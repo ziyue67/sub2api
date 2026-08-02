@@ -123,6 +123,7 @@ export default {
     groupChangedSuccess: '分组更换成功',
     failedToChangeGroup: '更换分组失败',
     groupRequired: '请选择分组',
+    defaultGroupFollowsRoute: '由首选路由自动设置',
     multiGroupRouting: '多分组路由',
     multiGroupRoutingHint: '按优先级选择；同优先级按权重分配。上游可重试失败时自动切换，并按冷却秒数跳过故障分组。',
     toggleMultiGroupRouting: '切换多分组路由',

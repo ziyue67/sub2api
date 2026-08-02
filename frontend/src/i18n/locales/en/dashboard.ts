@@ -123,6 +123,7 @@ export default {
     groupChangedSuccess: 'Group changed successfully',
     failedToChangeGroup: 'Failed to change group',
     groupRequired: 'Please select a group',
+    defaultGroupFollowsRoute: 'Automatically set from the preferred route',
     multiGroupRouting: 'Multi-group routing',
     multiGroupRoutingHint: 'Lower priority values run first; equal priorities use weights. Retryable upstream failures switch routes and skip the failed group for its cooldown.',
     toggleMultiGroupRouting: 'Toggle multi-group routing',

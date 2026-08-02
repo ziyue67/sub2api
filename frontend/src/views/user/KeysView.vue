@@ -468,10 +468,19 @@
         </div>
 
         <div>
-          <label class="input-label">{{ t('keys.groupLabel') }}</label>
+          <div class="flex items-center gap-2">
+            <label class="input-label mb-0">{{ t('keys.groupLabel') }}</label>
+            <span
+              v-if="formData.enable_group_routes"
+              class="text-xs text-gray-500 dark:text-dark-400"
+            >
+              {{ t('keys.defaultGroupFollowsRoute') }}
+            </span>
+          </div>
           <Select
             v-model="formData.group_id"
             :options="groupOptions"
+            :disabled="formData.enable_group_routes"
             :placeholder="t('keys.selectGroup')"
             :searchable="true"
             :search-placeholder="t('keys.searchGroup')"
@@ -1178,7 +1187,7 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, reactive, computed, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
@@ -1428,18 +1437,47 @@ const customKeyError = computed(() => {
   return ''
 })
 
+const primaryGroupRoute = () => {
+  const routes = formData.value.group_routes
+    .map((route, index) => ({ route, index }))
+    .filter(({ route }) => route.enabled !== false && route.group_id > 0)
+
+  return routes.sort((a, b) => a.route.priority - b.route.priority || a.index - b.index)[0]?.route
+}
+
+const syncDefaultGroupWithPrimaryRoute = () => {
+  if (!formData.value.enable_group_routes) return
+
+  const primaryRoute = primaryGroupRoute()
+  if (primaryRoute) {
+    formData.value.group_id = primaryRoute.group_id
+  }
+}
+
 const addGroupRoute = () => {
   const groupId = formData.value.group_id ?? groups.value[0]?.id
   if (!groupId) return
   formData.value.group_routes.push({ group_id: groupId, priority: formData.value.group_routes.length + 1, weight: 1, enabled: true, cooldown_seconds: 0 })
 }
 
-const removeGroupRoute = (index: number) => formData.value.group_routes.splice(index, 1)
+const removeGroupRoute = (index: number) => {
+  formData.value.group_routes.splice(index, 1)
+  syncDefaultGroupWithPrimaryRoute()
+}
 
 const toggleGroupRoutes = () => {
   formData.value.enable_group_routes = !formData.value.enable_group_routes
   if (formData.value.enable_group_routes && formData.value.group_routes.length === 0) addGroupRoute()
+  syncDefaultGroupWithPrimaryRoute()
 }
+
+watch(
+  () => [
+    formData.value.enable_group_routes,
+    ...formData.value.group_routes.flatMap((route) => [route.group_id, route.priority, route.enabled])
+  ],
+  syncDefaultGroupWithPrimaryRoute
+)
 
 const validateGroupRoutes = () => {
   if (!formData.value.enable_group_routes) return true
@@ -1765,6 +1803,8 @@ const confirmDelete = (key: ApiKey) => {
 }
 
 const handleSubmit = async () => {
+  syncDefaultGroupWithPrimaryRoute()
+
   // Validate group_id is required
   if (formData.value.group_id === null) {
     appStore.showError(t('keys.groupRequired'))
