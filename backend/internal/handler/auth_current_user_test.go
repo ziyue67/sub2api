@@ -29,19 +29,19 @@ func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T
 			AvatarURL:    "https://cdn.example.com/linuxdo.png",
 			AvatarSource: "remote_url",
 		},
-			identities: []service.UserAuthIdentityRecord{
-				{
-					ProviderType:    "linuxdo",
-					ProviderKey:     "linuxdo",
-					ProviderSubject: "linuxdo-subject-31",
-					VerifiedAt:      &verifiedAt,
-					Metadata: map[string]any{
-						"username":   "linuxdo-handle",
-						"avatar_url": "https://cdn.example.com/linuxdo.png",
-					},
+		identities: []service.UserAuthIdentityRecord{
+			{
+				ProviderType:    "linuxdo",
+				ProviderKey:     "linuxdo",
+				ProviderSubject: "linuxdo-subject-31",
+				VerifiedAt:      &verifiedAt,
+				Metadata: map[string]any{
+					"username":   "linuxdo-handle",
+					"avatar_url": "https://cdn.example.com/linuxdo.png",
 				},
 			},
-		}
+		},
+	}
 
 	handler := &AuthHandler{
 		userService: service.NewUserService(repo, nil, nil, nil),
@@ -55,6 +55,8 @@ func TestAuthHandlerGetCurrentUserReturnsProfileCompatibilityFields(t *testing.T
 	handler.GetCurrentUser(c)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "private, no-store, max-age=0", recorder.Header().Get("Cache-Control"))
+	require.Equal(t, "no-cache", recorder.Header().Get("Pragma"))
 
 	var resp struct {
 		Code int            `json:"code"`

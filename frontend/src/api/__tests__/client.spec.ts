@@ -188,6 +188,23 @@ describe('API Client', () => {
       expect(config.headers.get('X-Admin-UI-Request')).toBeFalsy()
     })
 
+    it('刷新当前用户资料时禁止复用缓存余额', async () => {
+      const adapter = vi.fn().mockResolvedValue({
+        status: 200,
+        data: { code: 0, data: {} },
+        headers: {},
+        config: {},
+        statusText: 'OK',
+      })
+      apiClient.defaults.adapter = adapter
+
+      await apiClient.get('/auth/me')
+
+      const config = adapter.mock.calls[0][0]
+      expect(config.headers.get('Cache-Control')).toBe('no-cache')
+      expect(config.headers.get('Pragma')).toBe('no-cache')
+    })
+
     it('支付用户 API 带 User UI 标记，公开支付 API 不带', async () => {
       const adapter = vi.fn().mockResolvedValue({
         status: 200,

@@ -55,6 +55,9 @@ watch(
 // Watch for authentication state and manage subscription data + announcements
 function onVisibilityChange() {
   if (document.visibilityState === 'visible' && authStore.isAuthenticated) {
+    authStore.refreshUser().catch((error) => {
+      console.warn('Failed to refresh user after returning to the app:', error)
+    })
     announcementStore.fetchAnnouncements()
   }
 }

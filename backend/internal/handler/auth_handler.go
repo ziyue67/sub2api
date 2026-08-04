@@ -412,6 +412,10 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
+	// This endpoint supplies the client-side balance. It must not be reused by
+	// browsers or intermediaries after a redeem or an administrator adjustment.
+	c.Header("Cache-Control", "private, no-store, max-age=0")
+	c.Header("Pragma", "no-cache")
 
 	user, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
 	if err != nil {

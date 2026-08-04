@@ -67,6 +67,12 @@ apiClient.interceptors.request.use(
 
     if (config.headers) {
       const requestURL = String(config.url || '')
+      if (config.method === 'get' && requestURL.replace(/\?.*$/, '') === '/auth/me') {
+        // A redeemed code or an administrator balance adjustment must be visible
+        // immediately, even when a reverse proxy has seen an older profile response.
+        config.headers['Cache-Control'] = 'no-cache'
+        config.headers.Pragma = 'no-cache'
+      }
       if (shouldMarkAdminUIRequest(requestURL)) {
         config.headers[ADMIN_UI_REQUEST_HEADER] = '1'
       }
