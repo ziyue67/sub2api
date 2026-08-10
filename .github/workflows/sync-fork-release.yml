@@ -81,27 +81,28 @@ jobs:
                   break
 
           version = os.environ["VERSION"]
-          images = f'''## Docker 镜像（ziyue67/sub2api）
-
-```text
-ziyue67/sub2api:latest
-ziyue67/sub2api:{version}
-ghcr.io/ziyue67/sub2api:latest
-ghcr.io/ziyue67/sub2api:{version}
-```
-
-拉取示例：
-
-```bash
-docker pull ziyue67/sub2api:{version}
-docker pull ghcr.io/ziyue67/sub2api:{version}
-```
-
-## 文档
-
-- [GitHub Repository](https://github.com/ziyue67/sub2api)
-- [Deployment Guide](https://github.com/ziyue67/sub2api/tree/main/deploy)
-'''
+          images = "\n".join([
+              "## Docker 镜像（ziyue67/sub2api）",
+              "",
+              "```text",
+              "ziyue67/sub2api:latest",
+              f"ziyue67/sub2api:{version}",
+              "ghcr.io/ziyue67/sub2api:latest",
+              f"ghcr.io/ziyue67/sub2api:{version}",
+              "```",
+              "",
+              "拉取示例：",
+              "",
+              "```bash",
+              f"docker pull ziyue67/sub2api:{version}",
+              f"docker pull ghcr.io/ziyue67/sub2api:{version}",
+              "```",
+              "",
+              "## 文档",
+              "",
+              "- [GitHub Repository](https://github.com/ziyue67/sub2api)",
+              "- [Deployment Guide](https://github.com/ziyue67/sub2api/tree/main/deploy)",
+          ])
           Path("release-notes.md").write_text(
               f"{body}\n\n---\n\n{images}", encoding="utf-8"
           )
