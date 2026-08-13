@@ -81,7 +81,7 @@
         <!-- Model Filter -->
         <div class="w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('usage.model') }}</label>
-          <Select v-model="filters.model" :options="modelOptions" searchable @change="emitChange" />
+          <Select v-model="filters.model" :options="modelOptions" searchable :creatable="modelCreatable" @change="emitChange" />
         </div>
 
         <!-- Account Filter -->
@@ -216,12 +216,15 @@ interface Props {
   mode?: 'usage' | 'errors' | 'ranking'
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
+  /** 模型筛选是否允许输入任意值（creatable） */
+  modelCreatable?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showActions: true,
   mode: 'usage',
-  flat: false
+  flat: false,
+  modelCreatable: false
 })
 const emit = defineEmits([
   'update:modelValue',

@@ -1,7 +1,8 @@
 export default {
     title: 'Token 排行榜',
-    description: '按 Token、请求数或费用查看全站用量排名，仅展示 Top 20。',
+    description: '按 Token、请求数或费用查看全站用量排名，支持多维筛选与 Top N。',
     periodLabel: '排行周期',
+    limit: '数量',
     filters: '排行榜筛选',
     sortBy: '排序',
     billingMode: '计费模式',
@@ -28,12 +29,31 @@ export default {
       live: 'Live'
     },
     period: {
-      day: '今日',
-      week: '近 7 天',
-      month: '近 30 天'
+      day1: '近 1 天',
+      day3: '近 3 天',
+      day7: '近 7 天',
+      day14: '近 14 天',
+      day30: '近 30 天'
     },
     rank: '排名',
     user: '用户',
+    apiKey: 'API 密钥',
+    model: '模型',
+    account: '账户',
+    billingType: '计费类型',
+    group: '分组',
+    filter: {
+      userPlaceholder: '按邮箱搜索用户...',
+      apiKeyPlaceholder: '按名称搜索 API 密钥...',
+      accountPlaceholder: '按名称搜索账户...',
+      modelPlaceholder: '请选择',
+      typePlaceholder: '请选择',
+      billingTypePlaceholder: '全部计费类型',
+      billingModePlaceholder: '请选择',
+      groupPlaceholder: '请选择'
+    },
+    billingTypeBalance: '余额计费',
+    billingTypeSubscription: '订阅计费',
     requests: '请求',
     totalTokens: '总 Token',
     inputTokensShort: '输入',
@@ -50,6 +70,7 @@ export default {
     generatedAt: '更新于 {time}',
     refresh: '刷新',
     refreshing: '刷新中…',
+    reset: '重置',
     theme: {
       light: '浅色',
       dark: '深色'
