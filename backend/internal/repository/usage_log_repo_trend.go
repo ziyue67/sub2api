@@ -262,6 +262,7 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 		FROM usage_logs u
 		LEFT JOIN users us ON u.user_id = us.id
 		LEFT JOIN accounts a ON u.account_id = a.id
+		LEFT JOIN accounts parent_a ON a.parent_account_id = parent_a.id
 		WHERE u.created_at >= $1 AND u.created_at < $2
 	`
 	args := []any{startTime, endTime}
@@ -298,12 +299,21 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 		query += fmt.Sprintf(" AND u.user_id = $%d", len(args)+1)
 		args = append(args, options.UserID)
 	}
+	// Search upstream account metadata. Shadow account usage can reference a child
+	// record while the visible account email/name belongs to its parent, so match both.
 	if accountName := strings.TrimSpace(options.AccountName); accountName != "" {
-		query += fmt.Sprintf(" AND a.name ILIKE $%d", len(args)+1)
+		query += fmt.Sprintf(" AND (a.name ILIKE $%d OR parent_a.name ILIKE $%d)", len(args)+1, len(args)+1)
 		args = append(args, "%"+accountName+"%")
 	}
 	if accountEmail := strings.TrimSpace(options.AccountEmail); accountEmail != "" {
-		query += fmt.Sprintf(" AND COALESCE(a.credentials->>'email', a.extra->>'email', a.extra->>'email_address', '') ILIKE $%d", len(args)+1)
+		query += fmt.Sprintf(` AND (
+			a.extra->>'email_address' ILIKE $%d OR
+			a.extra->>'email' ILIKE $%d OR
+			a.credentials->>'email' ILIKE $%d OR
+			parent_a.extra->>'email_address' ILIKE $%d OR
+			parent_a.extra->>'email' ILIKE $%d OR
+			parent_a.credentials->>'email' ILIKE $%d
+		)`, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1, len(args)+1)
 		args = append(args, "%"+accountEmail+"%")
 	}
 
