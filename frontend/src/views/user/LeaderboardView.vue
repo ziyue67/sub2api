@@ -1,6 +1,6 @@
 
 <template>
-  <AppLayout :class="{ 'leaderboard-layout--dark': theme === 'dark' }">
+  <AppLayout>
     <div class="leaderboard-page space-y-6" :data-theme="theme">
      <!-- 顶部操作栏：时间范围 + 数量 + 刷新/重置 -->
       <section class="lb-card lb-toolbar">
@@ -513,54 +513,12 @@ onBeforeUnmount(() => {
   --lb-input-border: #334155;
 }
 
-/* 深色仅作用于 /leaderboard；不写入 html.dark 和全站 theme。 */
-:global(.leaderboard-layout--dark) {
+/* 深色只覆盖排行榜内容区；导航栏、侧栏和其他路由保持原样。 */
+.leaderboard-page[data-theme='dark'] {
+  min-height: calc(100dvh - 8rem);
+  padding: 1.5rem;
+  margin: -1.5rem;
   background: #020617;
-}
-
-:global(.leaderboard-layout--dark .bg-mesh-gradient) {
-  background: #020617;
-}
-
-:global(.leaderboard-layout--dark .sidebar) {
-  background: #0f172a;
-  border-color: #1e293b;
-}
-
-:global(.leaderboard-layout--dark .sidebar-header),
-:global(.leaderboard-layout--dark .sidebar > div:last-of-type) {
-  border-color: #1e293b;
-}
-
-:global(.leaderboard-layout--dark .sidebar-link) {
-  color: #cbd5e1;
-}
-
-:global(.leaderboard-layout--dark .sidebar-link:hover) {
-  background: #1e293b;
-  color: #f8fafc;
-}
-
-:global(.leaderboard-layout--dark .sidebar-section-title),
-:global(.leaderboard-layout--dark .sidebar-brand-title) {
-  color: #94a3b8;
-}
-
-:global(.leaderboard-layout--dark .glass) {
-  background: rgb(15 23 42 / 0.92);
-  border-color: rgb(51 65 85 / 0.7);
-}
-
-:global(.leaderboard-layout--dark header h1),
-:global(.leaderboard-layout--dark header .text-gray-900),
-:global(.leaderboard-layout--dark header .text-gray-700) {
-  color: #f8fafc;
-}
-
-:global(.leaderboard-layout--dark header .text-gray-500),
-:global(.leaderboard-layout--dark header .text-gray-600),
-:global(.leaderboard-layout--dark header .text-gray-400) {
-  color: #94a3b8;
 }
 
 .lb-card {
