@@ -35,8 +35,6 @@ Sub2API is an AI API gateway platform designed to distribute and manage API quot
 
 - **Multi-Account Management** - Support multiple upstream account types (OAuth, API Key)
 - **API Key Distribution** - Generate and manage API Keys for users
-- **Model Square** - A live catalogue that synchronizes active groups, schedulable accounts, and channel pricing
-- **Multi-Group API Key Routing** - Route one API key across multiple groups with priority, weighted selection, cooldowns, and retryable-upstream failover
 - **Precise Billing** - Token-level usage tracking and cost calculation
 - **Smart Scheduling** - Intelligent account selection with sticky sessions
 - **Concurrency Control** - Per-user and per-account concurrency limits
@@ -80,7 +78,7 @@ Nginx drops headers containing underscores by default (e.g. `session_id`), which
 
 ## Deployment
 
-### Method 1: Script Installation
+### Method 1: Script Installation (Recommended)
 
 One-click installation script that downloads pre-built binaries from GitHub Releases.
 
@@ -250,27 +248,6 @@ docker compose -f docker-compose.local.yml ps
 docker compose -f docker-compose.local.yml logs -f sub2api
 ```
 
-#### Fork Image Deployment
-
-This fork's Compose files already use the GitHub Container Registry image
-`ghcr.io/ziyue67/sub2api:latest`:
-
-```bash
-docker compose -f docker-compose.local.yml pull
-docker compose -f docker-compose.local.yml up -d
-```
-
-To update an existing deployment after a new image is published:
-
-```bash
-docker compose -f docker-compose.local.yml pull sub2api
-docker compose -f docker-compose.local.yml up -d --no-deps sub2api
-```
-
-For a reproducible rollout, replace `latest` with a published image tag or digest.
-The `data`, `postgres_data`, and `redis_data` directories contain persistent
-state and must be backed up before upgrades.
-
 #### Deployment Versions
 
 | Version | Data Storage | Migration | Best For |
@@ -366,7 +343,7 @@ Build and run from source code for development or customization.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Wei-Shaw/sub2api.git
+git clone https://github.com/ziyue67/sub2api.git
 cd sub2api
 
 # 2. Install pnpm (if not already installed)
@@ -740,11 +717,11 @@ sub2api/
 
 ## Star History
 
-<a href="https://star-history.com/#Wei-Shaw/sub2api&Date">
+<a href="https://star-history.com/#ziyue67/sub2api&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Wei-Shaw/sub2api&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Wei-Shaw/sub2api&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Wei-Shaw/sub2api&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ziyue67/sub2api&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ziyue67/sub2api&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ziyue67/sub2api&type=Date" />
  </picture>
 </a>
 

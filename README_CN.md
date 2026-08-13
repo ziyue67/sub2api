@@ -36,8 +36,6 @@ Sub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅的
 
 - **多账号管理** - 支持多种上游账号类型（OAuth、API Key）
 - **API Key 分发** - 为用户生成和管理 API Key
-- **模型广场** - 自动同步活跃分组、可调度账号与渠道定价的实时模型目录
-- **API Key 多分组路由** - 单个 Key 可按优先级、权重与冷却秒数跨分组路由，并在上游可重试失败时自动切换
 - **精确计费** - Token 级别的用量追踪和成本计算
 - **智能调度** - 智能账号选择，支持粘性会话
 - **并发控制** - 用户级和账号级并发限制
@@ -94,7 +92,7 @@ Nginx 默认会丢弃名称中含下划线的请求头（如 `session_id`），�
 #### 安装步骤
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash
 ```
 
 脚本会自动：
@@ -144,7 +142,7 @@ sudo journalctl -u sub2api -f
 sudo systemctl restart sub2api
 
 # 卸载
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
+curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
 ```
 
 ---
@@ -167,7 +165,7 @@ curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install
 mkdir -p sub2api-deploy && cd sub2api-deploy
 
 # 下载并运行部署准备脚本
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/docker-deploy.sh | bash
 
 # 启动服务
 docker compose up -d
@@ -189,7 +187,7 @@ docker compose logs -f sub2api
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/Wei-Shaw/sub2api.git
+git clone https://github.com/ziyue67/sub2api.git
 cd sub2api/deploy
 
 # 2. 复制环境配置文件
@@ -249,23 +247,6 @@ docker compose -f docker-compose.local.yml ps
 # 7. 查看日志
 docker compose -f docker-compose.local.yml logs -f sub2api
 ```
-
-#### Fork 镜像部署
-
-本仓库的 Compose 文件默认使用：
-
-```text
-ghcr.io/ziyue67/sub2api:latest
-```
-
-首次启动和后续更新均使用以下命令：
-
-```bash
-docker compose -f docker-compose.local.yml pull sub2api
-docker compose -f docker-compose.local.yml up -d --no-deps sub2api
-```
-
-生产环境建议固定版本：可将 `latest` 替换为已发布的版本标签或不可变镜像摘要。
 
 #### 部署版本对比
 
@@ -348,7 +329,7 @@ rm -rf data/ postgres_data/ redis_data/
 Apple 芯片 Mac 在 macOS 26 上可使用 Apple `container` 1.1.0 或更高版本运行完整的 Sub2API、PostgreSQL 和 Redis：
 
 ```bash
-git clone https://github.com/Wei-Shaw/sub2api.git
+git clone https://github.com/ziyue67/sub2api.git
 cd sub2api/deploy
 ./apple-container.sh init
 ./apple-container.sh up
@@ -374,7 +355,7 @@ cd sub2api/deploy
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/Wei-Shaw/sub2api.git
+git clone https://github.com/ziyue67/sub2api.git
 cd sub2api
 
 # 2. 安装 pnpm（如果还没有安装）
@@ -665,11 +646,11 @@ sub2api/
 
 ## Star History
 
-<a href="https://star-history.com/#Wei-Shaw/sub2api&Date">
+<a href="https://star-history.com/#ziyue67/sub2api&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Wei-Shaw/sub2api&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Wei-Shaw/sub2api&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Wei-Shaw/sub2api&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ziyue67/sub2api&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ziyue67/sub2api&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ziyue67/sub2api&type=Date" />
  </picture>
 </a>
 
