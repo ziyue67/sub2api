@@ -212,6 +212,8 @@ type TokenLeaderboardQuery struct {
 	Model       string
 	GroupID     int64
 	UserID      int64
+	AccountName string
+	AccountEmail string
 }
 
 type TokenLeaderboardResponse struct {

@@ -107,3 +107,27 @@ func TestGetTokenLeaderboardWithFiltersUsesAllowlistedOrderAndLegacyRequestType(
 	require.Equal(t, float64(0.25), rows[0].AccountCost)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestGetTokenLeaderboardWithFiltersUsesAccountNameAndEmailSearch(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+
+	queryPattern := `(?s)LEFT JOIN accounts a ON u\.account_id = a\.id.*a\.name ILIKE \$3.*COALESCE\(a\.credentials->>'email', a\.extra->>'email', a\.extra->>'email_address', ''\) ILIKE \$4.*LIMIT \$5`
+	mock.ExpectQuery(queryPattern).
+		WithArgs(start, end, "%Codex%", "%admin@example.com%", 20).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"user_id", "email", "requests", "total_tokens", "input_tokens", "output_tokens",
+			"cache_tokens", "image_output_tokens", "cost", "actual_cost", "account_cost", "last_active_at",
+		}))
+
+	rows, err := repo.GetTokenLeaderboardWithFilters(context.Background(), start, end, 20, usagestats.TokenLeaderboardQuery{
+		AccountName:  "Codex",
+		AccountEmail: "admin@example.com",
+	})
+
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

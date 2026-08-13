@@ -261,6 +261,7 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 			MAX(u.created_at) AS last_active_at
 		FROM usage_logs u
 		LEFT JOIN users us ON u.user_id = us.id
+		LEFT JOIN accounts a ON u.account_id = a.id
 		WHERE u.created_at >= $1 AND u.created_at < $2
 	`
 	args := []any{startTime, endTime}
@@ -296,6 +297,14 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 	if options.UserID > 0 {
 		query += fmt.Sprintf(" AND u.user_id = $%d", len(args)+1)
 		args = append(args, options.UserID)
+	}
+	if accountName := strings.TrimSpace(options.AccountName); accountName != "" {
+		query += fmt.Sprintf(" AND a.name ILIKE $%d", len(args)+1)
+		args = append(args, "%"+accountName+"%")
+	}
+	if accountEmail := strings.TrimSpace(options.AccountEmail); accountEmail != "" {
+		query += fmt.Sprintf(" AND COALESCE(a.credentials->>'email', a.extra->>'email', a.extra->>'email_address', '') ILIKE $%d", len(args)+1)
+		args = append(args, "%"+accountEmail+"%")
 	}
 
 	query += " GROUP BY u.user_id, us.email " + resolveTokenLeaderboardOrderBy(options.SortBy)

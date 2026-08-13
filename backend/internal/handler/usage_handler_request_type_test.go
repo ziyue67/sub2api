@@ -92,6 +92,7 @@ func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 42})
+		c.Set(string(middleware2.ContextKeyUserRole), service.RoleAdmin)
 		c.Next()
 	})
 	router.GET("/usage", handler.List)
@@ -137,6 +138,19 @@ func TestDashboardLeaderboardRejectsInvalidSort(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestDashboardLeaderboardAcceptsAdminAccountNameAndEmailFilters(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=Codex&account_email=admin%40example.com", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "Codex", repo.leaderboardQuery.AccountName)
+	require.Equal(t, "admin@example.com", repo.leaderboardQuery.AccountEmail)
 }
 
 func TestUserUsageListRequestTypePriority(t *testing.T) {

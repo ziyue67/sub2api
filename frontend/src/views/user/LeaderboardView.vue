@@ -49,6 +49,28 @@
             </div>
           </div>
           <div class="lb-filter-col">
+            <label class="lb-filter-label">{{ t('leaderboard.accountName') }}</label>
+            <input
+              v-model.trim="filterAccountName"
+              type="search"
+              class="lb-input"
+              :placeholder="t('leaderboard.filter.accountNamePlaceholder')"
+              @change="reload"
+              @keyup.enter="reload"
+            />
+          </div>
+          <div class="lb-filter-col">
+            <label class="lb-filter-label">{{ t('leaderboard.accountEmail') }}</label>
+            <input
+              v-model.trim="filterAccountEmail"
+              type="search"
+              class="lb-input"
+              :placeholder="t('leaderboard.filter.accountEmailPlaceholder')"
+              @change="reload"
+              @keyup.enter="reload"
+            />
+          </div>
+          <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.requestType') }}</label>
             <div class="w-full">
               <Select v-model="filterRequestType" :options="requestTypeOptions" @change="reload" />
@@ -175,15 +197,13 @@ const { t } = useI18n()
 
 type DaysWindow = 1 | 3 | 7 | 14 | 30
 
-const THEME_STORAGE_KEY = 'leaderboard.theme'
-
 const leaderboard = ref<TokenLeaderboardResponse | null>(null)
 const loading = ref(false)
 const error = ref(false)
 const days = ref<DaysWindow>(1)
 const limit = ref(20)
 const sortBy = ref<LeaderboardSortBy>('tokens')
-const theme = ref<'light' | 'dark'>('light')
+const theme = ref<'light' | 'dark'>(document.documentElement.classList.contains('dark') ? 'dark' : 'light')
 
 // 筛选面板
 const filterModel = ref<string | null>(null)
@@ -191,11 +211,14 @@ const filterRequestType = ref<UsageRequestType | null>(null)
 const filterBillingType = ref<number | null>(null)
 const filterBillingMode = ref<LeaderboardBillingMode | null>(null)
 const filterGroup = ref<number | null>(null)
+const filterAccountName = ref('')
+const filterAccountEmail = ref('')
 const availableModels = ref<ModelStat[]>([])
 const availableGroups = ref<GroupStat[]>([])
 const filterOptionsLoading = ref(false)
 
 let abortController: AbortController | null = null
+let themeObserver: MutationObserver | null = null
 
 const periodOptions = computed(() => [
   { value: 1, label: t('leaderboard.period.day1') },
@@ -328,6 +351,8 @@ function buildParams(): LeaderboardParams {
     limit: limit.value
   }
   if (filterModel.value) params.model = filterModel.value
+  if (filterAccountName.value) params.account_name = filterAccountName.value
+  if (filterAccountEmail.value) params.account_email = filterAccountEmail.value
   if (filterRequestType.value) params.request_type = filterRequestType.value
   if (filterBillingType.value !== null) params.billing_type = filterBillingType.value
   if (filterBillingMode.value) params.billing_mode = filterBillingMode.value
@@ -420,14 +445,18 @@ function resetFilters() {
   filterBillingType.value = null
   filterBillingMode.value = null
   filterGroup.value = null
+  filterAccountName.value = ''
+  filterAccountEmail.value = ''
   void loadFilterOptions()
   void load()
 }
 
 function applyTheme(next: 'light' | 'dark') {
   theme.value = next
+  document.documentElement.classList.toggle('dark', next === 'dark')
+  window.dispatchEvent(new Event('app-theme-change'))
   try {
-    localStorage.setItem(THEME_STORAGE_KEY, next)
+    localStorage.setItem('theme', next)
   } catch {
     /* ignore storage errors */
   }
@@ -438,19 +467,19 @@ function toggleTheme() {
 }
 
 onMounted(() => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY)
-    if (saved === 'dark' || saved === 'light') {
-      theme.value = saved
-    }
-  } catch {
-    /* ignore storage errors */
-  }
+  // 排行榜开关与侧栏主题使用同一个全局主题，深色时整个页面一起切换。
+  theme.value = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+  themeObserver = new MutationObserver(() => {
+    theme.value = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   void loadFilterOptions()
   void load()
 })
 
 onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+  themeObserver = null
   if (abortController) {
     abortController.abort()
     abortController = null
@@ -485,11 +514,8 @@ onBeforeUnmount(() => {
   --lb-input-border: #334155;
 }
 
-.leaderboard-page[data-theme='dark']::before {
-  content: '';
-  position: fixed;
-  z-index: -1;
-  inset: 0;
+/* AppLayout 的网格背景也随全局主题切换，避免深色时页面底色仍然发白。 */
+:global(html.dark .bg-mesh-gradient) {
   background: #020617;
 }
 
@@ -570,7 +596,7 @@ onBeforeUnmount(() => {
 
 .lb-filter-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1rem;
 }
 

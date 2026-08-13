@@ -847,6 +847,11 @@ function toggleTheme() {
   isDark.value = !isDark.value
   document.documentElement.classList.toggle('dark', isDark.value)
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+  window.dispatchEvent(new Event('app-theme-change'))
+}
+
+function syncThemeFromDocument() {
+  isDark.value = document.documentElement.classList.contains('dark')
 }
 
 function closeMobile() {
@@ -919,8 +924,7 @@ function handleGroupClick(item: NavItem) {
 // Initialize theme
 const savedTheme = localStorage.getItem('theme')
 if (
-  savedTheme === 'dark' ||
-  (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  savedTheme === 'dark'
 ) {
   isDark.value = true
   document.documentElement.classList.add('dark')
@@ -938,6 +942,7 @@ watch(
 )
 
 onMounted(() => {
+  window.addEventListener('app-theme-change', syncThemeFromDocument)
   void refreshBatchImageAccess()
   if (isAdmin.value) {
     adminSettingsStore.fetch()
@@ -953,6 +958,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('app-theme-change', syncThemeFromDocument)
   if (sidebarNavRef.value) {
     appStore.sidebarScrollTop = sidebarNavRef.value.scrollTop
   }
