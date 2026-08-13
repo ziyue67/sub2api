@@ -1,11 +1,6 @@
 package service
 
-import (
-	"bytes"
-	"sort"
-
-	"github.com/tidwall/gjson"
-)
+import "sort"
 
 const (
 	// 工具定义在多轮历史里最多再嵌套一层 tools，留出余量后截断，避免畸形请求体
@@ -16,6 +11,9 @@ const (
 	openAIResponsesToolSchemaFallbackType = `"object"`
 	// 显式 null 在 JSON 里只有这一种字面量形态。
 	openAIResponsesToolSchemaNullLiteral = "null"
+	// 仅用于跳过不关心的 JSON 值的结构深度上限。超过上限按无变更处理，避免把
+	// 恶意深嵌套 body 递归到栈溢出。
+	openAIResponsesToolSchemaJSONMaxDepth = 128
 )
 
 // openAIResponsesToolSchemaNullType 记录一处待修正的 null，用原始 body 上的
@@ -36,23 +34,18 @@ type openAIResponsesToolSchemaNullType struct {
 // 只修正显式 null：缺失 type 的 Schema 本身合法（等价于不约束），补写会收窄
 // 客户端语义，因此保持原样。
 //
-// 实现上先收集全部命中的绝对偏移，再一次性拼出新 body：逐个 sjson.SetBytes 每次
-// 都会重扫并全量拷贝整个文档，命中 N 处就是 N 次全量拷贝，而 /v1/responses 的
-// body 上限是 gateway.max_body_size（默认 256MB），构造请求能塞进百万级命中。
+// 这里不使用逐项 gjson/sjson 路径查询。对一个有数千个 tools 的 body，路径查询会
+// 为每个 tool 创建临时 Result/路径对象，即使最终只拼接一次也会线性增加分配次数。
+// 轻量扫描器只记录原始 body 中的 null 偏移，最后一次性拼出新 body。
 func sanitizeOpenAIResponsesToolParameterTypes(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
 
 	hits := make([]openAIResponsesToolSchemaNullType, 0, 2)
-	collectOpenAIResponsesToolSchemaNullTypes(body, gjson.GetBytes(body, "tools"), 0, &hits)
-	if input := gjson.GetBytes(body, "input"); input.IsArray() {
-		input.ForEach(func(_, item gjson.Result) bool {
-			if item.IsObject() {
-				collectOpenAIResponsesToolSchemaNullTypes(body, item.Get("tools"), 0, &hits)
-			}
-			return true
-		})
+	root := skipOpenAIResponsesToolSchemaWhitespace(body, 0)
+	if root < len(body) && body[root] == '{' {
+		collectOpenAIResponsesRootToolSchemaNullTypes(body, root, &hits)
 	}
 	if len(hits) == 0 {
 		return body, false, nil
@@ -76,52 +69,429 @@ func sanitizeOpenAIResponsesToolParameterTypes(body []byte) ([]byte, bool, error
 	return sanitized, true, nil
 }
 
-// collectOpenAIResponsesToolSchemaNullTypes 收集一个 tools 数组里所有需要修正的
-// parameters.type 位置。不按 tool type 过滤：null 的 schema type 在 function、
-// custom 以及任何 hosted 工具上都同样非法。
-func collectOpenAIResponsesToolSchemaNullTypes(
-	body []byte, tools gjson.Result, depth int, hits *[]openAIResponsesToolSchemaNullType,
+// collectOpenAIResponsesRootToolSchemaNullTypes 只检查根级 tools 和 input 数组中
+// 每个历史条目的 tools，与 Responses 请求可出现的工具定义位置保持一致。
+func collectOpenAIResponsesRootToolSchemaNullTypes(
+	body []byte, objectStart int, hits *[]openAIResponsesToolSchemaNullType,
 ) {
-	if depth > openAIResponsesToolSchemaMaxDepth || !tools.IsArray() {
-		return
+	for i := objectStart + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		keyStart := i
+		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
+		if keyEnd < 0 {
+			return
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
+		if i >= len(body) || body[i] != ':' {
+			return
+		}
+		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
+		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
+		if valueEnd < 0 {
+			return
+		}
+		if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "tools") && valueStart < len(body) && body[valueStart] == '[' {
+			collectOpenAIResponsesToolsArrayNullTypes(body, valueStart, 0, hits)
+		} else if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "input") && valueStart < len(body) && body[valueStart] == '[' {
+			collectOpenAIResponsesInputArrayToolSchemaNullTypes(body, valueStart, hits)
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		if body[i] != ',' {
+			return
+		}
+		i++
 	}
-	tools.ForEach(func(_, tool gjson.Result) bool {
-		if !tool.IsObject() {
-			return true
-		}
-		// Responses 形态用顶层 parameters，ChatCompletions 形态用 function.parameters，
-		// 两种都可能出现在 Responses 请求里（见 normalizeCodexTools）。
-		for _, suffix := range []string{"parameters", "function.parameters"} {
-			params := tool.Get(suffix)
-			if !params.IsObject() {
-				continue
-			}
-			// gjson 用 Type==Null 同时表示「显式 null」和「路径不存在」，靠 Raw
-			// 区分：不存在时 Raw 为空串。
-			if typ := params.Get("type"); typ.Type == gjson.Null && typ.Raw == openAIResponsesToolSchemaNullLiteral {
-				appendOpenAIResponsesToolSchemaNullType(body, typ, hits)
-			}
-		}
-		// 历史输入里的工具定义会再嵌套一层 tools（upstream 报错路径形如
-		// input[234].tools[0].tools[3].parameters）。
-		collectOpenAIResponsesToolSchemaNullTypes(body, tool.Get("tools"), depth+1, hits)
-		return true
-	})
 }
 
-// appendOpenAIResponsesToolSchemaNullType 先校验 gjson 给出的偏移确实指向原始
-// body 上那段 null，再记录。gjson 对嵌套取值同样返回相对原始文档的绝对偏移，但
-// Index 为 0 表示未知；偏移不可用时跳过该处而不是猜位置——少修一个工具只是维持
-// 现状，拼错位置会损坏整个请求体。
-func appendOpenAIResponsesToolSchemaNullType(
-	body []byte, typ gjson.Result, hits *[]openAIResponsesToolSchemaNullType,
+func collectOpenAIResponsesInputArrayToolSchemaNullTypes(
+	body []byte, arrayStart int, hits *[]openAIResponsesToolSchemaNullType,
 ) {
-	end := typ.Index + len(typ.Raw)
-	if typ.Index <= 0 || end > len(body) {
+	for i := arrayStart + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) || body[i] == ']' {
+			return
+		}
+		valueStart := i
+		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
+		if valueEnd < 0 {
+			return
+		}
+		if body[valueStart] == '{' {
+			collectOpenAIResponsesInputItemToolSchemaNullTypes(body, valueStart, hits)
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
+		if i >= len(body) || body[i] == ']' {
+			return
+		}
+		if body[i] != ',' {
+			return
+		}
+		i++
+	}
+}
+
+func collectOpenAIResponsesInputItemToolSchemaNullTypes(
+	body []byte, objectStart int, hits *[]openAIResponsesToolSchemaNullType,
+) {
+	for i := objectStart + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		keyStart := i
+		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
+		if keyEnd < 0 {
+			return
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
+		if i >= len(body) || body[i] != ':' {
+			return
+		}
+		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
+		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
+		if valueEnd < 0 {
+			return
+		}
+		if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "tools") && valueStart < len(body) && body[valueStart] == '[' {
+			collectOpenAIResponsesToolsArrayNullTypes(body, valueStart, 0, hits)
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		if body[i] != ',' {
+			return
+		}
+		i++
+	}
+}
+
+// collectOpenAIResponsesToolsArrayNullTypes 收集一个 tools 数组里所有需要修正的
+// parameters.type 位置。不按 tool type 过滤：null 的 schema type 在 function、
+// custom 以及任何 hosted 工具上都同样非法。
+func collectOpenAIResponsesToolsArrayNullTypes(
+	body []byte, arrayStart, depth int, hits *[]openAIResponsesToolSchemaNullType,
+) {
+	if depth > openAIResponsesToolSchemaMaxDepth {
 		return
 	}
-	if !bytes.Equal(body[typ.Index:end], []byte(typ.Raw)) {
-		return
+	for i := arrayStart + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) || body[i] == ']' {
+			return
+		}
+		valueStart := i
+		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
+		if valueEnd < 0 {
+			return
+		}
+		if body[valueStart] == '{' {
+			collectOpenAIResponsesToolObjectSchemaNullTypes(body, valueStart, depth, hits)
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
+		if i >= len(body) || body[i] == ']' {
+			return
+		}
+		if body[i] != ',' {
+			return
+		}
+		i++
 	}
-	*hits = append(*hits, openAIResponsesToolSchemaNullType{offset: typ.Index, length: len(typ.Raw)})
+}
+
+func collectOpenAIResponsesToolObjectSchemaNullTypes(
+	body []byte, objectStart, depth int, hits *[]openAIResponsesToolSchemaNullType,
+) {
+	for i := objectStart + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		keyStart := i
+		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
+		if keyEnd < 0 {
+			return
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
+		if i >= len(body) || body[i] != ':' {
+			return
+		}
+		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
+		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
+		if valueEnd < 0 {
+			return
+		}
+		if valueStart < len(body) && body[valueStart] == '{' {
+			switch {
+			case openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "parameters"):
+				collectOpenAIResponsesParameterTypeNull(body, valueStart, hits)
+			case openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "function"):
+				collectOpenAIResponsesFunctionParameterTypeNull(body, valueStart, hits)
+			}
+		} else if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "tools") && valueStart < len(body) && body[valueStart] == '[' {
+			collectOpenAIResponsesToolsArrayNullTypes(body, valueStart, depth+1, hits)
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		if body[i] != ',' {
+			return
+		}
+		i++
+	}
+}
+
+func collectOpenAIResponsesFunctionParameterTypeNull(
+	body []byte, objectStart int, hits *[]openAIResponsesToolSchemaNullType,
+) {
+	for i := objectStart + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		keyStart := i
+		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
+		if keyEnd < 0 {
+			return
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
+		if i >= len(body) || body[i] != ':' {
+			return
+		}
+		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
+		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
+		if valueEnd < 0 {
+			return
+		}
+		if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "parameters") && valueStart < len(body) && body[valueStart] == '{' {
+			collectOpenAIResponsesParameterTypeNull(body, valueStart, hits)
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		if body[i] != ',' {
+			return
+		}
+		i++
+	}
+}
+
+func collectOpenAIResponsesParameterTypeNull(
+	body []byte, objectStart int, hits *[]openAIResponsesToolSchemaNullType,
+) {
+	for i := objectStart + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		keyStart := i
+		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
+		if keyEnd < 0 {
+			return
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
+		if i >= len(body) || body[i] != ':' {
+			return
+		}
+		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
+		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
+		if valueEnd < 0 {
+			return
+		}
+		if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "type") && valueEnd-valueStart == len(openAIResponsesToolSchemaNullLiteral) && string(body[valueStart:valueEnd]) == openAIResponsesToolSchemaNullLiteral {
+			*hits = append(*hits, openAIResponsesToolSchemaNullType{offset: valueStart, length: len(openAIResponsesToolSchemaNullLiteral)})
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
+		if i >= len(body) || body[i] == '}' {
+			return
+		}
+		if body[i] != ',' {
+			return
+		}
+		i++
+	}
+}
+
+func skipOpenAIResponsesToolSchemaWhitespace(body []byte, i int) int {
+	for i < len(body) {
+		switch body[i] {
+		case ' ', '\n', '\r', '\t':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+func scanOpenAIResponsesToolSchemaString(body []byte, start int) int {
+	if start >= len(body) || body[start] != '"' {
+		return -1
+	}
+	for i := start + 1; i < len(body); i++ {
+		switch body[i] {
+		case '\\':
+			i++
+			if i >= len(body) {
+				return -1
+			}
+		case '"':
+			return i + 1
+		}
+	}
+	return -1
+}
+
+func scanOpenAIResponsesToolSchemaValue(body []byte, start, depth int) int {
+	if start >= len(body) || depth > openAIResponsesToolSchemaJSONMaxDepth {
+		return -1
+	}
+	switch body[start] {
+	case '"':
+		return scanOpenAIResponsesToolSchemaString(body, start)
+	case '{':
+		return scanOpenAIResponsesToolSchemaObject(body, start, depth+1)
+	case '[':
+		return scanOpenAIResponsesToolSchemaArray(body, start, depth+1)
+	default:
+		i := start
+		for i < len(body) {
+			switch body[i] {
+			case ' ', '\n', '\r', '\t', ',', ']', '}':
+				return i
+			default:
+				i++
+			}
+		}
+		return i
+	}
+}
+
+func scanOpenAIResponsesToolSchemaObject(body []byte, start, depth int) int {
+	for i := start + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) {
+			return -1
+		}
+		if body[i] == '}' {
+			return i + 1
+		}
+		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
+		if keyEnd < 0 {
+			return -1
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
+		if i >= len(body) || body[i] != ':' {
+			return -1
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
+		i = scanOpenAIResponsesToolSchemaValue(body, i, depth)
+		if i < 0 {
+			return -1
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) {
+			return -1
+		}
+		if body[i] == '}' {
+			return i + 1
+		}
+		if body[i] != ',' {
+			return -1
+		}
+		i++
+	}
+}
+
+func scanOpenAIResponsesToolSchemaArray(body []byte, start, depth int) int {
+	for i := start + 1; ; {
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) {
+			return -1
+		}
+		if body[i] == ']' {
+			return i + 1
+		}
+		i = scanOpenAIResponsesToolSchemaValue(body, i, depth)
+		if i < 0 {
+			return -1
+		}
+		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
+		if i >= len(body) {
+			return -1
+		}
+		if body[i] == ']' {
+			return i + 1
+		}
+		if body[i] != ',' {
+			return -1
+		}
+		i++
+	}
+}
+
+// openAIResponsesToolSchemaKeyEquals 在不分配字符串的前提下比较 JSON 对象键。
+// 工具协议键均为 ASCII；同时兼容这些 ASCII 字符的 \u00XX 写法。
+func openAIResponsesToolSchemaKeyEquals(body []byte, start, end int, want string) bool {
+	if start < 0 || end <= start+1 || end > len(body) || body[start] != '"' || body[end-1] != '"' {
+		return false
+	}
+	i := start + 1
+	for j := 0; j < len(want); j++ {
+		if i >= end-1 {
+			return false
+		}
+		if body[i] != '\\' {
+			if body[i] != want[j] {
+				return false
+			}
+			i++
+			continue
+		}
+		i++
+		if i >= end-1 || body[i] != 'u' || i+4 >= end-1 {
+			return false
+		}
+		value, ok := decodeOpenAIResponsesToolSchemaHex4(body[i+1 : i+5])
+		if !ok || value != want[j] {
+			return false
+		}
+		i += 5
+	}
+	return i == end-1
+}
+
+func decodeOpenAIResponsesToolSchemaHex4(raw []byte) (byte, bool) {
+	if len(raw) != 4 || raw[0] != '0' || raw[1] != '0' {
+		return 0, false
+	}
+	decode := func(ch byte) (byte, bool) {
+		switch {
+		case ch >= '0' && ch <= '9':
+			return ch - '0', true
+		case ch >= 'a' && ch <= 'f':
+			return ch - 'a' + 10, true
+		case ch >= 'A' && ch <= 'F':
+			return ch - 'A' + 10, true
+		default:
+			return 0, false
+		}
+	}
+	hi, ok := decode(raw[2])
+	if !ok {
+		return 0, false
+	}
+	lo, ok := decode(raw[3])
+	if !ok {
+		return 0, false
+	}
+	return hi<<4 | lo, true
 }

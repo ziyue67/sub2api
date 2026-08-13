@@ -459,12 +459,12 @@ func leaderboardPeriodLabel(days int) string {
 	switch days {
 	case 1:
 		return "今日"
- 	case 3:
- 		return "近 3 天"
+	case 3:
+		return "近 3 天"
 	case 7:
 		return "近 7 天"
- 	case 14:
- 		return "近 14 天"
+	case 14:
+		return "近 14 天"
 	case 30:
 		return "近 30 天"
 	default:
@@ -475,12 +475,12 @@ func leaderboardPeriodLabel(days int) string {
 // parseLeaderboardDays clamps the days query to the allowed windows {1,3,7,14,30}, default 1.
 func parseLeaderboardDays(raw string) int {
 	switch strings.TrimSpace(raw) {
- 	case "3":
- 		return 3
+	case "3":
+		return 3
 	case "7":
 		return 7
- 	case "14":
- 		return 14
+	case "14":
+		return 14
 	case "30":
 		return 30
 	default:
