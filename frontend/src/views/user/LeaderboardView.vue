@@ -7,13 +7,13 @@
         <div class="lb-toolbar-group">
           <span class="lb-toolbar-label">{{ t('leaderboard.periodLabel') }}</span>
           <div class="w-40">
-            <Select v-model="days" :options="periodOptions" @change="onDaysChange" />
+            <Select v-model="days" :options="periodOptions" :theme="theme" @change="onDaysChange" />
           </div>
         </div>
         <div class="lb-toolbar-group lb-toolbar-actions">
           <span class="lb-toolbar-label">{{ t('leaderboard.limit') }}</span>
           <div class="w-24">
-            <Select v-model="limit" :options="limitOptions" @change="onLimitChange" />
+            <Select v-model="limit" :options="limitOptions" :theme="theme" @change="onLimitChange" />
           </div>
           <button
             type="button"
@@ -44,7 +44,7 @@
           <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.model') }}</label>
             <div class="w-full">
-              <Select v-model="filterModel" :options="modelOptions" searchable @change="reload" />
+              <Select v-model="filterModel" :options="modelOptions" :theme="theme" searchable @change="reload" />
               <p v-if="filterOptionsLoading" class="lb-filter-hint">{{ t('common.loading') }}</p>
             </div>
           </div>
@@ -73,25 +73,25 @@
           <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.requestType') }}</label>
             <div class="w-full">
-              <Select v-model="filterRequestType" :options="requestTypeOptions" @change="reload" />
+              <Select v-model="filterRequestType" :options="requestTypeOptions" :theme="theme" @change="reload" />
             </div>
           </div>
           <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.billingType') }}</label>
             <div class="w-full">
-              <Select v-model="filterBillingType" :options="billingTypeOptions" @change="reload" />
+              <Select v-model="filterBillingType" :options="billingTypeOptions" :theme="theme" @change="reload" />
             </div>
           </div>
           <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.billingMode') }}</label>
             <div class="w-full">
-              <Select v-model="filterBillingMode" :options="billingModeOptions" @change="reload" />
+              <Select v-model="filterBillingMode" :options="billingModeOptions" :theme="theme" @change="reload" />
             </div>
           </div>
           <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.group') }}</label>
             <div class="w-full">
-              <Select v-model="filterGroup" :options="groupOptions" searchable @change="reload" />
+              <Select v-model="filterGroup" :options="groupOptions" :theme="theme" searchable @change="reload" />
             </div>
           </div>
         </div>
