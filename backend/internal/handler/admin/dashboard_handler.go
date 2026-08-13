@@ -526,7 +526,7 @@ func parseUserBreakdownSortBy(raw string) (string, bool) {
 		return "actual_cost", true
 	case "tokens", "total_tokens":
 		return "total_tokens", true
-	case "input_tokens", "output_tokens", "cache_tokens", "requests", "cost":
+	case "input_tokens", "output_tokens", "cache_tokens", "image_output_tokens", "requests", "cost", "account_cost":
 		return strings.ToLower(strings.TrimSpace(raw)), true
 	default:
 		return "", false
@@ -686,7 +686,7 @@ func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 	if rawSortBy := strings.TrimSpace(c.Query("sort_by")); rawSortBy != "" {
 		sortBy, ok := parseUserBreakdownSortBy(rawSortBy)
 		if !ok {
-			response.BadRequest(c, "Invalid sort_by, use actual_cost/total_tokens/input_tokens/output_tokens/cache_tokens/requests/cost")
+			response.BadRequest(c, "Invalid sort_by, use actual_cost/total_tokens/input_tokens/output_tokens/cache_tokens/image_output_tokens/requests/cost/account_cost")
 			return
 		}
 		dim.SortBy = sortBy

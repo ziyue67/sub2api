@@ -1916,10 +1916,12 @@ export interface UserBreakdownItem {
   input_tokens: number
   output_tokens: number
   cache_tokens: number
+  image_output_tokens: number
   total_tokens: number
   cost: number
   actual_cost: number
   account_cost: number
+  last_active_at: string
 }
 
 export interface UserUsageTrendPoint {

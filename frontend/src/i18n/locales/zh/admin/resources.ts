@@ -560,7 +560,11 @@ export default {
           outputTokens: '输出 Token',
           cacheTokens: '缓存 Token',
           totalTokens: '总 Token',
-          cost: '费用'
+          imageOutputTokens: '生图输出',
+          cost: '费用',
+          actualCost: '实际扣费',
+          accountCost: '账号成本',
+          lastActive: '最近活跃'
         }
       },
       cleanup: {

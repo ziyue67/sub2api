@@ -563,7 +563,11 @@ export default {
           outputTokens: 'Output Tokens',
           cacheTokens: 'Cache Tokens',
           totalTokens: 'Total Tokens',
-          cost: 'Cost'
+          imageOutputTokens: 'Image Output',
+          cost: 'Cost',
+          actualCost: 'Actual Cost',
+          accountCost: 'Account Cost',
+          lastActive: 'Last Active'
         }
       },
       cleanup: {

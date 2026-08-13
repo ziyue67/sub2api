@@ -752,10 +752,12 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 			COALESCE(SUM(ul.input_tokens), 0) as input_tokens,
 			COALESCE(SUM(ul.output_tokens), 0) as output_tokens,
 			COALESCE(SUM(ul.cache_creation_tokens + ul.cache_read_tokens), 0) as cache_tokens,
-			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) as total_tokens,
+			COALESCE(SUM(ul.image_output_tokens), 0) as image_output_tokens,
+			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens + ul.image_output_tokens), 0) as total_tokens,
 			COALESCE(SUM(ul.total_cost), 0) as cost,
 			COALESCE(SUM(ul.actual_cost), 0) as actual_cost,
-			COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) as account_cost
+			COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) as account_cost,
+			MAX(ul.created_at) as last_active_at
 		FROM usage_logs ul
 		LEFT JOIN users u ON u.id = ul.user_id
 		WHERE ul.created_at >= $1 AND ul.created_at < $2
@@ -811,7 +813,7 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 	// ORDER BY 列来自固定 allowlist(非用户原样字符串),避免 SQL 注入。
 	orderBy := "actual_cost"
 	switch dim.SortBy {
-	case "total_tokens", "input_tokens", "output_tokens", "cache_tokens", "requests", "cost", "actual_cost":
+	case "total_tokens", "input_tokens", "output_tokens", "cache_tokens", "image_output_tokens", "requests", "cost", "actual_cost", "account_cost":
 		orderBy = dim.SortBy
 	}
 	query += " GROUP BY ul.user_id, u.email ORDER BY " + orderBy + " DESC, total_tokens DESC, requests DESC, user_id ASC"
@@ -840,10 +842,12 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 			&row.InputTokens,
 			&row.OutputTokens,
 			&row.CacheTokens,
+			&row.ImageOutputTokens,
 			&row.TotalTokens,
 			&row.Cost,
 			&row.ActualCost,
 			&row.AccountCost,
+			&row.LastActiveAt,
 		); err != nil {
 			return nil, err
 		}
