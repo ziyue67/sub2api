@@ -631,6 +631,15 @@ func (h *UsageHandler) DashboardLeaderboard(c *gin.Context) {
 
 	query.AccountName = strings.TrimSpace(c.Query("account_name"))
 	query.AccountEmail = strings.TrimSpace(c.Query("account_email"))
+	if query.AccountName != "" || query.AccountEmail != "" {
+		role, _ := middleware2.GetUserRoleFromContext(c)
+		if role != service.RoleAdmin {
+			// Identity filters may match users.username/users.email in addition to
+			// upstream account metadata. Restrict non-admin callers to their own
+			// usage rows so those filters cannot enumerate another user's activity.
+			query.UserID = subject.UserID
+		}
+	}
 
 	now := timezone.NowInUserLocation(userTZ)
 	endTime := timezone.StartOfDayInUserLocation(now.AddDate(0, 0, 1), userTZ)

@@ -85,14 +85,14 @@ func (s *userUsageRepoCapture) GetTokenLeaderboardWithFilters(_ context.Context,
 	return s.leaderboardRows, nil
 }
 
-func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
+func newUserUsageRequestTypeTestRouterWithRole(repo *userUsageRepoCapture, role string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	usageSvc := service.NewUsageService(repo, nil, nil, nil)
 	handler := NewUsageHandler(usageSvc, nil, nil, nil)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 42})
-		c.Set(string(middleware2.ContextKeyUserRole), service.RoleAdmin)
+		c.Set(string(middleware2.ContextKeyUserRole), role)
 		c.Next()
 	})
 	router.GET("/usage", handler.List)
@@ -101,6 +101,10 @@ func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
 	router.GET("/usage/dashboard/snapshot-v2", handler.DashboardSnapshotV2)
 	router.GET("/usage/dashboard/leaderboard", handler.DashboardLeaderboard)
 	return router
+}
+
+func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
+	return newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleAdmin)
 }
 
 func TestDashboardLeaderboardFiltersAndSort(t *testing.T) {
@@ -140,7 +144,7 @@ func TestDashboardLeaderboardRejectsInvalidSort(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestDashboardLeaderboardAcceptsAdminAccountNameAndEmailFilters(t *testing.T) {
+func TestDashboardLeaderboardAcceptsAccountNameAndEmailFilters(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
 
@@ -151,6 +155,40 @@ func TestDashboardLeaderboardAcceptsAdminAccountNameAndEmailFilters(t *testing.T
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "Codex", repo.leaderboardQuery.AccountName)
 	require.Equal(t, "admin@example.com", repo.leaderboardQuery.AccountEmail)
+}
+
+func TestDashboardLeaderboardRestrictsIdentityFiltersToCurrentUserForRegularUser(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleUser)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=account-name&account_email=account%40example.com", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, int64(42), repo.leaderboardQuery.UserID)
+	require.Equal(t, "account-name", repo.leaderboardQuery.AccountName)
+	require.Equal(t, "account@example.com", repo.leaderboardQuery.AccountEmail)
+}
+
+func TestDashboardLeaderboardMasksMatchedUserIdentity(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{
+			{UserID: 42, Email: "current@example.com"},
+			{UserID: 99, Email: "private@example.com"},
+		},
+	}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=private-user&account_email=private%40example.com", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"user":"我"`)
+	require.NotContains(t, rec.Body.String(), "private@example.com")
+	require.Contains(t, rec.Body.String(), "p***e@example.com")
+	require.NotContains(t, rec.Body.String(), "current@example.com")
 }
 
 func TestUserUsageListRequestTypePriority(t *testing.T) {
