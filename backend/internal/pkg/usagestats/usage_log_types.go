@@ -208,9 +208,12 @@ type TokenLeaderboardQuery struct {
 	Stream      *bool
 	BillingMode string
 	SortBy      string
+	BillingType *int16
+	Model       string
+	GroupID     int64
+	UserID      int64
 }
 
-// TokenLeaderboardResponse is the payload returned to the Token leaderboard page.
 type TokenLeaderboardResponse struct {
 	Days        int                    `json:"days"`
 	Label       string                 `json:"label"`
@@ -470,3 +473,4 @@ type UserLeaderboardResponse struct {
 	CurrentUserRank *UserLeaderboardItem  `json:"current_user_rank,omitempty"`
 	GeneratedAt     string                `json:"generated_at"`
 }
+

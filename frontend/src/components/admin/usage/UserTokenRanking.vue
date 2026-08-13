@@ -81,6 +81,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getUserBreakdown, type UserBreakdownParams } from '@/api/admin/dashboard'
 import { formatCompactNumber, formatCostFixed } from '@/utils/format'
@@ -93,6 +94,8 @@ const props = defineProps<{
   endDate: string
   filters: Record<string, unknown>
   model?: string
+  limit?: number
+  limitOptions?: { value: number; label: string }[]
 }>()
 
 defineEmits<{ (e: 'select-user', userId: number, email: string): void }>()
@@ -109,12 +112,14 @@ const sortableColumns: { key: SortKey; label: string }[] = [
   { key: 'actual_cost', label: 'admin.usage.tokenRanking.columns.cost' },
 ]
 
-const limitOptions = [
+const defaultLimitOptions = [
   { value: 20, label: 'Top 20' },
   { value: 50, label: 'Top 50' },
   { value: 100, label: 'Top 100' },
   { value: 200, label: 'Top 200' },
 ]
+
+const limitOptions = computed(() => props.limitOptions ?? defaultLimitOptions)
 
 // 前三名金/银/铜徽章
 const RANK_BADGE_CLASSES = [
@@ -126,11 +131,21 @@ const RANK_BADGE_CLASSES = [
 const items = ref<UserBreakdownItem[]>([])
 const loading = ref(false)
 const sortBy = ref<SortKey>('total_tokens')
-const limit = ref(50)
+const limit = ref(props.limit ?? 50)
 let reqSeq = 0
 
 const fmtTokens = (v: number) => formatCompactNumber(v)
 const fmtCost = (v: number) => formatCostFixed(v, 4)
+watch(
+  () => props.limit,
+  (next) => {
+    if (next != null && next !== limit.value) {
+      limit.value = next
+      load()
+    }
+  }
+)
+
 
 const setSort = (key: SortKey) => {
   if (sortBy.value === key) return

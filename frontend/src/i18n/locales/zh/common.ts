@@ -157,10 +157,11 @@ export default {
 
   // Navigation
   nav: {
-    dashboard: '仪表盘',
-    announcements: '公告',
-    apiKeys: 'API 密钥',
-    batchImage: '批量生图',
+   dashboard: '仪表盘',
+   announcements: '公告',
+   apiKeys: 'API 密钥',
+    leaderboard: '总排行榜',
+   batchImage: '批量生图',
     usage: '使用记录',
     redeem: '兑换',
     affiliate: '邀请返利',

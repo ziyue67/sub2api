@@ -1,7 +1,8 @@
 export default {
     title: 'Token Leaderboard',
-    description: 'View the top 20 users by tokens, requests, or cost.',
+    description: 'View the top users by tokens, requests, or cost with multi-dimensional filters.',
     periodLabel: 'Ranking period',
+    limit: 'Limit',
     filters: 'Leaderboard filters',
     sortBy: 'Sort by',
     billingMode: 'Billing mode',
@@ -28,12 +29,31 @@ export default {
       live: 'Live'
     },
     period: {
-      day: 'Today',
-      week: 'Last 7 days',
-      month: 'Last 30 days'
+      day1: 'Last 1 day',
+      day3: 'Last 3 days',
+      day7: 'Last 7 days',
+      day14: 'Last 14 days',
+      day30: 'Last 30 days'
     },
     rank: 'Rank',
     user: 'User',
+    apiKey: 'API Key',
+    model: 'Model',
+    account: 'Account',
+    billingType: 'Billing Type',
+    group: 'Group',
+    filter: {
+      userPlaceholder: 'Search user by email...',
+      apiKeyPlaceholder: 'Search API key by name...',
+      accountPlaceholder: 'Search account by name...',
+      modelPlaceholder: 'Please select',
+      typePlaceholder: 'Please select',
+      billingTypePlaceholder: 'All billing types',
+      billingModePlaceholder: 'Please select',
+      groupPlaceholder: 'Please select'
+    },
+    billingTypeBalance: 'Balance',
+    billingTypeSubscription: 'Subscription',
     requests: 'Requests',
     totalTokens: 'Total Tokens',
     inputTokensShort: 'Input',
@@ -50,6 +70,7 @@ export default {
     generatedAt: 'Updated {time}',
     refresh: 'Refresh',
     refreshing: 'Refreshing…',
+    reset: 'Reset',
     theme: {
       light: 'Light',
       dark: 'Dark'

@@ -157,10 +157,11 @@ export default {
 
   // Navigation
   nav: {
-    dashboard: 'Dashboard',
-    announcements: 'Announcements',
-    apiKeys: 'API Keys',
-    batchImage: 'Batch Images',
+   dashboard: 'Dashboard',
+   announcements: 'Announcements',
+   apiKeys: 'API Keys',
+    leaderboard: 'Leaderboard',
+   batchImage: 'Batch Images',
     usage: 'Usage',
     redeem: 'Redeem',
     affiliate: 'Affiliate Rebates',

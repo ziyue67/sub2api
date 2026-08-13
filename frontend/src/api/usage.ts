@@ -339,7 +339,7 @@ export interface TokenLeaderboardItem {
 }
 
 export interface TokenLeaderboardResponse {
-  days: number
+  days: 1 | 3 | 7 | 14 | 30
   label: string
   timezone: string
   start: string
@@ -355,11 +355,18 @@ export type LeaderboardSortBy = 'tokens' | 'requests' | 'cost' | 'actual_cost' |
 export type LeaderboardBillingMode = 'token' | 'per_request' | 'image' | 'video'
 
 export interface LeaderboardParams {
-  days?: 1 | 7 | 30
+  days?: 1 | 3 | 7 | 14 | 30
   timezone?: string
   sort_by?: LeaderboardSortBy
   billing_mode?: LeaderboardBillingMode
   request_type?: UsageRequestType
+  limit?: number
+  user_id?: number
+  api_key_id?: number
+  model?: string
+  account_id?: number
+  group_id?: number
+  billing_type?: number | null
 }
 
 /**

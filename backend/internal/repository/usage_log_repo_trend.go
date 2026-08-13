@@ -281,6 +281,23 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 		args = conditionArgs
 	}
 
+	if options.BillingType != nil {
+		query += fmt.Sprintf(" AND u.billing_type = $%d", len(args)+1)
+		args = append(args, *options.BillingType)
+	}
+	if strings.TrimSpace(options.Model) != "" {
+		query += fmt.Sprintf(" AND u.model = $%d", len(args)+1)
+		args = append(args, options.Model)
+	}
+	if options.GroupID > 0 {
+		query += fmt.Sprintf(" AND u.group_id = $%d", len(args)+1)
+		args = append(args, options.GroupID)
+	}
+	if options.UserID > 0 {
+		query += fmt.Sprintf(" AND u.user_id = $%d", len(args)+1)
+		args = append(args, options.UserID)
+	}
+
 	query += " GROUP BY u.user_id, us.email " + resolveTokenLeaderboardOrderBy(options.SortBy)
 	query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
 	args = append(args, limit)

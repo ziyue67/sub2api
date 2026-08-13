@@ -719,16 +719,28 @@ const routes: RouteRecordRaw[] = [
       requiresRiskControl: true
     }
   },
+ {
+   path: '/admin/usage',
+   name: 'AdminUsage',
+   component: () => import('@/views/admin/UsageView.vue'),
+   meta: {
+     requiresAuth: true,
+     requiresAdmin: true,
+     title: 'Usage Records',
+     titleKey: 'admin.usage.title',
+     descriptionKey: 'admin.usage.description'
+   }
+ },
   {
-    path: '/admin/usage',
-    name: 'AdminUsage',
-    component: () => import('@/views/admin/UsageView.vue'),
+    path: '/admin/leaderboard',
+    name: 'AdminLeaderboard',
+    component: () => import('@/views/admin/LeaderboardView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Usage Records',
-      titleKey: 'admin.usage.title',
-      descriptionKey: 'admin.usage.description'
+      title: 'Leaderboard',
+      titleKey: 'leaderboard.title',
+      descriptionKey: 'leaderboard.description'
     }
   },
   {
