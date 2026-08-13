@@ -618,6 +618,49 @@ func ProvideImageTaskService(store ImageTaskStore, settings *ImageStorageSetting
 	return NewImageTaskServiceWithResolver(store, settings.Resolver(), defaultImageTaskTTL, defaultImageTaskExecutionTimeout)
 }
 
+// ProvideImageCreatorService constructs the user image creator service. It reuses
+// the shared object store factory so S3/COS uploads share the backup credentials
+// plumbing rather than opening a second client stack.
+func ProvideImageCreatorService(
+	repo ImageCreatorRepository,
+	apiKeyService *APIKeyService,
+	cfg *config.Config,
+	storeFactory BackupObjectStoreFactory,
+) *ImageCreatorService {
+	// MembershipService is currently an optional compatibility stub. Keep image
+	// task limits on the standard default until a real membership provider exists.
+	return NewImageCreatorService(repo, apiKeyService, nil, cfg, storeFactory)
+}
+
+// ProvideCanvasService wires the canvas orchestration service to the image
+// creator so text-to-image / image-to-image nodes enqueue real tasks.
+func ProvideCanvasService(repo CanvasRepository, imageCreator *ImageCreatorService, apiKeyService *APIKeyService, channelService *ChannelService) *CanvasService {
+	canvasService := NewCanvasServiceWithDeps(repo, imageCreator, apiKeyService)
+	canvasService.SetChannelService(channelService)
+	return canvasService
+}
+
+func ProvideStudioBridgeService(
+	settings *SettingService,
+	repo StudioBridgeRepository,
+	store StudioBridgeStore,
+	apiKeyService *APIKeyService,
+) *StudioBridgeService {
+	svc := NewStudioBridgeService(settings, repo, store)
+	svc.SetAPIKeyService(apiKeyService)
+	return svc
+}
+
+// ProvideImageCreatorStorageGovernanceService constructs the admin-facing
+// storage governance service over the image creator storage.
+func ProvideImageCreatorStorageGovernanceService(
+	repo ImageCreatorStorageGovernanceRepository,
+	imageCreator *ImageCreatorService,
+	cfg *config.Config,
+) *ImageCreatorStorageGovernanceService {
+	return NewImageCreatorStorageGovernanceService(repo, imageCreator, cfg)
+}
+
 // ProvideBackupService creates and starts BackupService
 func ProvideBackupService(
 	settingRepo SettingRepository,
@@ -700,6 +743,9 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 	if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {
 		logger.LegacyPrintf("service.setting", "Warning: load forwarded client IP settings failed: %v", err)
 	}
+	if settings, err := svc.GetAllSettings(context.Background()); err == nil && settings != nil {
+		cfg.SetGlobalIPBlacklist(settings.IPBlacklist)
+	}
 	if err := svc.MigrateOpenAIAllowClaudeCodeCodexPluginSetting(context.Background()); err != nil {
 		logger.LegacyPrintf("service.setting", "Warning: migrate openai allow Claude Code Codex plugin setting failed: %v", err)
 	}
@@ -768,14 +814,20 @@ var ProviderSet = wire.NewSet(
 	NewBillingService,
 	ProvideBillingCacheService,
 	NewAnnouncementService,
+	NewEmailBroadcastService,
 	NewAdminService,
 	NewGatewayService,
 	NewOpenAIGatewayService,
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,
+	ProvideImageCreatorService,
+	ProvideCanvasService,
+	ProvideStudioBridgeService,
+	ProvideImageCreatorStorageGovernanceService,
 	ProvideBatchImageModelPricingResolver,
 	NewBatchImagePublicService,
 	NewBatchImageDownloadService,
+	NewPromptFavoriteService,
 	ProvideBatchImageCleanupService,
 	ProvideBatchImageWorkerRuntime,
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
@@ -856,6 +908,7 @@ var ProviderSet = wire.NewSet(
 	NewGroupCapacityService,
 	NewChannelService,
 	wire.Bind(new(ChannelCacheInvalidator), new(*ChannelService)),
+	ProvideModelSquareService,
 	NewModelPricingResolver,
 	NewContentModerationService,
 	NewAffiliateService,

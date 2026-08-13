@@ -35,3 +35,10 @@ exceptions:
     mitigation: "Proxy configuration not user-controlled; upgrade when axios releases fix"
     expires_on: "2026-07-10"
     owner: "security@your-domain"
+  - package: nanoid
+    advisory: "GHSA-2v37-7h3g-55p8"
+    severity: high
+    reason: "Transitive frontend dependency; application does not call custom nanoid generators with zero size"
+    mitigation: "Keep the lockfile audited and upgrade the dependency chain when a compatible release is available"
+    expires_on: "2026-10-06"
+    owner: "security@your-domain"
