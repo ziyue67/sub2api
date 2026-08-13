@@ -204,15 +204,15 @@ type TokenLeaderboardRow struct {
 // TokenLeaderboardQuery contains the optional filters and sort for the user-facing leaderboard.
 // SortBy is allowlisted by the handler and repository; empty defaults to tokens.
 type TokenLeaderboardQuery struct {
-	RequestType *int16
-	Stream      *bool
-	BillingMode string
-	SortBy      string
-	BillingType *int16
-	Model       string
-	GroupID     int64
-	UserID      int64
-	AccountName string
+	RequestType  *int16
+	Stream       *bool
+	BillingMode  string
+	SortBy       string
+	BillingType  *int16
+	Model        string
+	GroupID      int64
+	UserID       int64
+	AccountName  string
 	AccountEmail string
 }
 

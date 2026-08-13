@@ -1,6 +1,6 @@
 
 <template>
-  <AppLayout>
+  <AppLayout :class="{ 'leaderboard-layout--dark': theme === 'dark' }">
     <div class="leaderboard-page space-y-6" :data-theme="theme">
      <!-- 顶部操作栏：时间范围 + 数量 + 刷新/重置 -->
       <section class="lb-card lb-toolbar">
@@ -197,13 +197,15 @@ const { t } = useI18n()
 
 type DaysWindow = 1 | 3 | 7 | 14 | 30
 
+const THEME_STORAGE_KEY = 'leaderboard.theme'
+
 const leaderboard = ref<TokenLeaderboardResponse | null>(null)
 const loading = ref(false)
 const error = ref(false)
 const days = ref<DaysWindow>(1)
 const limit = ref(20)
 const sortBy = ref<LeaderboardSortBy>('tokens')
-const theme = ref<'light' | 'dark'>(document.documentElement.classList.contains('dark') ? 'dark' : 'light')
+const theme = ref<'light' | 'dark'>('light')
 
 // 筛选面板
 const filterModel = ref<string | null>(null)
@@ -218,7 +220,6 @@ const availableGroups = ref<GroupStat[]>([])
 const filterOptionsLoading = ref(false)
 
 let abortController: AbortController | null = null
-let themeObserver: MutationObserver | null = null
 
 const periodOptions = computed(() => [
   { value: 1, label: t('leaderboard.period.day1') },
@@ -453,10 +454,8 @@ function resetFilters() {
 
 function applyTheme(next: 'light' | 'dark') {
   theme.value = next
-  document.documentElement.classList.toggle('dark', next === 'dark')
-  window.dispatchEvent(new Event('app-theme-change'))
   try {
-    localStorage.setItem('theme', next)
+    localStorage.setItem(THEME_STORAGE_KEY, next)
   } catch {
     /* ignore storage errors */
   }
@@ -467,19 +466,19 @@ function toggleTheme() {
 }
 
 onMounted(() => {
-  // 排行榜开关与侧栏主题使用同一个全局主题，深色时整个页面一起切换。
-  theme.value = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
-  themeObserver = new MutationObserver(() => {
-    theme.value = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
-  })
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY)
+    if (saved === 'dark' || saved === 'light') {
+      theme.value = saved
+    }
+  } catch {
+    /* ignore storage errors */
+  }
   void loadFilterOptions()
   void load()
 })
 
 onBeforeUnmount(() => {
-  themeObserver?.disconnect()
-  themeObserver = null
   if (abortController) {
     abortController.abort()
     abortController = null
@@ -514,9 +513,54 @@ onBeforeUnmount(() => {
   --lb-input-border: #334155;
 }
 
-/* AppLayout 的网格背景也随全局主题切换，避免深色时页面底色仍然发白。 */
-:global(html.dark .bg-mesh-gradient) {
+/* 深色仅作用于 /leaderboard；不写入 html.dark 和全站 theme。 */
+:global(.leaderboard-layout--dark) {
   background: #020617;
+}
+
+:global(.leaderboard-layout--dark .bg-mesh-gradient) {
+  background: #020617;
+}
+
+:global(.leaderboard-layout--dark .sidebar) {
+  background: #0f172a;
+  border-color: #1e293b;
+}
+
+:global(.leaderboard-layout--dark .sidebar-header),
+:global(.leaderboard-layout--dark .sidebar > div:last-of-type) {
+  border-color: #1e293b;
+}
+
+:global(.leaderboard-layout--dark .sidebar-link) {
+  color: #cbd5e1;
+}
+
+:global(.leaderboard-layout--dark .sidebar-link:hover) {
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+:global(.leaderboard-layout--dark .sidebar-section-title),
+:global(.leaderboard-layout--dark .sidebar-brand-title) {
+  color: #94a3b8;
+}
+
+:global(.leaderboard-layout--dark .glass) {
+  background: rgb(15 23 42 / 0.92);
+  border-color: rgb(51 65 85 / 0.7);
+}
+
+:global(.leaderboard-layout--dark header h1),
+:global(.leaderboard-layout--dark header .text-gray-900),
+:global(.leaderboard-layout--dark header .text-gray-700) {
+  color: #f8fafc;
+}
+
+:global(.leaderboard-layout--dark header .text-gray-500),
+:global(.leaderboard-layout--dark header .text-gray-600),
+:global(.leaderboard-layout--dark header .text-gray-400) {
+  color: #94a3b8;
 }
 
 .lb-card {
