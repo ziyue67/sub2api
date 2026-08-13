@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -43,6 +44,9 @@ func newGroupRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *groupRep
 }
 
 func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) error {
+	if groupIn != nil && groupIn.DynamicRateMarkup == 0 {
+		groupIn.DynamicRateMarkup = service.DefaultDynamicRateMarkup
+	}
 	if err := createGroupRecord(ctx, r.client, groupIn); err != nil {
 		return err
 	}
@@ -56,11 +60,9 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 	if groupIn == nil {
 		return errors.New("group is nil")
 	}
-	// Keep direct repository callers compatible with groups created before the
-	// dynamic-rate fields existed; the database constraint requires a positive
-	// markup even when dynamic pricing is disabled.
-	if groupIn.DynamicRateMarkup == 0 {
-		groupIn.DynamicRateMarkup = service.DefaultDynamicRateMarkup
+	modelPricing, err := json.Marshal(groupIn.ModelPricing)
+	if err != nil {
+		return fmt.Errorf("marshal group model pricing: %w", err)
 	}
 	builder := client.Group.Create().
 		SetName(groupIn.Name).
@@ -97,6 +99,8 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetNillableAudioRealtimePricePerMin(groupIn.AudioRealtimePricePerMin).
 		SetNillableAudioTtsPricePerMillionChars(groupIn.AudioTTSPricePerMillionChars).
 		SetNillableAudioSttPricePerHour(groupIn.AudioSTTPricePerHour).
+		SetLongContextPricingEnabled(groupIn.LongContextPricingEnabled).
+		SetModelPricing(modelPricing).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
 		SetNillableFallbackGroupID(groupIn.FallbackGroupID).
@@ -246,6 +250,10 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	if groupIn != nil && groupIn.DynamicRateMarkup == 0 {
 		groupIn.DynamicRateMarkup = service.DefaultDynamicRateMarkup
 	}
+	modelPricing, err := json.Marshal(groupIn.ModelPricing)
+	if err != nil {
+		return fmt.Errorf("marshal group model pricing: %w", err)
+	}
 	builder := r.client.Group.UpdateOneID(groupIn.ID).
 		SetName(groupIn.Name).
 		SetDescription(groupIn.Description).
@@ -275,6 +283,8 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetNillableVideoPrice720p(groupIn.VideoPrice720P).
 		SetNillableVideoPrice1080p(groupIn.VideoPrice1080P).
 		SetVideoModelPrices(service.NormalizeVideoModelPrices(groupIn.VideoModelPrices)).
+		SetLongContextPricingEnabled(groupIn.LongContextPricingEnabled).
+		SetModelPricing(modelPricing).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
 		SetModelRoutingEnabled(groupIn.ModelRoutingEnabled).

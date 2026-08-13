@@ -558,6 +558,7 @@ export interface Group {
   daily_limit_usd: number | null
   weekly_limit_usd: number | null
   monthly_limit_usd: number | null
+  long_context_pricing_enabled: boolean
   // 图片生成计费配置
   allow_image_generation: boolean
   allow_batch_image_generation: boolean
@@ -604,10 +605,7 @@ export interface Group {
 }
 
 export interface AdminGroup extends Group {
-	// Dynamic pricing is admin-only because it exposes upstream cost data.
-	dynamic_rate_enabled?: boolean
-	dynamic_rate_markup?: number
-	dynamic_rate_source_multiplier?: number
+  model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
   // 分组利润控制（openai/anthropic/gemini/grok/antigravity 分组可启用；margin/buffer 为小数存储）。
   // 仅管理员可见：与 rate_multiplier 相乘即可反推上游成本上限，不得下放到 Group。
   profit_control_enabled: boolean
@@ -706,7 +704,6 @@ export interface ApiKey {
   key: string
   name: string
   group_id: number | null
-  group_routes: ApiKeyGroupRoute[]
   status: 'active' | 'inactive' | 'quota_exhausted' | 'expired'
   ip_whitelist: string[]
   ip_blacklist: string[]
@@ -733,18 +730,9 @@ export interface ApiKey {
   reset_7d_at: string | null
 }
 
-export interface ApiKeyGroupRoute {
-  group_id: number
-  priority: number
-  weight: number
-  enabled: boolean
-  cooldown_seconds: number
-}
-
 export interface CreateApiKeyRequest {
   name: string
   group_id?: number | null
-  group_routes?: ApiKeyGroupRoute[]
   custom_key?: string // Optional custom API Key
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -758,7 +746,6 @@ export interface CreateApiKeyRequest {
 export interface UpdateApiKeyRequest {
   name?: string
   group_id?: number | null
-  group_routes?: ApiKeyGroupRoute[]
   status?: 'active' | 'inactive'
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -776,13 +763,13 @@ export interface CreateGroupRequest {
   description?: string | null
   platform?: GroupPlatform
   rate_multiplier?: number
-  dynamic_rate_enabled?: boolean
-  dynamic_rate_markup?: number
   is_exclusive?: boolean
   subscription_type?: SubscriptionType
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null
+  long_context_pricing_enabled?: boolean
+  model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
   image_rate_independent?: boolean
@@ -837,14 +824,14 @@ export interface UpdateGroupRequest {
   description?: string | null
   platform?: GroupPlatform
   rate_multiplier?: number
-  dynamic_rate_enabled?: boolean
-  dynamic_rate_markup?: number
   is_exclusive?: boolean
   status?: 'active' | 'inactive'
   subscription_type?: SubscriptionType
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null
+  long_context_pricing_enabled?: boolean
+  model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
   image_rate_independent?: boolean
@@ -1916,12 +1903,10 @@ export interface UserBreakdownItem {
   input_tokens: number
   output_tokens: number
   cache_tokens: number
-  image_output_tokens: number
   total_tokens: number
   cost: number
   actual_cost: number
   account_cost: number
-  last_active_at: string
 }
 
 export interface UserUsageTrendPoint {

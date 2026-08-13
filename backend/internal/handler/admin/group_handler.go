@@ -96,17 +96,19 @@ func NewGroupHandler(adminService service.AdminService, dashboardService *servic
 
 // CreateGroupRequest represents create group request
 type CreateGroupRequest struct {
-	Name               string             `json:"name" binding:"required"`
-	Description        string             `json:"description"`
-	Platform           string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
-	RateMultiplier     float64            `json:"rate_multiplier"`
-	DynamicRateEnabled bool               `json:"dynamic_rate_enabled"`
-	DynamicRateMarkup  *float64           `json:"dynamic_rate_markup"`
-	IsExclusive        bool               `json:"is_exclusive"`
-	SubscriptionType   string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
-	DailyLimitUSD      optionalLimitField `json:"daily_limit_usd"`
-	WeeklyLimitUSD     optionalLimitField `json:"weekly_limit_usd"`
-	MonthlyLimitUSD    optionalLimitField `json:"monthly_limit_usd"`
+	Name                      string                        `json:"name" binding:"required"`
+	Description               string                        `json:"description"`
+	Platform                  string                        `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
+	RateMultiplier            float64                       `json:"rate_multiplier"`
+	DynamicRateEnabled        bool                          `json:"dynamic_rate_enabled"`
+	DynamicRateMarkup         *float64                      `json:"dynamic_rate_markup"`
+	IsExclusive               bool                          `json:"is_exclusive"`
+	SubscriptionType          string                        `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
+	DailyLimitUSD             optionalLimitField            `json:"daily_limit_usd"`
+	WeeklyLimitUSD            optionalLimitField            `json:"weekly_limit_usd"`
+	MonthlyLimitUSD           optionalLimitField            `json:"monthly_limit_usd"`
+	LongContextPricingEnabled bool                          `json:"long_context_pricing_enabled"`
+	ModelPricing              []service.ChannelModelPricing `json:"model_pricing"`
 	// 图片生成计费配置（antigravity 和 gemini 平台使用，负数表示清除配置）
 	AllowImageGeneration            bool                          `json:"allow_image_generation"`
 	AllowBatchImageGeneration       bool                          `json:"allow_batch_image_generation"`
@@ -164,18 +166,20 @@ type CreateGroupRequest struct {
 
 // UpdateGroupRequest represents update group request
 type UpdateGroupRequest struct {
-	Name               string             `json:"name"`
-	Description        *string            `json:"description"`
-	Platform           string             `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
-	RateMultiplier     *float64           `json:"rate_multiplier"`
-	DynamicRateEnabled *bool              `json:"dynamic_rate_enabled"`
-	DynamicRateMarkup  *float64           `json:"dynamic_rate_markup"`
-	IsExclusive        *bool              `json:"is_exclusive"`
-	Status             string             `json:"status" binding:"omitempty,oneof=active inactive"`
-	SubscriptionType   string             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
-	DailyLimitUSD      optionalLimitField `json:"daily_limit_usd"`
-	WeeklyLimitUSD     optionalLimitField `json:"weekly_limit_usd"`
-	MonthlyLimitUSD    optionalLimitField `json:"monthly_limit_usd"`
+	Name                      string                         `json:"name"`
+	Description               *string                        `json:"description"`
+	Platform                  string                         `json:"platform" binding:"omitempty,oneof=anthropic openai gemini antigravity grok composite"`
+	RateMultiplier            *float64                       `json:"rate_multiplier"`
+	DynamicRateEnabled        *bool                          `json:"dynamic_rate_enabled"`
+	DynamicRateMarkup         *float64                       `json:"dynamic_rate_markup"`
+	IsExclusive               *bool                          `json:"is_exclusive"`
+	Status                    string                         `json:"status" binding:"omitempty,oneof=active inactive"`
+	SubscriptionType          string                         `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
+	DailyLimitUSD             optionalLimitField             `json:"daily_limit_usd"`
+	WeeklyLimitUSD            optionalLimitField             `json:"weekly_limit_usd"`
+	MonthlyLimitUSD           optionalLimitField             `json:"monthly_limit_usd"`
+	LongContextPricingEnabled *bool                          `json:"long_context_pricing_enabled"`
+	ModelPricing              *[]service.ChannelModelPricing `json:"model_pricing"`
 	// 图片生成计费配置（antigravity 和 gemini 平台使用，负数表示清除配置）
 	AllowImageGeneration            *bool                         `json:"allow_image_generation"`
 	AllowBatchImageGeneration       *bool                         `json:"allow_batch_image_generation"`
@@ -514,6 +518,8 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		DailyLimitUSD:                   req.DailyLimitUSD.ToServiceInput(),
 		WeeklyLimitUSD:                  req.WeeklyLimitUSD.ToServiceInput(),
 		MonthlyLimitUSD:                 req.MonthlyLimitUSD.ToServiceInput(),
+		LongContextPricingEnabled:       req.LongContextPricingEnabled,
+		ModelPricing:                    req.ModelPricing,
 		AllowImageGeneration:            req.AllowImageGeneration,
 		AllowBatchImageGeneration:       req.AllowBatchImageGeneration,
 		ImageRateIndependent:            req.ImageRateIndependent,
@@ -643,6 +649,8 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		DailyLimitUSD:                   req.DailyLimitUSD.ToServiceInput(),
 		WeeklyLimitUSD:                  req.WeeklyLimitUSD.ToServiceInput(),
 		MonthlyLimitUSD:                 req.MonthlyLimitUSD.ToServiceInput(),
+		LongContextPricingEnabled:       req.LongContextPricingEnabled,
+		ModelPricing:                    req.ModelPricing,
 		AllowImageGeneration:            req.AllowImageGeneration,
 		AllowBatchImageGeneration:       req.AllowBatchImageGeneration,
 		ImageRateIndependent:            req.ImageRateIndependent,
