@@ -38,44 +38,15 @@
         </div>
       </section>
 
-      <!-- 筛选面板：用户/API密钥/模型/账户/类型/计费类型/计费模式/分组 -->
+      <!-- 筛选面板：模型和分组从当前用户的真实用量中加载。 -->
       <section class="lb-card lb-filters-card">
         <div class="lb-filter-grid">
-          <div class="lb-filter-col">
-            <label class="lb-filter-label">{{ t('leaderboard.user') }}</label>
-            <input
-              v-model="filterUser"
-              type="text"
-              class="lb-input"
-              :placeholder="t('leaderboard.filter.userPlaceholder')"
-              @change="reload"
-            />
-          </div>
-          <div class="lb-filter-col">
-            <label class="lb-filter-label">{{ t('leaderboard.apiKey') }}</label>
-            <input
-              v-model="filterApiKey"
-              type="text"
-              class="lb-input"
-              :placeholder="t('leaderboard.filter.apiKeyPlaceholder')"
-              @change="reload"
-            />
-          </div>
           <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.model') }}</label>
             <div class="w-full">
               <Select v-model="filterModel" :options="modelOptions" searchable @change="reload" />
+              <p v-if="filterOptionsLoading" class="lb-filter-hint">{{ t('common.loading') }}</p>
             </div>
-          </div>
-          <div class="lb-filter-col">
-            <label class="lb-filter-label">{{ t('leaderboard.account') }}</label>
-            <input
-              v-model="filterAccount"
-              type="text"
-              class="lb-input"
-              :placeholder="t('leaderboard.filter.accountPlaceholder')"
-              @change="reload"
-            />
           </div>
           <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.requestType') }}</label>
@@ -198,7 +169,7 @@ import {
   type LeaderboardSortBy,
   type LeaderboardBillingMode
 } from '@/api/usage'
-import type { UsageRequestType } from '@/types'
+import type { UsageRequestType, ModelStat, GroupStat } from '@/types'
 
 const { t } = useI18n()
 
@@ -215,14 +186,14 @@ const sortBy = ref<LeaderboardSortBy>('tokens')
 const theme = ref<'light' | 'dark'>('light')
 
 // 筛选面板
-const filterUser = ref('')
-const filterApiKey = ref('')
 const filterModel = ref<string | null>(null)
-const filterAccount = ref('')
 const filterRequestType = ref<UsageRequestType | null>(null)
 const filterBillingType = ref<number | null>(null)
 const filterBillingMode = ref<LeaderboardBillingMode | null>(null)
 const filterGroup = ref<number | null>(null)
+const availableModels = ref<ModelStat[]>([])
+const availableGroups = ref<GroupStat[]>([])
+const filterOptionsLoading = ref(false)
 
 let abortController: AbortController | null = null
 
@@ -243,10 +214,9 @@ const limitOptions = computed(() => [
 
 const modelOptions = computed(() => [
   { value: null, label: t('leaderboard.filter.modelPlaceholder') },
-  { value: 'gpt-4o', label: 'gpt-4o' },
-  { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
-  { value: 'claude-3-5-sonnet', label: 'claude-3-5-sonnet' },
-  { value: 'gemini-1.5-pro', label: 'gemini-1.5-pro' }
+  ...Array.from(new Set(availableModels.value.map((item) => item.model).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b))
+    .map((model) => ({ value: model, label: model }))
 ])
 
 const requestTypeOptions = computed(() => [
@@ -274,8 +244,10 @@ const billingModeOptions = computed(() => [
 
 const groupOptions = computed(() => [
   { value: null, label: t('leaderboard.filter.groupPlaceholder') },
-  { value: 1, label: 'Default' },
-  { value: 2, label: 'VIP' }
+  ...availableGroups.value
+    .filter((item) => item.group_id > 0)
+    .sort((a, b) => a.group_name.localeCompare(b.group_name))
+    .map((item) => ({ value: item.group_id, label: item.group_name || `#${item.group_id}` }))
 ])
 
 const items = computed(() => leaderboard.value?.items ?? [])
@@ -355,10 +327,7 @@ function buildParams(): LeaderboardParams {
     sort_by: sortBy.value,
     limit: limit.value
   }
-  if (filterUser.value) params.user_id = Number(filterUser.value) || undefined
-  if (filterApiKey.value) params.api_key_id = Number(filterApiKey.value) || undefined
   if (filterModel.value) params.model = filterModel.value
-  if (filterAccount.value) params.account_id = Number(filterAccount.value) || undefined
   if (filterRequestType.value) params.request_type = filterRequestType.value
   if (filterBillingType.value !== null) params.billing_type = filterBillingType.value
   if (filterBillingMode.value) params.billing_mode = filterBillingMode.value
@@ -395,11 +364,46 @@ async function load() {
   }
 }
 
+function leaderboardDateRange() {
+  const now = new Date()
+  const start = new Date(now)
+  start.setDate(now.getDate() - (days.value - 1))
+  const toDate = (value: Date) => {
+    const year = value.getFullYear()
+    const month = String(value.getMonth() + 1).padStart(2, '0')
+    const day = String(value.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+  return { start_date: toDate(start), end_date: toDate(now) }
+}
+
+async function loadFilterOptions() {
+  filterOptionsLoading.value = true
+  try {
+    const snapshot = await usageAPI.getDashboardSnapshotV2({
+      ...leaderboardDateRange(),
+      include_trend: false,
+      include_model_stats: true,
+      include_group_stats: true,
+      timezone: browserTimezone || undefined
+    })
+    availableModels.value = snapshot.models || []
+    availableGroups.value = snapshot.groups || []
+  } catch (err) {
+    console.error('Failed to load leaderboard filter options:', err)
+    availableModels.value = []
+    availableGroups.value = []
+  } finally {
+    filterOptionsLoading.value = false
+  }
+}
+
 function reload() {
   void load()
 }
 
 function onDaysChange() {
+  void loadFilterOptions()
   void load()
 }
 
@@ -411,14 +415,12 @@ function resetFilters() {
   days.value = 1
   limit.value = 20
   sortBy.value = 'tokens'
-  filterUser.value = ''
-  filterApiKey.value = ''
   filterModel.value = null
-  filterAccount.value = ''
   filterRequestType.value = null
   filterBillingType.value = null
   filterBillingMode.value = null
   filterGroup.value = null
+  void loadFilterOptions()
   void load()
 }
 
@@ -444,6 +446,7 @@ onMounted(() => {
   } catch {
     /* ignore storage errors */
   }
+  void loadFilterOptions()
   void load()
 })
 
@@ -480,6 +483,14 @@ onBeforeUnmount(() => {
   --lb-accent: #60a5fa;
   --lb-input-bg: #151e32;
   --lb-input-border: #334155;
+}
+
+.leaderboard-page[data-theme='dark']::before {
+  content: '';
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  background: #020617;
 }
 
 .lb-card {
@@ -529,6 +540,12 @@ onBeforeUnmount(() => {
   font-weight: 600;
   margin-bottom: 0.25rem;
   display: block;
+}
+
+.lb-filter-hint {
+  margin: 0.35rem 0 0;
+  color: var(--lb-muted);
+  font-size: 0.75rem;
 }
 
 .lb-input {
