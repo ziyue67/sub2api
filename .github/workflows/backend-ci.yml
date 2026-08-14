@@ -79,3 +79,6 @@ jobs:
           version: v2.9
           args: --timeout=30m
           working-directory: backend
+          # Skip `golangci-lint config verify`: it fetches the JSON schema from
+          # golangci-lint.run at runtime and flakes on network timeouts.
+          verify: false
