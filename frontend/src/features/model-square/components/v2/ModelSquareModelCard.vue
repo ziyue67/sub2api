@@ -10,8 +10,8 @@
     <header class='px-7 py-5 flex items-start justify-between border-b border-gray-200 dark:border-dark-700/60 bg-gray-50/50 dark:bg-dark-950/20'>
       <div class='min-w-0'>
         <div class='flex items-center gap-3'>
-          <div class='h-11 w-11 rounded-2xl flex items-center justify-center text-xl font-black text-white shadow-lg' :class='platformGradientClass(model.platform)'>
-            {{ model.name.slice(0, 1).toUpperCase() }}
+          <div class='h-11 w-11 rounded-2xl flex items-center justify-center shadow-lg bg-gray-100 dark:bg-dark-800' :class='platformTextClass(model.platform)'>
+            <ModelSquarePlatformIcon :platform='model.platform' size='lg' />
           </div>
           <div>
             <h2 class='text-2xl font-black tracking-tight text-gray-900 dark:text-white truncate leading-tight'>{{ model.name }}</h2>
@@ -79,8 +79,9 @@
 import { computed, ref } from 'vue'
 import type { ModelSquareModel } from '../../types'
 import { entryKey } from '../../utils/key'
-import { platformGradientClass, platformLabel } from '@/utils/platformColors'
+import { platformGradientClass, platformLabel, platformTextClass } from '@/utils/platformColors'
 import ModelSquareChannelPanel from './ModelSquareChannelPanel.vue'
+import ModelSquarePlatformIcon from './ModelSquarePlatformIcon.vue'
 
 interface Props {
   model: ModelSquareModel
