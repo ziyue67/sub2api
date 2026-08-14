@@ -1,6 +1,36 @@
 <template>
   <AppLayout>
-    <div class="admin-leaderboard space-y-6" :data-theme="theme">
+    <div class="space-y-6">
+      <!-- Header + quick controls -->
+      <div class="card p-6">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">
+              {{ t('leaderboard.title') }}
+            </h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('leaderboard.description') }}
+            </p>
+          </div>
+          <div class="flex flex-wrap items-end gap-3">
+            <div class="w-40">
+              <label class="input-label">{{ t('leaderboard.periodLabel') }}</label>
+              <Select v-model="days" :options="periodOptions" @change="onDaysChange" />
+            </div>
+            <div class="w-28">
+              <label class="input-label">{{ t('leaderboard.limit') }}</label>
+              <Select v-model="limit" :options="limitOptions" @change="onLimitChange" />
+            </div>
+            <button type="button" class="btn btn-secondary" @click="rankingRef?.reload">
+              {{ t('leaderboard.refresh') }}
+            </button>
+            <button type="button" class="btn btn-secondary" @click="resetFilters">
+              {{ t('leaderboard.reset') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Real backend search filters -->
       <UsageFilters
         v-model="filters"
@@ -19,34 +49,6 @@
 
       <!-- Ranking table -->
       <div class="card overflow-hidden">
-        <div class="admin-lb-controls">
-          <div class="flex flex-wrap items-end gap-3">
-            <div class="w-40">
-              <label class="input-label">{{ t('leaderboard.periodLabel') }}</label>
-              <Select v-model="days" :options="periodOptions" @change="onDaysChange" />
-            </div>
-            <div class="w-28">
-              <label class="input-label">{{ t('leaderboard.limit') }}</label>
-              <Select v-model="limit" :options="limitOptions" @change="onLimitChange" />
-            </div>
-          </div>
-          <div class="flex flex-wrap items-center gap-3">
-            <button type="button" class="btn btn-secondary" @click="rankingRef?.reload">
-              {{ t('leaderboard.refresh') }}
-            </button>
-            <button type="button" class="btn btn-secondary" @click="resetFilters">
-              {{ t('leaderboard.reset') }}
-            </button>
-            <button
-              type="button"
-              class="admin-lb-theme-button"
-              :title="themeToggleLabel"
-              @click="toggleTheme"
-            >
-              {{ theme === 'dark' ? '☀️' : '🌙' }}
-            </button>
-          </div>
-        </div>
         <UserTokenRanking
           ref="rankingRef"
           :start-date="startDate"
@@ -55,7 +57,6 @@
           :model="filters.model"
           :limit="limit"
           :limit-options="limitOptions"
-          :show-toolbar="false"
           @select-user="handleSelectUser"
         />
       </div>
@@ -78,9 +79,6 @@ const { t } = useI18n()
 const router = useRouter()
 
 type DaysWindow = 1 | 3 | 7 | 14 | 30
-type LeaderboardTheme = 'light' | 'dark'
-
-const THEME_STORAGE_KEY = 'admin-leaderboard.theme'
 
 const days = ref<DaysWindow>(7)
 const limit = ref(20)
@@ -88,7 +86,6 @@ const filters = ref<Record<string, any>>({})
 const rankingRef = ref<InstanceType<typeof UserTokenRanking> | null>(null)
 const requestedModelStats = ref<ModelStat[]>([])
 const modelStatsLoading = ref(false)
-const theme = ref<LeaderboardTheme>('light')
 
 const periodOptions = computed(() => [
   { value: 1, label: t('leaderboard.period.day1') },
@@ -125,10 +122,6 @@ const endDate = computed(() => range.value.end)
 
 const modelOptions = computed(() =>
   Array.from(new Set(requestedModelStats.value.map((m) => m.model).filter(Boolean))).sort()
-)
-
-const themeToggleLabel = computed(() =>
-  theme.value === 'dark' ? t('leaderboard.theme.light') : t('leaderboard.theme.dark')
 )
 
 // Exclude date fields because UserTokenRanking receives them separately.
@@ -187,96 +180,6 @@ const handleSelectUser = (userId: number) => {
   })
 }
 
-const toggleTheme = () => {
-  theme.value = theme.value === 'dark' ? 'light' : 'dark'
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, theme.value)
-  } catch {
-    // Storage is optional for this page-local preference.
-  }
-}
-
-onMounted(() => {
-  try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY)
-    if (saved === 'dark' || saved === 'light') theme.value = saved
-  } catch {
-    // Storage is optional for this page-local preference.
-  }
-  loadModelStats()
-})
+onMounted(() => loadModelStats())
 watch([startDate, endDate], () => loadModelStats())
 </script>
-
-<style scoped>
-.admin-lb-theme-button {
-  display: inline-flex;
-  height: 2.5rem;
-  width: 2.5rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #d1d5db;
-  border-radius: 0.5rem;
-  background: #fff;
-  font-size: 1rem;
-  line-height: 1;
-}
-
-.admin-lb-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  justify-content: space-between;
-  gap: 1rem;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 1rem 1.5rem;
-}
-
-.admin-leaderboard[data-theme='dark'] {
-  min-height: calc(100dvh - 8rem);
-  margin: -1.5rem;
-  padding: 1.5rem;
-  background: #020617;
-  color: #e2e8f0;
-}
-
-.admin-leaderboard[data-theme='dark'] :deep(.card),
-.admin-leaderboard[data-theme='dark'] :deep(.input),
-.admin-leaderboard[data-theme='dark'] :deep(.btn),
-.admin-leaderboard[data-theme='dark'] :deep(.admin-lb-theme-button),
-.admin-leaderboard[data-theme='dark'] :deep(table tbody) {
-  border-color: #334155;
-  background-color: #0f172a;
-  color: #e2e8f0;
-}
-
-.admin-leaderboard[data-theme='dark'] :deep(.input-label),
-.admin-leaderboard[data-theme='dark'] :deep(.text-gray-500),
-.admin-leaderboard[data-theme='dark'] :deep(.text-gray-400) {
-  color: #94a3b8;
-}
-
-.admin-leaderboard[data-theme='dark'] :deep(.text-gray-900),
-.admin-leaderboard[data-theme='dark'] :deep(.text-gray-700) {
-  color: #e2e8f0;
-}
-
-.admin-leaderboard[data-theme='dark'] :deep(thead),
-.admin-leaderboard[data-theme='dark'] :deep(.bg-gray-50) {
-  background-color: #151e32;
-}
-
-.admin-leaderboard[data-theme='dark'] :deep(.border-gray-100),
-.admin-leaderboard[data-theme='dark'] :deep(.border-gray-200),
-.admin-leaderboard[data-theme='dark'] :deep(.divide-gray-200) {
-  border-color: #334155;
-}
-
-.admin-leaderboard[data-theme='dark'] .admin-lb-controls {
-  border-color: #334155;
-}
-
-.admin-leaderboard[data-theme='dark'] :deep(tr:hover) {
-  background-color: #1e293b;
-}
-</style>

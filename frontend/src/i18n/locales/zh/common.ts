@@ -161,7 +161,6 @@ export default {
    announcements: '公告',
    apiKeys: 'API 密钥',
     leaderboard: '总排行榜',
-    adminLeaderboard: '后台管理员总排行榜',
    batchImage: '批量生图',
     usage: '使用记录',
     redeem: '兑换',

@@ -161,7 +161,6 @@ export default {
    announcements: 'Announcements',
    apiKeys: 'API Keys',
     leaderboard: 'Leaderboard',
-    adminLeaderboard: 'Admin Token Leaderboard',
    batchImage: 'Batch Images',
     usage: 'Usage',
     redeem: 'Redeem',

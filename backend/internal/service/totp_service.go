@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/pquerna/otp/totp"
@@ -512,47 +511,6 @@ func MaskEmail(email string) string {
 	}
 
 	return localPart[:1] + "***" + localPart[len(localPart)-1:] + domain
-}
-
-// MaskLeaderboardIdentity returns a stable non-raw identity for public
-// leaderboard rows. Usernames and email addresses can both be searched, but
-// neither is returned to other users in unmasked form.
-func MaskLeaderboardIdentity(username, email string) string {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return maskLeaderboardEmail(email)
-	}
-
-	runes := []rune(username)
-	switch len(runes) {
-	case 0:
-		return maskLeaderboardEmail(email)
-	case 1:
-		return string(runes[0]) + "***"
-	case 2:
-		return string(runes[:1]) + "***"
-	default:
-		return string(runes[:1]) + "***" + string(runes[len(runes)-1:])
-	}
-}
-
-func maskLeaderboardEmail(email string) string {
-	email = strings.TrimSpace(email)
-	if email == "" {
-		return "***"
-	}
-
-	at := strings.IndexByte(email, '@')
-	if at <= 0 {
-		runes := []rune(email)
-		if len(runes) == 0 {
-			return "***"
-		}
-		return string(runes[:1]) + "***"
-	}
-
-	local := []rune(email[:at])
-	return string(local[:1]) + "***@***"
 }
 
 // generateRandomToken generates a random hex-encoded token

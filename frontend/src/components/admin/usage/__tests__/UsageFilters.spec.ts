@@ -8,7 +8,6 @@ const messages: Record<string, string> = {
   'admin.usage.userDeletedBadge': 'deleted',
   'admin.usage.userFilter': 'User',
   'admin.usage.searchUserPlaceholder': 'Search user...',
-  'admin.usage.selectUserBeforeApiKey': 'Select a user first',
   'usage.apiKeyFilter': 'API Key',
   'admin.usage.searchApiKeyPlaceholder': 'Search API key...',
   'usage.model': 'Model',
@@ -229,40 +228,6 @@ describe('UsageFilters — user search dropdown', () => {
     pendingSearch.resolve([{ id: 3, email: 'stale@test.com', deleted: false }])
     await flushPromises()
     expect(wrapper.text()).not.toContain('stale@test.com')
-  })
-
-  it('requires selecting a user before API-key search and scopes key lookup to that user', async () => {
-    mockSearchUsers.mockResolvedValue([
-      { id: 8, email: 'member@example.test', username: 'member-name', deleted: false },
-    ])
-    mockSearchApiKeys.mockResolvedValue([{ id: 19, name: 'selected-user-key', user_id: 8 }])
-
-    const wrapper = mountFilters()
-    const inputs = wrapper.findAll('input[type="text"]')
-    const userInput = inputs[0]
-    const apiKeyInput = inputs[1]
-
-    expect((apiKeyInput.element as HTMLInputElement).disabled).toBe(true)
-    await apiKeyInput.trigger('focus')
-    vi.advanceTimersByTime(300)
-    await flushPromises()
-    expect(mockSearchApiKeys).not.toHaveBeenCalled()
-
-    await userInput.trigger('focus')
-    await userInput.setValue('member')
-    vi.advanceTimersByTime(300)
-    await flushPromises()
-    await wrapper.get('[data-testid="usage-user-result"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.props('modelValue').user_id).toBe(8)
-    expect((apiKeyInput.element as HTMLInputElement).disabled).toBe(false)
-    expect(mockSearchApiKeys).not.toHaveBeenCalled()
-
-    await apiKeyInput.setValue('selected')
-    vi.advanceTimersByTime(300)
-    await flushPromises()
-    expect(mockSearchApiKeys).toHaveBeenCalledWith(8, 'selected')
   })
 })
 

@@ -249,7 +249,6 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 		SELECT
 			u.user_id,
 			COALESCE(us.email, '') AS email,
-			COALESCE(us.username, '') AS username,
 			COUNT(*) AS requests,
 			COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_creation_tokens + u.cache_read_tokens + u.image_output_tokens), 0) AS total_tokens,
 			COALESCE(SUM(u.input_tokens), 0) AS input_tokens,
@@ -301,6 +300,9 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 		args = append(args, options.UserID)
 	}
 	if accountName := strings.TrimSpace(options.AccountName); accountName != "" {
+		// Search filters do not change the response identity. The visible user remains
+		// masked by the handler; this also supports a user's own profile name when the
+		// usage row has no matching upstream account name.
 		query += fmt.Sprintf(" AND (a.name ILIKE $%d OR parent_a.name ILIKE $%d OR us.username ILIKE $%d)", len(args)+1, len(args)+1, len(args)+1)
 		args = append(args, "%"+accountName+"%")
 	}
@@ -317,7 +319,7 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 		args = append(args, "%"+accountEmail+"%")
 	}
 
-	query += " GROUP BY u.user_id, us.email, us.username " + resolveTokenLeaderboardOrderBy(options.SortBy)
+	query += " GROUP BY u.user_id, us.email " + resolveTokenLeaderboardOrderBy(options.SortBy)
 	query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
 	args = append(args, limit)
 
@@ -338,7 +340,6 @@ func (r *usageLogRepository) GetTokenLeaderboardWithFilters(ctx context.Context,
 		if err = rows.Scan(
 			&row.UserID,
 			&row.Email,
-			&row.Username,
 			&row.Requests,
 			&row.TotalTokens,
 			&row.InputTokens,

@@ -32,12 +32,10 @@
               v-for="u in userResults"
               :key="u.id"
               type="button"
-              data-testid="usage-user-result"
               @click="selectUser(u)"
               class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
             >
-              <span>{{ userLabel(u) }}<span v-if="u.deleted" class="ml-1 text-xs text-gray-400">（{{ t('admin.usage.userDeletedBadge') }}）</span></span>
-              <span v-if="u.username && u.email && u.username !== u.email" class="ml-2 text-xs text-gray-400">{{ u.email }}</span>
+              <span>{{ u.email }}<span v-if="u.deleted" class="ml-1 text-xs text-gray-400">（{{ t('admin.usage.userDeletedBadge') }}）</span></span>
               <span class="ml-2 text-xs text-gray-400">#{{ u.id }}</span>
             </button>
           </div>
@@ -49,10 +47,8 @@
           <input
             v-model="apiKeyKeyword"
             type="text"
-            class="input pr-8 disabled:cursor-not-allowed disabled:opacity-60"
+            class="input pr-8"
             :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
-            :disabled="!filters.user_id"
-            :title="!filters.user_id ? t('admin.usage.selectUserBeforeApiKey') : undefined"
             @input="debounceApiKeySearch"
             @focus="onApiKeyFocus"
           />
@@ -73,7 +69,6 @@
               v-for="k in apiKeyResults"
               :key="k.id"
               type="button"
-              data-testid="usage-api-key-result"
               @click="selectApiKey(k)"
               class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
             >
@@ -328,8 +323,6 @@ const upstreamModelMismatchOptions = ref<SelectOption[]>([
 
 const emitChange = () => emit('change')
 
-const userLabel = (user: SimpleUser) => user.username || user.email || `#${user.id}`
-
 const clearPendingUserSearch = () => {
   if (userSearchTimeout) {
     clearTimeout(userSearchTimeout)
@@ -364,11 +357,6 @@ const debounceUserSearch = () => {
 
 const debounceApiKeySearch = () => {
   if (apiKeySearchTimeout) clearTimeout(apiKeySearchTimeout)
-  if (!filters.value.user_id) {
-    apiKeyResults.value = []
-    showApiKeyDropdown.value = false
-    return
-  }
   apiKeySearchTimeout = setTimeout(async () => {
     try {
       apiKeyResults.value = await adminAPI.usage.searchApiKeys(
@@ -383,10 +371,17 @@ const debounceApiKeySearch = () => {
 
 const selectUser = async (u: SimpleUser) => {
   clearPendingUserSearch()
-  userKeyword.value = userLabel(u)
+  userKeyword.value = u.email
   showUserDropdown.value = false
   filters.value.user_id = u.id
   clearApiKey()
+
+  // Auto-load API keys for this user
+  try {
+    apiKeyResults.value = await adminAPI.usage.searchApiKeys(u.id, '')
+  } catch {
+    apiKeyResults.value = []
+  }
 
   emitChange()
 }
@@ -418,13 +413,6 @@ const clearApiKey = () => {
 const onClearApiKey = () => {
   clearApiKey()
   emitChange()
-}
-
-const clearPendingApiKeySearch = () => {
-  if (apiKeySearchTimeout) {
-    clearTimeout(apiKeySearchTimeout)
-    apiKeySearchTimeout = null
-  }
 }
 
 const debounceAccountSearch = () => {
@@ -459,7 +447,6 @@ const clearAccount = () => {
 }
 
 const onApiKeyFocus = () => {
-  if (!filters.value.user_id) return
   showApiKeyDropdown.value = true
   // Trigger search if no results yet
   if (apiKeyResults.value.length === 0) {
@@ -503,8 +490,6 @@ watch(
       clearPendingUserSearch()
       userKeyword.value = ''
       userResults.value = []
-      clearPendingApiKeySearch()
-      clearApiKey()
     }
   }
 )
@@ -541,7 +526,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   clearPendingUserSearch()
-  clearPendingApiKeySearch()
   document.removeEventListener('click', onDocumentClick)
 })
 

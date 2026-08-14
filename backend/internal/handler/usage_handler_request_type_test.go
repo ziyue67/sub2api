@@ -85,10 +85,6 @@ func (s *userUsageRepoCapture) GetTokenLeaderboardWithFilters(_ context.Context,
 	return s.leaderboardRows, nil
 }
 
-func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
-	return newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleAdmin)
-}
-
 func newUserUsageRequestTypeTestRouterWithRole(repo *userUsageRepoCapture, role string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	usageSvc := service.NewUsageService(repo, nil, nil, nil)
@@ -107,6 +103,10 @@ func newUserUsageRequestTypeTestRouterWithRole(repo *userUsageRepoCapture, role 
 	return router
 }
 
+func newUserUsageRequestTypeTestRouter(repo *userUsageRepoCapture) *gin.Engine {
+	return newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleAdmin)
+}
+
 func TestDashboardLeaderboardFiltersAndSort(t *testing.T) {
 	repo := &userUsageRepoCapture{
 		leaderboardRows: []usagestats.TokenLeaderboardRow{{
@@ -120,7 +120,7 @@ func TestDashboardLeaderboardFiltersAndSort(t *testing.T) {
 			LastActiveAt: time.Date(2026, 8, 12, 1, 2, 3, 0, time.UTC),
 		}},
 	}
-	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleUser)
+	router := newUserUsageRequestTypeTestRouter(repo)
 
 	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?days=7&sort_by=cost&billing_mode=image&request_type=2&timezone=UTC", nil)
 	rec := httptest.NewRecorder()
@@ -146,37 +146,49 @@ func TestDashboardLeaderboardRejectsInvalidSort(t *testing.T) {
 
 func TestDashboardLeaderboardAcceptsAccountNameAndEmailFilters(t *testing.T) {
 	repo := &userUsageRepoCapture{}
-	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleUser)
+	router := newUserUsageRequestTypeTestRouter(repo)
 
-	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=other-user&account_email=member%40example.com", nil)
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=Codex&account_email=admin%40example.com", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "other-user", repo.leaderboardQuery.AccountName)
-	require.Equal(t, "member@example.com", repo.leaderboardQuery.AccountEmail)
+	require.Equal(t, "Codex", repo.leaderboardQuery.AccountName)
+	require.Equal(t, "admin@example.com", repo.leaderboardQuery.AccountEmail)
 }
 
-func TestDashboardLeaderboardMasksMatchedOtherUserIdentity(t *testing.T) {
-	repo := &userUsageRepoCapture{
-		leaderboardRows: []usagestats.TokenLeaderboardRow{{
-			UserID:   99,
-			Email:    "member@example.com",
-			Username: "other-user",
-		}},
-	}
+func TestDashboardLeaderboardRestrictsIdentityFiltersToCurrentUserForRegularUser(t *testing.T) {
+	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleUser)
 
-	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=other-user&account_email=member%40example.com", nil)
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=account-name&account_email=account%40example.com", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "other-user", repo.leaderboardQuery.AccountName)
-	require.Equal(t, "member@example.com", repo.leaderboardQuery.AccountEmail)
-	require.Contains(t, rec.Body.String(), `"user":"o***r"`)
-	require.NotContains(t, rec.Body.String(), "other-user")
-	require.NotContains(t, rec.Body.String(), "member@example.com")
+	require.Equal(t, int64(42), repo.leaderboardQuery.UserID)
+	require.Equal(t, "account-name", repo.leaderboardQuery.AccountName)
+	require.Equal(t, "account@example.com", repo.leaderboardQuery.AccountEmail)
+}
+
+func TestDashboardLeaderboardMasksMatchedUserIdentity(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{
+			{UserID: 42, Email: "current@example.com"},
+			{UserID: 99, Email: "private@example.com"},
+		},
+	}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=private-user&account_email=private%40example.com", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"user":"我"`)
+	require.NotContains(t, rec.Body.String(), "private@example.com")
+	require.Contains(t, rec.Body.String(), "p***e@example.com")
+	require.NotContains(t, rec.Body.String(), "current@example.com")
 }
 
 func TestUserUsageListRequestTypePriority(t *testing.T) {

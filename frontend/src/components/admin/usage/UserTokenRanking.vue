@@ -1,8 +1,8 @@
 <template>
-  <!-- 管理员排行榜表格：无额外卡片外观，由页面统一提供筛选和时间范围。 -->
+  <!-- 用量页"用户排行"tab 内容：无卡片外观，依赖父级统一卡片；筛选/时间范围复用页面级筛选栏 -->
   <div>
     <!-- Toolbar -->
-    <div v-if="showToolbar" class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-dark-700/50 sm:px-6">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-dark-700/50 sm:px-6">
       <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.usage.tokenRanking.subtitle') }}</p>
       <div class="flex items-center gap-3">
         <span v-if="!loading && items.length > 0" class="text-xs text-gray-400 dark:text-gray-500">
@@ -103,7 +103,6 @@ const props = defineProps<{
   model?: string
   limit?: number
   limitOptions?: { value: number; label: string }[]
-  showToolbar?: boolean
 }>()
 
 defineEmits<{ (e: 'select-user', userId: number, email: string): void }>()
@@ -131,7 +130,6 @@ const defaultLimitOptions = [
 ]
 
 const limitOptions = computed(() => props.limitOptions ?? defaultLimitOptions)
-const showToolbar = computed(() => props.showToolbar !== false)
 
 // 前三名金/银/铜徽章
 const RANK_BADGE_CLASSES = [

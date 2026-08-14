@@ -29,7 +29,6 @@ export interface AdminUsageStatsResponse {
 export interface SimpleUser {
   id: number
   email: string
-  username?: string
   deleted: boolean
 }
 
@@ -139,8 +138,8 @@ export async function getStats(params: {
 }
 
 /**
- * Search users by username or email keyword (admin only)
- * @param keyword - Username or email keyword to search
+ * Search users by email keyword (admin only)
+ * @param keyword - Email keyword to search
  * @returns List of matching users (max 30)
  */
 export async function searchUsers(keyword: string): Promise<SimpleUser[]> {
