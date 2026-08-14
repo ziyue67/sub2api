@@ -47,12 +47,12 @@ import { useModelSquareFilters } from '@/features/model-square/composables/useMo
 import { useModelSquareSearch } from '@/features/model-square/composables/useModelSquareSearch'
 import ModelSquareBackground from '@/features/model-square/components/ModelSquareBackground.vue'
 import ModelSquareEmpty from '@/features/model-square/components/ModelSquareEmpty.vue'
+import ModelSquareHeader from '@/features/model-square/components/v2/ModelSquareHeader.vue'
 import ModelSquareHint from '@/features/model-square/components/ModelSquareHint.vue'
 import ModelSquareLoading from '@/features/model-square/components/ModelSquareLoading.vue'
 import ModelSquarePlatformFilter from '@/features/model-square/components/ModelSquarePlatformFilter.vue'
-import ModelSquareHeader from '@/features/model-square/components/v2/ModelSquareHeader.vue'
-import ModelSquareModelIndex from '@/features/model-square/components/v2/ModelSquareModelIndex.vue'
 import ModelSquareModelCard from '@/features/model-square/components/v2/ModelSquareModelCard.vue'
+import ModelSquareModelIndex from '@/features/model-square/components/v2/ModelSquareModelIndex.vue'
 
 const { loading, userGroupRates, platforms, modelGroups, loadModels } = useModelSquare()
 const { search, debouncedSearch, setSearch } = useModelSquareSearch()

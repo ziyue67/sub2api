@@ -4,7 +4,7 @@
       <h2 class='text-xs font-black uppercase tracking-widest text-gray-500 dark:text-dark-400'>模型索引</h2>
       <p class='mt-0.5 text-[10px] text-gray-400 dark:text-dark-500'>点击跳转，共 {{ models.length }} 个</p>
     </div>
-    <div class='overflow-y-auto p-2 space-y-1'>
+    <div class='overflow-y-auto p-2 space-y-1 no-scrollbar'>
       <button
         v-for='model in models'
         :key='model.key'
