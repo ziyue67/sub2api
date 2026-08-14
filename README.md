@@ -741,9 +741,10 @@ traffic through Chat Completions:
 Streaming and non-streaming text, reasoning, and tool calls are forwarded in
 their original protocol. The built-in model catalog contains
 `deepseek-v4-flash` and `deepseek-v4-pro`; custom relay model IDs can be added
-explicitly. Images, embeddings, audio/video, realtime/WebSocket, Responses
-subpaths such as `/responses/compact`, and Messages `count_tokens` are not
-enabled for DeepSeek.
+explicitly. Images, embeddings, audio/video, realtime/WebSocket, most Responses
+subpaths, and Messages `count_tokens` are not enabled for DeepSeek. Exact
+`/responses/compact` aliases are accepted only for Codex compaction
+compatibility and are bridged to DeepSeek Chat Completions.
 
 `base_url` must be the shared API root, not a versioned path or a complete
 endpoint. The official `https://api.deepseek.com/v1` alias is normalized to the

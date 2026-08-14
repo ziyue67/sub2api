@@ -759,7 +759,8 @@ Sub2API 将 DeepSeek 作为独立平台接入，目前仅支持 API Key 账号�
 流式和非流式的文本、推理与工具调用都保留原协议语义。内置模型为
 `deepseek-v4-flash` 和 `deepseek-v4-pro`，自定义中转的模型 ID 需由管理员显式添加。
 DeepSeek 平台不开放图片、Embedding、音视频、Realtime/WebSocket、
-`/responses/compact` 等 Responses 子路径以及 Messages `count_tokens`。
+大多数 Responses 子路径以及 Messages `count_tokens`。仅为兼容 Codex 压缩，
+精确的 `/responses/compact` 别名会由网关桥接到 DeepSeek Chat Completions。
 
 `base_url` 必须是三种协议共用的 API 根地址，不能填写版本路径或完整接口。
 官方别名 `https://api.deepseek.com/v1` 会自动归一为根地址；自定义中转必须同时暴露上表三条路径。

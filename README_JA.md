@@ -693,8 +693,9 @@ Sub2API は DeepSeek を独立した API Key 専用プラットフォームと�
 
 ストリーミング／非ストリーミングのテキスト、推論、ツール呼び出しは元のプロトコルを保持します。
 組み込みモデルは `deepseek-v4-flash` と `deepseek-v4-pro` です。
-画像、Embedding、音声／動画、Realtime/WebSocket、`/responses/compact` などの子パス、
-Messages `count_tokens` は DeepSeek では有効化されません。
+画像、Embedding、音声／動画、Realtime/WebSocket、Responses の大半の子パス、
+Messages `count_tokens` は DeepSeek では有効化されません。Codex の圧縮互換性に限り、
+正確な `/responses/compact` エイリアスを DeepSeek Chat Completions へブリッジします。
 
 `base_url` はバージョンパスや完全なエンドポイントではなく、共通 API ルートである必要があります。
 公式の `https://api.deepseek.com/v1` は正規ルートに正規化されます。
