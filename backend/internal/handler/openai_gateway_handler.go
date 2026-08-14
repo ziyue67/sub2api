@@ -387,7 +387,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-	forwardBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
 	seedOpenAIForwardImageIntentHint(c, channelMapping.Mapped, imageIntent)
 	forwardModel := reqModel
 	if channelMapping.Mapped {
@@ -525,7 +524,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					sameAccountRetryCount = make(map[int64]int)
 					switchCount = 0
 					continue
-				}`t`t`t`tif legacyCompact && errors.Is(err, service.ErrNoAvailableCompactAccounts) {`r`n					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
+				}
+				if legacyCompact && errors.Is(err, service.ErrNoAvailableCompactAccounts) {
+					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "compact_not_supported", "No available accounts support /responses/compact", streamStarted)
 					return
 				}
