@@ -89,7 +89,7 @@
         </div>
 
         <!-- Account Filter -->
-        <div v-if="mode !== 'ranking'" ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
+        <div v-if="!hideAccountFilter" ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
           <label class="input-label">{{ t('admin.usage.account') }}</label>
           <input
             v-model="accountKeyword"
@@ -216,11 +216,13 @@ interface Props {
   modelOptions?: string[]
   /**
    * errors 模式:隐藏用量专属字段/按钮,显示错误类型+状态码(错误请求 tab 用)
-   * ranking 模式:保留邮箱和 API 密钥联动搜索，隐藏账户与计费模式筛选及清理/导出按钮(后台总排行榜用)
+   * ranking 模式:隐藏计费模式筛选及清理/导出按钮；账户搜索由 hideAccountFilter 单独控制
    */
   mode?: 'usage' | 'errors' | 'ranking'
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
+  /** 是否隐藏账户搜索，仅 /admin/usage 的用户排行使用 */
+  hideAccountFilter?: boolean
   /** 模型筛选是否允许输入任意值（creatable） */
   modelCreatable?: boolean
 }
@@ -229,6 +231,7 @@ const props = withDefaults(defineProps<Props>(), {
   showActions: true,
   mode: 'usage',
   flat: false,
+  hideAccountFilter: false,
   modelCreatable: false
 })
 const emit = defineEmits([

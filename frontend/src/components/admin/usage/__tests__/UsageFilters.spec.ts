@@ -278,6 +278,7 @@ describe('UsageFilters — ranking filters', () => {
         showActions: false,
         modelOptions: [],
         mode: 'ranking',
+        hideAccountFilter: true,
       },
       global: { stubs: { Select: true, Teleport: true } },
     })
