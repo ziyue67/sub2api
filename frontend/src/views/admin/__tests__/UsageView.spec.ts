@@ -131,10 +131,6 @@ const UsageTableStub = {
   emits: ['userClick'],
   template: '<div data-test="usage-table"><button class="user-click" @click="$emit(\'userClick\', 2)">user</button></div>',
 }
-const UserTokenRankingStub = {
-  emits: ['select-user'],
-  template: '<div data-test="ranking"><button class="pick-user" @click="$emit(\'select-user\', 5, \'rank@test.com\')">pick</button></div>',
-}
 const ModelDistributionChartStub = {
   props: ['metric'],
   emits: ['update:metric'],
@@ -471,58 +467,13 @@ describe('admin UsageView errors tab filter forwarding', () => {
   })
 })
 
-describe('admin UsageView ranking tab', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
-    list.mockReset()
-    getStats.mockReset()
-    getSnapshotV2.mockReset()
-    getModelStats.mockReset()
-
-    list.mockResolvedValue({ items: [], total: 0, pages: 0 })
-    getStats.mockResolvedValue({
-      total_requests: 0, total_input_tokens: 0, total_output_tokens: 0,
-      total_cache_tokens: 0, total_tokens: 0, total_cost: 0, total_actual_cost: 0, average_duration_ms: 0,
-    })
-    getSnapshotV2.mockResolvedValue({ trend: [], models: [], groups: [] })
-    getModelStats.mockResolvedValue({ models: [] })
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  it('mounts ranking lazily and drill-down sets user filter then jumps back to usage tab', async () => {
-    const wrapper = mount(UsageView, {
-      global: { stubs: {
-        AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
-        UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
-        UserBalanceHistoryModal: true, Pagination: true, Select: true,
-        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
-        ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true,
-        UserTokenRanking: UserTokenRankingStub, OpsErrorLogTable: true, OpsErrorDetailModal: true,
-      } },
-    })
-    vi.advanceTimersByTime(120)
+describe('admin UsageView tabs', () => {
+  it('does not render the removed user-ranking tab', async () => {
+    const wrapper = mountRouteFilteredUsageView()
     await flushPromises()
 
-    // 懒挂载:切到排行 tab 前不渲染
-    expect(wrapper.find('[data-test="ranking"]').exists()).toBe(false)
-
-    const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
-    expect(tabs).toHaveLength(3)
-    await tabs[2].trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-test="ranking"]').exists()).toBe(true)
-
-    // 下钻:设置 user_id、切回用量明细 tab 并按新筛选重新拉取列表
-    list.mockClear()
-    await wrapper.find('[data-test="ranking"] .pick-user').trigger('click')
-    await flushPromises()
-
-    expect((wrapper.vm as any).activeTab).toBe('usage')
-    expect((wrapper.vm as any).filters.user_id).toBe(5)
-    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 5 }), expect.anything())
+    expect(wrapper.findAll('[data-testid="usage-detail-tab"]')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('usage.tabs.ranking')
   })
 })
 

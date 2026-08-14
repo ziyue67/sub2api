@@ -13,8 +13,6 @@ const messages: Record<string, string> = {
   'admin.usage.searchApiKeyPlaceholder': 'Search API key...',
   'usage.model': 'Model',
   'admin.usage.allModels': 'All Models',
-  'admin.usage.account': 'Account',
-  'admin.usage.searchAccountPlaceholder': 'Search account...',
   'usage.type': 'Type',
   'admin.usage.allTypes': 'All Types',
   'usage.ws': 'WS',
@@ -57,7 +55,6 @@ const mockSearchUsers = vi.fn()
 const mockSearchApiKeys = vi.fn().mockResolvedValue([])
 const mockGroupsList = vi.fn().mockResolvedValue({ items: [] })
 const mockGetModelStats = vi.fn().mockResolvedValue({ models: [] })
-const mockAccountsList = vi.fn().mockResolvedValue({ items: [] })
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
@@ -67,7 +64,6 @@ vi.mock('@/api/admin', () => ({
     },
     groups: { list: (...args: any[]) => mockGroupsList(...args) },
     dashboard: { getModelStats: (...args: any[]) => mockGetModelStats(...args) },
-    accounts: { list: (...args: any[]) => mockAccountsList(...args) },
   },
 }))
 
@@ -278,7 +274,6 @@ describe('UsageFilters — ranking filters', () => {
         showActions: false,
         modelOptions: [],
         mode: 'ranking',
-        hideAccountFilter: true,
       },
       global: { stubs: { Select: true, Teleport: true } },
     })
