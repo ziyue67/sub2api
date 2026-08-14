@@ -1,45 +1,119 @@
 <template>
-  <aside class='hidden lg:flex sticky top-6 h-fit max-h-[calc(100vh-3rem)] w-full flex-col overflow-hidden rounded-2xl border border-gray-200 dark:border-dark-800 bg-white/80 dark:bg-dark-900/80 backdrop-blur shadow-sm'>
-    <div class='px-4 py-3 border-b border-gray-100 dark:border-dark-800'>
-      <h2 class='text-xs font-black uppercase tracking-widest text-gray-500 dark:text-dark-400'>模型索引</h2>
-      <p class='mt-0.5 text-[10px] text-gray-400 dark:text-dark-500'>点击跳转，共 {{ models.length }} 个</p>
+  <aside
+    ref='indexRef'
+    tabindex='0'
+    class='hidden lg:flex sticky top-8 h-fit max-h-[calc(100vh-4rem)] w-full flex-col overflow-hidden rounded-3xl border border-gray-200 dark:border-dark-700/60 bg-white/80 dark:bg-dark-900/60 backdrop-blur-xl shadow-2xl shadow-black/10 dark:shadow-black/20 focus:outline-none focus:ring-2 focus:ring-indigo-500/30'
+    @keydown='onKeydown'
+  >
+    <div class='px-5 py-4 border-b border-white/10 dark:border-dark-700/60'>
+      <h2 class='text-xs font-black uppercase tracking-[0.25em] text-gray-500 dark:text-dark-400'>模型索引</h2>
+      <p class='mt-1 text-xs text-gray-600 dark:text-dark-400'>↑↓ 选择 · Enter 跳转 · 共 {{ models.length }} 个</p>
     </div>
-    <div class='overflow-y-auto p-2 space-y-1 no-scrollbar'>
-      <button
-        v-for='model in models'
-        :key='model.key'
-        type='button'
-        class='w-full text-left rounded-xl px-3 py-2 text-xs font-bold transition-all'
-        :class='activeKey === model.key ? activeClass : inactiveClass'
-        @click='selectModel(model.key)'
-      >
-        <span class='block truncate'>{{ model.name }}</span>
-        <span class='mt-0.5 block text-[10px] opacity-70 font-mono uppercase tracking-wider'>{{ model.platform }}</span>
-      </button>
-      <p v-if='models.length === 0' class='px-3 py-6 text-center text-xs text-gray-400 dark:text-dark-500'>没有匹配的模型</p>
+    <div class='overflow-y-auto p-2.5 space-y-1 no-scrollbar'>
+      <template v-for='group in groupedModels' :key='group.platform'>
+        <div class='px-3 pt-3 pb-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 dark:text-dark-500'>{{ platformLabel(group.platform) }}</div>
+        <button
+          v-for='item in group.items'
+          :key='item.model.key'
+          type='button'
+          class='w-full text-left rounded-2xl px-3.5 py-3 text-sm font-semibold transition-all duration-200 group'
+          :class='modelValue === item.model.key ? activeClass : inactiveClass'
+          @click='selectModel(item.model.key, item.index)'
+        >
+          <span class='flex items-center gap-2.5'>
+            <span class='h-1.5 w-1.5 rounded-full shrink-0' :class='dotClass(item.model.platform)'></span>
+            <span class='block truncate' v-html='highlight(item.model.name)'></span>
+          </span>
+          <span class='mt-1 block text-xs font-mono uppercase tracking-wider opacity-50'>{{ item.model.channels.length }} 渠道</span>
+        </button>
+      </template>
+      <p v-if='models.length === 0' class='px-4 py-8 text-center text-xs text-gray-500 dark:text-dark-500'>没有匹配的模型</p>
     </div>
   </aside>
 </template>
 
 <script setup lang='ts'>
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { ModelSquareModel } from '../../types'
+import { platformLabel, platformBadgeLightClass } from '@/utils/platformColors'
 
 interface Props {
   models: ModelSquareModel[]
+  modelValue: string | null
+  search?: string
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
+const emit = defineEmits<{
+  'update:modelValue': [value: string | null]
+}>()
 
-const activeKey = defineModel<string | null>('activeKey', { default: null })
+const activeClass = 'bg-gradient-to-r from-indigo-500/20 to-purple-500/20 text-indigo-900 dark:text-white shadow-lg shadow-indigo-500/10 border border-indigo-500/30'
+const inactiveClass = 'text-gray-600 hover:bg-gray-100 dark:text-dark-400 dark:hover:bg-dark-800/60 border border-transparent'
 
-const activeClass = 'bg-primary-500 text-white shadow-sm'
-const inactiveClass = 'text-gray-600 hover:bg-gray-50 dark:text-dark-300 dark:hover:bg-dark-800'
+const indexRef = ref<HTMLElement | null>(null)
+const selectedIndex = ref(0)
 
-function selectModel(key: string) {
-  activeKey.value = key
+const normalizedSearch = computed(() => props.search?.trim().toLowerCase() ?? '')
+
+const groupedModels = computed(() => {
+  const groups: { platform: string; items: { model: ModelSquareModel; index: number }[] }[] = []
+  const map = new Map<string, { platform: string; items: { model: ModelSquareModel; index: number }[] }>()
+  props.models.forEach((model, index) => {
+    if (!map.has(model.platform)) {
+      const group = { platform: model.platform, items: [] as { model: ModelSquareModel; index: number }[] }
+      map.set(model.platform, group)
+      groups.push(group)
+    }
+    map.get(model.platform)!.items.push({ model, index })
+  })
+  return groups
+})
+
+function dotClass(platform: string) {
+  return platformBadgeLightClass(platform).split(' ')[0].replace('bg-', 'bg-').replace('/10', '') + ' ring-2 ring-black/10 dark:ring-white/20'
+}
+
+function highlight(name: string) {
+  if (!normalizedSearch.value) return name
+  const idx = name.toLowerCase().indexOf(normalizedSearch.value)
+  if (idx === -1) return name
+  const before = name.slice(0, idx)
+  const match = name.slice(idx, idx + normalizedSearch.value.length)
+  const after = name.slice(idx + normalizedSearch.value.length)
+  return `${before}<mark class='rounded px-0.5 bg-amber-400/90 text-gray-900'>${match}</mark>${after}`
+}
+
+function selectModel(key: string, index?: number) {
+  if (index != null) selectedIndex.value = index
+  emit('update:modelValue', key)
   const el = document.getElementById('model-' + key)
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function focusSelected() {
+  const buttons = indexRef.value?.querySelectorAll('button') ?? []
+  const el = buttons[selectedIndex.value] as HTMLElement | undefined
+  if (el) {
+    el.focus()
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (!indexRef.value || props.models.length === 0) return
+  const isInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
+  if (isInput) return
+
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    const step = e.key === 'ArrowDown' ? 1 : -1
+    selectedIndex.value = (selectedIndex.value + step + props.models.length) % props.models.length
+    focusSelected()
+  } else if (e.key === 'Enter' && selectedIndex.value >= 0) {
+    e.preventDefault()
+    selectModel(props.models[selectedIndex.value].key, selectedIndex.value)
+  }
 }
 
 let observer: IntersectionObserver | null = null
@@ -50,7 +124,11 @@ onMounted(() => {
     if (visible.length > 0) {
       const top = visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0]
       const key = top.target.getAttribute('data-model-key')
-      if (key) activeKey.value = key
+      if (key) {
+        emit('update:modelValue', key)
+        const idx = props.models.findIndex((m) => m.key === key)
+        if (idx !== -1) selectedIndex.value = idx
+      }
     }
   }, { rootMargin: '-10% 0px -60% 0px', threshold: 0 })
   document.querySelectorAll('[data-model-key]').forEach((el) => observer?.observe(el))

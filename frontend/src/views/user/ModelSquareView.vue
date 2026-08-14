@@ -2,7 +2,7 @@
   <AppLayout>
     <ModelSquareBackground />
 
-    <div class='relative z-10 mx-auto w-full max-w-[1600px] px-4 py-8 sm:px-6'>
+    <div class='relative z-10 mx-auto w-full max-w-[1600px] px-4 py-10 sm:px-6 lg:px-8'>
       <ModelSquareHeader
         :search='search'
         :loading='loading'
@@ -21,12 +21,13 @@
       <ModelSquareLoading v-if='loading' />
       <ModelSquareEmpty v-else-if='filteredModels.length === 0' />
 
-      <div v-else class='grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 items-start'>
+      <div v-else class='grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-8 items-start'>
         <ModelSquareModelIndex
-          v-model:active-key='activeModelKey'
+          v-model='activeModelKey'
           :models='filteredModels'
+          :search='debouncedSearch'
         />
-        <div class='space-y-6'>
+        <div class='space-y-8'>
           <ModelSquareModelCard
             v-for='model in filteredModels'
             :key='model.key'
