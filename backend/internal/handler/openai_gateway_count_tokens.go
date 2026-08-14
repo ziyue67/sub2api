@@ -55,7 +55,7 @@ func (h *OpenAIGatewayHandler) GrokCountTokens(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"input_tokens": estimated})
 }
 
-// CountTokens handles Anthropic-compatible POST /v1/messages/count_tokens for OpenAI groups.
+// CountTokens handles Anthropic-compatible POST /v1/messages/count_tokens for OpenAI-compatible targets.
 // It validates billing and routes to an OpenAI token-count bridge without taking concurrency slots
 // or recording usage.
 func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
@@ -78,7 +78,7 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 		zap.Any("group_id", apiKey.GroupID),
 	)
 
-	if apiKey.Group != nil && !apiKey.Group.AllowMessagesDispatch {
+	if !allowOpenAICompatibleMessagesDispatch(c, apiKey) {
 		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group does not allow /v1/messages dispatch")
 		return

@@ -66,6 +66,37 @@ func TestOpenAICompatibleTextTargetAllowsCompositeGrokModel(t *testing.T) {
 	}
 }
 
+func TestAllowOpenAICompatibleMessagesDispatchUsesCompositeTarget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	apiKey := &service.APIKey{Group: &service.Group{
+		Platform:              service.PlatformComposite,
+		AllowMessagesDispatch: false,
+	}}
+
+	for _, tc := range []struct {
+		name     string
+		platform string
+		resolved bool
+		want     bool
+	}{
+		{name: "openai target", platform: service.PlatformOpenAI, resolved: true, want: true},
+		{name: "grok target", platform: service.PlatformGrok, resolved: true, want: true},
+		{name: "anthropic target", platform: service.PlatformAnthropic, resolved: true, want: false},
+		{name: "deepseek target", platform: service.PlatformDeepSeek, resolved: true, want: false},
+		{name: "unresolved target", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+			if tc.resolved {
+				c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), tc.platform))
+			}
+
+			require.Equal(t, tc.want, allowOpenAICompatibleMessagesDispatch(c, apiKey))
+		})
+	}
+}
+
 func TestOpenAICompatibleRequestPlatformPreservesDeepSeek(t *testing.T) {
 	apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformDeepSeek}}
 	require.Equal(t, service.PlatformDeepSeek, openAICompatibleRequestPlatform(context.Background(), apiKey))

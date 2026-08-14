@@ -208,13 +208,19 @@ func openAIResponsesRequiredCapabilityForRequest(imageIntent bool, needsResponse
 	}
 	return openAIResponsesRequiredCapability(imageIntent, platform)
 }
-
-func allowOpenAICompatibleMessagesDispatch(apiKey *service.APIKey) bool {
+func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKey) bool {
 	if apiKey == nil || apiKey.Group == nil {
 		return true
 	}
 	if apiKey.Group.Platform == service.PlatformGrok {
 		return true
+	}
+	if apiKey.Group.Platform == service.PlatformComposite {
+		if c == nil || c.Request == nil {
+			return false
+		}
+		platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+		return ok && (platform == service.PlatformOpenAI || platform == service.PlatformGrok)
 	}
 	return apiKey.Group.AllowMessagesDispatch
 }
@@ -1073,8 +1079,8 @@ func (h *OpenAIGatewayHandler) logOpenAIRemoteCompactOutcome(c *gin.Context, sta
 	log.Warn("codex.remote_compact.failed")
 }
 
-// Messages handles Anthropic Messages API requests routed to OpenAI platform.
-// POST /v1/messages (when group platform is OpenAI)
+// Messages handles Anthropic Messages API requests routed to an OpenAI-compatible target.
+// POST /v1/messages
 func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	streamStarted := false
 	defer h.recoverAnthropicMessagesPanic(c, &streamStarted)
@@ -1101,7 +1107,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	)
 
 	// 检查分组是否允许 /v1/messages 调度
-	if !allowOpenAICompatibleMessagesDispatch(apiKey) {
+	if !allowOpenAICompatibleMessagesDispatch(c, apiKey) {
 		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group does not allow /v1/messages dispatch")
 		return
