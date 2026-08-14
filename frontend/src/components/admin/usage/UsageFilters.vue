@@ -172,6 +172,7 @@
           <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
         </div>
 
+        <slot name="after-filters" />
       </div>
 
       <!-- Right: actions -->

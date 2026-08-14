@@ -1,36 +1,6 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
-      <!-- Header + quick controls -->
-      <div class="card p-6">
-        <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 class="text-xl font-semibold text-gray-900 dark:text-gray-100">
-              {{ t('leaderboard.title') }}
-            </h1>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {{ t('leaderboard.description') }}
-            </p>
-          </div>
-          <div class="flex flex-wrap items-end gap-3">
-            <div class="w-40">
-              <label class="input-label">{{ t('leaderboard.periodLabel') }}</label>
-              <Select v-model="days" :options="periodOptions" @change="onDaysChange" />
-            </div>
-            <div class="w-28">
-              <label class="input-label">{{ t('leaderboard.limit') }}</label>
-              <Select v-model="limit" :options="limitOptions" @change="onLimitChange" />
-            </div>
-            <button type="button" class="btn btn-secondary" @click="rankingRef?.reload">
-              {{ t('leaderboard.refresh') }}
-            </button>
-            <button type="button" class="btn btn-secondary" @click="resetFilters">
-              {{ t('leaderboard.reset') }}
-            </button>
-          </div>
-        </div>
-      </div>
-
       <!-- Real backend search filters -->
       <UsageFilters
         v-model="filters"
@@ -45,7 +15,14 @@
         @change="applyFilters"
         @refresh="rankingRef?.reload"
         @reset="resetFilters"
-      />
+      >
+        <template #after-filters>
+          <div class="w-full sm:w-auto sm:min-w-[160px]">
+            <label class="input-label">{{ t('leaderboard.periodLabel') }}</label>
+            <Select v-model="days" :options="periodOptions" @change="onDaysChange" />
+          </div>
+        </template>
+      </UsageFilters>
 
       <!-- Ranking table -->
       <div class="card overflow-hidden">
@@ -152,10 +129,6 @@ const loadModelStats = async () => {
 
 const onDaysChange = () => {
   loadModelStats()
-}
-
-const onLimitChange = () => {
-  // UserTokenRanking watches the limit prop and reloads automatically.
 }
 
 const applyFilters = () => {
