@@ -365,8 +365,6 @@ export interface LeaderboardParams {
   api_key_id?: number
   model?: string
   account_id?: number
-  account_name?: string
-  account_email?: string
   group_id?: number
   billing_type?: number | null
 }

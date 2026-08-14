@@ -546,7 +546,7 @@ func parseLeaderboardRequestType(raw string) (int16, error) {
 }
 
 // DashboardLeaderboard returns the Token consumption leaderboard.
-// GET /api/v1/usage/dashboard/leaderboard?days=1|3|7|14|30&limit=20&timezone=Asia/Shanghai&sort_by=tokens|requests|cost|actual_cost|account_cost&billing_mode=token|per_request|image|video&request_type=0|1|2|3|4|5|sync|stream|ws_v2|cyber|live&billing_type=0|1&model=...&group_id=...&user_id=...&account_name=...&account_email=...
+// GET /api/v1/usage/dashboard/leaderboard?days=1|3|7|14|30&limit=20&timezone=Asia/Shanghai&sort_by=tokens|requests|cost|actual_cost|account_cost&billing_mode=token|per_request|image|video&request_type=0|1|2|3|4|5|sync|stream|ws_v2|cyber|live&billing_type=0|1&model=...&group_id=...&user_id=...
 //
 // Ranking key is total_tokens = input + output + cache + image_output.
 // Regular users only ever see Top 1-20 with emails masked; the current user's
@@ -627,18 +627,6 @@ func (h *UsageHandler) DashboardLeaderboard(c *gin.Context) {
 			return
 		}
 		query.UserID = userID
-	}
-
-	query.AccountName = strings.TrimSpace(c.Query("account_name"))
-	query.AccountEmail = strings.TrimSpace(c.Query("account_email"))
-	if query.AccountName != "" || query.AccountEmail != "" {
-		role, _ := middleware2.GetUserRoleFromContext(c)
-		if role != service.RoleAdmin {
-			// Identity filters may match users.username/users.email in addition to
-			// upstream account metadata. Restrict non-admin callers to their own
-			// usage rows so those filters cannot enumerate another user's activity.
-			query.UserID = subject.UserID
-		}
 	}
 
 	now := timezone.NowInUserLocation(userTZ)

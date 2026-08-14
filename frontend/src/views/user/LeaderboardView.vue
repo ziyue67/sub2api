@@ -49,28 +49,6 @@
             </div>
           </div>
           <div class="lb-filter-col">
-            <label class="lb-filter-label">{{ t('leaderboard.accountName') }}</label>
-            <input
-              v-model.trim="filterAccountName"
-              type="search"
-              class="lb-input"
-              :placeholder="t('leaderboard.filter.accountNamePlaceholder')"
-              @change="reload"
-              @keyup.enter="reload"
-            />
-          </div>
-          <div class="lb-filter-col">
-            <label class="lb-filter-label">{{ t('leaderboard.accountEmail') }}</label>
-            <input
-              v-model.trim="filterAccountEmail"
-              type="search"
-              class="lb-input"
-              :placeholder="t('leaderboard.filter.accountEmailPlaceholder')"
-              @change="reload"
-              @keyup.enter="reload"
-            />
-          </div>
-          <div class="lb-filter-col">
             <label class="lb-filter-label">{{ t('leaderboard.requestType') }}</label>
             <div class="w-full">
               <Select v-model="filterRequestType" :options="requestTypeOptions" :theme="theme" @change="reload" />
@@ -213,8 +191,6 @@ const filterRequestType = ref<UsageRequestType | null>(null)
 const filterBillingType = ref<number | null>(null)
 const filterBillingMode = ref<LeaderboardBillingMode | null>(null)
 const filterGroup = ref<number | null>(null)
-const filterAccountName = ref('')
-const filterAccountEmail = ref('')
 const availableModels = ref<ModelStat[]>([])
 const availableGroups = ref<GroupStat[]>([])
 const filterOptionsLoading = ref(false)
@@ -352,8 +328,6 @@ function buildParams(): LeaderboardParams {
     limit: limit.value
   }
   if (filterModel.value) params.model = filterModel.value
-  if (filterAccountName.value) params.account_name = filterAccountName.value
-  if (filterAccountEmail.value) params.account_email = filterAccountEmail.value
   if (filterRequestType.value) params.request_type = filterRequestType.value
   if (filterBillingType.value !== null) params.billing_type = filterBillingType.value
   if (filterBillingMode.value) params.billing_mode = filterBillingMode.value
@@ -446,8 +420,6 @@ function resetFilters() {
   filterBillingType.value = null
   filterBillingMode.value = null
   filterGroup.value = null
-  filterAccountName.value = ''
-  filterAccountEmail.value = ''
   void loadFilterOptions()
   void load()
 }

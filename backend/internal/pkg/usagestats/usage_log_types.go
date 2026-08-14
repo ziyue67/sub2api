@@ -202,20 +202,16 @@ type TokenLeaderboardRow struct {
 }
 
 // TokenLeaderboardQuery contains the optional filters and sort for the user-facing leaderboard.
-// AccountName/AccountEmail search account metadata and the ranked user's own
-// username/email as a fallback; matching is server-side and never reveals raw identity.
 // SortBy is allowlisted by the handler and repository; empty defaults to tokens.
 type TokenLeaderboardQuery struct {
-	RequestType  *int16
-	Stream       *bool
-	BillingMode  string
-	SortBy       string
-	BillingType  *int16
-	Model        string
-	GroupID      int64
-	UserID       int64
-	AccountName  string
-	AccountEmail string
+	RequestType *int16
+	Stream      *bool
+	BillingMode string
+	SortBy      string
+	BillingType *int16
+	Model       string
+	GroupID     int64
+	UserID      int64
 }
 
 type TokenLeaderboardResponse struct {

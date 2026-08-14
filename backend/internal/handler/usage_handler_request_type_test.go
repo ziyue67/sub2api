@@ -144,53 +144,6 @@ func TestDashboardLeaderboardRejectsInvalidSort(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestDashboardLeaderboardAcceptsAccountNameAndEmailFilters(t *testing.T) {
-	repo := &userUsageRepoCapture{}
-	router := newUserUsageRequestTypeTestRouter(repo)
-
-	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=Codex&account_email=admin%40example.com", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "Codex", repo.leaderboardQuery.AccountName)
-	require.Equal(t, "admin@example.com", repo.leaderboardQuery.AccountEmail)
-}
-
-func TestDashboardLeaderboardRestrictsIdentityFiltersToCurrentUserForRegularUser(t *testing.T) {
-	repo := &userUsageRepoCapture{}
-	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleUser)
-
-	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=account-name&account_email=account%40example.com", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, int64(42), repo.leaderboardQuery.UserID)
-	require.Equal(t, "account-name", repo.leaderboardQuery.AccountName)
-	require.Equal(t, "account@example.com", repo.leaderboardQuery.AccountEmail)
-}
-
-func TestDashboardLeaderboardMasksMatchedUserIdentity(t *testing.T) {
-	repo := &userUsageRepoCapture{
-		leaderboardRows: []usagestats.TokenLeaderboardRow{
-			{UserID: 42, Email: "current@example.com"},
-			{UserID: 99, Email: "private@example.com"},
-		},
-	}
-	router := newUserUsageRequestTypeTestRouter(repo)
-
-	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?account_name=private-user&account_email=private%40example.com", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"user":"我"`)
-	require.NotContains(t, rec.Body.String(), "private@example.com")
-	require.Contains(t, rec.Body.String(), "p***e@example.com")
-	require.NotContains(t, rec.Body.String(), "current@example.com")
-}
-
 func TestUserUsageListRequestTypePriority(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
