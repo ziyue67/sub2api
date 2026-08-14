@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent, ref } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
@@ -115,7 +116,16 @@ vi.mock('vue-router', () => ({
 }))
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
-const UsageFiltersStub = { template: '<div><slot name="after-reset" /></div>' }
+const UsageFiltersStub = defineComponent({
+  setup(_, { expose }) {
+    const userLabel = ref('')
+    let revision = 0
+    const setUserKeyword = (value: string) => { revision += 1; userLabel.value = value }
+    expose({ setUserKeyword, getUserSearchRevision: () => revision })
+    return { userLabel }
+  },
+  template: '<div><span data-test="user-filter-label">{{ userLabel }}</span><slot name="after-reset" /></div>',
+})
 const UsageTableStub = {
   props: ['columns'],
   emits: ['userClick'],
@@ -180,6 +190,18 @@ describe('admin UsageView route filters', () => {
   afterEach(() => {
     Object.keys(routeQuery).forEach((key) => delete routeQuery[key])
     vi.useRealTimers()
+  })
+
+  it('shows the selected user email when opened with a leaderboard user_id', async () => {
+    routeQuery.user_id = '42'
+    getById.mockResolvedValue({ id: 42, email: 'ranked-user@example.test' })
+
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+
+    expect(getById).toHaveBeenCalledWith(42, true)
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 42 }), expect.anything())
+    expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('ranked-user@example.test')
   })
 
   it('keeps previous model stats visible during refresh until new data arrives', async () => {

@@ -160,7 +160,7 @@ export default {
    dashboard: 'Dashboard',
    announcements: 'Announcements',
    apiKeys: 'API Keys',
-    leaderboard: 'Leaderboard',
+    leaderboard: 'Admin Leaderboard',
    batchImage: 'Batch Images',
     usage: 'Usage',
     redeem: 'Redeem',

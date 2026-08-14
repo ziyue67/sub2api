@@ -83,7 +83,7 @@
           </button>
         </div>
 
-        <UsageFilters v-model="filters" flat :mode="activeTab" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
           <template #after-reset>
             <div v-if="activeTab !== 'ranking'" class="relative" ref="columnDropdownRef">
               <button
@@ -265,8 +265,9 @@ const handleUserClick = async (userId: number) => {
 
 // Drill down from the per-user token ranking: scope the whole usage view to
 // that user and jump to the usage-detail tab so the drill-down is visible.
-const handleRankingSelectUser = (userId: number, _email: string) => {
+const handleRankingSelectUser = (userId: number, email: string) => {
   filters.value = { ...filters.value, user_id: userId }
+  usageFiltersRef.value?.setUserKeyword?.(email || '')
   activeTab.value = 'usage'
   applyFilters()
 }
@@ -335,6 +336,23 @@ const applyRouteQueryFilters = () => {
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
 }
 
+const loadRouteUserFilterLabel = async () => {
+  const requestedUserID = filters.value.user_id
+  if (!requestedUserID) return
+  const searchRevision = usageFiltersRef.value?.getUserSearchRevision?.()
+
+  const isCurrent = () => (
+    filters.value.user_id === requestedUserID
+    && usageFiltersRef.value?.getUserSearchRevision?.() === searchRevision
+  )
+
+  try {
+    const user = await adminAPI.users.getById(requestedUserID, true)
+    if (isCurrent()) usageFiltersRef.value?.setUserKeyword?.(user.email || String(requestedUserID))
+  } catch {
+    if (isCurrent()) usageFiltersRef.value?.setUserKeyword?.(String(requestedUserID))
+  }
+}
 
 const onDateRangeChange = (range: { startDate: string; endDate: string; preset: string | null }) => {
   startDate.value = range.startDate
@@ -760,6 +778,7 @@ const detailTabs = computed(() => [
   { key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const },
 ])
 const rankingMounted = ref(false)
+const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
 const rankingRef = ref<InstanceType<typeof UserTokenRanking> | null>(null)
 
 const switchTab = (tab: DetailTab) => {
@@ -834,6 +853,7 @@ const handleColumnClickOutside = (event: MouseEvent) => {
 
 onMounted(() => {
   applyRouteQueryFilters()
+  void loadRouteUserFilterLabel()
   loadLogs()
   loadStats()
   loadModelStats(modelDistributionSource.value, true)
