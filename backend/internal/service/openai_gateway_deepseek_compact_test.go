@@ -17,120 +17,246 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 const deepSeekRemoteCompactTestSummary = "Implemented the gateway bridge; next run the focused regression tests."
 
-func TestForwardDeepSeekResponsesRemoteCompactionV2UsesHarnessChatWireAndReturnsOneCompactionItem(t *testing.T) {
+func TestDeepSeekCompactResponsesRequestPreservesNativeHistoryAndEffort(t *testing.T) {
+	history := []any{
+		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "keep this verbatim"}}},
+		map[string]any{"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": `{"cmd":"go test ./..."}`, "opaque": map[string]any{"keep": true}},
+		map[string]any{"type": "function_call_output", "call_id": "call_1", "output": []any{map[string]any{"type": "input_text", "text": "passed"}}},
+		map[string]any{"type": "opaque_future_item", "payload": map[string]any{"keep": true}},
+	}
+	for _, effort := range []string{"max", "high", ""} {
+		t.Run("effort_"+effort, func(t *testing.T) {
+			input := append(append([]any(nil), history...), map[string]any{"type": "compaction_trigger"})
+			request := map[string]any{
+				"model": "client-model", "instructions": "preserve these instructions", "input": input,
+				"tools": []any{map[string]any{"type": "function", "name": "shell"}}, "tool_choice": "auto",
+				"parallel_tool_calls": true, "store": true, "include": []string{"reasoning.encrypted_content"},
+				"temperature": 0.1, "top_p": 0.2, "service_tier": "priority", "prompt_cache_key": "cache-key",
+			}
+			if effort != "" {
+				request["reasoning"] = map[string]any{"effort": effort, "summary": "detailed"}
+			}
+			body := mustMarshalDeepSeekCompactTestJSON(t, request)
+			upstreamBody, err := deepSeekCompactResponsesRequest(body, "mapped-model")
+			require.NoError(t, err)
+
+			var root map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(upstreamBody, &root))
+			wantKeys := []string{"model", "instructions", "input", "stream", "max_output_tokens"}
+			if effort != "" {
+				wantKeys = append(wantKeys, "reasoning")
+			}
+			gotKeys := make([]string, 0, len(root))
+			for key := range root {
+				gotKeys = append(gotKeys, key)
+			}
+			require.ElementsMatch(t, wantKeys, gotKeys)
+			require.Equal(t, "mapped-model", gjson.GetBytes(upstreamBody, "model").String())
+			require.Equal(t, "preserve these instructions", gjson.GetBytes(upstreamBody, "instructions").String())
+			require.True(t, gjson.GetBytes(upstreamBody, "stream").Bool())
+			require.Equal(t, int64(deepSeekCompactSummaryMaxTokens), gjson.GetBytes(upstreamBody, "max_output_tokens").Int())
+			if effort == "" {
+				require.False(t, gjson.GetBytes(upstreamBody, "reasoning").Exists())
+			} else {
+				require.Equal(t, effort, gjson.GetBytes(upstreamBody, "reasoning.effort").String())
+				require.False(t, gjson.GetBytes(upstreamBody, "reasoning.summary").Exists())
+			}
+			items := gjson.GetBytes(upstreamBody, "input").Array()
+			require.Len(t, items, len(history)+1)
+			for index, original := range history {
+				require.JSONEq(t, mustMarshalDeepSeekCompactTestJSONString(t, original), items[index].Raw)
+			}
+			require.Equal(t, "message", items[len(items)-1].Get("type").String())
+			require.Equal(t, "user", items[len(items)-1].Get("role").String())
+			require.Equal(t, deepSeekCompactInstruction, items[len(items)-1].Get("content.0.text").String())
+		})
+	}
+}
+
+func TestDeepSeekCompactResponsesRequestRejectsInvalidStateBeforeUpstream(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{name: "previous response id", body: map[string]any{"model": "m", "previous_response_id": "resp_1", "input": []any{map[string]any{"type": "message"}, map[string]any{"type": "compaction_trigger"}}}},
+		{name: "missing trigger", body: map[string]any{"model": "m", "input": []any{map[string]any{"type": "message"}}}},
+		{name: "non-final trigger", body: map[string]any{"model": "m", "input": []any{map[string]any{"type": "compaction_trigger"}, map[string]any{"type": "message"}}}},
+		{name: "unpaired tool call", body: map[string]any{"model": "m", "input": []any{map[string]any{"type": "function_call", "call_id": "call_1"}, map[string]any{"type": "compaction_trigger"}}}},
+		{name: "image", body: map[string]any{"model": "m", "input": []any{map[string]any{"type": "message", "content": []any{map[string]any{"type": "input_image", "image_url": "data:image/png;base64,aQ=="}}}, map[string]any{"type": "compaction_trigger"}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := deepSeekCompactResponsesRequest(mustMarshalDeepSeekCompactTestJSON(t, tt.body), "mapped")
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestForwardDeepSeekRemoteCompactionUsesNativeResponsesAndSynthesizesOneItem(t *testing.T) {
 	body := deepSeekRemoteCompactDetailedTestRequestBody(t)
 	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
-	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactChatResponse(
-		deepSeekRemoteCompactTestSummary,
-		"private reasoning must not become the checkpoint",
-		"stop",
-	)}
+	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactResponsesResponse(deepSeekRemoteCompactTestSummary)}
 	svc := newDeepSeekRemoteCompactTestService(upstream)
 
 	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.True(t, result.Stream)
-	require.Equal(t, deepSeekChatCompletionsEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, deepSeekResponsesEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, "/responses", upstream.lastReq.URL.Path)
+	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "tools").Exists())
+	require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+	require.NotNil(t, result.ReasoningEffort)
+	require.Equal(t, "max", *result.ReasoningEffort)
 	require.Equal(t, 31, result.Usage.InputTokens)
 	require.Equal(t, 7, result.Usage.OutputTokens)
 	require.Equal(t, 5, result.Usage.CacheReadInputTokens)
 	require.Equal(t, 3, result.Usage.ReasoningTokens)
 
-	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, "/chat/completions", upstream.lastReq.URL.Path)
-	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
-	require.Equal(t, "1", upstream.lastReq.Header.Get("X-DeepSeek-Harness-Compact"))
-	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
-	require.True(t, gjson.GetBytes(upstream.lastBody, "stream_options.include_usage").Bool())
-	require.Equal(t, int64(deepSeekCompactSummaryMaxTokens), gjson.GetBytes(upstream.lastBody, "max_tokens").Int())
-	require.Equal(t, "enabled", gjson.GetBytes(upstream.lastBody, "thinking.type").String())
-	require.Equal(t, deepSeekCompactReasoningEffort, gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
-	require.NotNil(t, result.ReasoningEffort)
-	require.Equal(t, deepSeekCompactReasoningEffort, *result.ReasoningEffort)
-	require.False(t, gjson.GetBytes(upstream.lastBody, "temperature").Exists())
-	require.Equal(t, "function", gjson.GetBytes(upstream.lastBody, "tools.0.type").String())
-	require.Equal(t, "shell", gjson.GetBytes(upstream.lastBody, "tools.0.function.name").String())
-	require.Equal(t, "Run a command", gjson.GetBytes(upstream.lastBody, "tools.0.function.description").String())
-	require.Equal(t, "object", gjson.GetBytes(upstream.lastBody, "tools.0.function.parameters.type").String())
-
-	messages := gjson.GetBytes(upstream.lastBody, "messages").Array()
-	require.GreaterOrEqual(t, len(messages), 6)
-	require.Equal(t, "system", messages[0].Get("role").String())
-	require.Equal(t, "You are Codex. Preserve the current engineering task.", messages[0].Get("content").String())
-	require.Equal(t, "system", messages[1].Get("role").String())
-	require.Equal(t, "assistant", messages[len(messages)-3].Get("role").String())
-	require.Equal(t, "shell", messages[len(messages)-3].Get("tool_calls.0.function.name").String())
-	require.Equal(t, "tool", messages[len(messages)-2].Get("role").String())
-	require.Equal(t, "user", messages[len(messages)-1].Get("role").String())
-	require.Equal(t, deepSeekCompactInstruction, messages[len(messages)-1].Get("content").String())
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
 	events := parseCompactBridgeSSE(t, recorder.Body.String())
 	require.Len(t, events, 2)
 	require.Equal(t, "response.output_item.done", events[0][0])
-	require.Equal(t, "compaction", gjson.Get(events[0][1], "item.type").String())
-	require.NotEmpty(t, gjson.Get(events[0][1], "item.encrypted_content").String())
-	require.NotContains(t, events[0][1], deepSeekRemoteCompactTestSummary)
-	require.NotContains(t, events[0][1], "private reasoning")
 	require.Equal(t, "response.completed", events[1][0])
 	require.Len(t, gjson.Get(events[1][1], "response.output").Array(), 1)
-	require.Equal(t, "compaction", gjson.Get(events[1][1], "response.output.0.type").String())
-	require.Equal(t, int64(38), gjson.Get(events[1][1], "response.usage.total_tokens").Int())
+	envelope := gjson.Get(events[0][1], "item.encrypted_content").String()
+	checkpoint, err := svc.openDeepSeekCompactCheckpoint(deepSeekCompactTestContext(42), envelope)
+	require.NoError(t, err)
+	require.Contains(t, checkpoint, deepSeekRemoteCompactTestSummary)
+	require.NotContains(t, checkpoint, "private chain of thought")
 }
 
-func TestForwardDeepSeekResponsesLegacyCompactReturnsUnaryJSON(t *testing.T) {
+func TestForwardDeepSeekLegacyCompactReturnsUnaryResponsesJSON(t *testing.T) {
 	body := mustMarshalDeepSeekCompactTestJSON(t, map[string]any{
-		"model":            "deepseek-v4-flash",
-		"stream":           true,
-		"store":            true,
-		"prompt_cache_key": "legacy-compact-session",
-		"instructions":     "You are Codex.",
-		"input": []any{map[string]any{
-			"type": "message", "role": "user",
-			"content": strings.Repeat("Preserve this legacy Codex context. ", 100),
-		}},
+		"model": "deepseek-v4-flash", "instructions": "You are Codex.",
+		"input": strings.Repeat("legacy context ", 100),
 	})
-	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactChatResponse(
-		deepSeekRemoteCompactTestSummary,
-		"private reasoning must not become the checkpoint",
-		"stop",
-	)}
-	svc := newDeepSeekRemoteCompactTestService(upstream)
 	c, recorder := newDeepSeekResponsesTestContext(t, body)
 	c.Request.URL.Path = "/v1/responses/compact"
-
+	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{resp: deepSeekRemoteCompactResponsesResponse(deepSeekRemoteCompactTestSummary)})
 	normalized, err := svc.NormalizeDeepSeekLegacyCompactRequest(c, body)
 	require.NoError(t, err)
-	require.False(t, gjson.GetBytes(normalized, "stream").Exists())
-	require.False(t, gjson.GetBytes(normalized, "store").Exists())
-	require.False(t, gjson.GetBytes(normalized, "prompt_cache_key").Exists())
-	legacyInput := gjson.GetBytes(normalized, "input").Array()
-	require.NotEmpty(t, legacyInput)
-	require.Equal(t, "compaction_trigger", legacyInput[len(legacyInput)-1].Get("type").String())
 	MarkDeepSeekCompaction(c, DeepSeekCompactionModeLegacyUnary)
-
 	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), normalized)
 	require.NoError(t, err)
-	require.NotNil(t, result)
 	require.False(t, result.Stream)
-	require.Equal(t, deepSeekChatCompletionsEndpoint, result.UpstreamEndpoint)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+	require.Equal(t, deepSeekResponsesEndpoint, result.UpstreamEndpoint)
 	require.Equal(t, "response", gjson.GetBytes(recorder.Body.Bytes(), "object").String())
-	require.Equal(t, "completed", gjson.GetBytes(recorder.Body.Bytes(), "status").String())
-	require.Len(t, gjson.GetBytes(recorder.Body.Bytes(), "output").Array(), 1)
 	require.Equal(t, "compaction", gjson.GetBytes(recorder.Body.Bytes(), "output.0.type").String())
 	require.NotEmpty(t, gjson.GetBytes(recorder.Body.Bytes(), "output.0.encrypted_content").String())
-	require.NotContains(t, recorder.Body.String(), "event: response.completed")
-	require.NotNil(t, upstream.lastReq)
-	require.Equal(t, "/chat/completions", upstream.lastReq.URL.Path)
+}
+
+func TestReadDeepSeekCompactResponsesStreamStrictTerminalContract(t *testing.T) {
+	completed := deepSeekRemoteCompactCompletedPayload(deepSeekRemoteCompactTestSummary, true, nil)
+	completedNoUsage := deepSeekRemoteCompactCompletedPayload(deepSeekRemoteCompactTestSummary, false, nil)
+	completedNoText := deepSeekRemoteCompactCompletedPayload("", true, nil)
+	completedToolOutput := deepSeekRemoteCompactCompletedPayload("", true, []any{map[string]any{"type": "function_call", "status": "completed"}})
+	completedWithError := deepSeekRemoteCompactCompletedWithErrorPayload(deepSeekRemoteCompactTestSummary)
+	usageBeforeTerminal := `{"type":"response.in_progress","response":{"id":"resp_usage_only","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}`
+	incomplete := deepSeekRemoteCompactTerminalPayload("response.incomplete", "incomplete", true)
+	failed := deepSeekRemoteCompactTerminalPayload("response.failed", "failed", true)
+	tests := []struct {
+		name      string
+		wire      string
+		wantErr   bool
+		wantDone  bool
+		wantUsage bool
+		wantFirst bool
+	}{
+		{name: "completed", wire: deepSeekRemoteCompactSSEWire(`{"type":"response.output_text.delta","delta":"first"}`, completed), wantDone: true, wantUsage: true, wantFirst: true},
+		{name: "error null", wire: deepSeekRemoteCompactSSEWire(strings.TrimSuffix(completed, "}") + `,"error":null}`), wantDone: true, wantUsage: true},
+		{name: "nested response error", wire: deepSeekRemoteCompactSSEWire(completedWithError), wantErr: true, wantDone: true, wantUsage: true},
+		{name: "done forbidden after completed", wire: deepSeekRemoteCompactSSEWire(completed, "[DONE]"), wantErr: true, wantDone: true, wantUsage: true},
+		{name: "duplicate terminal", wire: deepSeekRemoteCompactSSEWire(completed, completed), wantErr: true, wantUsage: true},
+		{name: "incomplete", wire: deepSeekRemoteCompactSSEWire(incomplete), wantErr: true, wantUsage: true},
+		{name: "failed", wire: deepSeekRemoteCompactSSEWire(failed), wantErr: true, wantUsage: true},
+		{name: "missing usage", wire: deepSeekRemoteCompactSSEWire(completedNoUsage), wantErr: true, wantDone: true},
+		{name: "no visible text", wire: deepSeekRemoteCompactSSEWire(completedNoText), wantErr: true, wantDone: true, wantUsage: true},
+		{name: "tool output", wire: deepSeekRemoteCompactSSEWire(completedToolOutput), wantErr: true, wantDone: true, wantUsage: true},
+		{name: "undispatched terminal", wire: strings.TrimSuffix(deepSeekRemoteCompactSSEWire(completed), "\n"), wantErr: true},
+		{name: "usage before truncated stream", wire: deepSeekRemoteCompactSSEWire(usageBeforeTerminal), wantErr: true, wantUsage: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := newDeepSeekRemoteCompactTestContext(t, deepSeekRemoteCompactTestRequestBody())
+			svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
+			resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(tt.wire))}
+			result, err := svc.readDeepSeekCompactResponsesStream(c, resp, deepSeekForwardTestAccount(), time.Now())
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, deepSeekRemoteCompactTestSummary, result.Summary)
+			}
+			require.Equal(t, tt.wantDone, result.Completed)
+			require.Equal(t, tt.wantUsage, hasBillableOpenAIUsage(result.Usage))
+			require.Equal(t, tt.wantFirst, result.FirstTokenMs != nil)
+		})
+	}
+}
+
+func TestForwardDeepSeekRemoteCompactionMissingUsageAllowsFailover(t *testing.T) {
+	body := deepSeekRemoteCompactDetailedTestRequestBody(t)
+	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
+	completedWithoutUsage := deepSeekRemoteCompactCompletedPayload(deepSeekRemoteCompactTestSummary, false, nil)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(deepSeekRemoteCompactSSEWire(completedWithoutUsage))),
+	}}
+	svc := newDeepSeekRemoteCompactTestService(upstream)
+
+	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
+
+	require.Nil(t, result)
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Empty(t, recorder.Body.Bytes())
+}
+
+func TestForwardDeepSeekRemoteCompactionUsageBeforeTruncationDoesNotFailover(t *testing.T) {
+	body := deepSeekRemoteCompactDetailedTestRequestBody(t)
+	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
+	usageBeforeTerminal := `{"type":"response.in_progress","response":{"id":"resp_usage_only","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}`
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(deepSeekRemoteCompactSSEWire(usageBeforeTerminal))),
+	}}
+	svc := newDeepSeekRemoteCompactTestService(upstream)
+
+	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
+
+	require.NotNil(t, result)
+	require.Error(t, err)
+	require.True(t, result.HasBillableTokenUsage())
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.Empty(t, recorder.Body.Bytes())
+}
+
+func TestReadDeepSeekCompactResponsesStreamRecomputesTotalFromLatestUsage(t *testing.T) {
+	c, _ := newDeepSeekRemoteCompactTestContext(t, deepSeekRemoteCompactTestRequestBody())
+	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
+	earlyUsage := `{"type":"response.in_progress","response":{"id":"resp_usage_only","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}`
+	completedWithoutTotal := deepSeekRemoteCompactCompletedWithoutTotalPayload(deepSeekRemoteCompactTestSummary)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(deepSeekRemoteCompactSSEWire(earlyUsage, completedWithoutTotal))),
+	}
+
+	result, err := svc.readDeepSeekCompactResponsesStream(c, resp, deepSeekForwardTestAccount(), time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, 31, result.Usage.InputTokens)
+	require.Equal(t, 7, result.Usage.OutputTokens)
+	require.Equal(t, 38, result.TotalTokens)
 }
 
 func TestNormalizeDeepSeekLegacyCompactRequestRejectsInvalidTriggers(t *testing.T) {
@@ -174,94 +300,6 @@ func TestNormalizeDeepSeekLegacyCompactRequestConvertsStringInput(t *testing.T) 
 	require.Equal(t, "compaction_trigger", items[1].Get("type").String())
 }
 
-func TestDeepSeekCompactChatRequestMatchesHarnessHistorySemantics(t *testing.T) {
-	body := mustMarshalDeepSeekCompactTestJSON(t, map[string]any{
-		"model": "deepseek-v4-flash", "stream": true,
-		"tools": []any{map[string]any{"type": "function", "name": "shell", "parameters": map[string]any{"type": "object"}}},
-		"input": []any{
-			map[string]any{"type": "message", "role": "user", "content": []any{
-				map[string]any{"type": "input_text", "text": "alpha"},
-				map[string]any{"type": "input_text", "text": "beta"},
-			}},
-			map[string]any{"type": "reasoning", "summary": []any{
-				map[string]any{"type": "summary_text", "text": "reason-a"},
-				map[string]any{"type": "summary_text", "text": "reason-b"},
-			}},
-			map[string]any{"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": `{}`},
-			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": ""},
-			map[string]any{"type": "reasoning", "summary": []any{map[string]any{"type": "summary_text", "text": "standalone"}}},
-			map[string]any{"type": "message", "role": "user", "content": []any{
-				map[string]any{"type": "input_text", "text": "gamma"},
-				map[string]any{"type": "input_text", "text": "delta"},
-			}},
-			map[string]any{"type": "compaction_trigger"},
-		},
-	})
-	chatBody, _, err := deepSeekCompactChatRequest(body, "deepseek-v4-flash")
-	require.NoError(t, err)
-	messages := gjson.GetBytes(chatBody, "messages").Array()
-	require.Equal(t, "alphabeta", messages[0].Get("content").String())
-	require.Equal(t, "assistant", messages[1].Get("role").String())
-	require.Equal(t, "", messages[1].Get("content").String())
-	require.True(t, messages[1].Get("content").Exists())
-	require.Equal(t, "reason-areason-b", messages[1].Get("reasoning_content").String())
-	require.Equal(t, "tool", messages[2].Get("role").String())
-	require.Equal(t, "(no output)", messages[2].Get("content").String())
-	require.Equal(t, "assistant", messages[3].Get("role").String())
-	require.True(t, messages[3].Get("content").Exists())
-	require.Equal(t, "", messages[3].Get("content").String())
-	require.Equal(t, "gammadelta", messages[4].Get("content").String())
-	require.Equal(t, deepSeekCompactInstruction, messages[len(messages)-1].Get("content").String())
-}
-
-func TestDeepSeekCompactChatRequestFlattensToolOutputTextParts(t *testing.T) {
-	body := mustMarshalDeepSeekCompactTestJSON(t, map[string]any{
-		"model": "deepseek-v4-flash", "stream": true,
-		"input": []any{
-			map[string]any{"type": "message", "role": "user", "content": "run the tool"},
-			map[string]any{"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": `{}`},
-			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": []any{
-				map[string]any{"type": "input_text", "text": "alpha"},
-				map[string]any{"type": "input_text", "text": "beta"},
-			}},
-			map[string]any{"type": "compaction_trigger"},
-		},
-	})
-	chatBody, _, err := deepSeekCompactChatRequest(body, "deepseek-v4-flash")
-	require.NoError(t, err)
-	messages := gjson.GetBytes(chatBody, "messages").Array()
-	require.Equal(t, "tool", messages[2].Get("role").String())
-	require.Equal(t, "alphabeta", messages[2].Get("content").String())
-}
-
-func TestDeepSeekCompactChatRequestRejectsUnbalancedToolHistory(t *testing.T) {
-	for _, history := range [][]any{
-		{
-			map[string]any{"type": "message", "role": "user", "content": "run the tool"},
-			map[string]any{"type": "function_call", "call_id": "call_1", "name": "shell", "arguments": `{}`},
-		},
-		{
-			map[string]any{"type": "message", "role": "user", "content": "orphan result"},
-			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": "done"},
-		},
-	} {
-		body := mustMarshalDeepSeekCompactTestJSON(t, map[string]any{
-			"model": "deepseek-v4-flash", "stream": true,
-			"input": append(history, map[string]any{"type": "compaction_trigger"}),
-		})
-		_, _, err := deepSeekCompactChatRequest(body, "deepseek-v4-flash")
-		require.Error(t, err)
-	}
-}
-
-func TestDeepSeekCompactChatRequestRejectsPreviousResponseID(t *testing.T) {
-	body := deepSeekRemoteCompactTestRequestBody()
-	body, err := sjson.SetBytes(body, "previous_response_id", "resp_server_state")
-	require.NoError(t, err)
-	_, _, err = deepSeekCompactChatRequest(body, "deepseek-v4-flash")
-	require.ErrorContains(t, err, "does not support previous_response_id")
-}
-
 func TestForwardDeepSeekResponsesRestoresRemoteCompactionAsFramedUserCheckpoint(t *testing.T) {
 	compactItem := runDeepSeekRemoteCompactTestTurn(t)
 	nextUser := map[string]any{
@@ -301,113 +339,6 @@ func TestForwardDeepSeekResponsesRestoresRemoteCompactionAsFramedUserCheckpoint(
 	require.Equal(t, nextResponse, recorder.Body.String())
 }
 
-func TestForwardDeepSeekResponsesRemoteCompactionFailsClosedBeforeClientOutput(t *testing.T) {
-	tests := []struct {
-		name string
-		resp *http.Response
-	}{
-		{name: "empty_text", resp: deepSeekRemoteCompactChatResponse("   ", "", "stop")},
-		{name: "reasoning_only", resp: deepSeekRemoteCompactChatResponse("", "private reasoning is not a checkpoint", "stop")},
-		{name: "incomplete", resp: deepSeekRemoteCompactChatResponse("partial checkpoint", "", "length")},
-		{name: "image_output", resp: deepSeekRemoteCompactRawChatResponse(
-			`{"id":"chatcmpl_compact","choices":[{"index":0,"delta":{"content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,aW1hZ2U="}}]},"finish_reason":"stop"}]}`,
-		)},
-		{name: "error_event_before_text", resp: &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body: io.NopCloser(strings.NewReader(
-				"event: error\n" +
-					"data: {\"type\":\"error\",\"error\":{\"message\":\"provider failed\"}}\n\n" +
-					"data: {\"choices\":[{\"delta\":{\"content\":\"must not be accepted\"},\"finish_reason\":\"stop\"}]}\n\n" +
-					"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\n" +
-					"data: [DONE]\n\n",
-			)),
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body := deepSeekRemoteCompactTestRequestBody()
-			c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
-			upstream := &httpUpstreamRecorder{resp: tt.resp}
-			svc := newDeepSeekRemoteCompactTestService(upstream)
-
-			result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
-			require.Error(t, err)
-			require.NotNil(t, result, "a completed billable summary call must not be retried")
-			require.True(t, result.HasBillableTokenUsage())
-			var failoverErr *UpstreamFailoverError
-			require.False(t, errors.As(err, &failoverErr))
-			if tt.name == "error_event_before_text" {
-				require.Empty(t, result.UpstreamTerminalEvent)
-			}
-			require.NotNil(t, upstream.lastReq)
-			require.False(t, c.Writer.Written())
-			require.Empty(t, recorder.Body.String())
-		})
-	}
-}
-
-func TestForwardDeepSeekResponsesRemoteCompactionRequiresDispatchedDoneAndUsage(t *testing.T) {
-	tests := []struct {
-		name         string
-		body         string
-		wantBillable bool
-	}{
-		{
-			name:         "done_without_blank_dispatch",
-			wantBillable: true,
-			body: "data: {\"choices\":[{\"delta\":{\"content\":\"summary\"},\"finish_reason\":\"stop\"}]}\n\n" +
-				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\n" +
-				"data: [DONE]\n",
-		},
-		{
-			name: "missing_usage",
-			body: "data: {\"choices\":[{\"delta\":{\"content\":\"summary\"},\"finish_reason\":\"stop\"}]}\n\n" +
-				"data: [DONE]\n\n",
-		},
-		{
-			name:         "done_payload_on_error_event",
-			wantBillable: true,
-			body: "data: {\"choices\":[{\"delta\":{\"content\":\"must not be accepted\"},\"finish_reason\":\"stop\"}]}\n\n" +
-				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\n" +
-				"event: error\n" +
-				"data: [DONE]\n\n",
-		},
-		{
-			name:         "malformed_event_then_usage",
-			wantBillable: true,
-			body: "data: {malformed-json\n\n" +
-				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\n" +
-				"data: [DONE]\n\n",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body := deepSeekRemoteCompactTestRequestBody()
-			c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
-			upstream := &httpUpstreamRecorder{resp: &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-				Body:       io.NopCloser(strings.NewReader(tt.body)),
-			}}
-			svc := newDeepSeekRemoteCompactTestService(upstream)
-			result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
-			require.Error(t, err)
-			require.Empty(t, recorder.Body.String())
-			var failoverErr *UpstreamFailoverError
-			if tt.wantBillable {
-				require.NotNil(t, result)
-				require.True(t, result.HasBillableTokenUsage())
-				require.False(t, errors.As(err, &failoverErr))
-			} else {
-				require.Nil(t, result)
-				require.True(t, errors.As(err, &failoverErr))
-			}
-		})
-	}
-}
-
 func TestForwardDeepSeekResponsesRejectsTamperedCompactEnvelopeBeforeUpstream(t *testing.T) {
 	compactItem := runDeepSeekRemoteCompactTestTurn(t)
 	envelope, _ := compactItem["encrypted_content"].(string)
@@ -421,7 +352,7 @@ func TestForwardDeepSeekResponsesRejectsTamperedCompactEnvelopeBeforeUpstream(t 
 		}},
 	})
 	c, recorder := newDeepSeekResponsesTestContext(t, body)
-	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactChatResponse("unused", "", "stop")}
+	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactResponsesResponse("unused")}
 	svc := newDeepSeekRemoteCompactTestService(upstream)
 
 	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
@@ -443,25 +374,6 @@ func TestDeepSeekCompactEnvelopeIsBoundToAuthenticatedUser(t *testing.T) {
 	require.Equal(t, checkpoint, restored)
 	_, err = svc.openDeepSeekCompactCheckpoint(deepSeekCompactTestContext(43), envelope)
 	require.ErrorIs(t, err, ErrDeepSeekCompactInvalidEncryptedContent)
-}
-
-func TestForwardDeepSeekResponsesRemoteCompactionRedactsSplitAPIKeyFromCheckpoint(t *testing.T) {
-	body := deepSeekRemoteCompactTestRequestBody()
-	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
-	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactRawChatResponse(
-		`{"id":"chatcmpl_compact","choices":[{"delta":{"content":"sk-deep"}}]}`,
-		`{"id":"chatcmpl_compact","choices":[{"delta":{"content":"seek-test safe summary"},"finish_reason":"stop"}]}`,
-	)}
-	svc := newDeepSeekRemoteCompactTestService(upstream)
-	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	events := parseCompactBridgeSSE(t, recorder.Body.String())
-	envelope := gjson.Get(events[0][1], "item.encrypted_content").String()
-	checkpoint, err := svc.openDeepSeekCompactCheckpoint(deepSeekCompactTestContext(42), envelope)
-	require.NoError(t, err)
-	require.NotContains(t, checkpoint, "sk-deepseek-test")
-	require.Contains(t, checkpoint, "[redacted]")
 }
 
 func TestRestoreDeepSeekCompactInputRejectsNonStringEncryptedContent(t *testing.T) {
@@ -556,91 +468,6 @@ func TestRestoreDeepSeekCompactInputUsesGatewayMaxBodySize(t *testing.T) {
 	require.False(t, changed)
 }
 
-func TestForwardDeepSeekResponsesRemoteCompactionPreservesEarlierBillableUsage(t *testing.T) {
-	body := deepSeekRemoteCompactTestRequestBody()
-	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
-	stream := "data: {\"id\":\"chat_compact\",\"choices\":[{\"delta\":{\"content\":\"short summary\"},\"finish_reason\":\"stop\"}]}\n\n" +
-		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":31,\"completion_tokens\":7,\"total_tokens\":38}}\n\n" +
-		"data: {\"choices\":[],\"usage\":{}}\n\n" +
-		"data: [DONE]\n\n"
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-		Body:       io.NopCloser(strings.NewReader(stream)),
-	}}
-	svc := newDeepSeekRemoteCompactTestService(upstream)
-	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
-	require.NoError(t, err)
-	require.Equal(t, 31, result.Usage.InputTokens)
-	require.Equal(t, 7, result.Usage.OutputTokens)
-	require.Contains(t, recorder.Body.String(), "response.completed")
-}
-
-func TestForwardDeepSeekResponsesRemoteCompactionMarksSSECyberPolicyWithUsage(t *testing.T) {
-	body := deepSeekRemoteCompactTestRequestBody()
-	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
-	stream := "event: error\n" +
-		"data: {\"type\":\"error\",\"error\":{\"code\":\"cyber_policy\",\"message\":\"blocked by policy\"}}\n\n" +
-		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":17,\"completion_tokens\":2,\"total_tokens\":19}}\n\n" +
-		"data: [DONE]\n\n"
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-		Body:       io.NopCloser(strings.NewReader(stream)),
-	}}
-	svc := newDeepSeekRemoteCompactTestService(upstream)
-	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
-	require.Error(t, err)
-	require.NotNil(t, result)
-	require.Empty(t, result.UpstreamTerminalEvent)
-	require.Equal(t, 17, result.Usage.InputTokens)
-	require.Equal(t, 2, result.Usage.OutputTokens)
-	mark := GetOpsCyberPolicy(c)
-	require.NotNil(t, mark)
-	require.Equal(t, "cyber_policy", mark.Code)
-	require.Equal(t, 17, mark.UpstreamInTok)
-	require.Equal(t, 2, mark.UpstreamOutTok)
-	require.Empty(t, recorder.Body.String())
-}
-
-func TestDeepSeekCompactImageDetectionIgnoresTextToolDataFields(t *testing.T) {
-	body := mustMarshalDeepSeekCompactTestJSON(t, map[string]any{
-		"model": "deepseek-v4-flash", "stream": true,
-		"input": []any{
-			map[string]any{"type": "message", "role": "user", "content": "inspect metadata"},
-			map[string]any{"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": `{}`},
-			map[string]any{"type": "function_call_output", "call_id": "call_1", "output": map[string]any{"image_url": "record identifier"}},
-			map[string]any{"type": "compaction_trigger"},
-		},
-	})
-	_, _, err := deepSeekCompactChatRequest(body, "deepseek-v4-flash")
-	require.NoError(t, err)
-}
-
-func TestForwardDeepSeekResponsesRemoteCompactionRejectsImageInputBeforeUpstream(t *testing.T) {
-	body := mustMarshalDeepSeekCompactTestJSON(t, map[string]any{
-		"model": "deepseek-v4-flash", "stream": true,
-		"input": []any{
-			map[string]any{
-				"type": "message", "role": "user",
-				"content": []any{map[string]any{
-					"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=",
-				}},
-			},
-			map[string]any{"type": "compaction_trigger"},
-		},
-	})
-	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
-	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactChatResponse("unused", "", "stop")}
-	svc := newDeepSeekRemoteCompactTestService(upstream)
-
-	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
-	require.ErrorContains(t, err, "does not support image content")
-	require.Nil(t, result)
-	require.Nil(t, upstream.lastReq)
-	require.Empty(t, recorder.Body.String())
-}
-
 func TestForwardDeepSeekResponsesOrdinaryWireRemainsByteForByteUnchanged(t *testing.T) {
 	body := []byte("{\n  \"model\": \"deepseek-v4-pro\",\n  \"stream\": false,\n  \"input\": [{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"ordinary request\"}]}]\n}")
 	responseBody := "{\n  \"id\": \"resp_ds_opaque\",\n  \"object\": \"response\",\n  \"model\": \"deepseek-v4-pro\",\n  \"status\": \"completed\",\n  \"output\": [{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\n  \"usage\": {\"input_tokens\": 4, \"output_tokens\": 1, \"total_tokens\": 5}\n}"
@@ -663,13 +490,40 @@ func TestForwardDeepSeekResponsesOrdinaryWireRemainsByteForByteUnchanged(t *test
 func TestForwardDeepSeekResponsesRejectsForeignCompactItemBeforeUpstream(t *testing.T) {
 	body := []byte(`{"model":"deepseek-v4-pro","stream":false,"input":[{"type":"compaction","encrypted_content":"foreign-provider-state"},{"type":"message","role":"user","content":"continue"}]}`)
 	c, recorder := newDeepSeekResponsesTestContext(t, body)
-	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactChatResponse("unused", "", "stop")}
+	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactResponsesResponse("unused")}
 	svc := newDeepSeekRemoteCompactTestService(upstream)
 	result, err := svc.Forward(context.Background(), c, deepSeekForwardTestAccount(), body)
 	require.ErrorIs(t, err, ErrDeepSeekCompactInvalidEncryptedContent)
 	require.Nil(t, result)
 	require.Nil(t, upstream.lastReq)
 	require.Empty(t, recorder.Body.String())
+}
+
+func TestRestoreDeepSeekCompactInputForOpenAITargetRestoresOwnedAndPreservesForeignState(t *testing.T) {
+	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
+	ctx := deepSeekCompactTestContext(42)
+	checkpoint := frameDeepSeekCompactSummary("resume this task")
+	envelope, err := svc.sealDeepSeekCompactCheckpoint(ctx, checkpoint)
+	require.NoError(t, err)
+	body := mustMarshalDeepSeekCompactTestJSON(t, map[string]any{
+		"model": "gpt-5.6-sol",
+		"input": []any{
+			map[string]any{"type": "compaction", "encrypted_content": "openai-native-opaque"},
+			map[string]any{"type": "compaction", "encrypted_content": envelope},
+			map[string]any{"type": "message", "role": "user", "content": "continue"},
+		},
+	})
+
+	restored, changed, err := svc.RestoreDeepSeekCompactInputForTarget(ctx, body, PlatformOpenAI)
+	require.NoError(t, err)
+	require.True(t, changed)
+	items := gjson.GetBytes(restored, "input").Array()
+	require.Len(t, items, 3)
+	require.Equal(t, "compaction", items[0].Get("type").String())
+	require.Equal(t, "openai-native-opaque", items[0].Get("encrypted_content").String())
+	require.Equal(t, "message", items[1].Get("type").String())
+	require.Equal(t, "user", items[1].Get("role").String())
+	require.Equal(t, checkpoint, items[1].Get("content.0.text").String())
 }
 
 type delayedDeepSeekCompactHTTPUpstream struct {
@@ -710,18 +564,94 @@ func runDeepSeekRemoteCompactTestTurn(t *testing.T) map[string]any {
 	t.Helper()
 	body := deepSeekRemoteCompactTestRequestBody()
 	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
-	upstream := &httpUpstreamRecorder{resp: deepSeekRemoteCompactChatResponse(deepSeekRemoteCompactTestSummary, "", "stop")}
-	svc := newDeepSeekRemoteCompactTestService(upstream)
+	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{resp: deepSeekRemoteCompactResponsesResponse(deepSeekRemoteCompactTestSummary)})
 	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	events := parseCompactBridgeSSE(t, recorder.Body.String())
 	require.Len(t, events, 2)
-	itemJSON := gjson.Get(events[0][1], "item").Raw
-	require.NotEmpty(t, itemJSON)
 	var item map[string]any
-	require.NoError(t, json.Unmarshal([]byte(itemJSON), &item))
+	require.NoError(t, json.Unmarshal([]byte(gjson.Get(events[0][1], "item").Raw), &item))
 	return item
+}
+
+func deepSeekRemoteCompactResponsesResponse(summary string) *http.Response {
+	completed := deepSeekRemoteCompactCompletedPayload(summary, true, nil)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type":          []string{"text/event-stream"},
+			"X-Deepseek-Request-Id": []string{"ds-compact-test"},
+		},
+		Body: io.NopCloser(strings.NewReader(deepSeekRemoteCompactSSEWire(
+			`{"type":"response.output_text.delta","delta":"visible"}`,
+			`{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_intermediate","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"this intermediate item is not the checkpoint"}]}}`,
+			completed,
+		))),
+	}
+}
+
+func deepSeekRemoteCompactCompletedPayload(summary string, withUsage bool, outputOverride []any) string {
+	output := outputOverride
+	if output == nil {
+		output = []any{
+			map[string]any{"id": "rs_1", "type": "reasoning", "status": "completed", "summary": []any{map[string]any{"type": "summary_text", "text": "private chain of thought"}}},
+			map[string]any{"id": "msg_final", "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": summary}}},
+		}
+	}
+	response := map[string]any{
+		"id": "resp_ds_compact", "object": "response", "model": "deepseek-v4-flash", "status": "completed", "output": output,
+	}
+	if withUsage {
+		response["usage"] = map[string]any{
+			"input_tokens": 31, "output_tokens": 7, "total_tokens": 38,
+			"input_tokens_details":  map[string]any{"cached_tokens": 5},
+			"output_tokens_details": map[string]any{"reasoning_tokens": 3},
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{"type": "response.completed", "response": response})
+	return string(payload)
+}
+
+func deepSeekRemoteCompactCompletedWithErrorPayload(summary string) string {
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(deepSeekRemoteCompactCompletedPayload(summary, true, nil)), &payload)
+	response, _ := payload["response"].(map[string]any)
+	response["error"] = map[string]any{"code": "upstream_error", "message": "failed despite completed status"}
+	encoded, _ := json.Marshal(payload)
+	return string(encoded)
+}
+
+func deepSeekRemoteCompactCompletedWithoutTotalPayload(summary string) string {
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(deepSeekRemoteCompactCompletedPayload(summary, true, nil)), &payload)
+	response, _ := payload["response"].(map[string]any)
+	usage, _ := response["usage"].(map[string]any)
+	delete(usage, "total_tokens")
+	encoded, _ := json.Marshal(payload)
+	return string(encoded)
+}
+
+func deepSeekRemoteCompactTerminalPayload(eventType, status string, withUsage bool) string {
+	response := map[string]any{"id": "resp_ds_terminal", "status": status, "output": []any{}}
+	if withUsage {
+		response["usage"] = map[string]any{"input_tokens": 3, "output_tokens": 1, "total_tokens": 4}
+	}
+	payload, _ := json.Marshal(map[string]any{"type": eventType, "response": response})
+	return string(payload)
+}
+
+func deepSeekRemoteCompactSSEWire(payloads ...string) string {
+	var wire strings.Builder
+	for _, payload := range payloads {
+		if payload != "[DONE]" {
+			if eventType := strings.TrimSpace(gjson.Get(payload, "type").String()); eventType != "" {
+				_, _ = wire.WriteString("event: " + eventType + "\n")
+			}
+		}
+		_, _ = wire.WriteString("data: " + payload + "\n\n")
+	}
+	return wire.String()
 }
 
 func deepSeekRemoteCompactTestRequestBody() []byte {
@@ -744,6 +674,7 @@ func deepSeekRemoteCompactDetailedTestRequestBody(t *testing.T) []byte {
 	return mustMarshalDeepSeekCompactTestJSON(t, map[string]any{
 		"model": "deepseek-v4-flash", "stream": true, "store": true,
 		"instructions": "You are Codex. Preserve the current engineering task.",
+		"reasoning":    map[string]any{"effort": "max", "summary": "detailed"},
 		"tools":        []any{map[string]any{"type": "function", "name": "shell", "description": "Run a command", "parameters": map[string]any{"type": "object"}}},
 		"tool_choice":  "auto",
 		"input": []any{
@@ -773,33 +704,6 @@ func newDeepSeekResponsesTestContext(t *testing.T, body []byte) (*gin.Context, *
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	return c, recorder
-}
-
-func deepSeekRemoteCompactChatResponse(content, reasoning, finishReason string) *http.Response {
-	contentJSON, _ := json.Marshal(content)
-	reasoningJSON, _ := json.Marshal(reasoning)
-	payload := `{"id":"chatcmpl_compact","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"content":` + string(contentJSON) + `,"reasoning_content":` + string(reasoningJSON) + `},"finish_reason":"` + finishReason + `"}]}`
-	return deepSeekRemoteCompactRawChatResponse(payload)
-}
-
-func deepSeekRemoteCompactRawChatResponse(payloads ...string) *http.Response {
-	var stream strings.Builder
-	for _, payload := range payloads {
-		_, _ = stream.WriteString("data: ")
-		_, _ = stream.WriteString(payload)
-		_, _ = stream.WriteString("\n\n")
-	}
-	_, _ = stream.WriteString(`data: {"id":"chatcmpl_compact","model":"deepseek-v4-flash","choices":[],"usage":{"prompt_tokens":31,"completion_tokens":7,"total_tokens":38,"prompt_tokens_details":{"cached_tokens":5},"completion_tokens_details":{"reasoning_tokens":3}}}`)
-	_, _ = stream.WriteString("\n\n")
-	_, _ = stream.WriteString("data: [DONE]\n\n")
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Header: http.Header{
-			"Content-Type":          []string{"text/event-stream"},
-			"X-Deepseek-Request-Id": []string{"ds-compact-test"},
-		},
-		Body: io.NopCloser(strings.NewReader(stream.String())),
-	}
 }
 
 func newDeepSeekRemoteCompactTestService(upstream *httpUpstreamRecorder) *OpenAIGatewayService {

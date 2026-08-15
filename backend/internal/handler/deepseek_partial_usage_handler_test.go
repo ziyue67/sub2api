@@ -31,6 +31,45 @@ type deepSeekCompactBlockingAuditEngine struct {
 	scanText string
 }
 
+func deepSeekCompactCompletedResponsesSSE(t *testing.T, responseID, summary string, inputTokens, outputTokens int) string {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": responseID, "model": "deepseek-v4-flash", "status": "completed",
+			"output": []any{map[string]any{
+				"id": "msg_compact", "type": "message", "status": "completed", "role": "assistant",
+				"content": []any{map[string]any{"type": "output_text", "text": summary}},
+			}},
+			"usage": map[string]any{
+				"input_tokens": inputTokens, "output_tokens": outputTokens,
+				"total_tokens":          inputTokens + outputTokens,
+				"input_tokens_details":  map[string]any{"cached_tokens": 0},
+				"output_tokens_details": map[string]any{"reasoning_tokens": 1},
+			},
+		},
+	})
+	require.NoError(t, err)
+	return "event: response.completed\ndata: " + string(payload) + "\n\n"
+}
+
+func deepSeekCompactFailedResponsesSSE(t *testing.T, responseID string, inputTokens, outputTokens int) string {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		"type": "response.failed",
+		"response": map[string]any{
+			"id": responseID, "model": "deepseek-v4-flash", "status": "failed", "output": []any{},
+			"error": map[string]any{"code": "provider_error", "message": "provider failed"},
+			"usage": map[string]any{
+				"input_tokens": inputTokens, "output_tokens": outputTokens,
+				"total_tokens": inputTokens + outputTokens,
+			},
+		},
+	})
+	require.NoError(t, err)
+	return "event: response.failed\ndata: " + string(payload) + "\n\n"
+}
+
 func (e *deepSeekCompactBlockingAuditEngine) EffectiveMode() securityaudit.Mode {
 	return securityaudit.ModeBlocking
 }
@@ -82,6 +121,9 @@ func newDeepSeekPartialUsageHandler(t *testing.T, upstreamBody string) (*OpenAIG
 		Credentials: map[string]any{
 			"api_key":  "sk-deepseek-partial",
 			"base_url": "http://deepseek.partial.test",
+		},
+		Extra: map[string]any{
+			service.DeepSeekUserIsolationModeKey: service.DeepSeekUserIsolationModeAuthenticatedUser,
 		},
 	}
 	cfg := &config.Config{RunMode: config.RunModeSimple}
@@ -253,14 +295,12 @@ func TestOpenAIResponsesDeepSeekPartialStreamRecordsObservedUsage(t *testing.T) 
 	require.NotContains(t, recorder.Body.String(), `"error":{"type"`)
 }
 
-func TestOpenAIResponsesDeepSeekRemoteCompactionUsesHarnessChatAndRecordsUsageOnce(t *testing.T) {
+func TestOpenAIResponsesDeepSeekRemoteCompactionUsesNativeResponsesAndRecordsUsageOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	upstreamBody := "data: {\"id\":\"chat_compact\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"private\",\"content\":\"## Primary Request and Intent\\n- continue implementation\"},\"finish_reason\":\"stop\"}]}\n\n" +
-		"data: {\"id\":\"chat_compact\",\"choices\":[],\"usage\":{\"prompt_tokens\":31,\"completion_tokens\":7,\"total_tokens\":38}}\n\n" +
-		"data: [DONE]\n\n"
+	upstreamBody := deepSeekCompactCompletedResponsesSSE(t, "resp_compact", "continue implementation", 31, 7)
 	h, usageRepo, apiKey, upstream := newDeepSeekPartialUsageHandler(t, upstreamBody)
 	requestBody, err := json.Marshal(map[string]any{
-		"model": "deepseek-v4-flash", "stream": true,
+		"model": "deepseek-v4-flash", "stream": true, "reasoning": map[string]any{"effort": "max"},
 		"input": []any{
 			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{
 				"type": "input_text", "text": strings.Repeat("important engineering context ", 100),
@@ -286,9 +326,16 @@ func TestOpenAIResponsesDeepSeekRemoteCompactionUsesHarnessChatAndRecordsUsageOn
 		t.Fatal("expected DeepSeek compact usage to be recorded")
 	}
 	require.Equal(t, 1, upstream.calls)
-	require.Equal(t, "/chat/completions", upstream.lastPath)
-	require.Equal(t, "enabled", gjson.GetBytes(upstream.lastBody, "thinking.type").String())
-	require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+	require.Equal(t, "/responses", upstream.lastPath)
+	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
+	require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning_effort").Exists())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "thinking").Exists())
+	require.True(t, strings.HasPrefix(gjson.GetBytes(upstream.lastBody, "user").String(), "dsu_v1_"))
+	require.False(t, strings.Contains(string(upstream.lastBody), "compaction_trigger"))
+	upstreamInput := gjson.GetBytes(upstream.lastBody, "input").Array()
+	require.NotEmpty(t, upstreamInput)
+	require.Contains(t, upstreamInput[len(upstreamInput)-1].Get("content.0.text").String(), "CONTEXT CHECKPOINT COMPACTION")
 	require.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
 	// The same sole item appears once in output_item.done and once inside the
 	// completed response object; there must be no second semantic item.
@@ -301,9 +348,7 @@ func TestOpenAIResponsesDeepSeekRemoteCompactionUsesHarnessChatAndRecordsUsageOn
 
 func TestOpenAIResponsesDeepSeekLegacyCodexCompactionWires(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	upstreamBody := "data: {\"id\":\"chat_compact_legacy\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"## Primary Request and Intent\\n- continue legacy task\"},\"finish_reason\":\"stop\"}]}\n\n" +
-		"data: {\"id\":\"chat_compact_legacy\",\"choices\":[],\"usage\":{\"prompt_tokens\":31,\"completion_tokens\":7,\"total_tokens\":38}}\n\n" +
-		"data: [DONE]\n\n"
+	upstreamBody := deepSeekCompactCompletedResponsesSSE(t, "resp_compact_legacy", "continue legacy task", 31, 7)
 	longContext := strings.Repeat("important legacy Codex context ", 100)
 	longContextJSON, err := json.Marshal(longContext)
 	require.NoError(t, err)
@@ -312,12 +357,14 @@ func TestOpenAIResponsesDeepSeekLegacyCodexCompactionWires(t *testing.T) {
 		path       string
 		body       string
 		wantStream bool
+		wantEffort string
 	}{
 		{
 			name:       "body_signal_stream_without_beta_header",
 			path:       "/v1/responses",
-			body:       `{"model":"deepseek-v4-flash","stream":true,"input":[{"type":"message","role":"user","content":"` + longContext + `"},{"type":"compaction_trigger"}]}`,
+			body:       `{"model":"deepseek-v4-flash","stream":true,"reasoning":{"effort":"high"},"input":[{"type":"message","role":"user","content":"` + longContext + `"},{"type":"compaction_trigger"}]}`,
 			wantStream: true,
+			wantEffort: "high",
 		},
 		{
 			name: "body_signal_unary",
@@ -352,15 +399,19 @@ func TestOpenAIResponsesDeepSeekLegacyCodexCompactionWires(t *testing.T) {
 				require.Equal(t, 31, log.InputTokens)
 				require.Equal(t, 7, log.OutputTokens)
 				require.Equal(t, tt.wantStream, log.Stream)
-				require.NotNil(t, log.ReasoningEffort)
-				require.Equal(t, "max", *log.ReasoningEffort)
+				if tt.wantEffort == "" {
+					require.Nil(t, log.ReasoningEffort)
+				} else {
+					require.NotNil(t, log.ReasoningEffort)
+					require.Equal(t, tt.wantEffort, *log.ReasoningEffort)
+				}
 			default:
 				t.Fatal("expected legacy DeepSeek compact usage to be recorded")
 			}
 			require.Equal(t, 1, upstream.calls)
-			require.Equal(t, "/chat/completions", upstream.lastPath)
-			require.Equal(t, "enabled", gjson.GetBytes(upstream.lastBody, "thinking.type").String())
-			require.Equal(t, "max", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+			require.Equal(t, "/responses", upstream.lastPath)
+			require.Equal(t, tt.wantEffort, gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+			require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning_effort").Exists())
 			if tt.wantStream {
 				require.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
 				require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: response.output_item.done"))
@@ -378,11 +429,9 @@ func TestOpenAIResponsesDeepSeekLegacyCodexCompactionWires(t *testing.T) {
 
 func TestOpenAIResponsesDeepSeekRemoteCompactionInvalidSummaryBillsOnceWithoutRetry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	upstreamBody := "data: {\"id\":\"chat_compact_empty\",\"choices\":[{\"delta\":{\"content\":\"   \"},\"finish_reason\":\"stop\"}]}\n\n" +
-		"data: {\"id\":\"chat_compact_empty\",\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2,\"total_tokens\":13}}\n\n" +
-		"data: [DONE]\n\n"
+	upstreamBody := deepSeekCompactCompletedResponsesSSE(t, "resp_compact_empty", "   ", 11, 2)
 	h, usageRepo, apiKey, upstream := newDeepSeekPartialUsageHandler(t, upstreamBody)
-	requestBody := `{"model":"deepseek-v4-flash","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"` + strings.Repeat("context ", 100) + `"}]},{"type":"compaction_trigger"}]}`
+	requestBody := `{"model":"deepseek-v4-flash","stream":true,"reasoning":{"effort":"max"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"` + strings.Repeat("context ", 100) + `"}]},{"type":"compaction_trigger"}]}`
 	c, recorder := deepSeekPartialUsageContext("/v1/responses", requestBody, apiKey)
 	c.Request.Header.Set("Accept", "text/event-stream")
 	c.Request.Header.Set("X-Codex-Beta-Features", "remote_compaction_v2")
@@ -406,12 +455,9 @@ func TestOpenAIResponsesDeepSeekRemoteCompactionInvalidSummaryBillsOnceWithoutRe
 
 func TestOpenAIResponsesDeepSeekRemoteCompactionUpstreamErrorBillsOnceAndFailsStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	upstreamBody := "event: error\n" +
-		"data: {\"type\":\"error\",\"error\":{\"message\":\"provider failed\"}}\n\n" +
-		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":13,\"completion_tokens\":2,\"total_tokens\":15}}\n\n" +
-		"data: [DONE]\n\n"
+	upstreamBody := deepSeekCompactFailedResponsesSSE(t, "resp_compact_failed", 13, 2)
 	h, usageRepo, apiKey, upstream := newDeepSeekPartialUsageHandler(t, upstreamBody)
-	requestBody := `{"model":"deepseek-v4-flash","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"` + strings.Repeat("context ", 100) + `"}]},{"type":"compaction_trigger"}]}`
+	requestBody := `{"model":"deepseek-v4-flash","stream":true,"reasoning":{"effort":"max"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"` + strings.Repeat("context ", 100) + `"}]},{"type":"compaction_trigger"}]}`
 	c, recorder := deepSeekPartialUsageContext("/v1/responses", requestBody, apiKey)
 	c.Request.Header.Set("Accept", "text/event-stream")
 	c.Request.Header.Set("X-Codex-Beta-Features", "remote_compaction_v2")

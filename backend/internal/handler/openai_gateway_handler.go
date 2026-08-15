@@ -947,10 +947,7 @@ func markDeepSeekRemoteCompactionV2Request(c *gin.Context, reqLog *zap.Logger, b
 }
 
 func (h *OpenAIGatewayHandler) restoreDeepSeekCompactInputBeforeAudit(c *gin.Context, body []byte, requestPlatform string) ([]byte, bool) {
-	if requestPlatform != service.PlatformDeepSeek {
-		return body, true
-	}
-	restoredBody, changed, err := h.gatewayService.RestoreDeepSeekCompactInput(c.Request.Context(), body)
+	restoredBody, changed, err := h.gatewayService.RestoreDeepSeekCompactInputForTarget(c.Request.Context(), body, requestPlatform)
 	if err != nil {
 		if errors.Is(err, service.ErrDeepSeekCompactRequestTooLarge) {
 			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", err.Error())
@@ -964,7 +961,9 @@ func (h *OpenAIGatewayHandler) restoreDeepSeekCompactInputBeforeAudit(c *gin.Con
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", message)
 		return nil, false
 	}
-	service.MarkDeepSeekResponsesInputValidated(c)
+	if requestPlatform == service.PlatformDeepSeek {
+		service.MarkDeepSeekResponsesInputValidated(c)
+	}
 	if changed {
 		return restoredBody, true
 	}

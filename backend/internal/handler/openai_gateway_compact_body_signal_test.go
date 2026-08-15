@@ -268,7 +268,7 @@ func TestRestoreDeepSeekCompactInputBeforeAudit_RejectsNonArrayCompactState(t *t
 	require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 }
 
-func TestRestoreDeepSeekCompactInputBeforeAudit_OnlyAppliesToDeepSeek(t *testing.T) {
+func TestRestoreDeepSeekCompactInputBeforeAudit_PreservesForeignOpenAIState(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.6-sol","stream":false,"input":[{"type":"compaction","encrypted_content":"untrusted"}]}`)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -280,6 +280,21 @@ func TestRestoreDeepSeekCompactInputBeforeAudit_OnlyAppliesToDeepSeek(t *testing
 	require.True(t, ok)
 	require.Equal(t, body, restored)
 	require.False(t, c.Writer.Written())
+}
+
+func TestRestoreDeepSeekCompactInputBeforeAudit_RejectsInvalidGatewayStateForOpenAI(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","stream":false,"input":[{"type":"compaction","encrypted_content":"sub2api.deepseek.compact.v1.invalid!"}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	h := &OpenAIGatewayHandler{gatewayService: newDeepSeekCompactRestoreTestGateway()}
+
+	restored, ok := h.restoreDeepSeekCompactInputBeforeAudit(c, body, service.PlatformOpenAI)
+
+	require.False(t, ok)
+	require.Nil(t, restored)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "invalid DeepSeek compact encrypted_content", gjson.GetBytes(recorder.Body.Bytes(), "error.message").String())
 }
 
 func TestRestoreDeepSeekCompactInputBeforeAudit_OrdinaryDeepSeekBodyUnchanged(t *testing.T) {
