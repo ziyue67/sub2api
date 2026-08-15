@@ -165,11 +165,15 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		// 手术，透传热路径禁全量 Unmarshal），出站头改写由请求构造器读取
 		// context 中的同一份 IDs 完成（turn_id 等随机字段两侧必须一致）。
 		if !isOpenAIResponsesCompactPath(c) {
+			captureCodexClientIdentifiersRaw(c, body)
+			sanitizedBody, sanitized, sanitizeErr := sanitizeCodexRequestClientMetadataRaw(body)
+			if sanitizeErr != nil { return nil, sanitizeErr }
+			if sanitized { body = sanitizedBody }
 			var clientHeaders http.Header
 			if c != nil && c.Request != nil {
 				clientHeaders = c.Request.Header
 			}
-			fpIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+			fpIDs := resolveCodexFingerprintIDsFromRequestWithScope(account, clientHeaders, getAPIKeyIDFromContext(c), strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String()))
 			if fpIDs != nil {
 				fpBody, fpChanged, fpErr := applyCodexFingerprintClientMetadataRaw(body, fpIDs)
 				if fpErr != nil {
@@ -1824,6 +1828,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 			return nil, fmt.Errorf("restore OpenAI Responses client tools: %w", err)
 		}
 	}
+	body = restoreCodexClientResponseIdentifiers(c, body)
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}

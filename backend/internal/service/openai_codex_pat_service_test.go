@@ -84,6 +84,15 @@ func TestOpenAIOAuthService_BuildAccountCredentialsForPAT(t *testing.T) {
 	require.NotContains(t, credentials, "id_token")
 }
 
+func TestOpenAIOAuthService_BuildAccountCredentialsPersistsDeviceID(t *testing.T) {
+	svc := NewOpenAIOAuthService(nil, nil)
+	credentials := svc.BuildAccountCredentials(&OpenAITokenInfo{
+		AccessToken: "access-token",
+		DeviceID:    "device-id",
+	})
+	require.Equal(t, "device-id", credentials["openai_device_id"])
+}
+
 func TestNormalizeOpenAIPersonalAccessTokenCredentialsRemovesOAuthFields(t *testing.T) {
 	account := &Account{
 		Platform: PlatformOpenAI,

@@ -1705,6 +1705,9 @@ func (a *Account) GetOpenAIDeviceID() string {
 	if !a.IsOpenAIOAuth() {
 		return ""
 	}
+	if deviceID := strings.TrimSpace(a.GetCredential("openai_device_id")); deviceID != "" {
+		return deviceID
+	}
 	return strings.TrimSpace(a.GetExtraString("openai_device_id"))
 }
 

@@ -21,6 +21,7 @@ import (
 // 构造器读取用于出站头改写——请求体与出站头必须共享同一份 IDs，保证
 // turn_id 等随机字段一致。
 const codexFingerprintIDsContextKey = "codex_fingerprint_ids"
+const codexClientIdentifiersContextKey = "codex_client_identifiers"
 
 // stageCodexFingerprintIDs 将本 attempt 解析出的收敛 ID 暂存到 gin context。
 // 必须无条件覆写（含 nil）：failover 从收敛账号切到 off 账号时，上一账号的
@@ -82,6 +83,7 @@ const (
 const (
 	codexFingerprintModeExtraKey = "codex_fingerprint_mode"
 	codexFingerprintSeedExtraKey = "codex_fingerprint_seed"
+	codexOutboundTimezoneExtraKey = "codex_outbound_timezone"
 )
 
 func canonicalCodexFingerprintSeed(value any) (string, bool) {
@@ -206,7 +208,10 @@ func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
 	if a == nil || !a.IsOpenAIOAuth() {
 		return codexFingerprintOff
 	}
-	return codexFingerprintModeFromExtra(a.Extra)
+	if _, explicitlySet := a.Extra[codexFingerprintModeExtraKey]; explicitlySet {
+		return codexFingerprintModeFromExtra(a.Extra)
+	}
+	return codexFingerprintSession
 }
 
 // deriveStableUUIDv4 从种子确定性派生一个 UUIDv4 格式的字符串。
@@ -257,6 +262,48 @@ func resolveConvergedThreadID(seed, clientSessionID string) string {
 	return deriveStableUUIDv4("sub2api:codex-thread-id:v2:" + seed + ":" + clientSessionID)
 }
 
+func (a *Account) resolveCodexOutboundTimezone() string {
+	if a == nil || !a.IsOpenAIOAuth() {
+		return "UTC"
+	}
+	tz := strings.TrimSpace(a.GetExtraString(codexOutboundTimezoneExtraKey))
+	if tz == "" {
+		return "UTC"
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return "UTC"
+	}
+	return tz
+}
+
+func codexConversationScope(promptCacheKey, clientSessionID string) string {
+	if key := strings.TrimSpace(promptCacheKey); key != "" {
+		return key
+	}
+	if sessionID := strings.TrimSpace(clientSessionID); sessionID != "" {
+		return sessionID
+	}
+	return "default"
+}
+
+func deriveCodexConversationSeed(account *Account, apiKeyID int64, promptCacheKey, clientSessionID string) string {
+	if account == nil {
+		return ""
+	}
+	seed, ok := codexFingerprintSeed(account.Extra)
+	if !ok {
+		return ""
+	}
+	return deriveStableUUIDv4(fmt.Sprintf("sub2api:codex-conversation-seed:v2:%s:%d:%s", seed, apiKeyID, codexConversationScope(promptCacheKey, clientSessionID)))
+}
+
+func resolveConvergedScopedSessionID(account *Account, apiKeyID int64, conversationSeed string) string {
+	if account == nil || conversationSeed == "" {
+		return ""
+	}
+	return deriveStableUUIDv4(fmt.Sprintf("sub2api:codex-session-seed:v2:%d:%d:%s", account.ID, apiKeyID, conversationSeed))
+}
+
 // codexFingerprintIDs 收敛后的完整 ID 集合。
 // 由 resolveCodexFingerprintIDs 一次性生成，同一个实例在头改写和体改写之间共享，
 // 确保所有载体中的 turn_id 等随机字段一致。体改写时还会补记原始
@@ -272,6 +319,10 @@ type codexFingerprintIDs struct {
 	turnStartedAtUnixMs           int64
 	originalBodySessionID         string
 	originalBodySessionIDCaptured bool
+	conversationID                string
+	promptCacheKey                string
+	timezone                      string
+	scoped                        bool
 }
 
 // resolveCodexFingerprintIDs 按收敛模式计算出站 ID 集合。
@@ -292,6 +343,7 @@ func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode c
 		accountID:           account.ID,
 		mode:                mode,
 		turnStartedAtUnixMs: time.Now().UnixMilli(),
+		timezone:            account.resolveCodexOutboundTimezone(),
 	}
 
 	ids.installationID = resolveConvergedInstallationID(account, seed)
@@ -324,6 +376,43 @@ func resolveCodexFingerprintIDs(account *Account, clientSessionID string, mode c
 	return nil
 }
 
+func resolveCodexFingerprintIDsWithScope(account *Account, apiKeyID int64, promptCacheKey, clientSessionID string, mode codexFingerprintMode) *codexFingerprintIDs {
+	if account == nil || mode == codexFingerprintOff {
+		return nil
+	}
+	seed, ok := codexFingerprintSeed(account.Extra)
+	if !ok {
+		return nil
+	}
+	ids := &codexFingerprintIDs{accountID: account.ID, mode: mode, turnStartedAtUnixMs: time.Now().UnixMilli(), timezone: account.resolveCodexOutboundTimezone(), scoped: true}
+	ids.installationID = resolveConvergedInstallationID(account, seed)
+	if ids.installationID == "" {
+		return nil
+	}
+	conversationSeed := deriveCodexConversationSeed(account, apiKeyID, promptCacheKey, clientSessionID)
+	if strings.TrimSpace(promptCacheKey) != "" {
+		ids.promptCacheKey = conversationSeed
+	}
+	switch mode {
+	case codexFingerprintDevice:
+		return ids
+	case codexFingerprintSession:
+		ids.sessionID = resolveConvergedScopedSessionID(account, apiKeyID, conversationSeed)
+		ids.conversationID = ids.sessionID
+		ids.threadID = deriveStableUUIDv4(fmt.Sprintf("sub2api:codex-thread-id:v2:%d:%d:%s", account.ID, apiKeyID, conversationSeed))
+		if ids.threadID == "" { ids.threadID = ids.sessionID }
+	case codexFingerprintFull:
+		ids.sessionID = resolveConvergedScopedSessionID(account, apiKeyID, conversationSeed)
+		ids.conversationID = ids.sessionID
+		ids.threadID = ids.sessionID
+	default:
+		return nil
+	}
+	ids.turnID = uuid.Must(uuid.NewV7()).String()
+	ids.windowID = ids.threadID + ":0"
+	return ids
+}
+
 // extractClientSessionID 从请求头中提取客户端原始的会话标识。
 // 优先取 session-id（连字符形式，Codex CLI 标准），回退到 session_id（下划线形式）。
 // 返回的值尚未被 isolateOpenAISessionID 改写，是客户端的真实标识。
@@ -352,6 +441,13 @@ func resolveCodexFingerprintIDsFromRequest(account *Account, clientHeaders http.
 	return resolveCodexFingerprintIDs(account, clientSessionID, mode)
 }
 
+func resolveCodexFingerprintIDsFromRequestWithScope(account *Account, clientHeaders http.Header, apiKeyID int64, promptCacheKey string) *codexFingerprintIDs {
+	if account == nil {
+		return nil
+	}
+	return resolveCodexFingerprintIDsWithScope(account, apiKeyID, promptCacheKey, extractClientSessionID(clientHeaders), account.GetCodexFingerprintMode())
+}
+
 // applyCodexFingerprintHeaders 按预计算的收敛 ID 改写出站 HTTP 头中的设备指纹。
 // 在 buildUpstreamRequest 的白名单透传之后、enforceCodexIdentityHeaders 之前调用。
 func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
@@ -361,10 +457,12 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 
 	// 所有非 off 模式都收敛 installation_id
 	h.Set("x-codex-installation-id", ids.installationID)
+	if ids.timezone != "" { h.Set("x-codex-timezone", ids.timezone) }
 
 	if ids.mode == codexFingerprintDevice {
-		rewriteCodexTurnMetadataFields(h, map[string]any{
-			"installation_id": ids.installationID,
+			rewriteCodexTurnMetadataFields(h, map[string]any{
+				"installation_id": ids.installationID,
+				"timezone": ids.timezone,
 		})
 		return
 	}
@@ -376,6 +474,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 	h.Set("session-id", ids.sessionID)
 	h.Set("session_id", ids.sessionID)
 	h.Set("thread-id", ids.threadID)
+	h.Set("conversation_id", ids.conversationID)
 
 	rewriteCodexTurnMetadataFields(h, map[string]any{
 		"installation_id":         ids.installationID,
@@ -384,6 +483,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
+		"timezone": ids.timezone,
 	})
 }
 
@@ -447,16 +547,19 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		existing["x-codex-installation-id"] = ids.installationID
 		modified = true
 	}
+	if ids.timezone != "" { existing["timezone"] = ids.timezone; modified = true }
 
 	if ids.mode == codexFingerprintDevice {
 		rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
 			"installation_id": ids.installationID,
+			"timezone": ids.timezone,
 		})
 		return modified
 	}
 
 	// session / full 模式
 	existing["session_id"] = ids.sessionID
+	existing["conversation_id"] = ids.conversationID
 	existing["thread_id"] = ids.threadID
 	existing["turn_id"] = ids.turnID
 	existing["x-codex-window-id"] = ids.windowID
@@ -468,6 +571,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
+		"timezone": ids.timezone,
 	})
 	return true
 }
@@ -515,9 +619,15 @@ func applyCodexFingerprintPromptCacheKey(reqBody map[string]any, ids *codexFinge
 		return false
 	}
 	promptCacheKey, ok := reqBody["prompt_cache_key"].(string)
-	if !ok || strings.TrimSpace(promptCacheKey) == "" || !shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey) {
+	if !ok || strings.TrimSpace(promptCacheKey) == "" {
 		return false
 	}
+	if ids.promptCacheKey != "" {
+		if !ids.scoped && !shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey) { return false }
+		reqBody["prompt_cache_key"] = ids.promptCacheKey
+		return promptCacheKey != ids.promptCacheKey
+	}
+	if !shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey) { return false }
 	if promptCacheKey == ids.sessionID {
 		return false
 	}
@@ -569,8 +679,11 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 		modified = true
 	}
 	promptCacheKey := gjson.GetBytes(body, "prompt_cache_key")
-	if promptCacheKey.Exists() && promptCacheKey.Type == gjson.String && strings.TrimSpace(promptCacheKey.String()) != "" && shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey.String()) {
-		rewritten, err := sjson.SetBytes(next, "prompt_cache_key", ids.sessionID)
+	if promptCacheKey.Exists() && promptCacheKey.Type == gjson.String && strings.TrimSpace(promptCacheKey.String()) != "" {
+		replacement := ""
+		if ids.promptCacheKey != "" && (ids.scoped || shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey.String())) { replacement = ids.promptCacheKey } else if shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey.String()) { replacement = ids.sessionID }
+		if replacement == "" || replacement == promptCacheKey.String() { return next, modified, nil }
+		rewritten, err := sjson.SetBytes(next, "prompt_cache_key", replacement)
 		if err != nil {
 			return body, false, fmt.Errorf("splice converged prompt_cache_key: %w", err)
 		}
@@ -597,5 +710,97 @@ func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fi
 	}
 	if rebuilt, err := json.Marshal(metadata); err == nil {
 		clientMetadata["x-codex-turn-metadata"] = string(rebuilt)
+	}
+}
+
+func sanitizeCodexClientMetadata(metadata map[string]any) bool {
+	if metadata == nil { return false }
+	blocked := map[string]struct{}{"api_key": {}, "api-key": {}, "apikey": {}, "authorization": {}, "authorization_header": {}, "proxy_authorization": {}, "proxy-authorization": {}, "proxy_url": {}, "proxyurl": {}, "base_url": {}, "baseurl": {}, "endpoint": {}, "endpoint_url": {}, "endpointurl": {}, "hostname": {}, "host": {}}
+	changed := false
+	for key, value := range metadata {
+		if _, forbidden := blocked[strings.ToLower(strings.TrimSpace(key))]; forbidden { delete(metadata, key); changed = true; continue }
+		switch nested := value.(type) {
+		case map[string]any:
+			changed = sanitizeCodexClientMetadata(nested) || changed
+		case []any:
+			for _, item := range nested { if child, ok := item.(map[string]any); ok { changed = sanitizeCodexClientMetadata(child) || changed } }
+		case string:
+			if !strings.EqualFold(key, "x-codex-turn-metadata") || strings.TrimSpace(nested) == "" { continue }
+			var embedded map[string]any
+			if json.Unmarshal([]byte(nested), &embedded) == nil && sanitizeCodexClientMetadata(embedded) { if rebuilt, err := json.Marshal(embedded); err == nil { metadata[key] = string(rebuilt); changed = true } }
+		}
+	}
+	return changed
+}
+
+func sanitizeCodexRequestClientMetadata(reqBody map[string]any) bool {
+	if reqBody == nil { return false }
+	metadata, _ := reqBody["client_metadata"].(map[string]any)
+	return sanitizeCodexClientMetadata(metadata)
+}
+
+func sanitizeCodexRequestClientMetadataRaw(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || !gjson.ParseBytes(body).IsObject() { return body, false, nil }
+	raw := gjson.GetBytes(body, "client_metadata")
+	if !raw.IsObject() { return body, false, nil }
+	metadata := map[string]any{}
+	if err := json.Unmarshal([]byte(raw.Raw), &metadata); err != nil { return body, false, fmt.Errorf("decode client_metadata for sanitization: %w", err) }
+	if !sanitizeCodexClientMetadata(metadata) { return body, false, nil }
+	encoded, err := json.Marshal(metadata); if err != nil { return body, false, err }
+	next, err := sjson.SetRawBytes(body, "client_metadata", encoded); if err != nil { return body, false, err }
+	return next, true, nil
+}
+
+type codexClientIdentifiers struct { installationID, sessionID, conversationID, threadID, windowID, promptCacheKey string }
+
+func captureCodexClientIdentifiers(c *gin.Context, reqBody map[string]any) {
+	if c == nil || c.Request == nil { return }
+	ids := &codexClientIdentifiers{installationID: strings.TrimSpace(c.Request.Header.Get("x-codex-installation-id")), sessionID: extractClientSessionID(c.Request.Header), conversationID: strings.TrimSpace(c.Request.Header.Get("conversation_id")), threadID: strings.TrimSpace(c.Request.Header.Get("thread-id")), windowID: strings.TrimSpace(c.Request.Header.Get("x-codex-window-id"))}
+	if reqBody != nil {
+		ids.promptCacheKey, _ = reqBody["prompt_cache_key"].(string)
+		if metadata, _ := reqBody["client_metadata"].(map[string]any); metadata != nil {
+			if ids.installationID == "" { ids.installationID, _ = metadata["x-codex-installation-id"].(string) }
+			if ids.sessionID == "" { ids.sessionID, _ = metadata["session_id"].(string) }
+			if ids.conversationID == "" { ids.conversationID, _ = metadata["conversation_id"].(string) }
+			if ids.threadID == "" { ids.threadID, _ = metadata["thread_id"].(string) }
+			if ids.windowID == "" { ids.windowID, _ = metadata["x-codex-window-id"].(string) }
+		}
+	}
+	c.Set(codexClientIdentifiersContextKey, ids)
+}
+
+func capturedCodexClientPromptCacheKey(c *gin.Context) string { if c == nil { return "" }; value, ok := c.Get(codexClientIdentifiersContextKey); ids, typed := value.(*codexClientIdentifiers); if !ok || !typed || ids == nil { return "" }; return strings.TrimSpace(ids.promptCacheKey) }
+
+func captureCodexClientIdentifiersRaw(c *gin.Context, body []byte) {
+	if c == nil || c.Request == nil { return }
+	bodyMap := map[string]any{}
+	if gjson.ParseBytes(body).IsObject() { if key := gjson.GetBytes(body, "prompt_cache_key"); key.Type == gjson.String { bodyMap["prompt_cache_key"] = key.String() }; if raw := gjson.GetBytes(body, "client_metadata"); raw.IsObject() { metadata := map[string]any{}; if json.Unmarshal([]byte(raw.Raw), &metadata) == nil { bodyMap["client_metadata"] = metadata } } }
+	captureCodexClientIdentifiers(c, bodyMap)
+}
+
+func restoreCodexClientResponseIdentifiers(c *gin.Context, data []byte) []byte {
+	if c == nil || len(data) == 0 { return data }
+	value, ok := c.Get(codexClientIdentifiersContextKey); original, typed := value.(*codexClientIdentifiers); if !ok || !typed || original == nil { return data }
+	fingerprint, ok := c.Get(codexFingerprintIDsContextKey); ids, typed := fingerprint.(*codexFingerprintIDs); if !ok || !typed || ids == nil { return data }
+	var payload any; if json.Unmarshal(data, &payload) != nil { return data }
+	if !restoreCodexClientIdentifierValues(payload, original, ids) { return data }
+	rebuilt, err := json.Marshal(payload); if err != nil { return data }; return rebuilt
+}
+
+func restoreCodexClientIdentifierValues(value any, original *codexClientIdentifiers, ids *codexFingerprintIDs) bool {
+	switch typed := value.(type) {
+	case []any:
+		changed := false; for _, item := range typed { changed = restoreCodexClientIdentifierValues(item, original, ids) || changed }; return changed
+	case map[string]any:
+		changed := false
+		for key, raw := range typed {
+			if nested, ok := raw.(map[string]any); ok { changed = restoreCodexClientIdentifierValues(nested, original, ids) || changed; continue }; if nested, ok := raw.([]any); ok { changed = restoreCodexClientIdentifierValues(nested, original, ids) || changed; continue }
+			stringValue, ok := raw.(string); if !ok { continue }
+			var replacement string; matched := false
+			switch strings.ToLower(key) { case "x-codex-installation-id", "installation_id": matched, replacement = stringValue == ids.installationID, original.installationID; case "session_id", "session-id": matched, replacement = stringValue == ids.sessionID, original.sessionID; case "conversation_id", "conversation-id": matched, replacement = stringValue == ids.conversationID, original.conversationID; case "thread_id", "thread-id": matched, replacement = stringValue == ids.threadID, original.threadID; case "window_id", "x-codex-window-id": matched, replacement = stringValue == ids.windowID, original.windowID; case "prompt_cache_key": matched, replacement = stringValue == ids.promptCacheKey, original.promptCacheKey }
+			if matched { if replacement == "" { delete(typed, key) } else { typed[key] = replacement }; changed = true }
+		}
+		return changed
+	default: return false
 	}
 }
