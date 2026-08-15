@@ -2868,6 +2868,27 @@
         </div>
       </div>
 
+      <div
+        v-if="form.platform === 'deepseek' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.deepseek.userIsolationMode') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.deepseek.userIsolationModeDesc') }}
+            </p>
+          </div>
+          <div class="w-full sm:w-56 sm:shrink-0">
+            <Select
+              v-model="deepSeekUserIsolationMode"
+              :options="deepSeekUserIsolationModeOptions"
+              data-testid="create-deepseek-user-isolation-mode-select"
+            />
+          </div>
+        </div>
+      </div>
+
       <!-- Anthropic API Key 自动透传开关 -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
@@ -3892,6 +3913,8 @@ const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
+type DeepSeekUserIsolationMode = 'authenticated_user' | 'off'
+const deepSeekUserIsolationMode = ref<DeepSeekUserIsolationMode>('authenticated_user')
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
@@ -4091,6 +4114,17 @@ const openAIWSModeOptions = computed(() => [
   { value: OPENAI_WS_MODE_CTX_POOL, label: t('admin.accounts.openai.wsModeCtxPool') },
   { value: OPENAI_WS_MODE_PASSTHROUGH, label: t('admin.accounts.openai.wsModePassthrough') },
   { value: OPENAI_WS_MODE_HTTP_BRIDGE, label: t('admin.accounts.openai.wsModeHttpBridge') }
+])
+
+const deepSeekUserIsolationModeOptions = computed(() => [
+  {
+    value: 'authenticated_user' as DeepSeekUserIsolationMode,
+    label: t('admin.accounts.deepseek.userIsolationAuthenticatedUser')
+  },
+  {
+    value: 'off' as DeepSeekUserIsolationMode,
+    label: t('admin.accounts.deepseek.userIsolationOff')
+  }
 ])
 
 const openaiResponsesWebSocketV2Mode = computed({
@@ -4352,6 +4386,7 @@ watch(
       codexCLIOnlyEnabled.value = false
       codexCLIOnlyAppServerEnabled.value = false
     }
+    deepSeekUserIsolationMode.value = 'authenticated_user'
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -4778,6 +4813,7 @@ const resetForm = () => {
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
+  deepSeekUserIsolationMode.value = 'authenticated_user'
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
@@ -4939,6 +4975,17 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
   }
 
   return Object.keys(extra).length > 0 ? extra : undefined
+}
+
+const buildDeepSeekExtra = (base?: Record<string, unknown>): Record<string, unknown> | undefined => {
+  if (form.platform !== 'deepseek' || accountCategory.value !== 'apikey') {
+    return base
+  }
+
+  return {
+    ...(base || {}),
+    deepseek_user_isolation_mode: deepSeekUserIsolationMode.value
+  }
 }
 
 // Helper function to create account with mixed channel warning handling
@@ -5239,7 +5286,7 @@ const handleSubmit = async () => {
   }
 
   form.credentials = credentials
-  const extra = buildAnthropicExtra(buildOpenAIExtra())
+  const extra = buildDeepSeekExtra(buildAnthropicExtra(buildOpenAIExtra()))
 
   await doCreateAccount({
     ...form,

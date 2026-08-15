@@ -1026,6 +1026,20 @@ jwt:
   access_token_expire_minutes: 0
 
 # =============================================================================
+# DeepSeek Provider Configuration
+# DeepSeek 平台配置
+# =============================================================================
+deepseek:
+  # Persistent secret used to derive anonymous upstream user isolation IDs.
+  # Keep this identical across replicas and restarts. Rotating it changes every
+  # derived ID and causes a DeepSeek KVCache cold start. When empty, Sub2API
+  # derives a separate HMAC subkey from the persistent jwt.secret.
+  # 用于派生匿名上游用户隔离 ID 的持久密钥。多副本和重启必须保持一致；轮换
+  # 会改变所有派生 ID，并导致 DeepSeek KVCache 冷启动。留空时会从持久的
+  # jwt.secret 通过独立 HMAC 域派生子密钥。
+  user_id_secret: ""
+
+# =============================================================================
 # TOTP (2FA) Configuration
 # TOTP 双因素认证配置
 # =============================================================================

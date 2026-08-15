@@ -413,7 +413,7 @@
         v-if="account.platform === 'grok' && account.type === 'oauth'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
-        <div class="flex items-center justify-between gap-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
             <label class="input-label mb-0">{{ t('admin.accounts.grokClientToolCache.title') }}</label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -1638,6 +1638,27 @@
           </div>
           <div class="w-52">
             <Select v-model="openaiResponsesWebSocketV2Mode" data-testid="edit-openai-ws-mode-select" :options="openAIWSModeOptions" />
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="account?.platform === 'deepseek' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.deepseek.userIsolationMode') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.deepseek.userIsolationModeDesc') }}
+            </p>
+          </div>
+          <div class="w-full sm:w-56 sm:shrink-0">
+            <Select
+              v-model="deepSeekUserIsolationMode"
+              :options="deepSeekUserIsolationModeOptions"
+              data-testid="edit-deepseek-user-isolation-mode-select"
+            />
           </div>
         </div>
       </div>
@@ -2959,6 +2980,8 @@ const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
+type DeepSeekUserIsolationMode = 'authenticated_user' | 'off'
+const deepSeekUserIsolationMode = ref<DeepSeekUserIsolationMode>('off')
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
@@ -3006,6 +3029,16 @@ const openAIWSModeOptions = computed(() => [
   { value: OPENAI_WS_MODE_CTX_POOL, label: t('admin.accounts.openai.wsModeCtxPool') },
   { value: OPENAI_WS_MODE_PASSTHROUGH, label: t('admin.accounts.openai.wsModePassthrough') },
   { value: OPENAI_WS_MODE_HTTP_BRIDGE, label: t('admin.accounts.openai.wsModeHttpBridge') }
+])
+const deepSeekUserIsolationModeOptions = computed(() => [
+  {
+    value: 'authenticated_user' as DeepSeekUserIsolationMode,
+    label: t('admin.accounts.deepseek.userIsolationAuthenticatedUser')
+  },
+  {
+    value: 'off' as DeepSeekUserIsolationMode,
+    label: t('admin.accounts.deepseek.userIsolationOff')
+  }
 ])
 const openaiResponsesWebSocketV2Mode = computed({
   get: () => {
@@ -3434,6 +3467,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openAICompactModelMappings.value = []
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
+  deepSeekUserIsolationMode.value = 'off'
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
@@ -3500,6 +3534,11 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     if (compactMappings && typeof compactMappings === 'object') {
       openAICompactModelMappings.value = Object.entries(compactMappings).map(([from, to]) => ({ from, to }))
     }
+  }
+  if (newAccount.platform === 'deepseek' && newAccount.type === 'apikey') {
+    deepSeekUserIsolationMode.value = extra?.deepseek_user_isolation_mode === 'authenticated_user'
+      ? 'authenticated_user'
+      : 'off'
   }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
@@ -4730,6 +4769,15 @@ const handleSubmit = async () => {
         newExtra.web_search_emulation = webSearchEmulationMode.value
       }
       updatePayload.extra = newExtra
+    }
+
+    if (props.account.platform === 'deepseek' && props.account.type === 'apikey') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      updatePayload.extra = {
+        ...currentExtra,
+        deepseek_user_isolation_mode: deepSeekUserIsolationMode.value
+      }
     }
 
     // For OpenAI OAuth/SetupToken/API Key accounts, handle passthrough mode in extra

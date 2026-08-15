@@ -587,6 +587,11 @@ export default {
       deepseek: {
         baseUrlHint: '保留默认值以使用 DeepSeek 官方 API',
         apiKeyHint: '您的 DeepSeek API Key',
+        userIsolationMode: '用户隔离',
+        userIsolationModeDesc:
+          '认证用户模式会根据每次请求中已认证的 Sub2API 用户生成稳定的上游匿名身份；关闭后不注入身份。此处不能输入或查看原始及派生用户 ID。',
+        userIsolationAuthenticatedUser: '认证用户（authenticated_user）',
+        userIsolationOff: '关闭（off）',
       },
       // OpenAI specific hints
       openai: {

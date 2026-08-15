@@ -290,7 +290,7 @@ type deepSeekResponsesJSONScan struct {
 var deepSeekResponsesRootJSONKeys = [...]string{
 	"model", "instructions", "input", "max_output_tokens", "temperature", "top_p", "stream", "tools",
 	"include", "store", "parallel_tool_calls", "reasoning", "text", "tool_choice", "service_tier",
-	"prompt_cache_key", "previous_response_id",
+	"prompt_cache_key", "previous_response_id", "user",
 }
 
 var deepSeekResponsesInputItemJSONKeys = [...]string{

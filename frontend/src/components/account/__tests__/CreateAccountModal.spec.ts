@@ -84,6 +84,32 @@ const OAuthAuthorizationFlowStub = defineComponent({
   `,
 })
 
+const SelectStub = defineComponent({
+  name: 'SelectStub',
+  props: {
+    modelValue: {
+      type: [String, Number, Boolean],
+      default: '',
+    },
+    options: {
+      type: Array,
+      default: () => [],
+    },
+  },
+  emits: ['update:modelValue'],
+  template: `
+    <select
+      v-bind="$attrs"
+      :value="modelValue"
+      @change="$emit('update:modelValue', $event.target.value)"
+    >
+      <option v-for="option in options" :key="option.value" :value="option.value">
+        {{ option.label }}
+      </option>
+    </select>
+  `,
+})
+
 function mountModal() {
   return mount(CreateAccountModal, {
     props: { show: true, proxies: [], groups: [] },
@@ -92,7 +118,7 @@ function mountModal() {
         BaseDialog: BaseDialogStub,
         OAuthAuthorizationFlow: OAuthAuthorizationFlowStub,
         ConfirmDialog: true,
-        Select: true,
+        Select: SelectStub,
         Icon: true,
         PlatformIcon: true,
         ProxySelector: true,
@@ -161,6 +187,15 @@ describe('CreateAccountModal DeepSeek API key accounts', () => {
     )
     expect(wrapper.find('[data-testid="upstream-billing-auto-probe"]').exists()).toBe(false)
 
+    const isolationSelect = wrapper.get('[data-testid="create-deepseek-user-isolation-mode-select"]')
+    expect((isolationSelect.element as HTMLSelectElement).value).toBe('authenticated_user')
+    expect(isolationSelect.findAll('option').map((option) => option.attributes('value'))).toEqual([
+      'authenticated_user',
+      'off',
+    ])
+    expect(wrapper.find('input[name="deepseek_user_id"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="deepseek_user"]').exists()).toBe(false)
+
     const baseUrlInput = wrapper.get('input[placeholder="https://api.deepseek.com"]')
     expect((baseUrlInput.element as HTMLInputElement).value).toBe('https://api.deepseek.com')
 
@@ -177,9 +212,26 @@ describe('CreateAccountModal DeepSeek API key accounts', () => {
         base_url: 'https://api.deepseek.com',
         api_key: 'sk-deepseek-test',
       }),
+      extra: expect.objectContaining({
+        deepseek_user_isolation_mode: 'authenticated_user',
+      }),
       upstream_billing_probe_enabled: false,
     }))
     expect(probeUpstreamBillingMock).not.toHaveBeenCalled()
+  })
+
+  it('can explicitly disable authenticated-user isolation', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-deepseek"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="create-deepseek-user-isolation-mode-select"]').setValue('off')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('DeepSeek account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-deepseek-test')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.deepseek_user_isolation_mode).toBe('off')
   })
 })
 

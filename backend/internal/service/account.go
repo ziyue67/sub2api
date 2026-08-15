@@ -296,6 +296,31 @@ func (a *Account) GetDeepSeekAPIKey() string {
 	return strings.TrimSpace(a.GetCredential("api_key"))
 }
 
+const (
+	DeepSeekUserIsolationModeKey               = "deepseek_user_isolation_mode"
+	DeepSeekUserIsolationModeAuthenticatedUser = "authenticated_user"
+	DeepSeekUserIsolationModeOff               = "off"
+)
+
+// ResolveDeepSeekUserIsolationMode returns the trusted upstream user identity
+// policy. Existing accounts without the field retain their pre-feature wire.
+func (a *Account) ResolveDeepSeekUserIsolationMode() string {
+	if a == nil || !a.IsDeepSeek() {
+		return DeepSeekUserIsolationModeOff
+	}
+	if a.Extra != nil {
+		if mode, ok := a.Extra[DeepSeekUserIsolationModeKey].(string); ok {
+			switch strings.ToLower(strings.TrimSpace(mode)) {
+			case DeepSeekUserIsolationModeOff:
+				return DeepSeekUserIsolationModeOff
+			case DeepSeekUserIsolationModeAuthenticatedUser:
+				return DeepSeekUserIsolationModeAuthenticatedUser
+			}
+		}
+	}
+	return DeepSeekUserIsolationModeOff
+}
+
 func (a *Account) IsGrokOAuth() bool {
 	return a.IsGrok() && a.Type == AccountTypeOAuth
 }

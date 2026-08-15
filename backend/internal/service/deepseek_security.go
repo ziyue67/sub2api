@@ -22,29 +22,31 @@ func withDeepSeekRedirectsDisabled(ctx context.Context, account *Account) contex
 	return WithHTTPUpstreamRedirectsDisabled(ctx)
 }
 
-// redactDeepSeekAPIKey removes the credential before upstream errors reach
-// logs, ops events, failover errors, or downstream responses.
+// redactDeepSeekAPIKey removes both the account credential and gateway-derived
+// DeepSeek user identities before upstream data reaches logs, ops events,
+// failover errors, or downstream responses.
 func redactDeepSeekAPIKey(account *Account, body []byte) []byte {
 	if account == nil || !account.IsDeepSeekAPIKey() || len(body) == 0 {
 		return body
 	}
 	apiKey := account.GetDeepSeekAPIKey()
 	if apiKey == "" {
-		return body
+		return redactDeepSeekDerivedUserIDs(body)
 	}
 
+	var redacted []byte
 	if json.Valid(bytes.TrimSpace(body)) {
-		return redactDeepSeekJSONStrings(body, apiKey)
+		redacted = redactDeepSeekJSONStrings(body, apiKey)
+	} else if sseRedacted, ok := redactDeepSeekSSE(body, apiKey); ok {
+		redacted = sseRedacted
+	} else {
+		// Invalid JSON and plain-text errors have no structure to preserve. Decode
+		// any complete JSON string fragments first, then cover literal/canonical
+		// escaped echoes in the remaining text.
+		redacted = redactDeepSeekJSONStrings(body, apiKey)
+		redacted = redactDeepSeekPlainText(redacted, apiKey)
 	}
-	if redacted, ok := redactDeepSeekSSE(body, apiKey); ok {
-		return redacted
-	}
-
-	// Invalid JSON and plain-text errors have no structure to preserve. Decode
-	// any complete JSON string fragments first, then cover literal/canonical
-	// escaped echoes in the remaining text.
-	redacted := redactDeepSeekJSONStrings(body, apiKey)
-	return redactDeepSeekPlainText(redacted, apiKey)
+	return redactDeepSeekDerivedUserIDs(redacted)
 }
 
 func redactDeepSeekAPIKeyString(account *Account, value string) string {
@@ -82,25 +84,62 @@ func sanitizeDeepSeekResponseHeadersInPlace(account *Account, headers http.Heade
 // not necessarily complete JSON strings, so the body JSON redactor cannot be
 // used for this case.
 func redactDeepSeekHeaderValue(value, apiKey string) string {
-	if value == "" || apiKey == "" {
+	if value == "" {
 		return value
 	}
-	value = strings.ReplaceAll(value, apiKey, deepSeekCredentialRedaction)
-	keyRunes := []rune(apiKey)
-	if len(keyRunes) == 0 {
-		return value
+	if apiKey != "" {
+		value = strings.ReplaceAll(value, apiKey, deepSeekCredentialRedaction)
+		keyRunes := []rune(apiKey)
+		var out strings.Builder
+		last := 0
+		for start := 0; start < len(value); {
+			end, ok := deepSeekEscapedHeaderMatchEnd(value, start, keyRunes)
+			if ok {
+				_, _ = out.WriteString(value[last:start])
+				_, _ = out.WriteString(deepSeekCredentialRedaction)
+				last = end
+				start = end
+				continue
+			}
+			_, size := utf8.DecodeRuneInString(value[start:])
+			if size <= 0 {
+				size = 1
+			}
+			start += size
+		}
+		if last != 0 {
+			_, _ = out.WriteString(value[last:])
+			value = out.String()
+		}
 	}
+	return redactDeepSeekDerivedUserIDsHeader(value)
+}
 
+func redactDeepSeekDerivedUserIDsHeader(value string) string {
+	value = redactDeepSeekDerivedUserIDsString(value)
+	prefix := []rune(deepSeekUserIDPrefix)
 	var out strings.Builder
 	last := 0
 	for start := 0; start < len(value); {
-		end, ok := deepSeekEscapedHeaderMatchEnd(value, start, keyRunes)
+		end, ok := deepSeekEscapedHeaderMatchEnd(value, start, prefix)
 		if ok {
-			_, _ = out.WriteString(value[last:start])
-			_, _ = out.WriteString(deepSeekCredentialRedaction)
-			last = end
-			start = end
-			continue
+			cursor := end
+			valid := true
+			for range deepSeekUserIDEncodedDigestBytes {
+				r, size, decoded := decodeDeepSeekHeaderRune(value, cursor)
+				if !decoded || !isDeepSeekDerivedUserIDByte(r) {
+					valid = false
+					break
+				}
+				cursor += size
+			}
+			if valid {
+				_, _ = out.WriteString(value[last:start])
+				_, _ = out.WriteString(deepSeekCredentialRedaction)
+				last = cursor
+				start = cursor
+				continue
+			}
 		}
 		_, size := utf8.DecodeRuneInString(value[start:])
 		if size <= 0 {
@@ -113,6 +152,88 @@ func redactDeepSeekHeaderValue(value, apiKey string) string {
 	}
 	_, _ = out.WriteString(value[last:])
 	return out.String()
+}
+
+func isDeepSeekDerivedUserIDByte(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_'
+}
+
+func redactDeepSeekDerivedUserIDsString(value string) string {
+	var out strings.Builder
+	last := 0
+	for searchFrom := 0; searchFrom < len(value); {
+		relative := strings.Index(value[searchFrom:], deepSeekUserIDPrefix)
+		if relative < 0 {
+			break
+		}
+		start := searchFrom + relative
+		end := start + len(deepSeekUserIDPrefix)
+		digestStart := end
+		for end < len(value) && end-digestStart < deepSeekUserIDEncodedDigestBytes && isDeepSeekDerivedUserIDByte(rune(value[end])) {
+			end++
+		}
+		if end-digestStart != deepSeekUserIDEncodedDigestBytes {
+			searchFrom = digestStart
+			continue
+		}
+		_, _ = out.WriteString(value[last:start])
+		_, _ = out.WriteString(deepSeekCredentialRedaction)
+		last = end
+		searchFrom = end
+	}
+	if last == 0 {
+		return value
+	}
+	_, _ = out.WriteString(value[last:])
+	return out.String()
+}
+
+func redactDeepSeekDerivedUserIDs(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	redacted := redactDeepSeekJSONStringsWithTransform(body, func(value string) string {
+		return redactDeepSeekDerivedUserIDsString(value)
+	})
+	return []byte(redactDeepSeekDerivedUserIDsString(string(redacted)))
+}
+
+func redactDeepSeekJSONStringsWithTransform(body []byte, transform func(string) string) []byte {
+	var out []byte
+	last := 0
+	for start := 0; start < len(body); {
+		rel := bytes.IndexByte(body[start:], '"')
+		if rel < 0 {
+			break
+		}
+		quoteStart := start + rel
+		quoteEnd := deepSeekJSONStringEnd(body, quoteStart)
+		if quoteEnd < 0 {
+			start = quoteStart + 1
+			continue
+		}
+		var decoded string
+		token := body[quoteStart : quoteEnd+1]
+		if err := json.Unmarshal(token, &decoded); err == nil {
+			transformed := transform(decoded)
+			if transformed != decoded {
+				encoded, err := json.Marshal(transformed)
+				if err == nil {
+					if out == nil {
+						out = make([]byte, 0, len(body))
+					}
+					out = append(out, body[last:quoteStart]...)
+					out = append(out, encoded...)
+					last = quoteEnd + 1
+				}
+			}
+		}
+		start = quoteEnd + 1
+	}
+	if out == nil {
+		return body
+	}
+	return append(out, body[last:]...)
 }
 
 func deepSeekEscapedHeaderMatchEnd(value string, start int, key []rune) (int, bool) {

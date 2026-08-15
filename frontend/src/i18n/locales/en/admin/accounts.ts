@@ -510,6 +510,11 @@ export default {
       deepseek: {
         baseUrlHint: 'Leave the default value for the official DeepSeek API',
         apiKeyHint: 'Your DeepSeek API Key',
+        userIsolationMode: 'User isolation',
+        userIsolationModeDesc:
+          'Authenticated user derives a stable anonymous upstream identity from each request\'s authenticated Sub2API user. Off disables identity injection. Raw and derived user IDs cannot be entered or viewed here.',
+        userIsolationAuthenticatedUser: 'Authenticated user (authenticated_user)',
+        userIsolationOff: 'Off (off)',
       },
       // OpenAI specific hints
       openai: {

@@ -596,6 +596,7 @@ describe('EditAccountModal', () => {
     const account = buildAccount()
     account.platform = 'deepseek'
     account.credentials = { api_key: 'sk-deepseek-test' }
+    account.extra = { unrelated_setting: 'keep-me' }
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
 
@@ -604,6 +605,14 @@ describe('EditAccountModal', () => {
     expect((wrapper.get('input[placeholder="https://api.deepseek.com"]').element as HTMLInputElement).value)
       .toBe('https://api.deepseek.com')
     expect(wrapper.find('[data-testid="upstream-billing-auto-probe"]').exists()).toBe(false)
+    const isolationSelect = wrapper.get('[data-testid="edit-deepseek-user-isolation-mode-select"]')
+    expect((isolationSelect.element as HTMLSelectElement).value).toBe('off')
+    expect(isolationSelect.findAll('option').map((option) => option.attributes('value'))).toEqual([
+      'authenticated_user',
+      'off'
+    ])
+    expect(wrapper.find('input[name="deepseek_user_id"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="deepseek_user"]').exists()).toBe(false)
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -611,6 +620,34 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe('https://api.deepseek.com')
     expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_probe_enabled).toBe(false)
     expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_rate_sync_enabled).toBe(false)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toEqual(expect.objectContaining({
+      unrelated_setting: 'keep-me',
+      deepseek_user_isolation_mode: 'off'
+    }))
+  })
+
+  it('loads and updates authenticated-user isolation without dropping unrelated extra', async () => {
+    const account = buildAccount()
+    account.platform = 'deepseek'
+    account.credentials = { api_key: 'sk-deepseek-test' }
+    account.extra = {
+      deepseek_user_isolation_mode: 'authenticated_user',
+      unrelated_setting: { enabled: true }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const isolationSelect = wrapper.get('[data-testid="edit-deepseek-user-isolation-mode-select"]')
+    expect((isolationSelect.element as HTMLSelectElement).value).toBe('authenticated_user')
+
+    await isolationSelect.setValue('off')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toEqual(expect.objectContaining({
+      deepseek_user_isolation_mode: 'off',
+      unrelated_setting: { enabled: true }
+    }))
   })
 
   it('only submits model mapping credentials when saving an OpenAI spark shadow account', async () => {

@@ -360,6 +360,13 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 			body = sanitized
 		}
 	}
+	if account.IsDeepSeekAPIKey() {
+		var err error
+		body, err = applyDeepSeekAuthenticatedUserID(ctx, s.cfg, account, DeepSeekUserIdentityMessages, body)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	ctx = withDeepSeekRedirectsDisabled(ctx, account)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))

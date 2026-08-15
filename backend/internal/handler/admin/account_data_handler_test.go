@@ -317,3 +317,48 @@ func TestImportDataReusesProxyAndSkipsDefaultGroup(t *testing.T) {
 	require.Len(t, adminSvc.createdAccounts, 1)
 	require.True(t, adminSvc.createdAccounts[0].SkipDefaultGroupBind)
 }
+
+func TestImportDataPreservesLegacyDeepSeekUserIsolationMode(t *testing.T) {
+	router, adminSvc := setupAccountDataRouter()
+	payload := map[string]any{
+		"data": map[string]any{
+			"type":    dataType,
+			"version": dataVersion,
+			"proxies": []any{},
+			"accounts": []map[string]any{
+				{
+					"name":        "legacy-deepseek",
+					"platform":    service.PlatformDeepSeek,
+					"type":        service.AccountTypeAPIKey,
+					"credentials": map[string]any{"api_key": "legacy-key"},
+					"extra":       map[string]any{"preserved": true},
+				},
+				{
+					"name":        "explicit-deepseek",
+					"platform":    service.PlatformDeepSeek,
+					"type":        service.AccountTypeAPIKey,
+					"credentials": map[string]any{"api_key": "explicit-key"},
+					"extra": map[string]any{
+						service.DeepSeekUserIsolationModeKey: service.DeepSeekUserIsolationModeAuthenticatedUser,
+					},
+				},
+			},
+		},
+		"skip_default_group_bind": true,
+	}
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/data", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Len(t, adminSvc.createdAccounts, 2)
+	require.Equal(t, service.DeepSeekUserIsolationModeOff,
+		adminSvc.createdAccounts[0].Extra[service.DeepSeekUserIsolationModeKey])
+	require.Equal(t, true, adminSvc.createdAccounts[0].Extra["preserved"])
+	require.Equal(t, service.DeepSeekUserIsolationModeAuthenticatedUser,
+		adminSvc.createdAccounts[1].Extra[service.DeepSeekUserIsolationModeKey])
+}

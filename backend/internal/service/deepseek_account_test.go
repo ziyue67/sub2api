@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -143,6 +144,7 @@ func TestAdminServiceCreateAccountNormalizesDeepSeekIdentity(t *testing.T) {
 	require.Equal(t, PlatformDeepSeek, created.Platform)
 	require.Equal(t, "arbitrary-key", created.Credentials["api_key"])
 	require.Equal(t, DefaultDeepSeekBaseURL, created.Credentials["base_url"])
+	require.Equal(t, DeepSeekUserIsolationModeAuthenticatedUser, created.Extra[DeepSeekUserIsolationModeKey])
 
 	_, err = (&adminServiceImpl{accountRepo: repo}).CreateAccount(context.Background(), &CreateAccountInput{
 		Name:                 "invalid",
@@ -210,6 +212,7 @@ func TestAccountServiceCreateAndUpdateUseDeepSeekIdentityValidation(t *testing.T
 	require.Equal(t, PlatformDeepSeek, created.Platform)
 	require.Equal(t, "secondary-key", created.Credentials["api_key"])
 	require.Equal(t, DefaultDeepSeekBaseURL, created.Credentials["base_url"])
+	require.Equal(t, DeepSeekUserIsolationModeAuthenticatedUser, created.Extra[DeepSeekUserIsolationModeKey])
 
 	baseURLOnly := map[string]any{"base_url": "https://relay.example.test/deepseek/"}
 	updated, err := svc.Update(context.Background(), created.ID, UpdateAccountRequest{Credentials: &baseURLOnly})
@@ -220,6 +223,23 @@ func TestAccountServiceCreateAndUpdateUseDeepSeekIdentityValidation(t *testing.T
 	invalid := map[string]any{"api_key": "invalid key"}
 	_, err = svc.Update(context.Background(), created.ID, UpdateAccountRequest{Credentials: &invalid})
 	require.Equal(t, "DEEPSEEK_API_KEY_INVALID", infraerrors.Reason(err))
+}
+
+func TestAdminServiceRejectsInvalidDeepSeekUserIsolationMode(t *testing.T) {
+	for _, mode := range []any{"client_passthrough", "", "   ", true, nil} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			repo := &upstreamBillingProbeAccountRepo{}
+			_, err := (&adminServiceImpl{accountRepo: repo}).CreateAccount(context.Background(), &CreateAccountInput{
+				Name:                 "deepseek-invalid-isolation",
+				Platform:             PlatformDeepSeek,
+				Type:                 AccountTypeAPIKey,
+				Credentials:          map[string]any{"api_key": "key"},
+				Extra:                map[string]any{DeepSeekUserIsolationModeKey: mode},
+				SkipDefaultGroupBind: true,
+			})
+			require.Equal(t, "DEEPSEEK_USER_ISOLATION_MODE_INVALID", infraerrors.Reason(err))
+		})
+	}
 }
 
 func TestLegacyUnsupportedPlatformUpdatePathsRemainCompatible(t *testing.T) {

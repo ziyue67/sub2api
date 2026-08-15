@@ -156,6 +156,76 @@ func TestDeepSeekUpstreamErrorCanaryIsRedactedAcrossNativeProtocols(t *testing.T
 	require.Equal(t, deepSeekSecurityCanaryKey, account.GetDeepSeekAPIKey(), "redaction must not mutate account credentials")
 }
 
+func TestDeepSeekDerivedUserIDCanaryIsRedactedAcrossNativeProtocols(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	account := deepSeekSecurityTestAccount(deepSeekSecurityCanaryKey)
+	derivedUserID := deepSeekUserIDPrefix + strings.Repeat("A", 43)
+	escapedDerivedUserID := strings.ReplaceAll(derivedUserID, "_", `\u005f`)
+	bodies := map[string]string{
+		"json":         fmt.Sprintf(`{"error":{"message":"upstream echoed %s"}}`, derivedUserID),
+		"json_unicode": fmt.Sprintf(`{"error":{"message":"upstream echoed %s"}}`, escapedDerivedUserID),
+		"plain":        "proxy echoed identity " + derivedUserID,
+	}
+
+	for protocol, path := range map[string]string{
+		"chat":      "/v1/chat/completions",
+		"responses": "/v1/responses",
+		"messages":  "/v1/messages",
+	} {
+		protocol, path := protocol, path
+		for format, body := range bodies {
+			format, body := format, body
+			t.Run(protocol+"/"+format, func(t *testing.T) {
+				c, recorder := deepSeekSecurityTestContext(path)
+				resp := deepSeekSecurityTestResponse(body)
+				var err error
+				switch protocol {
+				case "chat":
+					svc := &OpenAIGatewayService{cfg: deepSeekSecurityTestConfig()}
+					_, err = svc.handleCompatErrorResponse(resp, c, account, writeChatCompletionsError)
+				case "responses":
+					svc := &OpenAIGatewayService{cfg: deepSeekSecurityTestConfig()}
+					_, err = svc.handleErrorResponse(context.Background(), resp, c, account, nil)
+				case "messages":
+					svc := &GatewayService{cfg: deepSeekSecurityTestConfig()}
+					_, err = svc.handleErrorResponse(context.Background(), resp, c, account)
+				}
+
+				require.Error(t, err)
+				surfaces := deepSeekSecuritySurfaces(c, recorder, err)
+				require.NotContains(t, surfaces, derivedUserID)
+				require.NotContains(t, surfaces, escapedDerivedUserID)
+				require.Contains(t, surfaces, deepSeekCredentialRedaction)
+			})
+		}
+	}
+
+	headers := http.Header{
+		"X-Request-Id":          []string{"raw-" + derivedUserID},
+		"X-Deepseek-Request-Id": []string{"escaped-" + escapedDerivedUserID},
+	}
+	sanitizeDeepSeekResponseHeadersInPlace(account, headers)
+	require.NotContains(t, fmt.Sprint(headers), derivedUserID)
+	require.NotContains(t, fmt.Sprint(headers), escapedDerivedUserID)
+	require.Equal(t, "raw-"+deepSeekCredentialRedaction, headers.Get("X-Request-Id"))
+	require.Equal(t, "escaped-"+deepSeekCredentialRedaction, headers.Get("X-Deepseek-Request-Id"))
+}
+
+func TestDeepSeekDerivedUserIDRedactionPreservesNonIdentityPlaceholders(t *testing.T) {
+	account := deepSeekSecurityTestAccount(deepSeekSecurityCanaryKey)
+	for _, placeholder := range []string{
+		deepSeekUserIDPrefix + "example",
+		deepSeekUserIDPrefix + strings.Repeat("A", deepSeekUserIDEncodedDigestBytes-1),
+	} {
+		body := []byte(fmt.Sprintf(`{"message":%q}`, placeholder))
+		require.Equal(t, body, redactDeepSeekAPIKey(account, body))
+		require.Equal(t, "prefix-"+placeholder, redactDeepSeekHeaderValue("prefix-"+placeholder, deepSeekSecurityCanaryKey))
+	}
+	longValue := deepSeekUserIDPrefix + strings.Repeat("A", deepSeekUserIDEncodedDigestBytes) + "suffix"
+	require.Equal(t, deepSeekCredentialRedaction+"suffix",
+		string(redactDeepSeekAPIKey(account, []byte(longValue))))
+}
+
 func TestDeepSeekFailoverErrorAndOpsRedactCurrentAPIKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	account := deepSeekSecurityTestAccount(deepSeekSecurityCanaryKey)

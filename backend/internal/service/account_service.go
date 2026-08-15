@@ -229,6 +229,10 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (
 		return nil, err
 	}
 	req.Credentials = credentials
+	req.Extra, err = normalizeDeepSeekAccountExtra(platform, req.Extra, DeepSeekUserIsolationModeAuthenticatedUser)
+	if err != nil {
+		return nil, err
+	}
 
 	// 验证分组是否存在（如果指定了分组）
 	if len(req.GroupIDs) > 0 {
@@ -354,6 +358,10 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 		delete(extra, OllamaCloudUsageSessionExtraKey)
 		delete(extra, OllamaCloudUsageAutoRefreshExtraKey)
 		delete(extra, OllamaCloudUsageSnapshotExtraKey)
+		extra, err = normalizeDeepSeekAccountExtra(account.Platform, extra, account.ResolveDeepSeekUserIsolationMode())
+		if err != nil {
+			return nil, err
+		}
 		account.Extra = extra
 	}
 

@@ -94,6 +94,7 @@ type Config struct {
 	TokenRefresh            TokenRefreshConfig            `mapstructure:"token_refresh"`
 	RunMode                 string                        `mapstructure:"run_mode" yaml:"run_mode"`
 	Timezone                string                        `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
+	DeepSeek                DeepSeekConfig                `mapstructure:"deepseek"`
 	Gemini                  GeminiConfig                  `mapstructure:"gemini"`
 	Update                  UpdateConfig                  `mapstructure:"update"`
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
@@ -111,6 +112,13 @@ type LogConfig struct {
 	Output          LogOutputConfig   `mapstructure:"output"`
 	Rotation        LogRotationConfig `mapstructure:"rotation"`
 	Sampling        LogSamplingConfig `mapstructure:"sampling"`
+}
+
+// DeepSeekConfig contains deployment-scoped provider settings. UserIDSecret
+// must remain stable across restarts and replicas to preserve upstream cache
+// isolation identities.
+type DeepSeekConfig struct {
+	UserIDSecret string `mapstructure:"user_id_secret"`
 }
 
 type LogOutputConfig struct {
@@ -1756,6 +1764,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 	cfg.Server.FrontendURL = strings.TrimSpace(cfg.Server.FrontendURL)
 	cfg.JWT.Secret = strings.TrimSpace(cfg.JWT.Secret)
+	cfg.DeepSeek.UserIDSecret = strings.TrimSpace(cfg.DeepSeek.UserIDSecret)
 	cfg.LinuxDo.ClientID = strings.TrimSpace(cfg.LinuxDo.ClientID)
 	cfg.LinuxDo.ClientSecret = strings.TrimSpace(cfg.LinuxDo.ClientSecret)
 	cfg.LinuxDo.AuthorizeURL = strings.TrimSpace(cfg.LinuxDo.AuthorizeURL)
@@ -2174,6 +2183,7 @@ func setDefaults() {
 
 	// JWT
 	viper.SetDefault("jwt.secret", "")
+	viper.SetDefault("deepseek.user_id_secret", "")
 	viper.SetDefault("jwt.expire_hour", 24)
 	viper.SetDefault("jwt.access_token_expire_minutes", 0) // 0 表示回退到 expire_hour
 	viper.SetDefault("jwt.refresh_token_expire_days", 30)  // 30天Refresh Token有效期

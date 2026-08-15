@@ -317,6 +317,10 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	if err != nil {
 		return nil, fmt.Errorf("normalize duplicate account extra: %w", err)
 	}
+	accountExtra, err = normalizeDeepSeekAccountExtra(input.Platform, accountExtra, source.ResolveDeepSeekUserIsolationMode())
+	if err != nil {
+		return nil, fmt.Errorf("normalize duplicate DeepSeek account extra: %w", err)
+	}
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
 		return nil, err
 	}
@@ -489,6 +493,10 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	accountExtra, err = normalizeDeepSeekAccountExtra(input.Platform, accountExtra, DeepSeekUserIsolationModeAuthenticatedUser)
+	if err != nil {
+		return nil, err
+	}
 
 	// 绑定分组
 	groupIDs := input.GroupIDs
@@ -575,6 +583,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, err
 		}
 		normalizedExtra, err = normalizeGrokMediaEligibilityUpdateExtra(account, input, normalizedExtra)
+		if err != nil {
+			return nil, err
+		}
+		normalizedExtra, err = normalizeDeepSeekAccountExtra(account.Platform, normalizedExtra, account.ResolveDeepSeekUserIsolationMode())
 		if err != nil {
 			return nil, err
 		}
@@ -893,6 +905,17 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 			return err
 		}
 	}
+	if _, exists := updates[DeepSeekUserIsolationModeKey]; exists {
+		account, err := s.accountRepo.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		normalized, err := normalizeDeepSeekAccountExtra(account.Platform, updates, account.ResolveDeepSeekUserIsolationMode())
+		if err != nil {
+			return err
+		}
+		updates = normalized
+	}
 	if len(updates) == 0 {
 		return nil
 	}
@@ -935,10 +958,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 	_, hasLongContextBillingUpdate := input.Extra[openAILongContextBillingEnabledKey]
+	_, hasDeepSeekUserIsolationUpdate := input.Extra[DeepSeekUserIsolationModeKey]
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || hasLongContextBillingUpdate || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || hasLongContextBillingUpdate || hasDeepSeekUserIsolationUpdate || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -972,6 +996,21 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 			break
 		}
+	}
+	if hasDeepSeekUserIsolationUpdate {
+		for _, account := range cachedTargets {
+			if account == nil {
+				continue
+			}
+			if account.Platform != PlatformDeepSeek {
+				return nil, infraerrors.BadRequest("DEEPSEEK_USER_ISOLATION_PLATFORM_INVALID", "DeepSeek user isolation mode can only be bulk-updated on DeepSeek accounts")
+			}
+		}
+		normalizedMode, err := normalizeDeepSeekUserIsolationMode(input.Extra[DeepSeekUserIsolationModeKey])
+		if err != nil {
+			return nil, err
+		}
+		input.Extra[DeepSeekUserIsolationModeKey] = normalizedMode
 	}
 
 	// 影子账号绝不持有凭据:批量更新携带凭据时,目标中不得含影子(外审 G5,与单账号

@@ -343,6 +343,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 	isDeepSeekRequest := requestPlatform == service.PlatformDeepSeek
+	if isDeepSeekRequest {
+		if err := service.ValidateDeepSeekAuthenticatedUserContext(c.Request.Context()); err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
+			return
+		}
+	}
 	deepSeekCompactMode := classifyDeepSeekCompactionRequest(c, body, requestPlatform)
 	// Restore gateway-owned checkpoints before policy inspection so moderation
 	// evaluates the model-visible text instead of opaque encrypted_content.

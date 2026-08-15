@@ -156,6 +156,49 @@ func deepSeekPartialUsageContext(path, body string, apiKey *service.APIKey) (*gi
 	return c, recorder
 }
 
+func TestDeepSeekUserIdentityAmbiguityFailsBeforeScheduling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name      string
+		composite bool
+		path      string
+		body      string
+		invoke    func(*OpenAIGatewayHandler, *gin.Context)
+	}{
+		{
+			name:   "direct chat duplicate user_id",
+			path:   "/v1/chat/completions",
+			body:   `{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"user_id":"a","user_id":"b"}`,
+			invoke: func(h *OpenAIGatewayHandler, c *gin.Context) { h.ChatCompletions(c) },
+		},
+		{
+			name:      "composite responses noncanonical user",
+			composite: true,
+			path:      "/v1/responses",
+			body:      `{"model":"deepseek-v4-pro","input":"hi","User":"spoofed"}`,
+			invoke:    func(h *OpenAIGatewayHandler, c *gin.Context) { h.Responses(c) },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, usageRepo, apiKey, upstream := newDeepSeekPartialUsageHandler(t, "")
+			if tt.composite {
+				apiKey.Group.Platform = service.PlatformComposite
+			}
+			c, recorder := deepSeekPartialUsageContext(tt.path, tt.body, apiKey)
+			tt.invoke(h, c)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			require.Zero(t, upstream.calls)
+			select {
+			case <-usageRepo.created:
+				t.Fatal("invalid identity request must not create usage")
+			default:
+			}
+		})
+	}
+}
+
 func TestOpenAIChatCompletionsDeepSeekPartialStreamRecordsObservedUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstreamBody := "data: {\"id\":\"chat_partial\",\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n" +

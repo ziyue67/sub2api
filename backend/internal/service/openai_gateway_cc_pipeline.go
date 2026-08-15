@@ -183,6 +183,19 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	userAgent string,
 	grokCacheIdentity string,
 ) (*http.Response, error) {
+	deepSeekChatRequest := account.IsDeepSeek() && strings.HasSuffix(strings.TrimRight(targetURL, "/"), deepSeekChatCompletionsEndpoint)
+	deepSeekResponsesRequest := account.IsDeepSeek() && strings.HasSuffix(strings.TrimRight(targetURL, "/"), deepSeekResponsesEndpoint)
+	if deepSeekChatRequest || deepSeekResponsesRequest {
+		protocol := DeepSeekUserIdentityChatCompletions
+		if deepSeekResponsesRequest {
+			protocol = DeepSeekUserIdentityResponses
+		}
+		var err error
+		body, err = applyDeepSeekAuthenticatedUserID(ctx, s.cfg, account, protocol, body)
+		if err != nil {
+			return nil, err
+		}
+	}
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamCtx = withDeepSeekRedirectsDisabled(upstreamCtx, account)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
@@ -198,8 +211,6 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	} else {
 		upstreamReq.Header.Set("Accept", "application/json")
 	}
-	deepSeekChatRequest := account.IsDeepSeek() && strings.HasSuffix(strings.TrimRight(targetURL, "/"), deepSeekChatCompletionsEndpoint)
-
 	// 透传白名单中的客户端 header。详见 openaiCCRawAllowedHeaders 的设计说明。
 	for key, values := range c.Request.Header {
 		lowerKey := strings.ToLower(key)
