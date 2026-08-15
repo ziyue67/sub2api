@@ -10,6 +10,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/google/uuid"
 )
 
 // OpenAIOAuthService handles OpenAI OAuth authentication flows
@@ -127,6 +128,7 @@ type OpenAITokenInfo struct {
 	PlanType              string `json:"plan_type,omitempty"`
 	SubscriptionExpiresAt string `json:"subscription_expires_at,omitempty"`
 	PrivacyMode           string `json:"privacy_mode,omitempty"`
+	DeviceID              string `json:"openai_device_id,omitempty"`
 }
 
 // ExchangeCode exchanges authorization code for tokens
@@ -192,6 +194,7 @@ func (s *OpenAIOAuthService) ExchangeCode(ctx context.Context, input *OpenAIExch
 		ExpiresIn:    int64(tokenResp.ExpiresIn),
 		ExpiresAt:    time.Now().Unix() + int64(tokenResp.ExpiresIn),
 		ClientID:     clientID,
+		DeviceID:     uuid.NewString(),
 	}
 
 	if userInfo != nil {
@@ -374,6 +377,7 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 				OrganizationID:        account.GetCredential("organization_id"),
 				PlanType:              account.GetCredential("plan_type"),
 				SubscriptionExpiresAt: account.GetCredential("subscription_expires_at"),
+				DeviceID:              account.GetOpenAIDeviceID(),
 			}
 			if expiresAt := account.GetCredentialAsTime("expires_at"); expiresAt != nil {
 				tokenInfo.ExpiresAt = expiresAt.Unix()
@@ -386,7 +390,11 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 	}
 
 	clientID := account.GetCredential("client_id")
-	return s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
+	tokenInfo, err := s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
+	if tokenInfo != nil {
+		tokenInfo.DeviceID = account.GetOpenAIDeviceID()
+	}
+	return tokenInfo, err
 }
 
 // BuildAccountCredentials builds credentials map from token info
@@ -425,6 +433,9 @@ func (s *OpenAIOAuthService) BuildAccountCredentials(tokenInfo *OpenAITokenInfo)
 	}
 	if strings.TrimSpace(tokenInfo.ClientID) != "" {
 		creds["client_id"] = strings.TrimSpace(tokenInfo.ClientID)
+	}
+	if strings.TrimSpace(tokenInfo.DeviceID) != "" {
+		creds["openai_device_id"] = strings.TrimSpace(tokenInfo.DeviceID)
 	}
 	if tokenInfo.AuthMode == OpenAIAuthModePersonalAccessToken {
 		creds[openAIAuthModeCredentialKey] = OpenAIAuthModePersonalAccessToken

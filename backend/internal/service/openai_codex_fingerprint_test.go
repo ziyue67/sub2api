@@ -54,11 +54,9 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 	}{
 		{"nil 账号", nil, codexFingerprintOff},
 		{"非 OAuth 账号", &Account{Platform: PlatformOpenAI, Type: "api_key"}, codexFingerprintOff},
-		// 收敛是显式 opt-in：缺省/空/非法一律 off（#5610）。存量账号普遍没有这个
-		// extra 键，升级不得把它们静默切进收敛。
-		{"无 extra 默认 off", newTestOAuthAccount(1, nil), codexFingerprintOff},
-		{"空值默认 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintOff},
-		{"非法值默认 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintOff},
+		{"无 extra 默认 session", newTestOAuthAccount(1, nil), codexFingerprintSession},
+		{"空值默认 session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintSession},
+		{"非法值默认 session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintSession},
 		{"显式 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "off"}), codexFingerprintOff},
 		{"device", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "device"}), codexFingerprintDevice},
 		{"session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"}), codexFingerprintSession},
@@ -121,11 +119,11 @@ func TestResolveCodexFingerprintIDsFromRequest_ExplicitOff(t *testing.T) {
 	assert.Nil(t, ids, "显式 off 模式应返回 nil")
 }
 
-// 未显式配置的存量账号不得被收敛（#5610）：默认返回 nil，出站身份保持
-// v0.1.175 之前的客户端原值。
-func TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_DefaultIsSession(t *testing.T) {
 	account := newTestOAuthAccount(1, nil)
-	assert.Nil(t, resolveCodexFingerprintIDsFromRequest(account, nil), "无 extra 应视为 off")
+	ids := resolveCodexFingerprintIDsFromRequest(account, nil)
+	require.NotNil(t, ids)
+	assert.Equal(t, codexFingerprintSession, ids.mode)
 }
 
 // 管理员显式 opt-in 的账号行为不变。
@@ -658,4 +656,60 @@ func TestApplyCodexFingerprintClientMetadataRaw_NonObjectBodyUntouched(t *testin
 		assert.False(t, changed, "非 JSON 对象 body 不应被改写: %s", body)
 		assert.Equal(t, []byte(body), out)
 	}
+}
+
+func TestResolveCodexFingerprintIDsWithScope_IsolatesAPIKeyAndPromptCacheKey(t *testing.T) {
+	account := newTestOAuthAccount(9001, nil)
+	headers := http.Header{"session-id": []string{"client-session"}}
+
+	first := resolveCodexFingerprintIDsFromRequestWithScope(account, headers, 101, "prompt-a")
+	repeat := resolveCodexFingerprintIDsFromRequestWithScope(account, headers, 101, "prompt-a")
+	otherKey := resolveCodexFingerprintIDsFromRequestWithScope(account, headers, 102, "prompt-a")
+	otherPrompt := resolveCodexFingerprintIDsFromRequestWithScope(account, headers, 101, "prompt-b")
+
+	require.NotNil(t, first)
+	assert.Equal(t, first.sessionID, repeat.sessionID)
+	assert.Equal(t, first.threadID, repeat.threadID)
+	assert.NotEqual(t, first.sessionID, otherKey.sessionID)
+	assert.NotEqual(t, first.threadID, otherPrompt.threadID)
+	assert.NotEmpty(t, first.promptCacheKey)
+}
+
+func TestCodexFingerprintMetadataSanitizationAndResponseRestore(t *testing.T) {
+	account := newTestOAuthAccount(9002, nil)
+	ids := resolveCodexFingerprintIDsFromRequestWithScope(account, http.Header{}, 101, "prompt-a")
+	require.NotNil(t, ids)
+
+	reqBody := map[string]any{
+		"prompt_cache_key": "prompt-a",
+		"client_metadata": map[string]any{
+			"baseUrl": "https://relay.example",
+			"api_key": "secret",
+			"nested":  map[string]any{"authorization": "Bearer secret"},
+		},
+	}
+	c := newFingerprintStageTestContext(t)
+	c.Request.Header.Set("x-codex-installation-id", "client-install")
+	c.Request.Header.Set("session_id", "client-session")
+	captureCodexClientIdentifiers(c, reqBody)
+	assert.True(t, sanitizeCodexRequestClientMetadata(reqBody))
+	assert.True(t, applyCodexFingerprintClientMetadata(reqBody, ids))
+	stageCodexFingerprintIDs(c, ids)
+
+	metadata := reqBody["client_metadata"].(map[string]any)
+	assert.NotContains(t, metadata, "baseUrl")
+	assert.NotContains(t, metadata, "api_key")
+	assert.Equal(t, ids.promptCacheKey, reqBody["prompt_cache_key"])
+
+	response := []byte(`{"session_id":"` + ids.sessionID + `","installation_id":"` + ids.installationID + `","prompt_cache_key":"` + ids.promptCacheKey + `"}`)
+	var restored map[string]any
+	require.NoError(t, json.Unmarshal(restoreCodexClientResponseIdentifiers(c, response), &restored))
+	assert.Equal(t, "client-session", restored["session_id"])
+	assert.Equal(t, "client-install", restored["installation_id"])
+	assert.Equal(t, "prompt-a", restored["prompt_cache_key"])
+}
+
+func TestResolveCodexOutboundTimezone(t *testing.T) {
+	assert.Equal(t, "Asia/Shanghai", newTestOAuthAccount(1, map[string]any{codexOutboundTimezoneExtraKey: "Asia/Shanghai"}).resolveCodexOutboundTimezone())
+	assert.Equal(t, "UTC", newTestOAuthAccount(1, map[string]any{codexOutboundTimezoneExtraKey: "bad/timezone"}).resolveCodexOutboundTimezone())
 }

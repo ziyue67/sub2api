@@ -80,28 +80,34 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			body = normalizedBody
 		}
 		reqStream = gjson.GetBytes(body, "stream").Bool()
+		captureCodexClientIdentifiersRaw(c, body)
+		sanitizedBody, sanitized, sanitizeErr := sanitizeCodexRequestClientMetadataRaw(body)
+		if sanitizeErr != nil {
+			return nil, sanitizeErr
+		}
+		if sanitized {
+			body = sanitizedBody
+		}
 
 		// 指纹收敛：与非透传路径同门控（仅 OAuth、legacy compact 形态跳过）。
 		// 一次性解析收敛 ID：请求体 client_metadata 在此改写（raw 字节外科
 		// 手术，透传热路径禁全量 Unmarshal），出站头改写由请求构造器读取
 		// context 中的同一份 IDs 完成（turn_id 等随机字段两侧必须一致）。
-		if !isOpenAIResponsesCompactPath(c) {
-			var clientHeaders http.Header
-			if c != nil && c.Request != nil {
-				clientHeaders = c.Request.Header
-			}
-			fpIDs := resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
-			if fpIDs != nil {
-				fpBody, fpChanged, fpErr := applyCodexFingerprintClientMetadataRaw(body, fpIDs)
-				if fpErr != nil {
-					return nil, fpErr
-				}
-				if fpChanged {
-					body = fpBody
-				}
-			}
-			stageCodexFingerprintIDs(c, fpIDs)
+		var clientHeaders http.Header
+		if c != nil && c.Request != nil {
+			clientHeaders = c.Request.Header
 		}
+		fpIDs := resolveCodexFingerprintIDsFromRequestWithScope(account, clientHeaders, getAPIKeyIDFromContext(c), gjson.GetBytes(body, "prompt_cache_key").String())
+		if fpIDs != nil {
+			fpBody, fpChanged, fpErr := applyCodexFingerprintClientMetadataRaw(body, fpIDs)
+			if fpErr != nil {
+				return nil, fpErr
+			}
+			if fpChanged {
+				body = fpBody
+			}
+		}
+		stageCodexFingerprintIDs(c, fpIDs)
 	}
 
 	sanitizedBody, sanitized, err := sanitizeEmptyBase64InputImagesInOpenAIBody(body)
@@ -451,6 +457,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		}
 		if req.Header.Get("originator") == "" {
 			req.Header.Set("originator", openai.CodexDefaultOriginator)
+		}
+		if !isOpenAICompatMessagesBridgeContext(c) {
+			req.Header.Set("OpenAI-Beta", "responses=experimental")
 		}
 		// 用隔离后的 session 标识符覆盖客户端透传值，防止跨用户会话碰撞。
 		if clientSessionID == "" {
@@ -1345,6 +1354,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					trimmedData = strings.TrimSpace(string(restoredData))
 					line = "data: " + string(restoredData)
 				}
+				dataBytes = restoreCodexClientResponseIdentifiers(c, dataBytes)
+				trimmedData = strings.TrimSpace(string(dataBytes))
+				line = "data: " + string(dataBytes)
 			}
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if eventType == "response.failed" {
@@ -1560,6 +1572,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponsePassthrough(
 	if err != nil {
 		return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", err)
 	}
+	body = restoreCodexClientResponseIdentifiers(c, body)
 	if !writeOpenAICompactSSEBridge(c, resp.StatusCode, body) {
 		c.Data(resp.StatusCode, contentType, body)
 	}
@@ -1606,6 +1619,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", restoreErr)
 		}
 		body = restoredBody
+		body = restoreCodexClientResponseIdentifiers(c, body)
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 		if terminalOK && terminalType == "response.failed" {
