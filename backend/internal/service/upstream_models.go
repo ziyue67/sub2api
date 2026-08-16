@@ -525,7 +525,7 @@ func buildOpenAIModelsURL(base string) string {
 }
 
 func buildDeepSeekModelsURL(base string) string {
-	return buildOpenAIEndpointURL(base, "/models")
+	return buildOpenAIEndpointURL(base, "/v1/models")
 }
 
 func buildGeminiModelsURL(base string) string {
