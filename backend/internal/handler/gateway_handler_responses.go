@@ -365,7 +365,7 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		return // Can't write error after stream started
 	}
 	if lastErr != nil {
-		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
+		copyFailoverResponseHeaders(c, lastErr.ResponseHeaders)
 	}
 	if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(lastErr)

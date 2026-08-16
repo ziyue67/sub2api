@@ -13,11 +13,36 @@ func ensureCompositeTargetPlatform(c *gin.Context, apiKey *service.APIKey, model
 	if c == nil || c.Request == nil || apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
 		return
 	}
+	if _, ok := service.CompositeRouteEndpointFromContext(c.Request.Context()); !ok {
+		c.Request = c.Request.WithContext(service.WithCompositeRouteEndpoint(c.Request.Context(), compositeRouteEndpointForPath(c.Request.URL.Path)))
+	}
 	if _, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
 		return
 	}
 	if platform, ok := service.DetectModelPlatform(model); ok {
 		c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
+	}
+}
+
+func compositeRouteEndpointForPath(path string) string {
+	path = strings.ToLower(strings.TrimSpace(path))
+	switch {
+	case strings.Contains(path, "/messages/count_tokens"):
+		return service.CompositeRouteEndpointCountTokens
+	case strings.Contains(path, "/messages"):
+		return service.CompositeRouteEndpointMessages
+	case strings.Contains(path, "/responses"):
+		return service.CompositeRouteEndpointResponses
+	case strings.Contains(path, "/chat/completions"):
+		return service.CompositeRouteEndpointChatCompletions
+	case strings.Contains(path, "/embeddings"):
+		return service.CompositeRouteEndpointEmbeddings
+	case strings.Contains(path, "/images/"):
+		return service.CompositeRouteEndpointImages
+	case strings.Contains(path, "/v1beta/"):
+		return service.CompositeRouteEndpointGemini
+	default:
+		return service.CompositeRouteEndpointAny
 	}
 }
 

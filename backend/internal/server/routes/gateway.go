@@ -45,12 +45,22 @@ func RegisterGatewayRoutes(
 	requireGroupAnthropic := middleware.RequireGroupAssignment(settingService, middleware.AnthropicErrorWriter)
 	requireGroupGoogle := middleware.RequireGroupAssignment(settingService, middleware.GoogleErrorWriter)
 
-	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
-		switch getGroupPlatform(c) {
-		case service.PlatformOpenAI, service.PlatformGrok:
-			return true
-		default:
-			return false
+	writeUnsupportedPlatformFeature := func(c *gin.Context, feature string) {
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "not_found_error",
+				"message": feature + " is not supported for this platform",
+			},
+		})
+	}
+	rejectDeepSeekFeature := func(feature string, next gin.HandlerFunc) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			if getGroupPlatform(c) == service.PlatformDeepSeek {
+				writeUnsupportedPlatformFeature(c, feature)
+				return
+			}
+			next(c)
 		}
 	}
 	isOpenAIGatewayPlatform := func(c *gin.Context) bool {
@@ -62,6 +72,8 @@ func RegisterGatewayRoutes(
 			h.OpenAIGateway.CountTokens(c)
 		case service.PlatformGrok:
 			h.OpenAIGateway.GrokCountTokens(c)
+		case service.PlatformDeepSeek:
+			writeUnsupportedPlatformFeature(c, "Messages count_tokens API")
 		default:
 			h.Gateway.CountTokens(c)
 		}
@@ -185,11 +197,7 @@ func RegisterGatewayRoutes(
 	{
 		// /v1/messages: auto-route based on group platform
 		gateway.POST("/messages", func(c *gin.Context) {
-			if isOpenAIResponsesCompatibleGatewayPlatform(c) {
-				h.OpenAIGateway.Messages(c)
-				return
-			}
-			h.Gateway.Messages(c)
+			dispatchMessagesGateway(c, h.OpenAIGateway.Messages, h.Gateway.Messages)
 		})
 		// /v1/messages/count_tokens: OpenAI bridges upstream, Grok estimates
 		// locally, and Anthropic-compatible platforms retain their existing path.
@@ -199,34 +207,22 @@ func RegisterGatewayRoutes(
 		// Codex manifest format; other clients keep the OpenAI-style list.
 		gateway.GET("/models", modelsHandler)
 		gateway.GET("/usage", h.Gateway.Usage)
-		gateway.POST("/live", h.OpenAIGateway.Live)
-		gateway.GET("/live/:call_id", h.OpenAIGateway.LiveSideband)
+		gateway.POST("/live", rejectDeepSeekFeature("Live API", h.OpenAIGateway.Live))
+		gateway.GET("/live/:call_id", rejectDeepSeekFeature("Live API", h.OpenAIGateway.LiveSideband))
 		// OpenAI Responses API: auto-route based on group platform
 		gateway.POST("/responses", func(c *gin.Context) {
-			if isOpenAIResponsesCompatibleGatewayPlatform(c) {
-				h.OpenAIGateway.Responses(c)
-				return
-			}
-			h.Gateway.Responses(c)
+			dispatchChatResponsesGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 		})
-		gateway.POST("/responses/*subpath", guardResponsesSubpath(func(c *gin.Context) {
-			if isOpenAIResponsesCompatibleGatewayPlatform(c) {
-				h.OpenAIGateway.Responses(c)
-				return
-			}
-			h.Gateway.Responses(c)
-		}))
-		gateway.POST("/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
-		gateway.GET("/responses", func(c *gin.Context) {
+		gateway.POST("/responses/*subpath", guardResponsesSubpath(rejectDeepSeekFeature("Responses subpaths", func(c *gin.Context) {
+			dispatchChatResponsesGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
+		})))
+		gateway.POST("/alpha/search", textBodyLimit, rejectDeepSeekFeature("Alpha search API", h.OpenAIGateway.AlphaSearch))
+		gateway.GET("/responses", rejectDeepSeekFeature("Responses WebSocket", func(c *gin.Context) {
 			h.OpenAIGateway.ResponsesWebSocket(c)
-		})
+		}))
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
-			if isOpenAIResponsesCompatibleGatewayPlatform(c) {
-				h.OpenAIGateway.ChatCompletions(c)
-				return
-			}
-			h.Gateway.ChatCompletions(c)
+			dispatchChatResponsesGateway(c, h.OpenAIGateway.ChatCompletions, h.Gateway.ChatCompletions)
 		})
 		gateway.POST("/embeddings", textBodyLimit, func(c *gin.Context) {
 			if !isOpenAIOnlyEndpointGatewayPlatform(c) {
@@ -343,40 +339,32 @@ func RegisterGatewayRoutes(
 
 	// OpenAI Responses API（不带v1前缀的别名）— auto-route based on group platform
 	responsesHandler := func(c *gin.Context) {
-		if isOpenAIResponsesCompatibleGatewayPlatform(c) {
-			h.OpenAIGateway.Responses(c)
-			return
-		}
-		h.Gateway.Responses(c)
+		dispatchChatResponsesGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 	}
 	r.POST("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, responsesHandler)
-	r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, guardResponsesSubpath(responsesHandler))
-	r.POST("/alpha/search", textBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, h.OpenAIGateway.AlphaSearch)
+	r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, guardResponsesSubpath(rejectDeepSeekFeature("Responses subpaths", responsesHandler)))
+	r.POST("/alpha/search", textBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, rejectDeepSeekFeature("Alpha search API", h.OpenAIGateway.AlphaSearch))
 	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
-		h.OpenAIGateway.ResponsesWebSocket(c)
+		rejectDeepSeekFeature("Responses WebSocket", h.OpenAIGateway.ResponsesWebSocket)(c)
 	})
 	r.GET("/models", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, modelsHandler)
 	r.POST("/messages/count_tokens", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
 	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic)
 	{
-		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
-		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)
-		codexDirect.POST("/responses", responsesHandler)
-		codexDirect.POST("/responses/*subpath", guardResponsesSubpath(responsesHandler))
-		codexDirect.POST("/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
-		codexDirect.GET("/responses", func(c *gin.Context) {
+		codexDirect.POST("/realtime/calls", rejectDeepSeekFeature("Codex Live API", h.OpenAIGateway.Live))
+		codexDirect.GET("/:call_id", rejectDeepSeekFeature("Codex Live API", h.OpenAIGateway.LiveSideband))
+		codexDirect.POST("/responses", rejectDeepSeekFeature("Codex Responses API", responsesHandler))
+		codexDirect.POST("/responses/*subpath", guardResponsesSubpath(rejectDeepSeekFeature("Codex Responses API", responsesHandler)))
+		codexDirect.POST("/alpha/search", textBodyLimit, rejectDeepSeekFeature("Codex alpha search API", h.OpenAIGateway.AlphaSearch))
+		codexDirect.GET("/responses", rejectDeepSeekFeature("Codex Responses WebSocket", func(c *gin.Context) {
 			h.OpenAIGateway.ResponsesWebSocket(c)
-		})
-		codexDirect.GET("/models", h.OpenAIGateway.CodexModels)
+		}))
+		codexDirect.GET("/models", rejectDeepSeekFeature("Codex models API", h.OpenAIGateway.CodexModels))
 	}
 	// OpenAI Chat Completions API（不带v1前缀的别名）— auto-route based on group platform
 	r.POST("/chat/completions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
-		if isOpenAIResponsesCompatibleGatewayPlatform(c) {
-			h.OpenAIGateway.ChatCompletions(c)
-			return
-		}
-		h.Gateway.ChatCompletions(c)
+		dispatchChatResponsesGateway(c, h.OpenAIGateway.ChatCompletions, h.Gateway.ChatCompletions)
 	})
 	r.POST("/embeddings", textBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
 		if !isOpenAIOnlyEndpointGatewayPlatform(c) {
@@ -493,6 +481,29 @@ func RegisterGatewayRoutes(
 		antigravityV1Beta.POST("/models/*modelAction", h.Gateway.GeminiV1BetaModels)
 	}
 
+}
+
+// dispatchChatResponsesGateway keeps OpenAI-compatible transports on their
+// native handler after a composite group has resolved to a concrete provider.
+func dispatchChatResponsesGateway(c *gin.Context, openAIHandler, genericHandler gin.HandlerFunc) {
+	switch getGroupPlatform(c) {
+	case service.PlatformOpenAI, service.PlatformGrok, service.PlatformDeepSeek:
+		openAIHandler(c)
+	default:
+		genericHandler(c)
+	}
+}
+
+// dispatchMessagesGateway intentionally leaves DeepSeek on GatewayHandler:
+// that handler forwards DeepSeek's native Anthropic-compatible Messages API
+// without converting it through the OpenAI compatibility path.
+func dispatchMessagesGateway(c *gin.Context, openAIHandler, genericHandler gin.HandlerFunc) {
+	switch getGroupPlatform(c) {
+	case service.PlatformOpenAI, service.PlatformGrok:
+		openAIHandler(c)
+	default:
+		genericHandler(c)
+	}
 }
 
 // getGroupPlatform extracts the group platform from the API Key stored in context.

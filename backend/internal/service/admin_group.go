@@ -212,6 +212,12 @@ func compositeRouteFromInput(groupID int64, input CompositeRouteInput) (*Composi
 	if !isConcreteRequestPlatform(input.TargetPlatform) {
 		return nil, fmt.Errorf("target_platform must be a concrete provider")
 	}
+	if !compositeRouteEndpointSupported(input.TargetPlatform, input.Endpoint) {
+		return nil, infraerrors.BadRequest(
+			"COMPOSITE_ROUTE_ENDPOINT_UNSUPPORTED",
+			fmt.Sprintf("endpoint %s is not supported for target platform %s", input.Endpoint, input.TargetPlatform),
+		)
+	}
 	if input.Priority == 0 {
 		input.Priority = 100
 	}
@@ -226,6 +232,23 @@ func compositeRouteFromInput(groupID int64, input CompositeRouteInput) (*Composi
 		Enabled:        input.Enabled,
 		Notes:          input.Notes,
 	}, nil
+}
+
+var compositeRouteEndpointCapabilities = map[string]map[string]struct{}{
+	PlatformDeepSeek: {
+		CompositeRouteEndpointMessages:        {},
+		CompositeRouteEndpointResponses:       {},
+		CompositeRouteEndpointChatCompletions: {},
+	},
+}
+
+func compositeRouteEndpointSupported(platform, endpoint string) bool {
+	capabilities, constrained := compositeRouteEndpointCapabilities[platform]
+	if !constrained {
+		return true
+	}
+	_, supported := capabilities[endpoint]
+	return supported
 }
 
 func defaultModelsListCandidateIDs(platform string) []string {
@@ -247,6 +270,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return ids
 	case PlatformGrok:
 		return xai.DefaultModelIDs()
+	case PlatformDeepSeek:
+		return DeepSeekDefaultModelIDs()
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:
@@ -267,7 +292,7 @@ func defaultAllowImageGenerationForPlatform(platform string) bool {
 func compositeDefaultModelsListCandidateIDs() []string {
 	seen := make(map[string]struct{})
 	ids := make([]string, 0)
-	for _, platform := range []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok} {
+	for _, platform := range []string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformDeepSeek} {
 		for _, id := range defaultModelsListCandidateIDs(platform) {
 			if _, ok := seen[id]; ok {
 				continue
@@ -295,12 +320,21 @@ func groupSupportsOAuthOnlyFilter(platform string) bool {
 		platform == PlatformComposite
 }
 
+func sanitizeGroupOAuthRequirement(group *Group) {
+	if group != nil && group.Platform == PlatformDeepSeek {
+		group.RequireOAuthOnly = false
+	}
+}
+
 func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
 	if input.RateMultiplier <= 0 {
 		return nil, errors.New("rate_multiplier must be > 0")
 	}
 
 	platform := NormalizeGroupPlatform(input.Platform)
+	if err := validateGroupPlatform(platform); err != nil {
+		return nil, err
+	}
 	modelPricing, err := normalizeGroupModelPricing(platform, input.ModelPricing)
 	if err != nil {
 		return nil, err
@@ -509,6 +543,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		MaxReasoningEffort:              maxReasoningEffort,
 		ReasoningEffortMappings:         reasoningEffortMappings,
 	}
+	sanitizeGroupOAuthRequirement(group)
 	sanitizeGroupMessagesDispatchFields(group)
 	if group.Platform != PlatformOpenAI {
 		group.AllowLive = false
@@ -651,7 +686,11 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.Description = *input.Description
 	}
 	if input.Platform != "" {
-		group.Platform = input.Platform
+		platform := NormalizeGroupPlatform(input.Platform)
+		if err := validateGroupPlatform(platform); err != nil {
+			return nil, err
+		}
+		group.Platform = platform
 	}
 	if input.RateMultiplier != nil {
 		if *input.RateMultiplier <= 0 {
@@ -889,6 +928,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		}
 		group.ReasoningEffortMappings = reasoningEffortMappings
 	}
+	sanitizeGroupOAuthRequirement(group)
 	sanitizeGroupMessagesDispatchFields(group)
 	if group.Platform != PlatformOpenAI {
 		group.AllowLive = false

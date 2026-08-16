@@ -805,6 +805,7 @@ func TestLoadDefaultSecurityToggles(t *testing.T) {
 	}
 
 	wantHosts := []string{
+		"api.deepseek.com",
 		"api.kimi.com",
 		"api.moonshot.ai",
 		"api.moonshot.cn",

@@ -140,10 +140,13 @@ func TestAcquireResponsesAccountSlotProfitRecheck(t *testing.T) {
 	})
 }
 
+// OpenAI 的 Responses capability 仍仅用于显式生图或压缩请求；DeepSeek 则用它表达原生
+// Responses 文本能力，scheduler 必须按平台区分利润门边界。
 func TestOpenAIResponsesRequiredCapabilityForRequest(t *testing.T) {
 	require.Equal(t, service.OpenAIEndpointCapabilityResponses, openAIResponsesRequiredCapability(true, service.PlatformOpenAI))
 	require.Equal(t, service.OpenAIEndpointCapabilityChatCompletions, openAIResponsesRequiredCapability(false, service.PlatformOpenAI))
 	require.Equal(t, service.OpenAIEndpointCapabilityChatCompletions, openAIResponsesRequiredCapability(true, service.PlatformGrok))
+	require.Equal(t, service.OpenAIEndpointCapabilityResponses, openAIResponsesRequiredCapability(false, service.PlatformDeepSeek))
 	require.Equal(t, service.OpenAIEndpointCapabilityResponses, openAIResponsesRequiredCapabilityForRequest(false, true, service.PlatformOpenAI))
 	require.Equal(t, service.OpenAIEndpointCapabilityChatCompletions, openAIResponsesRequiredCapabilityForRequest(false, true, service.PlatformGrok))
 }

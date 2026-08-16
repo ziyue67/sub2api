@@ -137,6 +137,8 @@ func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, acc
 		return s.buildAntigravityAPIKeyModelsRequest(ctx, account)
 	case account.IsGrok():
 		return s.buildGrokUpstreamModelsRequest(ctx, account)
+	case account.IsDeepSeek():
+		return s.buildDeepSeekUpstreamModelsRequest(ctx, account)
 	case account.IsOpenAI():
 		return s.buildOpenAIUpstreamModelsRequest(ctx, account)
 	case account.IsGemini():
@@ -148,6 +150,43 @@ func (s *AccountTestService) buildUpstreamModelsRequest(ctx context.Context, acc
 			fmt.Sprintf("Unsupported platform for upstream model sync: %s", account.Platform), nil,
 		)
 	}
+}
+
+func (s *AccountTestService) buildDeepSeekUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
+	if account == nil {
+		return nil, newUpstreamModelSyncConfigError("Account is required", nil)
+	}
+	if !account.IsDeepSeekAPIKey() {
+		return nil, newUpstreamModelSyncUnsupportedError(
+			fmt.Sprintf("Unsupported DeepSeek account type for upstream model sync: %s", account.Type), nil,
+		)
+	}
+
+	apiKey := account.GetDeepSeekAPIKey()
+	if apiKey == "" {
+		return nil, newUpstreamModelSyncConfigError("No DeepSeek API key is available", nil)
+	}
+	normalizedBaseURL, err := normalizeDeepSeekBaseURL(account.GetDeepSeekBaseURL())
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid DeepSeek base URL", err)
+	}
+	normalizedBaseURL, err = s.validateUpstreamBaseURL(normalizedBaseURL)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid DeepSeek base URL", err)
+	}
+
+	reqCtx := WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileOpenAI))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, buildDeepSeekModelsURL(normalizedBaseURL), nil)
+	if err != nil {
+		return nil, newUpstreamModelSyncConfigError("Invalid DeepSeek model list URL", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	account.ApplyHeaderOverrides(req.Header)
+	req.Header.Del("X-Api-Key")
+	req.Header.Del("X-Goog-Api-Key")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	return req, nil
 }
 
 func (s *AccountTestService) buildGrokUpstreamModelsRequest(ctx context.Context, account *Account) (*http.Request, error) {
@@ -480,6 +519,10 @@ func buildV1ModelsURL(base string) string {
 
 func buildOpenAIModelsURL(base string) string {
 	return buildOpenAIEndpointURL(base, "/v1/models")
+}
+
+func buildDeepSeekModelsURL(base string) string {
+	return buildOpenAIEndpointURL(base, "/models")
 }
 
 func buildGeminiModelsURL(base string) string {

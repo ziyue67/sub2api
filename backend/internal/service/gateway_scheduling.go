@@ -49,7 +49,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 		ctx = s.withGroupContext(ctx, group)
 		platform = group.Platform
 		if group.Platform == PlatformComposite {
-			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, CompositeRouteEndpointAny)
+			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, compositeRouteEndpointForScheduling(ctx))
 			if err != nil {
 				return nil, err
 			}
@@ -118,6 +118,17 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 	ctx = s.withGroupContext(ctx, group)
 	ctx = s.withGatewayProfitControlGate(ctx, groupID)
+	if group != nil && group.Platform == PlatformComposite {
+		decision, ok, resolveErr := s.resolveCompositeRouteDecision(ctx, group, requestedModel, compositeRouteEndpointForScheduling(ctx))
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		if !ok {
+			return nil, fmt.Errorf("%w supporting model: %s (composite target platform unknown)", ErrNoAvailableAccounts, requestedModel)
+		}
+		requestedModel = decision.UpstreamModel
+		ctx = WithCompositeRouteDecision(ctx, decision)
+	}
 
 	// Claude Code 限制可能已将 groupID 解析为 fallback group，
 	// 渠道限制预检查必须使用解析后的分组。
@@ -926,7 +937,7 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 	}
 	if group != nil {
 		if group.Platform == PlatformComposite {
-			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, CompositeRouteEndpointAny)
+			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, compositeRouteEndpointForScheduling(ctx))
 			if err != nil {
 				return "", false, err
 			}
@@ -943,7 +954,7 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 			return "", false, err
 		}
 		if group.Platform == PlatformComposite {
-			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, CompositeRouteEndpointAny)
+			decision, ok, err := s.resolveCompositeRouteDecision(ctx, group, requestedModel, compositeRouteEndpointForScheduling(ctx))
 			if err != nil {
 				return "", false, err
 			}
@@ -955,6 +966,13 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, gr
 		return group.Platform, false, nil
 	}
 	return PlatformAnthropic, false, nil
+}
+
+func compositeRouteEndpointForScheduling(ctx context.Context) string {
+	if endpoint, ok := CompositeRouteEndpointFromContext(ctx); ok {
+		return endpoint
+	}
+	return CompositeRouteEndpointAny
 }
 
 func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {

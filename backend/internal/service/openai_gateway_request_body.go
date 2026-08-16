@@ -832,6 +832,24 @@ func extractOpenAIReasoningEffortFromBody(body []byte, modelCandidates ...string
 	return &value
 }
 
+// extractOpenAIReasoningEffortFromBodyForAccount preserves provider-native
+// effort levels before they are written to usage logs. DeepSeek distinguishes
+// max from OpenAI's xhigh even when the configured upstream model is an alias
+// that does not carry a deepseek-* prefix.
+func extractOpenAIReasoningEffortFromBodyForAccount(account *Account, body []byte, modelCandidates ...string) *string {
+	if account != nil && account.IsDeepSeek() {
+		raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
+		if raw == "" {
+			raw = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
+		}
+		if NormalizeMaxReasoningEffort(raw) == "max" {
+			value := "max"
+			return &value
+		}
+	}
+	return extractOpenAIReasoningEffortFromBody(body, modelCandidates...)
+}
+
 func extractOpenAIServiceTier(reqBody map[string]any) *string {
 	if reqBody == nil {
 		return nil

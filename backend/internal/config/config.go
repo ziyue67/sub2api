@@ -1956,6 +1956,7 @@ func setDefaults() {
 	viper.SetDefault("security.url_allowlist.upstream_hosts", []string{
 		"api.openai.com",
 		"api.anthropic.com",
+		"api.deepseek.com",
 		"api.kimi.com",
 		"api.moonshot.ai",
 		"api.moonshot.cn",

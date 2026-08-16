@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
@@ -396,10 +397,26 @@ func validProfitControlRatio(v float64) bool {
 // 「省略 platform + 启用利润控制」会被 handler 以「平台不支持」400 掉，
 // 而该分组本会被建成受支持的 anthropic 分组。
 func NormalizeGroupPlatform(platform string) string {
+	platform = strings.ToLower(strings.TrimSpace(platform))
 	if platform == "" {
 		return PlatformAnthropic
 	}
 	return platform
+}
+
+func validateGroupPlatform(platform string) error {
+	switch platform {
+	case PlatformAnthropic,
+		PlatformOpenAI,
+		PlatformGemini,
+		PlatformAntigravity,
+		PlatformGrok,
+		PlatformDeepSeek,
+		PlatformComposite:
+		return nil
+	default:
+		return infraerrors.BadRequest("GROUP_PLATFORM_INVALID", "group platform is not supported")
+	}
 }
 
 // ValidateProfitControlConfig 是分组利润控制配置的唯一校验来源，handler 与 service 层共用。
@@ -426,7 +443,7 @@ func ValidateProfitControlConfig(platform string, enabled bool, minMargin, safet
 }
 
 // NormalizeProfitControlConfig 归一化最终落库的利润控制配置，CreateGroup 与 UpdateGroup 共用（唯一收口）：
-//   - 非五个平台分组不携带利润控制，一律重置为默认（关、0、0）；
+//   - 非支持平台分组不携带利润控制，一律重置为默认（关、0、0）；
 //   - 支持平台关闭开关时保留合法数值（便于再次启用），清洗 NaN/Inf/越界脏值。
 //
 // 与 ValidateProfitControlConfig 的分工同高峰倍率：先归一化、后校验，
@@ -448,7 +465,7 @@ func NormalizeProfitControlConfig(platform string, enabled bool, minMargin, safe
 
 func profitControlPlatformSupported(platform string) bool {
 	switch platform {
-	case PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformGrok, PlatformAntigravity:
+	case PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformGrok, PlatformAntigravity, PlatformDeepSeek:
 		return true
 	default:
 		return false

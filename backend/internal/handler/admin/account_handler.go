@@ -2706,6 +2706,31 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// Handle DeepSeek accounts
+	if account.IsDeepSeek() {
+		modelIDs := service.DeepSeekDefaultModelIDs()
+		if mapping := account.GetModelMapping(); len(mapping) > 0 {
+			modelIDs = modelIDs[:0]
+			for requestedModel := range mapping {
+				modelIDs = append(modelIDs, requestedModel)
+			}
+			sort.Strings(modelIDs)
+		}
+
+		models := make([]openai.Model, 0, len(modelIDs))
+		for _, modelID := range modelIDs {
+			models = append(models, openai.Model{
+				ID:          modelID,
+				Object:      "model",
+				OwnedBy:     "deepseek",
+				Type:        "model",
+				DisplayName: modelID,
+			})
+		}
+		response.Success(c, models)
+		return
+	}
+
 	// Handle Claude/Anthropic accounts
 	// For OAuth and Setup-Token accounts: return default models
 	if account.IsOAuth() {

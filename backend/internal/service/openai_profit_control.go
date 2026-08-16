@@ -15,7 +15,7 @@ package service
 //     apiKey 自身分组；composite 请求为父分组）做 ResolveUserGroupRateMultiplier
 //     （用户-分组覆盖 ?? 分组默认）× Group.PeakMultiplierAt(pricingAt)，绝不在
 //     用户有覆盖时退回分组默认；开关与 margin/buffer 则始终取被调度
-//     openai/grok 分组。
+//     OpenAI-compatible text 分组（OpenAI/Grok/DeepSeek）。
 //   - U（上游成本倍率）取 accounts.rate_multiplier。倍率可以由运营者手工维护，
 //     也可以由上游倍率探测同步写回；利润门不再耦合探测协议、新鲜度或账号类型。
 //     0 是合法的免费上游倍率；nil、负数、NaN、Inf 属于非法数据并保守拒绝。
@@ -188,7 +188,7 @@ func OpenAIPricingAtFromContext(ctx context.Context) time.Time {
 }
 
 // withOpenAIProfitControlGate 解析分组利润控制配置；启用时把预计算好的准入门
-// 装进 ctx。抑制标记、未启用/非 openai 分组/无法取到分组配置时原样返回 ctx
+// 装进 ctx。抑制标记、未启用/非 OpenAI-compatible 文本分组/无法取到分组配置时原样返回 ctx
 // （门不存在，全部否决点自动放行，既有行为零变化）。ctx 已有同分组门时直接
 // 复用：同一请求的全部 failover 重入共享同一阈值。
 func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, groupID *int64) context.Context {
@@ -202,7 +202,7 @@ func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, 
 	}
 	gate := s.resolveOpenAIProfitControlGate(ctx, groupID)
 	if gate == nil {
-		// 被调度分组无门（未启用/非 openai/配置读取失败）而 ctx 带着其他分组的
+		// 被调度分组无门（未启用/非 OpenAI-compatible 文本分组/配置读取失败）而 ctx 带着其他分组的
 		// 请求门时清除之：门配置取被调度分组，父分组阈值不得泄漏到成员分组
 		//（composite/模型路由等跨分组调度）。typed-nil 覆盖值由否决点按无门放行。
 		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && groupID != nil && existing.groupID != *groupID {
@@ -237,7 +237,7 @@ func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Contex
 		group = loaded
 	}
 	if group == nil || !group.ProfitControlEnabled ||
-		(group.Platform != PlatformOpenAI && group.Platform != PlatformGrok) {
+		(group.Platform != PlatformOpenAI && group.Platform != PlatformGrok && group.Platform != PlatformDeepSeek) {
 		return nil
 	}
 

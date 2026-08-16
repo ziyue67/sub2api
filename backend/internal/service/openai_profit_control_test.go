@@ -55,10 +55,20 @@ func TestResolveOpenAIProfitControlGate(t *testing.T) {
 		require.Nil(t, svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID))
 	})
 
-	t.Run("non openai or grok platform yields no gate even if enabled", func(t *testing.T) {
+	t.Run("platform outside the openai-compatible runtime yields no gate even if enabled", func(t *testing.T) {
 		group := profitControlTestGroup(groupID, 0.3, 0)
 		group.Platform = PlatformAnthropic
 		require.Nil(t, svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID))
+	})
+
+	t.Run("deepseek group routed through openai handler installs gate", func(t *testing.T) {
+		group := profitControlTestGroup(groupID, 0.3, 0.05)
+		group.Platform = PlatformDeepSeek
+		group.RateMultiplier = 0.5
+		gate := svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID)
+		require.NotNil(t, gate)
+		require.Equal(t, PlatformDeepSeek, gate.platform)
+		require.InDelta(t, 0.5*(1-0.35), gate.threshold, 1e-12)
 	})
 
 	t.Run("grok group routed through openai handler installs gate", func(t *testing.T) {
@@ -260,9 +270,62 @@ func TestProfitControlSchedulerFiltersCandidates(t *testing.T) {
 	})
 }
 
+func TestDeepSeekProfitControlSchedulerFiltersCandidates(t *testing.T) {
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+
+	now := time.Now()
+	cheap := upstreamCostTestAccount(41, UpstreamBillingProbeStatusOK, 0.3, now.Add(-time.Minute), 30*time.Minute)
+	expensive := upstreamCostTestAccount(42, UpstreamBillingProbeStatusOK, 0.8, now.Add(-time.Minute), 30*time.Minute)
+	for _, account := range []*Account{cheap, expensive} {
+		account.Platform = PlatformDeepSeek
+		account.Type = AccountTypeAPIKey
+		account.Status = StatusActive
+		account.Schedulable = true
+		account.Concurrency = 5
+	}
+	profitControlTestAccountWithRate(cheap, 0.3)
+	profitControlTestAccountWithRate(expensive, 0.8)
+	cache := &upstreamCostTrackingConcurrencyCache{loadMap: map[int64]*AccountLoadInfo{
+		cheap.ID:     {AccountID: cheap.ID},
+		expensive.ID: {AccountID: expensive.ID},
+	}}
+	svc := &OpenAIGatewayService{
+		accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{*cheap, *expensive}},
+		cfg:                &config.Config{},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(cache),
+	}
+	groupID := int64(7)
+	group := profitControlTestGroup(groupID, 0.5, 0)
+	group.Platform = PlatformDeepSeek
+
+	selection, _, err := svc.SelectAccountWithSchedulerForCapability(
+		profitControlTestCtx(group),
+		&groupID,
+		"",
+		"",
+		"deepseek-v4-flash",
+		nil,
+		OpenAIUpstreamTransportAny,
+		OpenAIEndpointCapabilityChatCompletions,
+		false,
+		false,
+		false,
+		PlatformDeepSeek,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, cheap.ID, selection.Account.ID)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
 func TestValidateProfitControlConfig(t *testing.T) {
 	require.NoError(t, ValidateProfitControlConfig(PlatformAnthropic, false, 0, 0))
-	for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformGrok, PlatformAntigravity} {
+	for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformGrok, PlatformAntigravity, PlatformDeepSeek} {
 		require.NoError(t, ValidateProfitControlConfig(platform, true, 0.3, 0.05))
 		require.NoError(t, ValidateProfitControlConfig(platform, true, 0, 0))
 	}
@@ -282,8 +345,8 @@ func TestNormalizeProfitControlConfig(t *testing.T) {
 		require.Zero(t, buffer)
 	})
 
-	t.Run("all five platforms retain configuration", func(t *testing.T) {
-		for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformGrok, PlatformAntigravity} {
+	t.Run("all supported platforms retain configuration", func(t *testing.T) {
+		for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformGrok, PlatformAntigravity, PlatformDeepSeek} {
 			enabled, margin, buffer := NormalizeProfitControlConfig(platform, true, 0.3, 0.1)
 			require.True(t, enabled)
 			require.InDelta(t, 0.3, margin, 1e-12)

@@ -218,6 +218,27 @@ func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool 
 	}
 }
 
+// openAICompatibleUpstreamRequestID normalizes provider-specific request ID
+// headers for result metadata and ops diagnostics. DeepSeek's harness prefers
+// the generic header when both are present, then falls back to its vendor name.
+func openAICompatibleUpstreamRequestID(headers http.Header) string {
+	if headers == nil {
+		return ""
+	}
+	return firstNonEmpty(
+		headers.Get("x-request-id"),
+		headers.Get("x-deepseek-request-id"),
+		headers.Get("xai-request-id"),
+	)
+}
+
+func openAICompatibleErrorPlatform(account *Account) string {
+	if account == nil || strings.TrimSpace(account.Platform) == "" {
+		return PlatformOpenAI
+	}
+	return account.Platform
+}
+
 func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
 	if isOpenAIContextWindowError(upstreamMsg, upstreamBody) {
 		return false
@@ -320,8 +341,10 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	requestBody []byte,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 	body := s.readUpstreamErrorBody(resp)
 	body = s.redactAgentIdentitySensitiveBody(ctx, account, body)
+	body = redactDeepSeekAPIKey(account, body)
 
 	// cyber_policy 硬阻断：透传上游原始错误体给客户端（不重包成通用 502），不冷却账号。
 	// 当前请求恒透传（需求1）；标记供 handler 事后写风控/邮件。400 cyber 不可 failover
@@ -389,7 +412,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 			Kind:               "failover",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
@@ -406,7 +429,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
 		c,
-		PlatformOpenAI,
+		openAICompatibleErrorPlatform(account),
 		resp.StatusCode,
 		body,
 		http.StatusBadGateway,
@@ -436,7 +459,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
@@ -473,7 +496,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		AccountID:          account.ID,
 		AccountName:        account.Name,
 		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 		Kind:               kind,
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
@@ -565,8 +588,10 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 	writeError compatErrorWriter,
 	requestedModel ...string,
 ) (*OpenAIForwardResult, error) {
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 	body := s.readUpstreamErrorBody(resp)
 	body = s.redactAgentIdentitySensitiveBody(context.Background(), account, body)
+	body = redactDeepSeekAPIKey(account, body)
 
 	// cyber_policy：兼容路径（Chat Completions / Anthropic）以各自格式回写错误，
 	// 不原样透传 responses 格式的 cyber body（否则对下游格式不合法）。cyber 是上游网络
@@ -638,7 +663,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 			Kind:               "http_error",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
@@ -668,7 +693,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		AccountID:          account.ID,
 		AccountName:        account.Name,
 		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 		Kind:               kind,
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,

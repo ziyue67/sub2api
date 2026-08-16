@@ -120,6 +120,7 @@ func TestOpenAIForwardResultSucceededForScheduling_TerminalEvents(t *testing.T) 
 		{name: "nil legacy result", result: nil, expected: true},
 		{name: "non websocket zero value", result: &OpenAIForwardResult{}, expected: true},
 		{name: "websocket legacy empty terminal", result: &OpenAIForwardResult{OpenAIWSMode: true}, expected: true},
+		{name: "http failed terminal", result: &OpenAIForwardResult{UpstreamTerminalEvent: "response.failed"}, expected: false},
 		{name: "completed", result: &OpenAIForwardResult{OpenAIWSMode: true, UpstreamTerminalEvent: "response.completed"}, expected: true},
 		{name: "done", result: &OpenAIForwardResult{OpenAIWSMode: true, UpstreamTerminalEvent: "response.done"}, expected: true},
 		{name: "failed", result: &OpenAIForwardResult{OpenAIWSMode: true, UpstreamTerminalEvent: "response.failed"}, expected: false},

@@ -142,6 +142,7 @@ security:
     upstream_hosts:
       - "api.openai.com"
       - "api.anthropic.com"
+      - "api.deepseek.com"
       - "api.kimi.com"
       - "api.moonshot.ai"
       - "api.moonshot.cn"

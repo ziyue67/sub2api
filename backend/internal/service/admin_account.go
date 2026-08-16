@@ -259,6 +259,10 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 			"accounts with rotating or unsupported credential types cannot be duplicated",
 		)
 	}
+	platform, err := normalizeAccountPlatform(source.Platform)
+	if err != nil {
+		return nil, err
+	}
 
 	credentials, err := cloneAccountJSONMap(source.Credentials)
 	if err != nil {
@@ -273,6 +277,10 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 			extra = make(map[string]any, 1)
 		}
 		extra[duplicateAccountOperationIDExtraKey] = operationID
+	}
+	credentials, err = normalizeAccountCredentialsForPlatform(platform, source.Type, credentials)
+	if err != nil {
+		return nil, err
 	}
 
 	var expiresAt *int64
@@ -290,7 +298,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	input := &CreateAccountInput{
 		Name:                  duplicateAccountName(source.Name),
 		Notes:                 cloneAccountValuePointer(source.Notes),
-		Platform:              source.Platform,
+		Platform:              platform,
 		Type:                  source.Type,
 		Credentials:           credentials,
 		Extra:                 extra,
@@ -459,6 +467,20 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if input == nil {
+		return nil, infraerrors.BadRequest("ACCOUNT_INPUT_REQUIRED", "account input is required")
+	}
+	platform, err := normalizeAccountPlatform(input.Platform)
+	if err != nil {
+		return nil, err
+	}
+	input.Platform = platform
+	credentials, err := normalizeAccountCredentialsForPlatform(platform, input.Type, input.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	input.Credentials = credentials
+
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, err
@@ -609,6 +631,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		// Strip SSO/password residue that must never sit next to OAuth tokens.
 		account.Credentials = SanitizeStoredCredentials(account.Platform, account.Credentials)
+	}
+	account.Credentials, err = normalizeAccountCredentialsForPlatform(account.Platform, account.Type, account.Credentials)
+	if err != nil {
+		return nil, err
 	}
 	// Extra 使用 map：需要区分“未提供(nil)”与“显式清空({})”。
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库。
@@ -1024,6 +1050,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if input.Credentials != nil {
 		input.Credentials = SanitizeStoredCredentials("", input.Credentials)
 	}
+	normalizedCredentials, err := normalizeBulkAccountCredentials(cachedTargets, input.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	input.Credentials = normalizedCredentials
 
 	// Prepare bulk updates for columns and JSONB fields.
 	repoUpdates := AccountBulkUpdate{
@@ -1119,6 +1150,39 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 
 	return result, nil
+}
+
+func normalizeBulkAccountCredentials(targets []*Account, delta map[string]any) (map[string]any, error) {
+	if len(delta) == 0 {
+		return delta, nil
+	}
+
+	normalizedDelta := make(map[string]any, len(delta))
+	for key, value := range delta {
+		normalizedDelta[key] = value
+	}
+	for _, account := range targets {
+		if account == nil || !strings.EqualFold(strings.TrimSpace(account.Platform), PlatformDeepSeek) {
+			continue
+		}
+		effective := make(map[string]any, len(account.Credentials)+len(normalizedDelta))
+		for key, value := range account.Credentials {
+			effective[key] = value
+		}
+		for key, value := range normalizedDelta {
+			effective[key] = value
+		}
+		normalized, err := normalizeAccountCredentialsForPlatform(PlatformDeepSeek, account.Type, effective)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range []string{"api_key", "base_url"} {
+			if _, provided := delta[key]; provided {
+				normalizedDelta[key] = normalized[key]
+			}
+		}
+	}
+	return normalizedDelta, nil
 }
 
 func updatesUpstreamBillingProbeIdentity(credentials map[string]any) bool {

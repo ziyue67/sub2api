@@ -18,6 +18,7 @@ type accountRepoStubForBulkUpdate struct {
 	accountRepoStub
 	bulkUpdateErr       error
 	bulkUpdateIDs       []int64
+	bulkUpdate          AccountBulkUpdate
 	bindGroupErrByID    map[int64]error
 	bindGroupsCalls     []int64
 	bindGroupsByAccount map[int64][]int64
@@ -50,8 +51,9 @@ type accountRepoStubForBulkUpdate struct {
 	}
 }
 
-func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64, _ AccountBulkUpdate) (int64, error) {
+func (s *accountRepoStubForBulkUpdate) BulkUpdate(_ context.Context, ids []int64, update AccountBulkUpdate) (int64, error) {
 	s.bulkUpdateIDs = append([]int64{}, ids...)
+	s.bulkUpdate = update
 	if s.bulkUpdateErr != nil {
 		return 0, s.bulkUpdateErr
 	}
@@ -306,4 +308,53 @@ func TestAdminServiceBulkUpdateAccounts_ResolvesIDsFromFilters(t *testing.T) {
 	require.Equal(t, 2, result.Success)
 	require.Equal(t, 0, result.Failed)
 	require.Equal(t, []int64{7, 11}, result.SuccessIDs)
+}
+
+func TestAdminServiceBulkUpdateAccounts_NormalizesDeepSeekCredentialsByIDs(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		getByIDsAccounts: []*Account{{
+			ID:       7,
+			Platform: PlatformDeepSeek,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":  "old-key",
+				"base_url": "https://relay.example/deepseek",
+			},
+		}},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs:  []int64{7},
+		Credentials: map[string]any{"api_key": "  rotated-key  "},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Success)
+	require.Equal(t, "rotated-key", repo.bulkUpdate.Credentials["api_key"])
+	require.NotContains(t, repo.bulkUpdate.Credentials, "base_url", "an omitted base_url must preserve each target account's existing value")
+}
+
+func TestAdminServiceBulkUpdateAccounts_RejectsInvalidDeepSeekCredentialsResolvedByFilters(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{
+		listData:   []Account{{ID: 11, Platform: PlatformDeepSeek, Type: AccountTypeAPIKey}},
+		listResult: &pagination.PaginationResult{Total: 1},
+		getByIDsAccounts: []*Account{{
+			ID:          11,
+			Platform:    PlatformDeepSeek,
+			Type:        AccountTypeAPIKey,
+			Credentials: map[string]any{"api_key": "existing-key", "base_url": DefaultDeepSeekBaseURL},
+		}},
+	}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		Filters:     &BulkUpdateAccountFilters{Platform: PlatformDeepSeek},
+		Credentials: map[string]any{"base_url": "/relative"},
+	})
+
+	require.Nil(t, result)
+	require.Equal(t, "DEEPSEEK_BASE_URL_INVALID", infraerrors.Reason(err))
+	require.True(t, repo.listCalled)
+	require.Empty(t, repo.bulkUpdateIDs, "invalid merged credentials must be rejected before the repository write")
 }

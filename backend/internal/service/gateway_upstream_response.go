@@ -356,9 +356,11 @@ func (s *GatewayService) readUpstreamErrorBody(resp *http.Response) ([]byte, err
 }
 
 func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, requestedModel ...string) (*ForwardResult, error) {
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 	// Upstream returned a non-success HTTP status; count Ollama Cloud activity.
 	scheduleOllamaCloudUsageActivity(s.deferredService, account)
 	body, readErr := s.readUpstreamErrorBody(resp)
+	body = redactDeepSeekAPIKey(account, body)
 	if readErr != nil {
 		// 读取失败时 body 可能被截断，错误分类会基于不完整数据；记录日志以便排查，
 		// 避免静默吞掉导致误判。
@@ -548,6 +550,7 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 	MarkResponseCommitted(c)
 	// Capture upstream error body before side-effects consume the stream.
 	respBody, _ := s.readUpstreamErrorBody(resp)
+	respBody = redactDeepSeekAPIKey(account, respBody)
 	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 

@@ -219,6 +219,17 @@ func NewAccountService(accountRepo AccountRepository, groupRepo GroupRepository)
 
 // Create 创建账号
 func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (*Account, error) {
+	platform, err := normalizeAccountPlatform(req.Platform)
+	if err != nil {
+		return nil, err
+	}
+	req.Platform = platform
+	credentials, err := normalizeAccountCredentialsForPlatform(platform, req.Type, req.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	req.Credentials = credentials
+
 	// 验证分组是否存在（如果指定了分组）
 	if len(req.GroupIDs) > 0 {
 		if err := s.validateGroupIDsExist(ctx, req.GroupIDs); err != nil {
@@ -325,7 +336,14 @@ func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccount
 	}
 
 	if req.Credentials != nil {
-		account.Credentials = SanitizeStoredCredentials(account.Platform, *req.Credentials)
+		account.Credentials = SanitizeStoredCredentials(
+			account.Platform,
+			MergePreservingSensitiveCreds(account.Credentials, *req.Credentials),
+		)
+	}
+	account.Credentials, err = normalizeAccountCredentialsForPlatform(account.Platform, account.Type, account.Credentials)
+	if err != nil {
+		return nil, err
 	}
 
 	if req.Extra != nil {

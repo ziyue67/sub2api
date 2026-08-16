@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type compositeRouteRepoStub struct {
@@ -131,6 +132,74 @@ func TestCompositeTargetPlatformMiddlewareUsesExplicitRouteAndRewritesBody(t *te
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestCompositeDeepSeekDispatchesEachProtocolToItsNativeHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resolver := service.NewCompositeRouteResolver(compositeRouteRepoStub{
+		routes: []service.CompositeModelRoute{
+			{ID: 1, GroupID: 1, PublicModel: "deepseek-alias", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointChatCompletions, Priority: 100, Enabled: true},
+			{ID: 2, GroupID: 1, PublicModel: "deepseek-alias", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointResponses, Priority: 100, Enabled: true},
+			{ID: 3, GroupID: 1, PublicModel: "deepseek-alias", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointMessages, Priority: 100, Enabled: true},
+		},
+	})
+	router := gin.New()
+	router.Use(gin.HandlerFunc(servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) {
+		groupID := int64(1)
+		c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+			GroupID: &groupID,
+			Group:   &service.Group{ID: groupID, Platform: service.PlatformComposite},
+		})
+		c.Next()
+	})))
+	router.Use(compositeTargetPlatformMiddleware(resolver))
+
+	mark := func(name, endpoint string) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+			require.True(t, ok)
+			require.Equal(t, service.PlatformDeepSeek, platform)
+			upstreamModel, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context())
+			require.True(t, ok)
+			require.Equal(t, "deepseek-v4-pro", upstreamModel)
+			publicModel, ok := service.RequestedPublicModelFromContext(c.Request.Context())
+			require.True(t, ok)
+			require.Equal(t, "deepseek-alias", publicModel)
+			resolvedEndpoint, ok := service.CompositeRouteEndpointFromContext(c.Request.Context())
+			require.True(t, ok)
+			require.Equal(t, endpoint, resolvedEndpoint)
+			body, err := io.ReadAll(c.Request.Body)
+			require.NoError(t, err)
+			require.Equal(t, "deepseek-v4-pro", gjson.GetBytes(body, "model").String())
+			c.String(http.StatusOK, name)
+		}
+	}
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		dispatchChatResponsesGateway(c, mark("openai-native-chat", service.CompositeRouteEndpointChatCompletions), mark("generic-chat", service.CompositeRouteEndpointChatCompletions))
+	})
+	router.POST("/v1/responses", func(c *gin.Context) {
+		dispatchChatResponsesGateway(c, mark("openai-native-responses", service.CompositeRouteEndpointResponses), mark("generic-responses", service.CompositeRouteEndpointResponses))
+	})
+	router.POST("/v1/messages", func(c *gin.Context) {
+		dispatchMessagesGateway(c, mark("openai-messages-bridge", service.CompositeRouteEndpointMessages), mark("deepseek-native-messages", service.CompositeRouteEndpointMessages))
+	})
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{path: "/v1/chat/completions", want: "openai-native-chat"},
+		{path: "/v1/responses", want: "openai-native-responses"},
+		{path: "/v1/messages", want: "deepseek-native-messages"},
+	} {
+		req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(`{"model":"deepseek-alias"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "path=%s", tc.path)
+		require.Equal(t, tc.want, w.Body.String(), "path=%s", tc.path)
+	}
 }
 
 func TestCompositeTargetPlatformMiddlewareUsesExplicitRouteForMultipartImages(t *testing.T) {

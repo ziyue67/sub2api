@@ -140,6 +140,33 @@ func TestOpenAIForwardSucceededForScheduling(t *testing.T) {
 	}))
 }
 
+func TestShouldRecordDeepSeekPartialUsage(t *testing.T) {
+	deepSeek := &service.Account{
+		Platform: service.PlatformDeepSeek,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "sk-test",
+		},
+	}
+	result := &service.OpenAIForwardResult{Usage: service.OpenAIUsage{InputTokens: 3, OutputTokens: 1}}
+	streamErr := errors.New("stream ended before terminal dispatch")
+
+	require.True(t, shouldRecordDeepSeekPartialUsage(deepSeek, result, streamErr))
+	require.False(t, shouldRecordDeepSeekPartialUsage(&service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}, result, streamErr))
+	require.False(t, shouldRecordDeepSeekPartialUsage(deepSeek, nil, streamErr))
+	require.False(t, shouldRecordDeepSeekPartialUsage(deepSeek, result, nil))
+	require.False(t, shouldRecordDeepSeekPartialUsage(deepSeek, &service.OpenAIForwardResult{}, streamErr))
+	require.False(t, shouldRecordDeepSeekPartialUsage(deepSeek, &service.OpenAIForwardResult{
+		ImageCount: 1,
+		Usage:      result.Usage,
+	}, streamErr))
+	require.False(t, shouldRecordDeepSeekPartialUsage(deepSeek, &service.OpenAIForwardResult{
+		UpstreamTerminalEvent: "response.failed",
+		Usage:                 result.Usage,
+	}, streamErr))
+	require.False(t, shouldRecordDeepSeekPartialUsage(deepSeek, result, &service.UpstreamFailoverError{StatusCode: http.StatusBadGateway}))
+}
+
 func TestOpenAIResponsesRequiredCapability(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -163,6 +190,11 @@ func TestOpenAIResponsesRequiredCapability(t *testing.T) {
 			name:     "non-image intent keeps chat capability",
 			platform: service.PlatformOpenAI,
 			want:     service.OpenAIEndpointCapabilityChatCompletions,
+		},
+		{
+			name:     "DeepSeek native Responses requires Responses capability",
+			platform: service.PlatformDeepSeek,
+			want:     service.OpenAIEndpointCapabilityResponses,
 		},
 	}
 

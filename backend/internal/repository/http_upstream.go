@@ -382,6 +382,7 @@ func isGrokCLICompatibilityAccessDenied(body []byte) bool {
 
 func isGrokCLIAccessDeniedFallbackCandidate(req *http.Request, resp *http.Response) bool {
 	return req != nil && req.URL != nil && req.GetBody != nil && resp != nil &&
+		!service.HTTPUpstreamRedirectsDisabled(req.Context()) &&
 		resp.StatusCode == http.StatusForbidden &&
 		strings.EqualFold(strings.TrimSpace(req.URL.Hostname()), grokCLIProxyHost) &&
 		strings.EqualFold(strings.TrimSpace(req.Header.Get("X-XAI-Token-Auth")), "xai-grok-cli") &&

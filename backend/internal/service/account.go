@@ -267,12 +267,41 @@ func (a *Account) IsGrok() bool {
 	return a.Platform == PlatformGrok
 }
 
+func (a *Account) IsDeepSeek() bool {
+	return a != nil && a.Platform == PlatformDeepSeek
+}
+
+func (a *Account) IsDeepSeekAPIKey() bool {
+	return a.IsDeepSeek() && a.Type == AccountTypeAPIKey
+}
+
+func (a *Account) GetDeepSeekBaseURL() string {
+	if !a.IsDeepSeek() {
+		return ""
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/")
+	if baseURL == "" {
+		return DefaultDeepSeekBaseURL
+	}
+	if normalized, err := normalizeDeepSeekBaseURL(baseURL); err == nil {
+		return normalized
+	}
+	return baseURL
+}
+
+func (a *Account) GetDeepSeekAPIKey() string {
+	if !a.IsDeepSeekAPIKey() {
+		return ""
+	}
+	return strings.TrimSpace(a.GetCredential("api_key"))
+}
+
 func (a *Account) IsGrokOAuth() bool {
 	return a.IsGrok() && a.Type == AccountTypeOAuth
 }
 
 func (a *Account) IsOpenAICompatible() bool {
-	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok)
+	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok || a.Platform == PlatformDeepSeek)
 }
 
 func (a *Account) GeminiOAuthType() string {
@@ -1481,6 +1510,17 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 			// forwarding gate itself fails closed if that probe is unavailable or
 			// cannot produce positive paid-entitlement evidence.
 			return eligible || reason == "billing_unobserved"
+		default:
+			return false
+		}
+	}
+	if a.IsDeepSeek() {
+		if !a.IsDeepSeekAPIKey() {
+			return false
+		}
+		switch capability {
+		case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses:
+			return true
 		default:
 			return false
 		}

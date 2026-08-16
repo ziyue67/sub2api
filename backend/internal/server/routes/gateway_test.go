@@ -25,6 +25,10 @@ func newGatewayRoutesTestRouter(platform ...string) *gin.Engine {
 }
 
 func newGatewayRoutesTestRouterWithConfig(cfg *config.Config, platform ...string) *gin.Engine {
+	return newGatewayRoutesTestRouterWithConfigAndResolver(cfg, nil, platform...)
+}
+
+func newGatewayRoutesTestRouterWithConfigAndResolver(cfg *config.Config, compositeResolver *service.CompositeRouteResolver, platform ...string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
@@ -51,7 +55,7 @@ func newGatewayRoutesTestRouterWithConfig(cfg *config.Config, platform ...string
 		nil,
 		nil,
 		nil,
-		nil,
+		compositeResolver,
 		cfg,
 	)
 
@@ -441,6 +445,116 @@ func TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths(t *testing.T)
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusNotFound, w.Code, "path=%s must be rejected at the edge", path)
 		require.Contains(t, w.Body.String(), "Unsupported responses subpath", "path=%s", path)
+	}
+}
+
+func TestGatewayRoutesDeepSeekAllowsOnlyBareHTTPResponsesSurface(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformDeepSeek)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/v1/responses/compact"},
+		{http.MethodPost, "/responses/compact"},
+		{http.MethodGet, "/v1/responses"},
+		{http.MethodGet, "/responses"},
+		{http.MethodPost, "/backend-api/codex/responses"},
+		{http.MethodPost, "/backend-api/codex/responses/compact"},
+		{http.MethodGet, "/backend-api/codex/responses"},
+		{http.MethodPost, "/v1/live"},
+		{http.MethodPost, "/v1/alpha/search"},
+		{http.MethodPost, "/alpha/search"},
+		{http.MethodPost, "/backend-api/codex/alpha/search"},
+		{http.MethodPost, "/v1/messages/count_tokens"},
+		{http.MethodPost, "/messages/count_tokens"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{"model":"deepseek-v4-pro"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNotFound, w.Code, "method=%s path=%s", tc.method, tc.path)
+		require.Contains(t, w.Body.String(), "not supported for this platform", "method=%s path=%s", tc.method, tc.path)
+	}
+}
+
+func TestGatewayRoutesDeepSeekBareChatAndResponsesReachOpenAICompatibleHandlers(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformDeepSeek)
+
+	for _, path := range []string{
+		"/v1/chat/completions",
+		"/chat/completions",
+		"/v1/responses",
+		"/responses",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-v4-pro","input":"hello"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should reach the OpenAI-compatible handler", path)
+	}
+}
+
+func TestGatewayRoutesCompositeDeepSeekBareAPIsUseNativeProtocolHandlers(t *testing.T) {
+	resolver := service.NewCompositeRouteResolver(compositeRouteRepoStub{
+		routes: []service.CompositeModelRoute{
+			{ID: 1, GroupID: 1, PublicModel: "deepseek-alias", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointChatCompletions, Priority: 100, Enabled: true},
+			{ID: 2, GroupID: 1, PublicModel: "deepseek-alias", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointResponses, Priority: 100, Enabled: true},
+			{ID: 3, GroupID: 1, PublicModel: "deepseek-alias", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointMessages, Priority: 100, Enabled: true},
+		},
+	})
+	router := newGatewayRoutesTestRouterWithConfigAndResolver(&config.Config{
+		Gateway: config.GatewayConfig{MaxBodySize: 1024 * 1024, TextMaxBodySize: 1024 * 1024},
+	}, resolver, service.PlatformComposite)
+
+	for _, path := range []string{
+		"/v1/chat/completions",
+		"/chat/completions",
+		"/v1/responses",
+		"/responses",
+		"/v1/messages",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-alias","input":"hello","messages":[{"role":"user","content":"hello"}]}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should reach its native protocol handler", path)
+		require.NotContains(t, w.Body.String(), "not supported", "path=%s", path)
+		require.NotContains(t, w.Body.String(), "composite groups", "path=%s", path)
+	}
+}
+
+func TestGatewayRoutesCompositeDeepSeekEffectivePlatformAppliesFeatureGuards(t *testing.T) {
+	resolver := service.NewCompositeRouteResolver(compositeRouteRepoStub{
+		routes: []service.CompositeModelRoute{
+			{ID: 1, GroupID: 1, PublicModel: "deepseek-alias", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointResponses, Priority: 100, Enabled: true},
+		},
+	})
+	router := newGatewayRoutesTestRouterWithConfigAndResolver(&config.Config{
+		Gateway: config.GatewayConfig{MaxBodySize: 1024 * 1024, TextMaxBodySize: 1024 * 1024},
+	}, resolver, service.PlatformComposite)
+
+	for _, path := range []string{"/v1/responses/compact", "/responses/compact", "/backend-api/codex/responses"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-alias","input":"hello"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNotFound, w.Code, "path=%s", path)
+		require.Contains(t, w.Body.String(), "not supported for this platform", "path=%s", path)
+	}
+
+	for _, path := range []string{"/v1/messages/count_tokens", "/messages/count_tokens"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-v4-pro","messages":[]}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNotFound, w.Code, "path=%s", path)
+		require.Contains(t, w.Body.String(), "not supported for this platform", "path=%s", path)
 	}
 }
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 
@@ -22,6 +23,34 @@ func TestCompositeTargetPlatformAllowedResolvesKnownAllowedModel(t *testing.T) {
 	require.Equal(t, service.PlatformOpenAI, platform)
 }
 
+func TestEnsureCompositeTargetPlatformBindsInboundEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformComposite}}
+
+	for _, tc := range []struct {
+		path     string
+		model    string
+		endpoint string
+	}{
+		{path: "/v1/chat/completions", model: "gpt-deepseek-alias", endpoint: service.CompositeRouteEndpointChatCompletions},
+		{path: "/v1/responses", model: "grok-deepseek-alias", endpoint: service.CompositeRouteEndpointResponses},
+		{path: "/v1/messages", model: "claude-deepseek-alias", endpoint: service.CompositeRouteEndpointMessages},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", tc.path, nil)
+
+			ensureCompositeTargetPlatform(c, apiKey, tc.model)
+
+			endpoint, ok := service.CompositeRouteEndpointFromContext(c.Request.Context())
+			require.True(t, ok)
+			require.Equal(t, tc.endpoint, endpoint)
+			_, resolved := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+			require.True(t, resolved, "the handler detector should seed a fallback platform")
+		})
+	}
+}
+
 func TestOpenAICompatibleTextTargetAllowsCompositeGrokModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -35,6 +64,15 @@ func TestOpenAICompatibleTextTargetAllowsCompositeGrokModel(t *testing.T) {
 		require.True(t, ok, "path=%s", path)
 		require.Equal(t, service.PlatformGrok, platform, "path=%s", path)
 	}
+}
+
+func TestOpenAICompatibleRequestPlatformPreservesDeepSeek(t *testing.T) {
+	apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformDeepSeek}}
+	require.Equal(t, service.PlatformDeepSeek, openAICompatibleRequestPlatform(context.Background(), apiKey))
+
+	ctx := service.WithResolvedTargetPlatform(context.Background(), service.PlatformDeepSeek)
+	compositeKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformComposite}}
+	require.Equal(t, service.PlatformDeepSeek, openAICompatibleRequestPlatform(ctx, compositeKey))
 }
 
 func TestCompositeTargetPlatformAllowedRejectsWrongOrUnknownModel(t *testing.T) {

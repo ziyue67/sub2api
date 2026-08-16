@@ -11,6 +11,7 @@ func TestFilterHeadersDisabledUsesDefaultAllowlist(t *testing.T) {
 	src := http.Header{}
 	src.Add("Content-Type", "application/json")
 	src.Add("X-Request-Id", "req-123")
+	src.Add("X-DeepSeek-Request-Id", "deepseek-123")
 	src.Add("X-Test", "ok")
 	src.Add("Connection", "keep-alive")
 	src.Add("Content-Length", "123")
@@ -26,6 +27,9 @@ func TestFilterHeadersDisabledUsesDefaultAllowlist(t *testing.T) {
 	}
 	if filtered.Get("X-Request-Id") != "req-123" {
 		t.Fatalf("expected X-Request-Id allowed, got %q", filtered.Get("X-Request-Id"))
+	}
+	if filtered.Get("X-DeepSeek-Request-Id") != "deepseek-123" {
+		t.Fatalf("expected X-DeepSeek-Request-Id allowed, got %q", filtered.Get("X-DeepSeek-Request-Id"))
 	}
 	if filtered.Get("X-Test") != "" {
 		t.Fatalf("expected X-Test removed, got %q", filtered.Get("X-Test"))

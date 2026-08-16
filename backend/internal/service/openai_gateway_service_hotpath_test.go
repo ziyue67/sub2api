@@ -920,9 +920,9 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 			wantValue: "xhigh",
 		},
 		{
-			name:      "DeepSeek max 归一化为 xhigh",
+			name:      "非 GPT-5.6 max 归一化为 xhigh",
 			body:      []byte(`{"reasoning_effort":"max"}`),
-			model:     "deepseek-v4-pro",
+			model:     "gpt-5.4",
 			wantNil:   false,
 			wantValue: "xhigh",
 		},
@@ -958,6 +958,20 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 			require.Equal(t, tt.wantValue, *got)
 		})
 	}
+}
+
+func TestExtractOpenAIReasoningEffortFromBodyForDeepSeekAccountPreservesMaxWithAliasedModel(t *testing.T) {
+	body := []byte(`{"reasoning_effort":"max"}`)
+	deepSeek := &Account{Platform: PlatformDeepSeek, Type: AccountTypeAPIKey}
+
+	got := extractOpenAIReasoningEffortFromBodyForAccount(deepSeek, body, "custom-v4-alias")
+	require.NotNil(t, got)
+	require.Equal(t, "max", *got)
+
+	openAI := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	got = extractOpenAIReasoningEffortFromBodyForAccount(openAI, body, "gpt-5.4")
+	require.NotNil(t, got)
+	require.Equal(t, "xhigh", *got)
 }
 
 func TestGetOpenAIRequestBodyMap_ParseError(t *testing.T) {

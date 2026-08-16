@@ -22,32 +22,40 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-func TestHTTPUpstreamDoCanDisableRedirectsPerRequest(t *testing.T) {
+func TestHTTPUpstreamDoBlocksCrossHost307CredentialForwarding(t *testing.T) {
 	var redirectedCalls atomic.Int64
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var leakedCredential atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		redirectedCalls.Add(1)
+		if r.Header.Get("Authorization") != "" || r.Header.Get("X-Api-Key") != "" {
+			leakedCredential.Store(true)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(target.Close)
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusFound)
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(redirector.Close)
+	require.NotEqual(t, redirector.URL, target.URL)
 
 	upstream := NewHTTPUpstream(nil)
 	req, err := http.NewRequestWithContext(
 		service.WithHTTPUpstreamRedirectsDisabled(t.Context()),
-		http.MethodGet,
+		http.MethodPost,
 		redirector.URL,
-		nil,
+		strings.NewReader(`{"model":"deepseek-v4-flash"}`),
 	)
 	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer deepseek-canary-secret")
+	req.Header.Set("X-Api-Key", "deepseek-canary-secret")
 
 	resp, err := upstream.Do(req, "", 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, http.StatusFound, resp.StatusCode)
+	require.Equal(t, http.StatusTemporaryRedirect, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 	require.Zero(t, redirectedCalls.Load())
+	require.False(t, leakedCredential.Load())
 }
 
 func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredHTTPProxy(t *testing.T) {
@@ -345,6 +353,39 @@ func TestGrokAccessDeniedFallbackRecognizesChatEndpointPermissionDenied(t *testi
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, []string{grokCLIProxyHost, grokOfficialAPIHost}, hosts)
+}
+
+func TestGrokAccessDeniedFallbackDoesNotReplayCredentialIsolatedRequest(t *testing.T) {
+	const canary = "deepseek-canary-secret"
+	var hosts []string
+	var leakedCredential bool
+	transport := &grokAccessDeniedFallbackTransport{
+		base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			hosts = append(hosts, req.URL.Hostname())
+			if req.URL.Hostname() == grokOfficialAPIHost && strings.Contains(req.Header.Get("Authorization"), canary) {
+				leakedCredential = true
+			}
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":"Access denied"}`)),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	ctx := service.WithHTTPUpstreamRedirectsDisabled(t.Context())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://cli-chat-proxy.grok.com/v1/responses", strings.NewReader(`{"model":"deepseek-v4-pro"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+canary)
+	req.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+
+	resp, err := transport.RoundTrip(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, []string{grokCLIProxyHost}, hosts)
+	require.False(t, leakedCredential)
 }
 
 func TestIsGrokCLICompatibilityAccessDenied(t *testing.T) {

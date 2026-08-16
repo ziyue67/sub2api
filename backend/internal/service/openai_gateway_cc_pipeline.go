@@ -88,6 +88,9 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	upstreamMsg string,
 	upstreamModel string,
 ) *UpstreamFailoverError {
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
+	respBody = redactDeepSeekAPIKey(account, respBody)
+	upstreamMsg = redactDeepSeekAPIKeyString(account, upstreamMsg)
 	shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
 	tempUnscheduled := false
 	if c != nil && account != nil && account.Platform != PlatformGrok && !shouldFailover && !IsResponseCommitted(c) && s.rateLimitService != nil {
@@ -116,7 +119,7 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 		AccountID:          account.ID,
 		AccountName:        account.Name,
 		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 		Kind:               "failover",
 		Message:            upstreamMsg,
 		Detail:             upstreamDetail,
@@ -125,13 +128,15 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	if account.Platform != PlatformGrok && !tempUnscheduled {
 		shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 	}
-	return newOpenAIUpstreamFailoverError(
+	failoverErr := newOpenAIUpstreamFailoverError(
 		resp.StatusCode,
 		resp.Header,
 		respBody,
 		upstreamMsg,
 		!shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
 	)
+	failoverErr.Platform = account.Platform
+	return failoverErr
 }
 
 // openAIChatCompletionsTargetURL 解析账号的（非 Grok）Chat Completions 上游端点。
@@ -179,6 +184,7 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	grokCacheIdentity string,
 ) (*http.Response, error) {
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
+	upstreamCtx = withDeepSeekRedirectsDisabled(upstreamCtx, account)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
 	releaseUpstreamCtx()
 	if err != nil {
@@ -192,14 +198,23 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	} else {
 		upstreamReq.Header.Set("Accept", "application/json")
 	}
+	deepSeekChatRequest := account.IsDeepSeek() && strings.HasSuffix(strings.TrimRight(targetURL, "/"), deepSeekChatCompletionsEndpoint)
 
 	// 透传白名单中的客户端 header。详见 openaiCCRawAllowedHeaders 的设计说明。
 	for key, values := range c.Request.Header {
 		lowerKey := strings.ToLower(key)
-		if openaiCCRawAllowedHeaders[lowerKey] {
-			for _, v := range values {
-				upstreamReq.Header.Add(key, v)
+		allowed := openaiCCRawAllowedHeaders[lowerKey]
+		if !allowed && deepSeekChatRequest {
+			allowed = deepSeekHarnessForwardHeaders[lowerKey]
+		}
+		if !allowed {
+			continue
+		}
+		for _, v := range values {
+			if deepSeekHarnessForwardHeaders[lowerKey] && len(v) > deepSeekHarnessForwardHeaderMaxBytes {
+				continue
 			}
+			upstreamReq.Header.Add(key, v)
 		}
 	}
 	if userAgent != "" {
@@ -215,6 +230,14 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	// 账号级请求头覆写：放在所有内置默认头（含 Grok CLI 身份头）之后应用，
 	// 使配置值获得除共享传输层强制头之外的最高优先级。
 	account.ApplyHeaderOverrides(upstreamReq.Header)
+	if account.IsDeepSeekAPIKey() {
+		// DeepSeek credentials always come from credentials.api_key. Prevent
+		// account header overrides from replacing or duplicating authentication.
+		upstreamReq.Header.Del("Authorization")
+		upstreamReq.Header.Del("X-Api-Key")
+		upstreamReq.Header.Del("X-Goog-Api-Key")
+		upstreamReq.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
 
 	proxyURL := ""
 	if account.Proxy != nil {
