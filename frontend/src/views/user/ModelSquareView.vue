@@ -120,6 +120,62 @@ watch(isDark, (value) => {
   min-width: 0;
   overflow-x: auto;
   overscroll-behavior-x: contain;
+  /* 给可见横条留出空间，避免紧贴卡片 */
+  padding-bottom: 0.75rem;
+  /*
+   * 浏览器缩放（zoom）适配：
+   * 缩放会等比缩小视口的 CSS 宽度，内容 min-width 超出时由此区域横向滚动，
+   * 布局本身按 rem/断点等比降级，不会出现错位或裁剪。
+   */
+  /* Firefox：始终可见的横向滚动条（覆盖全局“仅 hover 可见”的透明样式） */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(99, 102, 241, 0.45) rgba(148, 163, 184, 0.12);
+}
+
+.model-square-scroll-region:hover,
+.model-square-scroll-region:focus-visible {
+  scrollbar-color: rgba(99, 102, 241, 0.7) rgba(148, 163, 184, 0.16);
+}
+
+.dark .model-square-scroll-region {
+  scrollbar-color: rgba(129, 140, 248, 0.5) rgba(255, 255, 255, 0.06);
+}
+
+.dark .model-square-scroll-region:hover,
+.dark .model-square-scroll-region:focus-visible {
+  scrollbar-color: rgba(129, 140, 248, 0.75) rgba(255, 255, 255, 0.1);
+}
+
+/* WebKit / Blink：始终可见的横向滚动条 */
+.model-square-scroll-region::-webkit-scrollbar {
+  height: 0.625rem;
+  width: 0.625rem;
+}
+
+.model-square-scroll-region::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.12);
+  border-radius: 9999px;
+}
+
+.model-square-scroll-region::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.45);
+  border-radius: 9999px;
+}
+
+.model-square-scroll-region::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.7);
+}
+
+.dark .model-square-scroll-region::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dark .model-square-scroll-region::-webkit-scrollbar-thumb {
+  background: rgba(129, 140, 248, 0.5);
+}
+
+.dark .model-square-scroll-region::-webkit-scrollbar-thumb:hover {
+  background: rgba(129, 140, 248, 0.75);
 }
 
 .model-square-scroll-content {
