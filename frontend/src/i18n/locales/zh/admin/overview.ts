@@ -883,6 +883,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        deepseek: 'DeepSeek',
         composite: 'Composite',
       },
       saving: '保存中...',

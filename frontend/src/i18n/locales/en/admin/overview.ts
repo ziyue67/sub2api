@@ -950,6 +950,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        deepseek: 'DeepSeek',
         composite: 'Composite',
       },
       deleteConfirm:

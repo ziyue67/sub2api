@@ -160,6 +160,20 @@
             <PlatformIcon platform="grok" size="sm" />
             Grok
           </button>
+          <button
+            type="button"
+            data-testid="platform-deepseek"
+            @click="form.platform = 'deepseek'"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'deepseek'
+                ? 'bg-white text-indigo-600 shadow-sm dark:bg-dark-600 dark:text-indigo-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="deepseek" size="sm" />
+            DeepSeek
+          </button>
         </div>
       </div>
 
@@ -408,6 +422,28 @@
               <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.types.responsesApi') }}</span>
             </div>
           </button>
+        </div>
+      </div>
+
+      <!-- DeepSeek currently supports API-key accounts only. -->
+      <div v-if="form.platform === 'deepseek'" data-testid="deepseek-account-type">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2" data-tour="account-form-type">
+          <div
+            class="flex items-center gap-3 rounded-lg border-2 border-indigo-500 bg-indigo-50 p-3 text-left dark:bg-indigo-900/20"
+          >
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-500 text-white">
+              <Icon name="key" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{
+                t('admin.accounts.apiKey')
+              }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                t('admin.accounts.types.deepseekApikey')
+              }}</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1120,15 +1156,7 @@
             v-model="apiKeyBaseUrl"
             type="text"
             class="input"
-            :placeholder="
-              form.platform === 'openai'
-                ? 'https://api.openai.com'
-                : form.platform === 'gemini'
-                  ? 'https://generativelanguage.googleapis.com'
-                  : form.platform === 'grok'
-                    ? 'https://api.x.ai/v1'
-                    : 'https://api.anthropic.com'
-            "
+            :placeholder="getDefaultApiKeyBaseUrl(form.platform)"
           />
           <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
           <GrokBaseUrlPresets
@@ -1144,21 +1172,14 @@
             type="password"
             required
             class="input font-mono"
-            :placeholder="
-              form.platform === 'openai'
-                ? 'sk-proj-...'
-                : form.platform === 'gemini'
-                  ? 'AIza...'
-                  : form.platform === 'grok'
-                    ? 'xai-...'
-                    : 'sk-ant-...'
-            "
+            :placeholder="apiKeyPlaceholder"
           />
           <p v-if="apiKeyHint" class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
-        <!-- 上游倍率自动探测：全部 API-key 平台可用（所在区块已限定 apikey 类型） -->
+        <!-- 上游倍率自动探测：仅对后端支持的 API-key 平台开放 -->
         <div
+          v-if="isUpstreamBillingProbeIdentity(form.platform, form.type)"
           class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
         >
           <div>
@@ -3620,6 +3641,7 @@ import {
 } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
+import { isUpstreamBillingProbeIdentity } from '@/utils/upstreamBillingProbe'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -3659,10 +3681,19 @@ const oauthStepTitle = computed(() => {
   return t('admin.accounts.oauth.title')
 })
 
+const getDefaultApiKeyBaseUrl = (platform: AccountPlatform): string => {
+  if (platform === 'openai') return 'https://api.openai.com'
+  if (platform === 'gemini') return 'https://generativelanguage.googleapis.com'
+  if (platform === 'grok') return 'https://api.x.ai/v1'
+  if (platform === 'deepseek') return 'https://api.deepseek.com'
+  return 'https://api.anthropic.com'
+}
+
 // Platform-specific hints for API Key type
 const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
+  if (form.platform === 'deepseek') return t('admin.accounts.deepseek.baseUrlHint')
   if (form.platform === 'grok') return ''
   return t('admin.accounts.baseUrlHint')
 })
@@ -3670,8 +3701,17 @@ const baseUrlHint = computed(() => {
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
+  if (form.platform === 'deepseek') return t('admin.accounts.deepseek.apiKeyHint')
   if (form.platform === 'grok') return ''
   return t('admin.accounts.apiKeyHint')
+})
+
+const apiKeyPlaceholder = computed(() => {
+  if (form.platform === 'openai') return 'sk-proj-...'
+  if (form.platform === 'gemini') return 'AIza...'
+  if (form.platform === 'grok') return 'xai-...'
+  if (form.platform === 'deepseek') return 'sk-...'
+  return 'sk-ant-...'
 })
 
 interface Props {
@@ -4246,16 +4286,15 @@ watch(
 // Reset platform-specific settings when platform changes
 watch(
   () => form.platform,
-  (newPlatform) => {
+  (newPlatform, oldPlatform) => {
     // Reset base URL based on platform
-    apiKeyBaseUrl.value =
-      (newPlatform === 'openai')
-        ? 'https://api.openai.com'
-        : newPlatform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newPlatform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : 'https://api.anthropic.com'
+    apiKeyBaseUrl.value = getDefaultApiKeyBaseUrl(newPlatform)
+    if (!isUpstreamBillingProbeIdentity(newPlatform, 'apikey')) {
+      accountCategory.value = 'apikey'
+      upstreamBillingAutoProbeEnabled.value = false
+    } else if (oldPlatform && !isUpstreamBillingProbeIdentity(oldPlatform, 'apikey')) {
+      upstreamBillingAutoProbeEnabled.value = true
+    }
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
@@ -5140,14 +5179,7 @@ const handleSubmit = async () => {
   }
 
   // Determine default base URL based on platform
-  const defaultBaseUrl =
-    form.platform === 'openai'
-      ? 'https://api.openai.com'
-      : form.platform === 'gemini'
-        ? 'https://generativelanguage.googleapis.com'
-        : form.platform === 'grok'
-          ? 'https://api.x.ai/v1'
-          : 'https://api.anthropic.com'
+  const defaultBaseUrl = getDefaultApiKeyBaseUrl(form.platform)
 
   // Build credentials with optional model mapping
   const credentials: Record<string, unknown> = {
@@ -5213,7 +5245,8 @@ const handleSubmit = async () => {
     ...form,
     group_ids: form.group_ids,
     extra,
-    upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
+    upstream_billing_probe_enabled:
+      isUpstreamBillingProbeIdentity(form.platform, form.type) && upstreamBillingAutoProbeEnabled.value,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
 }
@@ -5342,9 +5375,9 @@ const createAccountAndFinish = async (
     rate_multiplier: form.rate_multiplier,
     group_ids: form.group_ids,
     expires_at: form.expires_at,
-    // 上游倍率探测对全部 API-key 平台开放（antigravity upstream 走本 helper）；
-    // 非 apikey 类型（bedrock/oauth）不传，后端不动作。
-    upstream_billing_probe_enabled: type === 'apikey' ? upstreamBillingAutoProbeEnabled.value : undefined,
+    upstream_billing_probe_enabled: type === 'apikey'
+      ? isUpstreamBillingProbeIdentity(platform, type) && upstreamBillingAutoProbeEnabled.value
+      : undefined,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
 }

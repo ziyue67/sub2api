@@ -420,7 +420,6 @@ describe('BulkEditAccountModal', () => {
   })
 
   it('非 OpenAI 平台的 API Key 批量编辑同样可开启上游倍率自动探测', async () => {
-    // 探测已放宽到全部 API-key 平台，混合平台选择只要求类型全为 apikey。
     const wrapper = mountModal({
       selectedPlatforms: ['grok', 'anthropic'],
       selectedTypes: ['apikey']
@@ -434,6 +433,32 @@ describe('BulkEditAccountModal', () => {
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
       upstream_billing_probe_enabled: true
     })
+  })
+
+  it('所选账号包含 DeepSeek 时不显示上游倍率自动探测批量开关', () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai', 'deepseek'],
+      selectedTypes: ['apikey']
+    })
+
+    expect(wrapper.find('#bulk-edit-upstream-billing-auto-probe-enabled').exists()).toBe(false)
+  })
+
+  it('筛选结果带 unknown 元数据哨兵时保守隐藏上游倍率自动探测批量开关', () => {
+    const wrapper = mountModal({
+      accountIds: [],
+      selectedPlatforms: [],
+      selectedTypes: [],
+      target: {
+        mode: 'filtered',
+        filters: { status: 'active' },
+        previewCount: 101,
+        selectedPlatforms: ['openai', 'unknown'],
+        selectedTypes: ['apikey', 'unknown']
+      }
+    })
+
+    expect(wrapper.find('#bulk-edit-upstream-billing-auto-probe-enabled').exists()).toBe(false)
   })
 
   it('OpenAI API Key 批量编辑可统一关闭上游倍率自动探测', async () => {

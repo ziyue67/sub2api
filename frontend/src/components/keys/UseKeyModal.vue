@@ -239,6 +239,8 @@ const activeTab = ref<string>('unix')
 const activeClientTab = ref<string>('claude')
 type CodexAuthMode = 'legacy' | 'api-key'
 const codexAuthMode = ref<CodexAuthMode>('legacy')
+const DEEPSEEK_FLASH_MODEL = 'deepseek-v4-flash'
+const DEEPSEEK_PRO_MODEL = 'deepseek-v4-pro'
 
 // Reset tabs when platform changes
 const defaultClientTab = computed(() => {
@@ -250,6 +252,8 @@ const defaultClientTab = computed(() => {
     case 'gemini':
       return 'gemini'
     case 'antigravity':
+      return 'claude'
+    case 'deepseek':
       return 'claude'
     default:
       return 'claude'
@@ -366,6 +370,11 @@ const clientTabs = computed((): TabConfig[] => {
         { id: 'grok', label: t('keys.useKeyModal.cliTabs.grokCli'), icon: TerminalIcon },
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+      ]
+    case 'deepseek':
+      return [
+        { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
     default:
@@ -519,6 +528,8 @@ const currentFiles = computed((): FileConfig[] => {
         ]
       case 'grok':
         return [generateOpenCodeConfig('grok', apiBase, apiKey)]
+      case 'deepseek':
+        return [generateOpenCodeConfig('deepseek', apiBase, apiKey)]
       default:
         return [generateOpenCodeConfig('openai', apiBase, apiKey)]
     }
@@ -548,6 +559,8 @@ const currentFiles = computed((): FileConfig[] => {
         return generateGrokCodexFiles(apiBase, apiKey)
       }
       return generateGrokFiles(apiBase, apiKey)
+    case 'deepseek':
+      return generateDeepSeekClaudeFiles(baseRoot, apiKey)
     default:
       return generateAnthropicFiles(baseUrl, apiKey)
   }
@@ -608,16 +621,29 @@ $env:CLAUDE_CODE_ATTRIBUTION_HEADER=0`
   ]
 }
 
-function generateGrokClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] {
+interface ClaudeModelAliases {
+  default: string
+  opus: string
+  sonnet: string
+  haiku: string
+  fable: string
+  subagent: string
+}
+
+function generateMappedClaudeFiles(
+  baseUrl: string,
+  apiKey: string,
+  models: ClaudeModelAliases
+): FileConfig[] {
   const environment = {
     ANTHROPIC_BASE_URL: baseUrl,
     ANTHROPIC_AUTH_TOKEN: apiKey,
-    ANTHROPIC_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_FABLE_MODEL: 'grok-4.5',
-    CLAUDE_CODE_SUBAGENT_MODEL: 'grok-4.5',
+    ANTHROPIC_MODEL: models.default,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: models.opus,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: models.sonnet,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: models.haiku,
+    ANTHROPIC_DEFAULT_FABLE_MODEL: models.fable,
+    CLAUDE_CODE_SUBAGENT_MODEL: models.subagent,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     CLAUDE_CODE_ATTRIBUTION_HEADER: '0'
   }
@@ -663,6 +689,28 @@ function generateGrokClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] 
       hint: t('keys.useKeyModal.claudeSettingsHint')
     }
   ]
+}
+
+function generateGrokClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] {
+  return generateMappedClaudeFiles(baseUrl, apiKey, {
+    default: 'grok-4.5',
+    opus: 'grok-4.5',
+    sonnet: 'grok-4.5',
+    haiku: 'grok-4.5',
+    fable: 'grok-4.5',
+    subagent: 'grok-4.5'
+  })
+}
+
+function generateDeepSeekClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] {
+  return generateMappedClaudeFiles(baseUrl, apiKey, {
+    default: DEEPSEEK_PRO_MODEL,
+    opus: DEEPSEEK_PRO_MODEL,
+    sonnet: DEEPSEEK_PRO_MODEL,
+    haiku: DEEPSEEK_FLASH_MODEL,
+    fable: DEEPSEEK_FLASH_MODEL,
+    subagent: DEEPSEEK_FLASH_MODEL
+  })
 }
 
 function generateGeminiCliContent(baseUrl: string, apiKey: string): FileConfig {
@@ -1501,6 +1549,14 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
       limit: { context: 500000, output: 64000 }
     }
   }
+  const deepseekModels = {
+    [DEEPSEEK_FLASH_MODEL]: {
+      name: 'DeepSeek V4 Flash'
+    },
+    [DEEPSEEK_PRO_MODEL]: {
+      name: 'DeepSeek V4 Pro'
+    }
+  }
 
   if (platform === 'gemini') {
     provider[platform].npm = '@ai-sdk/google'
@@ -1522,6 +1578,10 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     provider[platform].npm = '@ai-sdk/openai-compatible'
     provider[platform].name = 'Grok via Sub2API'
     provider[platform].models = grokModels
+  } else if (platform === 'deepseek') {
+    provider[platform].npm = '@ai-sdk/openai-compatible'
+    provider[platform].name = 'DeepSeek via Sub2API'
+    provider[platform].models = deepseekModels
   }
 
   const agent =

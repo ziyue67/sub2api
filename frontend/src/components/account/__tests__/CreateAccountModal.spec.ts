@@ -145,6 +145,44 @@ async function openCodexImportStep(toggleClicks = 0) {
   return wrapper
 }
 
+describe('CreateAccountModal DeepSeek API key accounts', () => {
+  beforeEach(() => {
+    createAccountMock.mockReset().mockResolvedValue({ id: 84, platform: 'deepseek', type: 'apikey' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+  })
+
+  it('forces API key mode, uses the official base URL, and disables upstream billing probes', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-deepseek"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="deepseek-account-type"]').text()).toContain(
+      'admin.accounts.types.deepseekApikey'
+    )
+    expect(wrapper.find('[data-testid="upstream-billing-auto-probe"]').exists()).toBe(false)
+
+    const baseUrlInput = wrapper.get('input[placeholder="https://api.deepseek.com"]')
+    expect((baseUrlInput.element as HTMLInputElement).value).toBe('https://api.deepseek.com')
+
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('DeepSeek account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-deepseek-test')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      platform: 'deepseek',
+      type: 'apikey',
+      credentials: expect.objectContaining({
+        base_url: 'https://api.deepseek.com',
+        api_key: 'sk-deepseek-test',
+      }),
+      upstream_billing_probe_enabled: false,
+    }))
+    expect(probeUpstreamBillingMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('CreateAccountModal OpenAI long-context billing', () => {
   beforeEach(() => {
     createAccountMock.mockReset().mockResolvedValue({ id: 42, platform: 'openai', type: 'apikey' })

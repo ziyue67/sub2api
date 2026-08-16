@@ -203,6 +203,69 @@ describe('UseKeyModal', () => {
     )
   })
 
+  it('renders only native DeepSeek models for Claude Code and OpenCode', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-deepseek-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'deepseek'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    const clientTabs = wrapper.find('nav[aria-label="Client"]').findAll('button').map((button) => button.text())
+    expect(clientTabs).toEqual([
+      'keys.useKeyModal.cliTabs.claudeCode',
+      'keys.useKeyModal.cliTabs.opencode'
+    ])
+
+    let codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    const shellConfig = codeBlocks.find((content) => content.startsWith('export ANTHROPIC_BASE_URL'))
+    expect(shellConfig).toBeDefined()
+    expect(shellConfig).toContain('ANTHROPIC_BASE_URL="https://example.com"')
+    expect(shellConfig).toContain('ANTHROPIC_MODEL="deepseek-v4-pro"')
+    expect(shellConfig).toContain('ANTHROPIC_DEFAULT_OPUS_MODEL="deepseek-v4-pro"')
+    expect(shellConfig).toContain('ANTHROPIC_DEFAULT_SONNET_MODEL="deepseek-v4-pro"')
+    expect(shellConfig).toContain('ANTHROPIC_DEFAULT_HAIKU_MODEL="deepseek-v4-flash"')
+    expect(shellConfig).toContain('ANTHROPIC_DEFAULT_FABLE_MODEL="deepseek-v4-flash"')
+    expect(shellConfig).toContain('CLAUDE_CODE_SUBAGENT_MODEL="deepseek-v4-flash"')
+    expect(shellConfig).not.toContain('claude-')
+    expect(shellConfig).not.toContain('gpt-')
+
+    const opencodeTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.opencode')
+    )
+    expect(opencodeTab).toBeDefined()
+    await opencodeTab!.trigger('click')
+    await nextTick()
+
+    codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    const parsed = JSON.parse(codeBlocks[0])
+    expect(Object.keys(parsed.provider)).toEqual(['deepseek'])
+    expect(parsed.provider.deepseek.npm).toBe('@ai-sdk/openai-compatible')
+    expect(parsed.provider.deepseek.name).toBe('DeepSeek via Sub2API')
+    expect(parsed.provider.deepseek.options).toEqual({
+      baseURL: 'https://example.com/v1',
+      apiKey: 'sk-deepseek-test'
+    })
+    expect(Object.keys(parsed.provider.deepseek.models)).toEqual([
+      'deepseek-v4-flash',
+      'deepseek-v4-pro'
+    ])
+    expect(codeBlocks[0]).not.toContain('"gpt-')
+    expect(codeBlocks[0]).not.toContain('"claude-')
+  })
+
   it('renders Codex custom provider setup through the Grok Responses gateway', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {

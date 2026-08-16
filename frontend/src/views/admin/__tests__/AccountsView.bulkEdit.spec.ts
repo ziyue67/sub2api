@@ -102,11 +102,13 @@ const ProbeDataTableStub = {
 
 const AccountBulkActionsBarStub = {
   props: ['selectedIds'],
-  emits: ['edit-filtered', 'probe-upstream-billing'],
+  emits: ['edit-selected', 'edit-filtered', 'probe-upstream-billing', 'select-all-results'],
   template: `
     <div>
+      <button data-test="edit-selected" @click="$emit('edit-selected')">edit selected</button>
       <button data-test="edit-filtered" @click="$emit('edit-filtered')">edit filtered</button>
       <button data-test="probe-upstream-billing" @click="$emit('probe-upstream-billing')">probe</button>
+      <button data-test="select-all-results" @click="$emit('select-all-results')">select all</button>
     </div>
   `
 }
@@ -118,7 +120,13 @@ const PaginationStub = {
 
 const BulkEditAccountModalStub = {
   props: ['show', 'target'],
-  template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
+  template: `<div
+    data-test="bulk-edit-modal"
+    :data-show="String(show)"
+    :data-target-mode="target?.mode ?? ''"
+    :data-target-platforms="target?.selectedPlatforms?.join(',') ?? ''"
+    :data-target-types="target?.selectedTypes?.join(',') ?? ''"
+  ></div>`
 }
 
 describe('admin AccountsView bulk edit scope', () => {
@@ -200,6 +208,8 @@ describe('admin AccountsView bulk edit scope', () => {
 
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('true')
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('filtered')
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-platforms')).toContain('unknown')
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-types')).toContain('unknown')
   })
 
   it('renders the created_at column by default', async () => {
@@ -268,6 +278,67 @@ describe('admin AccountsView bulk edit scope', () => {
       label: 'admin.accounts.columns.createdAt',
       sortable: true
     })
+  })
+
+  it('adds unknown sentinels when selected IDs exceed the known account identities', async () => {
+    const visibleAccount = {
+      id: 1,
+      name: 'deepseek-visible',
+      platform: 'deepseek',
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-13T00:00:00Z',
+      updated_at: '2026-07-13T00:00:00Z'
+    }
+    listAccounts
+      .mockResolvedValueOnce({ items: [visibleAccount], total: 2, page: 1, page_size: 20, pages: 1 })
+      .mockResolvedValueOnce({ items: [{ id: 1 }, { id: 2 }], total: 2, page: 1, page_size: 1000, pages: 1 })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('[data-test="select-all-results"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="edit-selected"]').trigger('click')
+
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-platforms'))
+      .toBe('deepseek,unknown')
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-types'))
+      .toBe('apikey,unknown')
   })
 
   it('passes the loaded global probe state to every upstream billing cell', async () => {
@@ -339,11 +410,11 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(wrapper.get('[data-test="upstream-billing-cell"]').attributes('data-global-enabled')).toBe('false')
   })
 
-  it('submits selected account IDs from every page for backend eligibility checks', async () => {
-    const account = (id: number) => ({
+  it('keeps cross-page identities for batch probe and bulk-edit eligibility', async () => {
+    const account = (id: number, platform: 'openai' | 'deepseek') => ({
       id,
       name: `account-${id}`,
-      platform: 'openai',
+      platform,
       type: 'apikey',
       status: 'active',
       schedulable: true,
@@ -351,8 +422,8 @@ describe('admin AccountsView bulk edit scope', () => {
       updated_at: '2026-07-13T00:00:00Z'
     })
     listAccounts
-      .mockResolvedValueOnce({ items: [account(7)], total: 2, page: 1, page_size: 1, pages: 2 })
-      .mockResolvedValueOnce({ items: [account(11)], total: 2, page: 2, page_size: 1, pages: 2 })
+      .mockResolvedValueOnce({ items: [account(7, 'deepseek')], total: 2, page: 1, page_size: 1, pages: 2 })
+      .mockResolvedValueOnce({ items: [account(11, 'openai')], total: 2, page: 2, page_size: 1, pages: 2 })
 
     const wrapper = mount(AccountsView, {
       global: {
@@ -397,7 +468,80 @@ describe('admin AccountsView bulk edit scope', () => {
     await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
     await flushPromises()
 
-    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([7, 11])
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([11])
+
+    await wrapper.get('[data-test="edit-selected"]').trigger('click')
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-platforms'))
+      .toBe('deepseek,openai')
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-types')).toBe('apikey')
+  })
+
+  it('applies the batch limit after filtering out DeepSeek accounts', async () => {
+    const account = (id: number, platform: 'openai' | 'deepseek') => ({
+      id,
+      name: `account-${id}`,
+      platform,
+      type: 'apikey',
+      status: 'active',
+      schedulable: true,
+      created_at: '2026-07-13T00:00:00Z',
+      updated_at: '2026-07-13T00:00:00Z'
+    })
+    const items = [
+      account(7, 'openai'),
+      ...Array.from({ length: 20 }, (_, index) => account(100 + index, 'deepseek'))
+    ]
+    listAccounts.mockResolvedValueOnce({
+      items,
+      total: items.length,
+      page: 1,
+      page_size: 50,
+      pages: 1
+    })
+
+    const wrapper = mount(AccountsView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: { template: '<div><slot name="table" /></div>' },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          AccountTableActions: true,
+          AccountTableFilters: true,
+          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountActionMenu: true,
+          ImportDataModal: true,
+          ReAuthAccountModal: true,
+          AccountTestModal: true,
+          AccountStatsModal: true,
+          ScheduledTestsPanel: true,
+          SyncFromCrsModal: true,
+          TempUnschedStatusModal: true,
+          ErrorPassthroughRulesModal: true,
+          TLSFingerprintProfilesModal: true,
+          CreateAccountModal: true,
+          EditAccountModal: true,
+          BulkEditAccountModal: BulkEditAccountModalStub,
+          PlatformTypeBadge: true,
+          AccountCapacityCell: true,
+          AccountStatusIndicator: true,
+          AccountTodayStatsCell: true,
+          AccountGroupsCell: true,
+          AccountUsageCell: true,
+          Icon: true
+        }
+      }
+    })
+
+    await flushPromises()
+    for (const checkbox of wrapper.findAll('[data-test="select-row"] input')) {
+      await checkbox.trigger('change')
+    }
+    await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
+    await flushPromises()
+
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([7])
   })
 
   it('refreshes the current page after a batch probe and displays the synced rate', async () => {

@@ -34,17 +34,7 @@
             v-model="editBaseUrl"
             type="text"
             class="input"
-            :placeholder="
-              account.platform === 'openai'
-                ? 'https://api.openai.com'
-                : account.platform === 'gemini'
-                  ? 'https://generativelanguage.googleapis.com'
-                  : account.platform === 'antigravity'
-                    ? 'https://cloudcode-pa.googleapis.com'
-                    : account.platform === 'grok'
-                      ? 'https://api.x.ai/v1'
-                      : 'https://api.anthropic.com'
-            "
+            :placeholder="defaultBaseUrl"
           />
           <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
           <GrokBaseUrlPresets
@@ -63,17 +53,7 @@
             data-1p-ignore
             data-lpignore="true"
             data-bwignore="true"
-            :placeholder="
-              account.platform === 'openai'
-                ? 'sk-proj-...'
-                : account.platform === 'gemini'
-                  ? 'AIza...'
-                  : account.platform === 'antigravity'
-                    ? 'sk-...'
-                    : account.platform === 'grok'
-                      ? 'xai-...'
-                      : 'sk-ant-...'
-            "
+            :placeholder="apiKeyPlaceholder"
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
@@ -1719,7 +1699,7 @@
       </div>
 
       <div
-        v-if="account?.type === 'apikey'"
+        v-if="account && isUpstreamBillingProbeIdentity(account.platform, account.type)"
         class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div>
@@ -2756,6 +2736,7 @@ import {
 } from '@/components/account/credentialsBuilder'
 import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
+import { isUpstreamBillingProbeIdentity } from '@/utils/upstreamBillingProbe'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -2805,6 +2786,7 @@ const baseUrlHint = computed(() => {
   if (!props.account) return t('admin.accounts.baseUrlHint')
   if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
+  if (props.account.platform === 'deepseek') return t('admin.accounts.deepseek.baseUrlHint')
   if (props.account.platform === 'grok') return ''
   return t('admin.accounts.baseUrlHint')
 })
@@ -3267,12 +3249,24 @@ const tempUnschedPresets = computed(() => [
   }
 ])
 
-// Computed: default base URL based on platform
-const defaultBaseUrl = computed(() => {
-  if (props.account?.platform === 'openai') return 'https://api.openai.com'
-  if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
-  if (props.account?.platform === 'grok') return 'https://api.x.ai/v1'
+const getAccountDefaultBaseUrl = (platform?: Account['platform']): string => {
+  if (platform === 'openai') return 'https://api.openai.com'
+  if (platform === 'gemini') return 'https://generativelanguage.googleapis.com'
+  if (platform === 'antigravity') return 'https://cloudcode-pa.googleapis.com'
+  if (platform === 'grok') return 'https://api.x.ai/v1'
+  if (platform === 'deepseek') return 'https://api.deepseek.com'
   return 'https://api.anthropic.com'
+}
+
+// Computed: default base URL based on platform
+const defaultBaseUrl = computed(() => getAccountDefaultBaseUrl(props.account?.platform))
+
+const apiKeyPlaceholder = computed(() => {
+  if (props.account?.platform === 'openai') return 'sk-proj-...'
+  if (props.account?.platform === 'gemini') return 'AIza...'
+  if (props.account?.platform === 'grok') return 'xai-...'
+  if (props.account?.platform === 'deepseek' || props.account?.platform === 'antigravity') return 'sk-...'
+  return 'sk-ant-...'
 })
 
 const mixedChannelWarningMessageText = computed(() => {
@@ -3423,7 +3417,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
 	autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
-	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
+	upstreamBillingAutoProbeEnabled.value =
+    isUpstreamBillingProbeIdentity(newAccount.platform, newAccount.type) &&
+    extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
@@ -3622,14 +3618,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Initialize API Key fields for apikey type
   if (newAccount.type === 'apikey' && newAccount.credentials) {
     const credentials = newAccount.credentials as Record<string, unknown>
-    const platformDefaultUrl =
-      newAccount.platform === 'openai'
-        ? 'https://api.openai.com'
-        : newAccount.platform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newAccount.platform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : 'https://api.anthropic.com'
+    const platformDefaultUrl = getAccountDefaultBaseUrl(newAccount.platform)
     editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
 
     // Load model mappings and detect mode
@@ -3693,14 +3682,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     // Load model mappings for service_account
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
   } else {
-    const platformDefaultUrl =
-      newAccount.platform === 'openai'
-        ? 'https://api.openai.com'
-        : newAccount.platform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newAccount.platform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : 'https://api.anthropic.com'
+    const platformDefaultUrl = getAccountDefaultBaseUrl(newAccount.platform)
     editBaseUrl.value = platformDefaultUrl
 
     // Load model mappings for OpenAI/Grok OAuth accounts
@@ -4279,9 +4261,13 @@ const handleSubmit = async () => {
     }
     updatePayload.auto_pause_on_expired = autoPauseOnExpired.value
     if (props.account.type === 'apikey') {
-      updatePayload.upstream_billing_probe_enabled = upstreamBillingAutoProbeEnabled.value
-      updatePayload.upstream_billing_rate_sync_enabled = upstreamBillingRateSyncEnabled.value
-      if (upstreamBillingRateSyncEnabled.value) {
+      const upstreamBillingProbeEnabled =
+        isUpstreamBillingProbeIdentity(props.account.platform, props.account.type) &&
+        upstreamBillingAutoProbeEnabled.value
+      const upstreamBillingRateSync = upstreamBillingProbeEnabled && upstreamBillingRateSyncEnabled.value
+      updatePayload.upstream_billing_probe_enabled = upstreamBillingProbeEnabled
+      updatePayload.upstream_billing_rate_sync_enabled = upstreamBillingRateSync
+      if (upstreamBillingRateSync) {
         delete updatePayload.rate_multiplier
       }
     }

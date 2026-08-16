@@ -592,6 +592,27 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe('https://api.x.ai/v1')
   })
 
+  it('uses the official DeepSeek base URL when an API-key account omits base_url', async () => {
+    const account = buildAccount()
+    account.platform = 'deepseek'
+    account.credentials = { api_key: 'sk-deepseek-test' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+
+    expect((wrapper.get('input[placeholder="https://api.deepseek.com"]').element as HTMLInputElement).value)
+      .toBe('https://api.deepseek.com')
+    expect(wrapper.find('[data-testid="upstream-billing-auto-probe"]').exists()).toBe(false)
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.base_url).toBe('https://api.deepseek.com')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_probe_enabled).toBe(false)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.upstream_billing_rate_sync_enabled).toBe(false)
+  })
+
   it('only submits model mapping credentials when saving an OpenAI spark shadow account', async () => {
     authIsSimpleMode.value = false
     const account = buildOpenAISparkShadowAccount()
