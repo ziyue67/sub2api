@@ -676,6 +676,33 @@ go generate ./cmd/server
 
 ---
 
+## DeepSeek サポート
+
+Sub2API は DeepSeek を独立した API Key 専用プラットフォームとしてサポートします。
+アカウントは `platform: deepseek`、`type: apikey`、`credentials.api_key`を使用し、
+`credentials.base_url` にプロトコル共通の API ルートを設定します
+（デフォルト: `https://api.deepseek.com`）。
+
+ゲートウェイは Chat Completions へ一律変換せず、クライアントのプロトコルをそのまま転送します。
+
+| クライアント | DeepSeek 上流 | 認証 |
+| --- | --- | --- |
+| `/v1/chat/completions` | `/chat/completions` | Bearer API Key |
+| `/v1/responses` | `/responses` | Bearer API Key |
+| `/v1/messages` | `/anthropic/v1/messages` | `x-api-key` |
+
+ストリーミング／非ストリーミングのテキスト、推論、ツール呼び出しは元のプロトコルを保持します。
+組み込みモデルは `deepseek-v4-flash` と `deepseek-v4-pro` です。
+画像、Embedding、音声／動画、Realtime/WebSocket、`/responses/compact` などの子パス、
+Messages `count_tokens` は DeepSeek では有効化されません。
+
+`base_url` はバージョンパスや完全なエンドポイントではなく、共通 API ルートである必要があります。
+公式の `https://api.deepseek.com/v1` は正規ルートに正規化されます。
+認証情報を含む DeepSeek リクエストは HTTP リダイレクトに追従しません。
+本番環境でカスタムリレーを使用する場合は `security.url_allowlist` を有効にし、
+意図したリレーホストだけを追加して、`allow_private_hosts` と
+`allow_insecure_http` をともに `false` に設定してください。
+
 ## Antigravity サポート
 
 Sub2API は [Antigravity](https://antigravity.so/) アカウントをサポートしています。認証後、Claude および Gemini モデル用の専用エンドポイントが利用可能になります。

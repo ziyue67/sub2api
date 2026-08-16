@@ -14,6 +14,7 @@ Composite groups can route to these concrete account platforms:
 - OpenAI
 - Antigravity
 - Grok
+- DeepSeek
 
 The selected concrete platform is used for account selection, user platform
 quota checks, post-usage billing, ops error platform attribution, channel
@@ -62,6 +63,7 @@ Composite routing detects common public model IDs and provider-prefixed IDs:
 - `gpt-*`, `o*`, `codex-*`, `text-embedding-*`, `dall-e-*`, and
   `openai/*` route to OpenAI.
 - `grok-*` and `xai/grok-*` route to Grok.
+- `deepseek-*` routes to DeepSeek.
 
 Unknown or ambiguous model names fail closed with a client error instead of
 guessing a provider.
@@ -117,6 +119,10 @@ Composite routes choose a concrete provider and upstream model; they do not
 create synthetic model metadata, pricing, or upstream capability records by
 themselves. Keep channel pricing/model mapping configured for the concrete
 provider platforms that the routes target.
+
+DeepSeek routes are limited to `messages`, `chat_completions`, and `responses`.
+They cannot use `any`, `count_tokens`, `embeddings`, `images`, or `gemini`
+because those public endpoint families are not implemented for this platform.
 
 This PR intentionally does not implement:
 

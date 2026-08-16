@@ -741,6 +741,32 @@ go generate ./cmd/server
 
 ---
 
+## DeepSeek 支持
+
+Sub2API 将 DeepSeek 作为独立平台接入，目前仅支持 API Key 账号。创建账号时使用
+`platform: deepseek`、`type: apikey`、`credentials.api_key`，并在
+`credentials.base_url` 中填写不带协议路径的 API 根地址（默认为
+`https://api.deepseek.com`）。
+
+网关按客户端入口协议原生转发，不会统一转换为 Chat Completions：
+
+| 客户端接口 | DeepSeek 上游接口 | 鉴权 |
+| --- | --- | --- |
+| `/v1/chat/completions` | `/chat/completions` | Bearer API Key |
+| `/v1/responses` | `/responses` | Bearer API Key |
+| `/v1/messages` | `/anthropic/v1/messages` | `x-api-key` |
+
+流式和非流式的文本、推理与工具调用都保留原协议语义。内置模型为
+`deepseek-v4-flash` 和 `deepseek-v4-pro`，自定义中转的模型 ID 需由管理员显式添加。
+DeepSeek 平台不开放图片、Embedding、音视频、Realtime/WebSocket、
+`/responses/compact` 等 Responses 子路径以及 Messages `count_tokens`。
+
+`base_url` 必须是三种协议共用的 API 根地址，不能填写版本路径或完整接口。
+官方别名 `https://api.deepseek.com/v1` 会自动归一为根地址；自定义中转必须同时暴露上表三条路径。
+携带 DeepSeek 凭据的请求不会跟随 HTTP 重定向。
+生产环境如需使用自定义中转，请启用 `security.url_allowlist`，仅加入预期中转域名，
+并将 `allow_private_hosts` 与 `allow_insecure_http` 都设为 `false`。
+
 ## Antigravity 使用说明
 
 Sub2API 支持 [Antigravity](https://antigravity.so/) 账户，授权后可通过专用端点访问 Claude 和 Gemini 模型。
