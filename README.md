@@ -741,10 +741,32 @@ traffic through Chat Completions:
 Streaming and non-streaming text, reasoning, and tool calls are forwarded in
 their original protocol. The built-in model catalog contains
 `deepseek-v4-flash` and `deepseek-v4-pro`; custom relay model IDs can be added
-explicitly. Images, embeddings, audio/video, realtime/WebSocket, most Responses
-subpaths, and Messages `count_tokens` are not enabled for DeepSeek. Exact
-`/responses/compact` aliases are accepted only for Codex compaction
-compatibility and are bridged to DeepSeek Chat Completions.
+explicitly. Images, embeddings, audio/video, realtime, most Responses subpaths,
+and Messages `count_tokens` are not enabled for DeepSeek.
+
+Codex remote compaction is implemented as a gateway checkpoint bridge. The
+summary helper is a normal streaming `POST /responses` request to DeepSeek,
+using the Codex checkpoint prompt and the request's explicit reasoning effort;
+it never calls Chat Completions or DeepSeek `/responses/compact`. The gateway
+fully validates the terminal event and billable usage before returning one
+encrypted Codex compaction item. Exact `/responses/compact`, remote-v2 SSE, and
+legacy compact wires share this implementation.
+
+DeepSeek accounts support client Responses WebSocket mode `off` or
+`http_bridge`. In `http_bridge`, Sub2API accepts Codex WebSocket ingress and
+maps each `response.create` to an independent streaming DeepSeek HTTP
+`POST /responses`; DeepSeek upstream is never contacted over WebSocket. The
+account mode also requires the global `gateway.openai_ws` v2 router/bridge.
+Accordingly, generated Codex `supports_websockets` describes Sub2API ingress
+capability, not native DeepSeek WebSocket support.
+
+New DeepSeek accounts default to authenticated-user isolation. Sub2API derives
+a stable anonymous DeepSeek `user`/`user_id` from the authenticated local user,
+overrides untrusted client identity fields, and uses the same identity across
+Chat Completions, Responses, Anthropic Messages, compaction, and WebSocket
+turns. Account mode `off` remains available for compatibility. Keep
+`deepseek.user_id_secret` stable across replicas and restarts; rotating it
+changes every upstream identity and causes a DeepSeek KVCache cold start.
 
 `base_url` must be the shared API root, not a versioned path or a complete
 endpoint. The official `https://api.deepseek.com/v1` alias is normalized to the

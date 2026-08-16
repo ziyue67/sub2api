@@ -2,17 +2,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
-const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
+const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode, deepSeekBridgeEnabled } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
-  authIsSimpleMode: { value: true }
+  authIsSimpleMode: { value: true },
+  deepSeekBridgeEnabled: { value: false }
 }))
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     showError: vi.fn(),
     showSuccess: vi.fn(),
-    showInfo: vi.fn()
+    showInfo: vi.fn(),
+    get cachedPublicSettings() {
+      return {
+        deepseek_responses_websocket_http_bridge_enabled: deepSeekBridgeEnabled.value
+      }
+    }
   })
 }))
 
@@ -313,6 +319,7 @@ function mountModal(account = buildAccount()) {
 
 describe('EditAccountModal', () => {
   beforeEach(() => {
+    deepSeekBridgeEnabled.value = false
     authIsSimpleMode.value = true
   })
 
@@ -613,6 +620,12 @@ describe('EditAccountModal', () => {
     ])
     expect(wrapper.find('input[name="deepseek_user_id"]').exists()).toBe(false)
     expect(wrapper.find('input[name="deepseek_user"]').exists()).toBe(false)
+    const wsModeSelect = wrapper.get('[data-testid="edit-deepseek-ws-mode-select"]')
+    expect((wsModeSelect.element as HTMLSelectElement).value).toBe('off')
+    expect(wsModeSelect.findAll('option').map((option) => option.attributes('value'))).toEqual([
+      'off',
+      'http_bridge'
+    ])
 
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
@@ -624,6 +637,67 @@ describe('EditAccountModal', () => {
       unrelated_setting: 'keep-me',
       deepseek_user_isolation_mode: 'off'
     }))
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra)
+      .not.toHaveProperty('deepseek_responses_websockets_v2_mode')
+  })
+
+  it('shows the effective http_bridge default for a legacy account when globally enabled', async () => {
+    deepSeekBridgeEnabled.value = true
+    const account = buildAccount()
+    account.platform = 'deepseek'
+    account.credentials = { api_key: 'sk-deepseek-test' }
+    account.extra = { unrelated_setting: 'keep-me' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const wsModeSelect = wrapper.get('[data-testid="edit-deepseek-ws-mode-select"]')
+    expect((wsModeSelect.element as HTMLSelectElement).value).toBe('http_bridge')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toEqual(expect.objectContaining({
+      unrelated_setting: 'keep-me'
+    }))
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra)
+      .not.toHaveProperty('deepseek_responses_websockets_v2_mode')
+  })
+
+  it('persists an explicit off stop switch when editing a legacy account', async () => {
+    deepSeekBridgeEnabled.value = true
+    const account = buildAccount()
+    account.platform = 'deepseek'
+    account.credentials = { api_key: 'sk-deepseek-test' }
+    account.extra = {}
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const wsModeSelect = wrapper.get('[data-testid="edit-deepseek-ws-mode-select"]')
+    expect((wsModeSelect.element as HTMLSelectElement).value).toBe('http_bridge')
+    await wsModeSelect.setValue('off')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.deepseek_responses_websockets_v2_mode)
+      .toBe('off')
+  })
+
+  it('fails legacy upstream-native mode values closed instead of exposing them', async () => {
+    deepSeekBridgeEnabled.value = true
+    const account = buildAccount()
+    account.platform = 'deepseek'
+    account.credentials = { api_key: 'sk-deepseek-test' }
+    account.extra = { deepseek_responses_websockets_v2_mode: 'ctx_pool' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const wsModeSelect = wrapper.get('[data-testid="edit-deepseek-ws-mode-select"]')
+    expect((wsModeSelect.element as HTMLSelectElement).value).toBe('off')
+    expect(wrapper.text()).not.toContain('ctx_pool')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.deepseek_responses_websockets_v2_mode)
+      .toBe('off')
   })
 
   it('loads and updates authenticated-user isolation without dropping unrelated extra', async () => {
@@ -632,6 +706,7 @@ describe('EditAccountModal', () => {
     account.credentials = { api_key: 'sk-deepseek-test' }
     account.extra = {
       deepseek_user_isolation_mode: 'authenticated_user',
+      deepseek_responses_websockets_v2_mode: 'http_bridge',
       unrelated_setting: { enabled: true }
     }
     updateAccountMock.mockReset().mockResolvedValue(account)
@@ -640,12 +715,15 @@ describe('EditAccountModal', () => {
     const wrapper = mountModal(account)
     const isolationSelect = wrapper.get('[data-testid="edit-deepseek-user-isolation-mode-select"]')
     expect((isolationSelect.element as HTMLSelectElement).value).toBe('authenticated_user')
+    expect((wrapper.get('[data-testid="edit-deepseek-ws-mode-select"]').element as HTMLSelectElement).value)
+      .toBe('http_bridge')
 
     await isolationSelect.setValue('off')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toEqual(expect.objectContaining({
       deepseek_user_isolation_mode: 'off',
+      deepseek_responses_websockets_v2_mode: 'http_bridge',
       unrelated_setting: { enabled: true }
     }))
   })

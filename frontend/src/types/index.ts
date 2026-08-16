@@ -274,6 +274,8 @@ export interface PublicSettings {
   service_quota_enabled: boolean
   affiliate_enabled: boolean
   allow_user_view_error_requests?: boolean
+  /** Effective deployment-wide DeepSeek Responses WS-to-HTTP ingress switch. */
+  deepseek_responses_websocket_http_bridge_enabled?: boolean
 }
 
 export interface AuthResponse {
@@ -552,6 +554,8 @@ export interface Group {
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
   max_reasoning_effort?: string // OpenAI/Codex reasoning ceiling; empty means unlimited
   reasoning_effort_mappings?: ReasoningEffortMapping[]
+  /** Server-computed Codex Responses WS ingress capability for this group. */
+  codex_supports_websockets?: boolean
   is_exclusive: boolean
   status: 'active' | 'inactive'
   subscription_type: SubscriptionType

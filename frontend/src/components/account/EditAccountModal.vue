@@ -1648,6 +1648,28 @@
       >
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.deepseek.wsMode') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.deepseek.wsModeDesc') }}
+            </p>
+          </div>
+          <div class="w-full sm:w-56 sm:shrink-0">
+            <Select
+              :model-value="deepSeekResponsesWebSocketV2Mode"
+              :options="deepSeekWSModeOptions"
+              data-testid="edit-deepseek-ws-mode-select"
+              @update:model-value="setDeepSeekWSMode"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="account?.platform === 'deepseek' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
             <label class="input-label mb-0">{{ t('admin.accounts.deepseek.userIsolationMode') }}</label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.deepseek.userIsolationModeDesc') }}
@@ -2770,6 +2792,13 @@ import {
   resolveOpenAIWSModeFromExtra
 } from '@/utils/openaiWsMode'
 import {
+  DEEPSEEK_WS_MODE_HTTP_BRIDGE,
+  DEEPSEEK_WS_MODE_OFF,
+  normalizeDeepSeekWSMode,
+  resolveDeepSeekWSModeFromExtra,
+  type DeepSeekWSMode
+} from '@/utils/deepseekWsMode'
+import {
   getPresetMappingsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
@@ -2792,6 +2821,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+void appStore.fetchPublicSettings?.()?.catch(() => {})
 const authStore = useAuthStore()
 
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
@@ -2982,6 +3012,9 @@ const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 type DeepSeekUserIsolationMode = 'authenticated_user' | 'off'
 const deepSeekUserIsolationMode = ref<DeepSeekUserIsolationMode>('off')
+const deepSeekResponsesWebSocketV2Mode = ref<DeepSeekWSMode>(DEEPSEEK_WS_MODE_OFF)
+const deepSeekWSModeExplicit = ref(false)
+const deepSeekWSModeTouched = ref(false)
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
@@ -3040,6 +3073,25 @@ const deepSeekUserIsolationModeOptions = computed(() => [
     label: t('admin.accounts.deepseek.userIsolationOff')
   }
 ])
+const deepSeekWSModeOptions = computed(() => [
+  {
+    value: DEEPSEEK_WS_MODE_OFF,
+    label: t('admin.accounts.deepseek.wsModeOff')
+  },
+  {
+    value: DEEPSEEK_WS_MODE_HTTP_BRIDGE,
+    label: t('admin.accounts.deepseek.wsModeHttpBridge')
+  }
+])
+const deepSeekWSBridgeGloballyEnabled = computed(() =>
+  appStore.cachedPublicSettings?.deepseek_responses_websocket_http_bridge_enabled === true
+)
+const setDeepSeekWSMode = (value: unknown) => {
+  const mode = normalizeDeepSeekWSMode(value)
+  if (!mode) return
+  deepSeekWSModeTouched.value = true
+  deepSeekResponsesWebSocketV2Mode.value = mode
+}
 const openaiResponsesWebSocketV2Mode = computed({
   get: () => {
     if (props.account?.type === 'apikey') {
@@ -3468,6 +3520,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   deepSeekUserIsolationMode.value = 'off'
+  deepSeekResponsesWebSocketV2Mode.value = DEEPSEEK_WS_MODE_OFF
+  deepSeekWSModeExplicit.value = false
+  deepSeekWSModeTouched.value = false
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
@@ -3539,6 +3594,14 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     deepSeekUserIsolationMode.value = extra?.deepseek_user_isolation_mode === 'authenticated_user'
       ? 'authenticated_user'
       : 'off'
+    deepSeekWSModeExplicit.value = !!extra && Object.prototype.hasOwnProperty.call(
+      extra,
+      'deepseek_responses_websockets_v2_mode'
+    )
+    deepSeekResponsesWebSocketV2Mode.value = resolveDeepSeekWSModeFromExtra(
+      extra,
+      deepSeekWSBridgeGloballyEnabled.value
+    )
   }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
@@ -3907,6 +3970,17 @@ const addTempUnschedRule = (preset?: TempUnschedRuleForm) => {
     description: ''
   })
 }
+
+watch(deepSeekWSBridgeGloballyEnabled, (enabled) => {
+  if (
+    props.account?.platform !== 'deepseek' ||
+    deepSeekWSModeExplicit.value ||
+    deepSeekWSModeTouched.value
+  ) {
+    return
+  }
+  deepSeekResponsesWebSocketV2Mode.value = resolveDeepSeekWSModeFromExtra(undefined, enabled)
+})
 
 const removeTempUnschedRule = (index: number) => {
   tempUnschedRules.value.splice(index, 1)
@@ -4774,10 +4848,16 @@ const handleSubmit = async () => {
     if (props.account.platform === 'deepseek' && props.account.type === 'apikey') {
       const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
         (props.account.extra as Record<string, unknown>) || {}
-      updatePayload.extra = {
+      const newExtra: Record<string, unknown> = {
         ...currentExtra,
         deepseek_user_isolation_mode: deepSeekUserIsolationMode.value
       }
+      if (deepSeekWSModeExplicit.value || deepSeekWSModeTouched.value) {
+        newExtra.deepseek_responses_websockets_v2_mode = deepSeekResponsesWebSocketV2Mode.value
+      } else {
+        delete newExtra.deepseek_responses_websockets_v2_mode
+      }
+      updatePayload.extra = newExtra
     }
 
     // For OpenAI OAuth/SetupToken/API Key accounts, handle passthrough mode in extra

@@ -53,6 +53,7 @@ const messages: Record<string, string> = {
   'keys.status.inactive': 'Inactive',
   'keys.status.quota_exhausted': 'Quota exhausted',
   'keys.usage': 'Usage',
+  'keys.useKey': 'Use Key',
 }
 
 vi.mock('@/api', () => ({
@@ -173,6 +174,7 @@ const DataTableStub = {
         <div data-test="current-concurrency">
           <slot name="cell-current_concurrency" :value="row.current_concurrency" :row="row" />
         </div>
+        <slot name="cell-actions" :value="row" :row="row" />
         <div
           v-if="columns.some((col) => col.key === 'last_used_ip')"
           data-test="last-used-ip"
@@ -392,6 +394,33 @@ describe('user KeysView column settings', () => {
     const wrapper = await mountView()
 
     expect(wrapper.get('[data-test="current-concurrency"]').text()).toBe('3')
+  })
+
+  it('passes the server-computed group WebSocket capability to the key guide', async () => {
+    listKeys.mockResolvedValueOnce({
+      items: [{
+        ...createApiKey(),
+        group: {
+          id: 7,
+          name: 'DeepSeek',
+          platform: 'deepseek',
+          allow_messages_dispatch: false,
+          codex_supports_websockets: true,
+        } as ApiKey['group'],
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    const wrapper = await mountView()
+
+    await getButtonByText(wrapper, 'Use Key').trigger('click')
+    await nextTick()
+
+    const modal = wrapper.findComponent({ name: 'UseKeyModal' })
+    expect(modal.props('platform')).toBe('deepseek')
+    expect(modal.props('supportsWebsockets')).toBe(true)
   })
 
   it('marks current concurrency as sortable', async () => {

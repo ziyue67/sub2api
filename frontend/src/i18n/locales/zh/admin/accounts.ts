@@ -587,6 +587,11 @@ export default {
       deepseek: {
         baseUrlHint: '保留默认值以使用 DeepSeek 官方 API',
         apiKeyHint: '您的 DeepSeek API Key',
+        wsMode: 'Responses WebSocket 模式',
+        wsModeDesc:
+          'HTTP 桥接表示 Sub2API 接受客户端 Responses WebSocket，并将每个 turn 通过 HTTP /responses 转发给 DeepSeek；DeepSeek 上游不使用原生 WebSocket。该模式还需开启网关全局桥接。',
+        wsModeOff: '关闭（off）',
+        wsModeHttpBridge: 'HTTP 桥接（http_bridge）',
         userIsolationMode: '用户隔离',
         userIsolationModeDesc:
           '认证用户模式会根据每次请求中已认证的 Sub2API 用户生成稳定的上游匿名身份；关闭后不注入身份。此处不能输入或查看原始及派生用户 ID。',

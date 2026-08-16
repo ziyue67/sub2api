@@ -758,9 +758,26 @@ Sub2API 将 DeepSeek 作为独立平台接入，目前仅支持 API Key 账号�
 
 流式和非流式的文本、推理与工具调用都保留原协议语义。内置模型为
 `deepseek-v4-flash` 和 `deepseek-v4-pro`，自定义中转的模型 ID 需由管理员显式添加。
-DeepSeek 平台不开放图片、Embedding、音视频、Realtime/WebSocket、
-大多数 Responses 子路径以及 Messages `count_tokens`。仅为兼容 Codex 压缩，
-精确的 `/responses/compact` 别名会由网关桥接到 DeepSeek Chat Completions。
+DeepSeek 平台不开放图片、Embedding、音视频、Realtime、大多数 Responses 子路径以及
+Messages `count_tokens`。
+
+Codex 远程压缩由网关 checkpoint 桥实现。摘要辅助调用是普通的流式 DeepSeek
+`POST /responses`，使用 Codex checkpoint prompt，并继承请求显式指定的 reasoning effort；
+不会调用 Chat Completions，也不会请求 DeepSeek `/responses/compact`。网关完整校验 terminal
+和 billable usage 后，才返回一个加密的 Codex compaction item。精确 `/responses/compact`、
+remote-v2 SSE 和 legacy compact wire 共用该实现。
+
+DeepSeek 账号的客户端 Responses WebSocket 模式仅有 `off` 和 `http_bridge`。
+`http_bridge` 由 Sub2API 接受 Codex WebSocket 入口，并将每个 `response.create` 作为独立的
+流式 DeepSeek HTTP `POST /responses` 请求；DeepSeek 上游始终不使用 WebSocket。账号模式还需
+开启全局 `gateway.openai_ws` v2 router/bridge。因此 Codex 配置中的
+`supports_websockets` 表示 Sub2API 的客户端入口能力，不表示 DeepSeek 原生 WS 能力。
+
+新建 DeepSeek 账号默认启用认证用户隔离。Sub2API 根据已认证的本地用户派生稳定的匿名
+DeepSeek `user`/`user_id`，覆盖客户端不可信身份字段，并在 Chat Completions、Responses、
+Anthropic Messages、压缩和 WebSocket turn 中保持一致。账号仍可选择 `off` 兼容模式。
+多副本与重启必须保持 `deepseek.user_id_secret` 不变；轮换会改变全部上游身份并造成
+DeepSeek KVCache 冷启动。
 
 `base_url` 必须是三种协议共用的 API 根地址，不能填写版本路径或完整接口。
 官方别名 `https://api.deepseek.com/v1` 会自动归一为根地址；自定义中转必须同时暴露上表三条路径。

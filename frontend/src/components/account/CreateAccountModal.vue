@@ -2874,6 +2874,28 @@
       >
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.deepseek.wsMode') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.deepseek.wsModeDesc') }}
+            </p>
+          </div>
+          <div class="w-full sm:w-56 sm:shrink-0">
+            <Select
+              :model-value="deepSeekResponsesWebSocketV2Mode"
+              :options="deepSeekWSModeOptions"
+              data-testid="create-deepseek-ws-mode-select"
+              @update:model-value="setDeepSeekWSMode"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="form.platform === 'deepseek' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
             <label class="input-label mb-0">{{ t('admin.accounts.deepseek.userIsolationMode') }}</label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.deepseek.userIsolationModeDesc') }}
@@ -3673,6 +3695,13 @@ import {
   resolveOpenAIWSModeConcurrencyHintKey,
   type OpenAIWSMode
 } from '@/utils/openaiWsMode'
+import {
+  DEEPSEEK_WS_MODE_HTTP_BRIDGE,
+  DEEPSEEK_WS_MODE_OFF,
+  normalizeDeepSeekWSMode,
+  resolveDeepSeekWSModeFromExtra,
+  type DeepSeekWSMode
+} from '@/utils/deepseekWsMode'
 import OAuthAuthorizationFlow from './OAuthAuthorizationFlow.vue'
 
 // Type for exposed OAuthAuthorizationFlow component
@@ -3748,6 +3777,7 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+void appStore.fetchPublicSettings?.()?.catch(() => {})
 
 // OAuth composables
 const oauth = useAccountOAuth() // For Anthropic OAuth
@@ -3915,6 +3945,8 @@ const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 type DeepSeekUserIsolationMode = 'authenticated_user' | 'off'
 const deepSeekUserIsolationMode = ref<DeepSeekUserIsolationMode>('authenticated_user')
+const deepSeekResponsesWebSocketV2Mode = ref<DeepSeekWSMode>(DEEPSEEK_WS_MODE_OFF)
+const deepSeekWSModeTouched = ref(false)
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
@@ -4126,6 +4158,25 @@ const deepSeekUserIsolationModeOptions = computed(() => [
     label: t('admin.accounts.deepseek.userIsolationOff')
   }
 ])
+const deepSeekWSModeOptions = computed(() => [
+  {
+    value: DEEPSEEK_WS_MODE_OFF,
+    label: t('admin.accounts.deepseek.wsModeOff')
+  },
+  {
+    value: DEEPSEEK_WS_MODE_HTTP_BRIDGE,
+    label: t('admin.accounts.deepseek.wsModeHttpBridge')
+  }
+])
+const deepSeekWSBridgeGloballyEnabled = computed(() =>
+  appStore.cachedPublicSettings?.deepseek_responses_websocket_http_bridge_enabled === true
+)
+const setDeepSeekWSMode = (value: unknown) => {
+  const mode = normalizeDeepSeekWSMode(value)
+  if (!mode) return
+  deepSeekWSModeTouched.value = true
+  deepSeekResponsesWebSocketV2Mode.value = mode
+}
 
 const openaiResponsesWebSocketV2Mode = computed({
   get: () => {
@@ -4387,6 +4438,11 @@ watch(
       codexCLIOnlyAppServerEnabled.value = false
     }
     deepSeekUserIsolationMode.value = 'authenticated_user'
+    deepSeekWSModeTouched.value = false
+    deepSeekResponsesWebSocketV2Mode.value = resolveDeepSeekWSModeFromExtra(
+      undefined,
+      newPlatform === 'deepseek' && deepSeekWSBridgeGloballyEnabled.value
+    )
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -4407,6 +4463,11 @@ watch(
     grokOAuth.resetState()
   }
 )
+
+watch(deepSeekWSBridgeGloballyEnabled, (enabled) => {
+  if (form.platform !== 'deepseek' || deepSeekWSModeTouched.value) return
+  deepSeekResponsesWebSocketV2Mode.value = resolveDeepSeekWSModeFromExtra(undefined, enabled)
+})
 
 // Gemini AI Studio OAuth availability (requires operator-configured OAuth client)
 watch(
@@ -4814,6 +4875,11 @@ const resetForm = () => {
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   deepSeekUserIsolationMode.value = 'authenticated_user'
+  deepSeekResponsesWebSocketV2Mode.value = resolveDeepSeekWSModeFromExtra(
+    undefined,
+    deepSeekWSBridgeGloballyEnabled.value
+  )
+  deepSeekWSModeTouched.value = false
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
@@ -4984,7 +5050,8 @@ const buildDeepSeekExtra = (base?: Record<string, unknown>): Record<string, unkn
 
   return {
     ...(base || {}),
-    deepseek_user_isolation_mode: deepSeekUserIsolationMode.value
+    deepseek_user_isolation_mode: deepSeekUserIsolationMode.value,
+    deepseek_responses_websockets_v2_mode: deepSeekResponsesWebSocketV2Mode.value
   }
 }
 

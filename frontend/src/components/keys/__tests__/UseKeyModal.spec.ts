@@ -203,13 +203,14 @@ describe('UseKeyModal', () => {
     )
   })
 
-  it('renders only native DeepSeek models for Claude Code and OpenCode', async () => {
+  it('renders native DeepSeek models and a capability-aware Codex provider', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
         show: true,
         apiKey: 'sk-deepseek-test',
         baseUrl: 'https://example.com/v1',
-        platform: 'deepseek'
+        platform: 'deepseek',
+        supportsWebsockets: true
       },
       global: {
         stubs: {
@@ -226,6 +227,7 @@ describe('UseKeyModal', () => {
     const clientTabs = wrapper.find('nav[aria-label="Client"]').findAll('button').map((button) => button.text())
     expect(clientTabs).toEqual([
       'keys.useKeyModal.cliTabs.claudeCode',
+      'keys.useKeyModal.cliTabs.codexCli',
       'keys.useKeyModal.cliTabs.opencode'
     ])
 
@@ -241,6 +243,25 @@ describe('UseKeyModal', () => {
     expect(shellConfig).toContain('CLAUDE_CODE_SUBAGENT_MODEL="deepseek-v4-flash"')
     expect(shellConfig).not.toContain('claude-')
     expect(shellConfig).not.toContain('gpt-')
+
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    expect(codexTab).toBeDefined()
+    await codexTab!.trigger('click')
+    await nextTick()
+
+    codeBlocks = wrapper.findAll('pre code').map((code) => code.text())
+    const codexConfig = codeBlocks.find((content) => content.includes('[model_providers.sub2api]'))
+    expect(codexConfig).toBeDefined()
+    expect(codexConfig).toContain('model = "deepseek-v4-pro"')
+    expect(codexConfig).toContain('name = "OpenAI"')
+    expect(codexConfig).toContain('wire_api = "responses"')
+    expect(codexConfig).toContain('requires_openai_auth = false')
+    expect(codexConfig).toContain('supports_websockets = true')
+    expect(codexConfig).toContain('responses_websockets_v2 = true')
+    expect(codexConfig).toContain('base_url = "https://example.com/v1"')
+    expect(codexConfig).not.toContain('name = "DeepSeek')
 
     const opencodeTab = wrapper.findAll('button').find((button) =>
       button.text().includes('keys.useKeyModal.cliTabs.opencode')
@@ -264,6 +285,35 @@ describe('UseKeyModal', () => {
     ])
     expect(codeBlocks[0]).not.toContain('"gpt-')
     expect(codeBlocks[0]).not.toContain('"claude-')
+  })
+
+  it('keeps DeepSeek Codex WebSockets disabled when the group capability is unavailable', async () => {
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-deepseek-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'deepseek',
+        supportsWebsockets: false
+      },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: { template: '<span />' }
+        }
+      }
+    })
+
+    const codexTab = wrapper.findAll('button').find((button) =>
+      button.text().includes('keys.useKeyModal.cliTabs.codexCli')
+    )
+    await codexTab!.trigger('click')
+    await nextTick()
+
+    const config = wrapper.findAll('pre code').map((code) => code.text()).join('\n')
+    expect(config).toContain('name = "OpenAI"')
+    expect(config).toContain('supports_websockets = false')
+    expect(config).not.toContain('responses_websockets_v2 = true')
   })
 
   it('renders Codex custom provider setup through the Grok Responses gateway', async () => {

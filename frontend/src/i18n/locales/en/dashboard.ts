@@ -188,6 +188,20 @@ export default {
         codexNoteWindows:
           'Set $env:SUB2API_API_KEY, save config.toml under %USERPROFILE%\\.codex. Prefer env_key auth; do not commit secrets.',
       },
+      deepseek: {
+        description:
+          'Configure Claude Code, Codex, or OpenCode to use native DeepSeek protocol endpoints through Sub2API.',
+        codexDescription:
+          'Configure Codex to use DeepSeek through Sub2API Responses, including gateway compaction and optional client WebSocket ingress.',
+        codexConfigTomlHint:
+          'Keep provider name exactly "OpenAI" so Codex enables remote_compaction_v2. supports_websockets describes Sub2API client ingress; DeepSeek upstream still uses HTTP /responses.',
+        note:
+          'The selected client sends requests through the DeepSeek API-key group. Do not commit files containing your API key.',
+        codexNote:
+          'Export SUB2API_API_KEY and save config.toml under ~/.codex. WebSocket turns, when enabled, are bridged by Sub2API to DeepSeek HTTP /responses.',
+        codexNoteWindows:
+          'Set $env:SUB2API_API_KEY and save config.toml under %USERPROFILE%\\.codex. WebSocket turns, when enabled, are bridged by Sub2API to DeepSeek HTTP /responses.',
+      },
       opencode: {
         title: 'OpenCode Example',
         subtitle: 'opencode.json',

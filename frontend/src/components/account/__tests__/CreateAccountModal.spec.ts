@@ -7,11 +7,13 @@ const {
   probeUpstreamBillingMock,
   importCodexSessionMock,
   createOpenAICodexPATMock,
+  deepSeekBridgeEnabled,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
   probeUpstreamBillingMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
+  deepSeekBridgeEnabled: { value: false },
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -19,6 +21,11 @@ vi.mock('@/stores/app', () => ({
     showError: vi.fn(),
     showSuccess: vi.fn(),
     showWarning: vi.fn(),
+    get cachedPublicSettings() {
+      return {
+        deepseek_responses_websocket_http_bridge_enabled: deepSeekBridgeEnabled.value,
+      }
+    },
   }),
 }))
 
@@ -173,6 +180,7 @@ async function openCodexImportStep(toggleClicks = 0) {
 
 describe('CreateAccountModal DeepSeek API key accounts', () => {
   beforeEach(() => {
+    deepSeekBridgeEnabled.value = false
     createAccountMock.mockReset().mockResolvedValue({ id: 84, platform: 'deepseek', type: 'apikey' })
     probeUpstreamBillingMock.mockReset().mockResolvedValue({})
   })
@@ -195,6 +203,12 @@ describe('CreateAccountModal DeepSeek API key accounts', () => {
     ])
     expect(wrapper.find('input[name="deepseek_user_id"]').exists()).toBe(false)
     expect(wrapper.find('input[name="deepseek_user"]').exists()).toBe(false)
+    const wsModeSelect = wrapper.get('[data-testid="create-deepseek-ws-mode-select"]')
+    expect((wsModeSelect.element as HTMLSelectElement).value).toBe('off')
+    expect(wsModeSelect.findAll('option').map((option) => option.attributes('value'))).toEqual([
+      'off',
+      'http_bridge',
+    ])
 
     const baseUrlInput = wrapper.get('input[placeholder="https://api.deepseek.com"]')
     expect((baseUrlInput.element as HTMLInputElement).value).toBe('https://api.deepseek.com')
@@ -214,10 +228,29 @@ describe('CreateAccountModal DeepSeek API key accounts', () => {
       }),
       extra: expect.objectContaining({
         deepseek_user_isolation_mode: 'authenticated_user',
+        deepseek_responses_websockets_v2_mode: 'off',
       }),
       upstream_billing_probe_enabled: false,
     }))
     expect(probeUpstreamBillingMock).not.toHaveBeenCalled()
+  })
+
+  it('defaults new accounts to http_bridge when the global bridge is available', async () => {
+    deepSeekBridgeEnabled.value = true
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-deepseek"]').trigger('click')
+    await flushPromises()
+
+    const wsModeSelect = wrapper.get('[data-testid="create-deepseek-ws-mode-select"]')
+    expect((wsModeSelect.element as HTMLSelectElement).value).toBe('http_bridge')
+
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('DeepSeek account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-deepseek-test')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.deepseek_responses_websockets_v2_mode)
+      .toBe('http_bridge')
   })
 
   it('can explicitly disable authenticated-user isolation', async () => {

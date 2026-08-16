@@ -13,4 +13,16 @@ describe('DeepSeek user isolation locale descriptions', () => {
     expect(zh.accounts.deepseek.userIsolationOff).toContain('off')
     expect(zh.accounts.deepseek.userIsolationModeDesc).toContain('不能输入或查看')
   })
+
+  it('documents only the client WS-to-HTTP bridge modes', () => {
+    expect(en.accounts.deepseek.wsModeOff).toContain('off')
+    expect(en.accounts.deepseek.wsModeHttpBridge).toContain('http_bridge')
+    expect(en.accounts.deepseek.wsModeDesc).toContain('HTTP /responses')
+    expect(en.accounts.deepseek.wsModeDesc).toContain('does not use native WebSocket')
+
+    expect(zh.accounts.deepseek.wsModeOff).toContain('off')
+    expect(zh.accounts.deepseek.wsModeHttpBridge).toContain('http_bridge')
+    expect(zh.accounts.deepseek.wsModeDesc).toContain('HTTP /responses')
+    expect(zh.accounts.deepseek.wsModeDesc).toContain('不使用原生 WebSocket')
+  })
 })

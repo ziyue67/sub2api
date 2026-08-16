@@ -510,6 +510,11 @@ export default {
       deepseek: {
         baseUrlHint: 'Leave the default value for the official DeepSeek API',
         apiKeyHint: 'Your DeepSeek API Key',
+        wsMode: 'Responses WebSocket mode',
+        wsModeDesc:
+          'HTTP bridge accepts client Responses WebSocket sessions at Sub2API and forwards each turn to DeepSeek over HTTP /responses. DeepSeek upstream does not use native WebSocket. The global gateway bridge must also be enabled.',
+        wsModeOff: 'Off (off)',
+        wsModeHttpBridge: 'HTTP bridge (http_bridge)',
         userIsolationMode: 'User isolation',
         userIsolationModeDesc:
           'Authenticated user derives a stable anonymous upstream identity from each request\'s authenticated Sub2API user. Off disables identity injection. Raw and derived user IDs cannot be entered or viewed here.',

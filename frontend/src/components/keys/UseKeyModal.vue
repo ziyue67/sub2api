@@ -209,6 +209,7 @@ interface Props {
   baseUrl: string
   platform: GroupPlatform | null
   allowMessagesDispatch?: boolean
+  supportsWebsockets?: boolean
 }
 
 interface Emits {
@@ -375,6 +376,7 @@ const clientTabs = computed((): TabConfig[] => {
     case 'deepseek':
       return [
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
     default:
@@ -432,6 +434,11 @@ const platformDescription = computed(() => {
         return t('keys.useKeyModal.grok.codexDescription')
       }
       return t('keys.useKeyModal.grok.description')
+    case 'deepseek':
+      if (activeClientTab.value === 'codex') {
+        return t('keys.useKeyModal.deepseek.codexDescription')
+      }
+      return t('keys.useKeyModal.deepseek.description')
     default:
       return t('keys.useKeyModal.description')
   }
@@ -469,6 +476,13 @@ const platformNote = computed(() => {
         return t('keys.useKeyModal.grok.noteWindows')
       }
       return t('keys.useKeyModal.grok.note')
+    case 'deepseek':
+      if (activeClientTab.value === 'codex') {
+        return activeTab.value === 'windows'
+          ? t('keys.useKeyModal.deepseek.codexNoteWindows')
+          : t('keys.useKeyModal.deepseek.codexNote')
+      }
+      return t('keys.useKeyModal.deepseek.note')
     default:
       return t('keys.useKeyModal.note')
   }
@@ -560,6 +574,9 @@ const currentFiles = computed((): FileConfig[] => {
       }
       return generateGrokFiles(apiBase, apiKey)
     case 'deepseek':
+      if (activeClientTab.value === 'codex') {
+        return generateDeepSeekCodexFiles(apiBase, apiKey, props.supportsWebsockets === true)
+      }
       return generateDeepSeekClaudeFiles(baseRoot, apiKey)
     default:
       return generateAnthropicFiles(baseUrl, apiKey)
@@ -1017,6 +1034,50 @@ supports_websockets = false
       path: joinConfigPath(configDir, 'config.toml', isWindowsPath),
       content: configContent,
       hint: t('keys.useKeyModal.grok.codexConfigTomlHint')
+    }
+  ]
+}
+
+function generateDeepSeekCodexFiles(
+  baseUrl: string,
+  apiKey: string,
+  supportsWebsockets: boolean
+): FileConfig[] {
+  const shell = activeTab.value
+  const isWindowsPath = shell === 'windows' || shell === 'cmd' || shell === 'powershell'
+  const configDir = isWindowsPath ? '%userprofile%\\.codex' : '~/.codex'
+
+  const envContent = isWindowsPath
+    ? `$env:SUB2API_API_KEY="${apiKey}"`
+    : `export SUB2API_API_KEY="${apiKey}"`
+  const websocketFeature = supportsWebsockets
+    ? `\n[features]\nresponses_websockets_v2 = true`
+    : ''
+  const configContent = `# Codex CLI -> Sub2API DeepSeek group
+model_provider = "sub2api"
+model = "${DEEPSEEK_PRO_MODEL}"
+review_model = "${DEEPSEEK_PRO_MODEL}"
+disable_response_storage = true
+
+[model_providers.sub2api]
+# Keep this exact name so Codex enables remote_compaction_v2.
+name = "OpenAI"
+base_url = "${baseUrl}"
+env_key = "SUB2API_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+# This describes Sub2API client ingress, not native DeepSeek upstream WebSocket support.
+supports_websockets = ${supportsWebsockets}${websocketFeature}`
+
+  return [
+    {
+      path: isWindowsPath ? 'PowerShell' : 'Terminal',
+      content: envContent
+    },
+    {
+      path: joinConfigPath(configDir, 'config.toml', isWindowsPath),
+      content: configContent,
+      hint: t('keys.useKeyModal.deepseek.codexConfigTomlHint')
     }
   ]
 }
