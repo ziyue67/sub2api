@@ -102,7 +102,7 @@ func (h *OpenAIGatewayHandler) responsesDeepSeekWebSocket(
 			// request. Always start policy processing from the connection context.
 			c.Request = c.Request.WithContext(connectionCtx)
 			c.Set(securityAuditWSTurnContextKey, turn)
-			service.MarkDeepSeekCompaction(c, service.DeepSeekCompactionModeNone)
+			service.ClearDeepSeekCompaction(c)
 
 			if !gjson.ValidBytes(payload) {
 				return nil, service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid JSON"))

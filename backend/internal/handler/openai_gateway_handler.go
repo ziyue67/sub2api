@@ -905,7 +905,7 @@ func isExactDeepSeekResponsesPath(c *gin.Context) bool {
 		return false
 	}
 	switch strings.TrimSpace(c.Request.URL.Path) {
-	case "/v1/responses", "/responses", "/backend-api/codex/responses":
+	case "/v1/responses", "/openai/v1/responses", "/responses", "/backend-api/codex/responses":
 		return true
 	default:
 		return false
@@ -917,7 +917,7 @@ func isExactDeepSeekResponsesCompactPath(c *gin.Context) bool {
 		return false
 	}
 	switch strings.TrimSpace(c.Request.URL.Path) {
-	case "/v1/responses/compact", "/responses/compact", "/backend-api/codex/responses/compact":
+	case "/v1/responses/compact", "/openai/v1/responses/compact", "/responses/compact", "/backend-api/codex/responses/compact":
 		return true
 	default:
 		return false

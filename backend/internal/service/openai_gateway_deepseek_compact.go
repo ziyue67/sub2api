@@ -106,6 +106,18 @@ func MarkDeepSeekCompaction(c *gin.Context, mode DeepSeekCompactionMode) {
 	}
 }
 
+// ClearDeepSeekCompaction resets request-scoped state before reusing a Gin
+// context for the next turn of a Responses WebSocket connection.
+func ClearDeepSeekCompaction(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(deepSeekCompactionModeKey, DeepSeekCompactionModeNone)
+	c.Set(deepSeekCompactPreparedKey, nil)
+	c.Set(deepSeekResponsesValidatedKey, false)
+	clearOpenAICompactClientStream(c)
+}
+
 // MarkDeepSeekRemoteCompactionV2 keeps the existing call site contract for the
 // current Codex remote_compaction_v2 streaming wire.
 func MarkDeepSeekRemoteCompactionV2(c *gin.Context) {
@@ -286,8 +298,9 @@ func scanDeepSeekResponsesJSON(body []byte) (bool, error) {
 // probeDeepSeekResponsesCompactionState performs a streaming, fixed-state
 // probe. Provider-native fields remain opaque unless an input item identifies
 // itself as compaction state, at which point the caller runs the strict scan.
-// Root model and input stay strict even for ordinary requests because routing
-// and policy inspection consume them before the original JSON reaches upstream.
+// Root model, input, and stream stay strict even for ordinary requests because
+// routing, policy inspection, and wire selection consume them before the
+// original JSON reaches upstream.
 func probeDeepSeekResponsesCompactionState(body []byte) (bool, error) {
 	return scanDeepSeekResponsesJSONWithMode(body, false)
 }
@@ -364,7 +377,8 @@ func consumeDeepSeekResponsesJSONToken(
 			case deepSeekResponsesJSONScanContentItem:
 				canonical, bit, recognized = deepSeekResponsesCanonicalJSONKey(key, deepSeekResponsesContentItemJSONKeys[:])
 			}
-			strictKey := scan.strict || (mode == deepSeekResponsesJSONScanRoot && (canonical == "model" || canonical == "input"))
+			strictKey := scan.strict || (mode == deepSeekResponsesJSONScanRoot &&
+				(canonical == "model" || canonical == "input" || canonical == "stream"))
 			if recognized && strictKey {
 				if key != canonical {
 					return ErrDeepSeekResponsesNonCanonicalJSONKey

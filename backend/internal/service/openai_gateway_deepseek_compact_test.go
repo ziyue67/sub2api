@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,6 +21,30 @@ import (
 )
 
 const deepSeekRemoteCompactTestSummary = "Implemented the gateway bridge; next run the focused regression tests."
+
+func TestClearDeepSeekCompactionResetsWebSocketTurnState(t *testing.T) {
+	body := deepSeekRemoteCompactTestRequestBody()
+	c, _ := newDeepSeekRemoteCompactTestContext(t, body)
+	MarkDeepSeekResponsesInputValidated(c)
+	c.Set(deepSeekCompactPreparedKey, deepSeekCompactPreparedRequest{
+		SourceHash:    sha256.Sum256(body),
+		ResponsesBody: []byte(`{"model":"deepseek-v4-flash"}`),
+	})
+
+	require.True(t, IsDeepSeekCompactionMarked(c))
+	require.True(t, openAICompactClientWantsStream(c))
+	require.True(t, IsDeepSeekResponsesInputValidated(c))
+	_, prepared := preparedDeepSeekCompactResponsesRequest(c, body, "deepseek-v4-flash")
+	require.True(t, prepared)
+
+	ClearDeepSeekCompaction(c)
+
+	require.Equal(t, DeepSeekCompactionModeNone, DeepSeekCompactionModeFromContext(c))
+	require.False(t, openAICompactClientWantsStream(c))
+	require.False(t, IsDeepSeekResponsesInputValidated(c))
+	_, prepared = preparedDeepSeekCompactResponsesRequest(c, body, "deepseek-v4-flash")
+	require.False(t, prepared)
+}
 
 func TestDeepSeekCompactResponsesRequestPreservesNativeHistoryAndEffort(t *testing.T) {
 	history := []any{
@@ -602,7 +627,7 @@ func TestRestoreDeepSeekCompactInputLeavesOrdinaryProviderFieldsOpaque(t *testin
 	}
 }
 
-func TestRestoreDeepSeekCompactInputRejectsOrdinaryRootModelAndInputAmbiguity(t *testing.T) {
+func TestRestoreDeepSeekCompactInputRejectsOrdinaryRoutingAuditAndWireAmbiguity(t *testing.T) {
 	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
 	tests := []struct {
 		name    string
@@ -627,6 +652,16 @@ func TestRestoreDeepSeekCompactInputRejectsOrdinaryRootModelAndInputAmbiguity(t 
 		{
 			name:    "non-canonical input",
 			body:    []byte(`{"model":"deepseek-v4-flash","Input":"hidden","input":"visible"}`),
+			wantErr: ErrDeepSeekResponsesNonCanonicalJSONKey,
+		},
+		{
+			name:    "duplicate stream",
+			body:    []byte(`{"model":"deepseek-v4-flash","input":"hello","stream":true,"stream":false}`),
+			wantErr: ErrDeepSeekResponsesDuplicateJSONKey,
+		},
+		{
+			name:    "non-canonical stream",
+			body:    []byte(`{"model":"deepseek-v4-flash","input":"hello","Stream":false}`),
 			wantErr: ErrDeepSeekResponsesNonCanonicalJSONKey,
 		},
 	}

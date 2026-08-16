@@ -157,7 +157,7 @@ func TestDeepSeekResponsesWebSocketHandlerBridgesNativeHTTPAndRecordsUsage(t *te
 	_ = conn.Close(coderws.StatusNormalClosure, http.StatusText(http.StatusOK))
 }
 
-func TestDeepSeekResponsesWebSocketRejectsRoutingAndAuditAmbiguityBeforeScheduling(t *testing.T) {
+func TestDeepSeekResponsesWebSocketRejectsRoutingAuditAndWireAmbiguityBeforeScheduling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
 		name      string
@@ -171,6 +171,14 @@ func TestDeepSeekResponsesWebSocketRejectsRoutingAndAuditAmbiguityBeforeScheduli
 		{
 			name:    "direct non-canonical input",
 			payload: `{"type":"response.create","model":"deepseek-v4-pro","Input":"hidden from audit","input":"visible to audit"}`,
+		},
+		{
+			name:    "direct duplicate stream",
+			payload: `{"type":"response.create","model":"deepseek-v4-pro","input":"hello","stream":true,"stream":false}`,
+		},
+		{
+			name:    "direct non-canonical stream",
+			payload: `{"type":"response.create","model":"deepseek-v4-pro","input":"hello","Stream":true}`,
 		},
 		{
 			name:      "composite non-canonical model",
@@ -263,7 +271,7 @@ func TestDeepSeekResponsesWebSocketRejectsRoutingAndAuditAmbiguityBeforeScheduli
 	}
 }
 
-func TestDeepSeekResponsesWebSocketCyberPolicyBlocksNextTurnAndRecordsOnce(t *testing.T) {
+func TestDeepSeekResponsesWebSocketClearsStaleCompactionBeforeCyberUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstreamBody := "event: response.failed\n" +
 		`data: {"type":"response.failed","response":{"id":"resp_ds_ws_cyber","model":"deepseek-v4-pro","status":"failed","output":[],"error":{"code":"cyber_policy","message":"blocked"},"usage":{"input_tokens":9,"output_tokens":2,"total_tokens":11}}}` + "\n\n"
@@ -280,6 +288,9 @@ func TestDeepSeekResponsesWebSocketCyberPolicyBlocksNextTurnAndRecordsOnce(t *te
 		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID))
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID})
+		// Simulate state left by a compact turn on this connection. BeforeRequest
+		// must clear it before processing the normal response.create below.
+		service.MarkDeepSeekCompaction(c, service.DeepSeekCompactionModeRemoteV2SSE)
 		c.Next()
 	})
 	router.GET("/responses", h.ResponsesWebSocket)
@@ -306,6 +317,7 @@ func TestDeepSeekResponsesWebSocketCyberPolicyBlocksNextTurnAndRecordsOnce(t *te
 		require.Equal(t, 9, usageLog.InputTokens)
 		require.Equal(t, 2, usageLog.OutputTokens)
 		require.Equal(t, service.RequestTypeCyberBlocked, usageLog.RequestType)
+		require.Equal(t, service.UsageRequestKindNormal, usageLog.RequestKind)
 	case <-time.After(3 * time.Second):
 		t.Fatal("waiting for DeepSeek WebSocket cyber usage record timed out")
 	}
