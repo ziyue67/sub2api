@@ -28,6 +28,88 @@ const (
 	deepSeekWSSensitiveHoldMaxBytes  = 1024 * 1024
 )
 
+type deepSeekWSAccountNeutralError struct {
+	err error
+}
+
+func (e *deepSeekWSAccountNeutralError) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *deepSeekWSAccountNeutralError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+// NewDeepSeekWSAccountNeutralError marks a request-scoped DeepSeek WS failure.
+func NewDeepSeekWSAccountNeutralError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &deepSeekWSAccountNeutralError{err: err}
+}
+
+// IsDeepSeekWSAccountNeutralError reports request-scoped upstream rejections
+// that must not affect the selected account's scheduling health.
+func IsDeepSeekWSAccountNeutralError(err error) bool {
+	var neutralErr *deepSeekWSAccountNeutralError
+	return errors.As(err, &neutralErr)
+}
+
+func newDeepSeekWSClientRequestError(err error) error {
+	closeErr := NewOpenAIWSClientCloseError(
+		coderws.StatusPolicyViolation,
+		"DeepSeek Responses request was rejected",
+		err,
+	)
+	return NewDeepSeekWSAccountNeutralError(closeErr)
+}
+
+func newDeepSeekWSClientWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var closeErr *OpenAIWSClientCloseError
+	if errors.As(err, &closeErr) {
+		return err
+	}
+	return NewOpenAIWSClientCloseError(
+		coderws.StatusGoingAway,
+		"DeepSeek Responses WebSocket client write failed",
+		err,
+	)
+}
+
+func isDeepSeekWSDeterministicClientStatus(statusCode int) bool {
+	return statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity
+}
+
+func ensureDeepSeekWSUsageRequestID(c *gin.Context, result *OpenAIForwardResult, turn int) {
+	if result == nil || strings.TrimSpace(result.RequestID) != "" {
+		return
+	}
+	domain := "normal"
+	if result.RequestKind.Normalize() == UsageRequestKindCompact {
+		domain = "compact"
+	}
+	if GetOpsCyberPolicy(c) != nil {
+		domain = "cyber"
+	}
+	if turn < 1 {
+		turn = 1
+	}
+	identity := strings.TrimSpace(result.ResponseID)
+	if identity == "" {
+		identity = strings.ReplaceAll(uuid.NewString(), "-", "")
+	}
+	result.RequestID = fmt.Sprintf("deepseek-ws:%s:turn:%d:%s", domain, turn, identity)
+}
+
 // DeepSeekWSIngressHooks keeps connection framing and stateless replay in the
 // service while allowing the handler to perform security review, scheduling,
 // per-turn concurrency admission and billing at the correct lifecycle points.
@@ -94,6 +176,9 @@ func parseDeepSeekWSCreateFrame(payload []byte, fallbackModel string) ([]byte, s
 		return nil, "", "", errors.New("invalid websocket request payload")
 	}
 	if err := ValidateDeepSeekUserIdentityRequest(trimmed, DeepSeekUserIdentityResponses); err != nil {
+		return nil, "", "", err
+	}
+	if _, err := probeDeepSeekResponsesCompactionState(trimmed); err != nil {
 		return nil, "", "", err
 	}
 	var object map[string]json.RawMessage
@@ -286,7 +371,7 @@ func (s *OpenAIGatewayService) ProxyDeepSeekResponsesWebSocket(
 	clientConn *coderws.Conn,
 	firstClientMessage []byte,
 	hooks *DeepSeekWSIngressHooks,
-) error {
+) (returnErr error) {
 	if s == nil {
 		return errors.New("service is nil")
 	}
@@ -307,7 +392,13 @@ func (s *OpenAIGatewayService) ProxyDeepSeekResponsesWebSocket(
 		lifecycleCtx = hooks.ClientLifecycleContext
 	}
 	sessionCtx, cancelSession := context.WithCancelCause(ctx)
-	defer cancelSession(context.Canceled)
+	defer func() {
+		var closeErr *OpenAIWSClientCloseError
+		if errors.As(returnErr, &closeErr) {
+			_ = clientConn.Close(closeErr.StatusCode(), closeErr.Reason())
+		}
+		cancelSession(context.Canceled)
+	}()
 	stopLifecycle := context.AfterFunc(lifecycleCtx, func() { cancelSession(context.Cause(lifecycleCtx)) })
 	defer stopLifecycle()
 
@@ -973,7 +1064,7 @@ func (s *OpenAIGatewayService) readDeepSeekWSResponsesSSE(
 	emit := func(message []byte) error {
 		state.wroteEvent = true
 		if err := write(message); err != nil {
-			return NewOpenAIWSClientCloseError(coderws.StatusGoingAway, "DeepSeek Responses WebSocket client write failed", err)
+			return newDeepSeekWSClientWriteError(err)
 		}
 		return nil
 	}
@@ -1167,17 +1258,19 @@ func (s *OpenAIGatewayService) recordDeepSeekWSHTTPError(
 	account *Account,
 	upstreamModel string,
 	err *deepSeekCompactUpstreamHTTPError,
-) {
+) bool {
 	if err == nil {
-		return
+		return false
 	}
 	message := redactDeepSeekAPIKeyString(account, err.Message)
 	setOpsUpstreamError(c, err.StatusCode, message, "")
+	cyberBlocked := false
 	if hit, code, cyberMessage := detectOpenAICyberPolicy(err.Body); hit {
+		cyberBlocked = true
 		MarkOpsCyberPolicy(c, CyberPolicyMark{
 			Code: code, Message: cyberMessage, Body: truncateString(string(err.Body), 4096), UpstreamStatus: err.StatusCode,
 		})
-	} else {
+	} else if !isDeepSeekWSDeterministicClientStatus(err.StatusCode) {
 		s.handleOpenAIAccountUpstreamError(ctx, account, err.StatusCode, err.Headers, err.Body, upstreamModel)
 	}
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -1189,6 +1282,7 @@ func (s *OpenAIGatewayService) recordDeepSeekWSHTTPError(
 		Kind:               "http_error",
 		Message:            message,
 	})
+	return cyberBlocked
 }
 
 func (s *OpenAIGatewayService) forwardDeepSeekResponsesWebSocketCompactionTurn(
@@ -1219,6 +1313,7 @@ func (s *OpenAIGatewayService) forwardDeepSeekResponsesWebSocketCompactionTurn(
 			if buildErr != nil {
 				return nil, buildErr
 			}
+			req.Header.Set("X-DeepSeek-Harness-Compact", "1")
 			proxyURL := ""
 			if account.Proxy != nil {
 				proxyURL = account.Proxy.URL()
@@ -1235,15 +1330,33 @@ func (s *OpenAIGatewayService) forwardDeepSeekResponsesWebSocketCompactionTurn(
 		if !errors.As(err, &upstreamHTTPError) {
 			return execution.Result, err
 		}
-		s.recordDeepSeekWSHTTPError(ctx, c, account, upstreamModel, upstreamHTTPError)
+		cyberBlocked := s.recordDeepSeekWSHTTPError(ctx, c, account, upstreamModel, upstreamHTTPError)
 		message := strings.TrimSpace(upstreamHTTPError.Message)
 		if message == "" {
 			message = http.StatusText(upstreamHTTPError.StatusCode)
 		}
-		if writeErr := write(buildOpenAIWSHTTPBridgeErrorEvent(upstreamHTTPError.StatusCode, message)); writeErr != nil {
-			return nil, writeErr
+		result := execution.Result
+		if result == nil && cyberBlocked {
+			result = &OpenAIForwardResult{
+				RequestID:        openAICompatibleUpstreamRequestID(upstreamHTTPError.Headers),
+				Model:            originalModel,
+				BillingModel:     billingModel,
+				UpstreamModel:    upstreamModel,
+				UpstreamEndpoint: deepSeekResponsesEndpoint,
+				ReasoningEffort:  optionalTrimmedStringPtr(gjson.GetBytes(upstreamHTTPError.RequestBody, "reasoning.effort").String()),
+				RequestKind:      UsageRequestKindCompact,
+				Stream:           true,
+				OpenAIWSMode:     true,
+				ResponseHeaders:  upstreamHTTPError.Headers.Clone(),
+			}
 		}
-		return nil, upstreamHTTPError
+		if writeErr := write(buildOpenAIWSHTTPBridgeErrorEvent(upstreamHTTPError.StatusCode, message)); writeErr != nil {
+			return result, newDeepSeekWSClientWriteError(writeErr)
+		}
+		if cyberBlocked || isDeepSeekWSDeterministicClientStatus(upstreamHTTPError.StatusCode) {
+			return result, newDeepSeekWSClientRequestError(upstreamHTTPError)
+		}
+		return result, upstreamHTTPError
 	}
 	if execution.Result == nil {
 		return nil, errors.New("DeepSeek WebSocket compaction result is nil")
@@ -1252,15 +1365,16 @@ func (s *OpenAIGatewayService) forwardDeepSeekResponsesWebSocketCompactionTurn(
 	if err != nil {
 		return execution.Result, err
 	}
-	for _, event := range events {
-		if err := write(event); err != nil {
-			return execution.Result, err
-		}
-	}
 	execution.Result.OpenAIWSMode = true
 	execution.Result.Stream = true
+	execution.Result.RequestKind = UsageRequestKindCompact
 	execution.Result.UpstreamEndpoint = deepSeekResponsesEndpoint
 	execution.Result.UpstreamTerminalEvent = "response.completed"
+	for _, event := range events {
+		if err := write(event); err != nil {
+			return execution.Result, newDeepSeekWSClientWriteError(err)
+		}
+	}
 	execution.Result.wsReplayInput = replayItems
 	execution.Result.wsReplayInputExists = true
 	execution.Result.deepSeekWSCompaction = true
@@ -1277,7 +1391,7 @@ func (s *OpenAIGatewayService) ForwardDeepSeekResponsesWebSocketTurn(
 	account *Account,
 	token string,
 	payload []byte,
-	_ int,
+	turn int,
 	write func([]byte) error,
 ) (*OpenAIForwardResult, error) {
 	if s == nil || s.httpUpstream == nil {
@@ -1299,14 +1413,28 @@ func (s *OpenAIGatewayService) ForwardDeepSeekResponsesWebSocketTurn(
 		return nil, ErrDeepSeekCompactRequestTooLarge
 	}
 	if IsDeepSeekCompactionMarked(c) && HasCompactionTriggerInInput(payload) {
-		return s.forwardDeepSeekResponsesWebSocketCompactionTurn(ctx, c, account, token, payload, write)
+		result, err := s.forwardDeepSeekResponsesWebSocketCompactionTurn(ctx, c, account, token, payload, write)
+		ensureDeepSeekWSUsageRequestID(c, result, turn)
+		if err != nil && GetOpsCyberPolicy(c) != nil && !IsDeepSeekWSAccountNeutralError(err) {
+			err = NewDeepSeekWSAccountNeutralError(err)
+		}
+		return result, err
 	}
 	startTime := time.Now()
-	req, body, err := s.buildDeepSeekWSHTTPBridgeRequest(ctx, c, account, token, payload)
+	originalModel := strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+	if originalModel == "" {
+		return nil, errors.New("DeepSeek WebSocket request requires a model")
+	}
+	billingModel := resolveOpenAIForwardModel(account, originalModel, "")
+	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	upstreamPayload := payload
+	if upstreamModel != originalModel {
+		upstreamPayload = ReplaceModelInBody(payload, upstreamModel)
+	}
+	req, body, err := s.buildDeepSeekWSHTTPBridgeRequest(ctx, c, account, token, upstreamPayload)
 	if err != nil {
 		return nil, err
 	}
-	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	SetActualOpenAIUpstreamEndpoint(c, deepSeekResponsesEndpoint)
 	proxyURL := ""
 	if account.Proxy != nil {
@@ -1325,9 +1453,9 @@ func (s *OpenAIGatewayService) ForwardDeepSeekResponsesWebSocketTurn(
 		if hit, _, _ := detectOpenAICyberPolicy(respBody); hit {
 			result := &OpenAIForwardResult{
 				RequestID:        openAICompatibleUpstreamRequestID(resp.Header),
-				Model:            model,
-				BillingModel:     model,
-				UpstreamModel:    model,
+				Model:            originalModel,
+				BillingModel:     billingModel,
+				UpstreamModel:    upstreamModel,
 				UpstreamEndpoint: deepSeekResponsesEndpoint,
 				ServiceTier:      extractOpenAIServiceTierFromBody(body),
 				ReasoningEffort:  optionalTrimmedStringPtr(gjson.GetBytes(body, "reasoning.effort").String()),
@@ -1336,22 +1464,29 @@ func (s *OpenAIGatewayService) ForwardDeepSeekResponsesWebSocketTurn(
 				ResponseHeaders:  resp.Header.Clone(),
 				Duration:         time.Since(startTime),
 			}
-			s.recordDeepSeekWSHTTPError(ctx, c, account, model, &deepSeekCompactUpstreamHTTPError{
+			s.recordDeepSeekWSHTTPError(ctx, c, account, upstreamModel, &deepSeekCompactUpstreamHTTPError{
 				StatusCode: resp.StatusCode,
 				Headers:    resp.Header.Clone(),
 				Body:       respBody,
 				Message:    upstreamMsg,
 			})
 			if writeErr := write(buildOpenAIWSHTTPBridgeErrorEvent(resp.StatusCode, upstreamMsg)); writeErr != nil {
-				return result, writeErr
+				return result, newDeepSeekWSClientWriteError(writeErr)
 			}
-			return result, fmt.Errorf("DeepSeek Responses WebSocket upstream HTTP %d: %s", resp.StatusCode, upstreamMsg)
+			ensureDeepSeekWSUsageRequestID(c, result, turn)
+			return result, newDeepSeekWSClientRequestError(fmt.Errorf("DeepSeek Responses WebSocket upstream HTTP %d: %s", resp.StatusCode, upstreamMsg))
 		}
-		if failoverErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, model); failoverErr != nil {
+		if failoverErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); failoverErr != nil {
 			return nil, failoverErr
 		}
-		_ = write(buildOpenAIWSHTTPBridgeErrorEvent(resp.StatusCode, upstreamMsg))
-		return nil, fmt.Errorf("DeepSeek Responses WebSocket upstream HTTP %d: %s", resp.StatusCode, upstreamMsg)
+		if writeErr := write(buildOpenAIWSHTTPBridgeErrorEvent(resp.StatusCode, upstreamMsg)); writeErr != nil {
+			return nil, newDeepSeekWSClientWriteError(writeErr)
+		}
+		upstreamErr := fmt.Errorf("DeepSeek Responses WebSocket upstream HTTP %d: %s", resp.StatusCode, upstreamMsg)
+		if isDeepSeekWSDeterministicClientStatus(resp.StatusCode) {
+			return nil, newDeepSeekWSClientRequestError(upstreamErr)
+		}
+		return nil, upstreamErr
 	}
 
 	state, streamErr := s.readDeepSeekWSResponsesSSE(ctx, c, account, resp, startTime, write)
@@ -1359,9 +1494,9 @@ func (s *OpenAIGatewayService) ForwardDeepSeekResponsesWebSocketTurn(
 		RequestID:                     openAICompatibleUpstreamRequestID(resp.Header),
 		ResponseID:                    state.responseID,
 		Usage:                         state.usage,
-		Model:                         model,
-		BillingModel:                  model,
-		UpstreamModel:                 model,
+		Model:                         originalModel,
+		BillingModel:                  billingModel,
+		UpstreamModel:                 upstreamModel,
 		UpstreamResponseModel:         state.upstreamModel,
 		UpstreamResponseModelConflict: state.modelConflict,
 		UpstreamEndpoint:              deepSeekResponsesEndpoint,
@@ -1374,12 +1509,19 @@ func (s *OpenAIGatewayService) ForwardDeepSeekResponsesWebSocketTurn(
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  state.firstTokenMs,
 	}
+	ensureDeepSeekWSUsageRequestID(c, result, turn)
 	if len(state.outputItems) > 0 {
 		result.wsReplayInput = cloneOpenAIWSRawMessages(state.outputItems)
 		result.wsReplayInputExists = true
 	}
 	if streamErr == nil {
 		return result, nil
+	}
+	if GetOpsCyberPolicy(c) != nil {
+		return result, NewDeepSeekWSAccountNeutralError(streamErr)
+	}
+	if state.securityBlocked {
+		return result, NewDeepSeekWSAccountNeutralError(streamErr)
 	}
 	if errors.Is(streamErr, context.Canceled) || errors.Is(streamErr, ErrDeepSeekWSTurnCancelled) {
 		return result, streamErr

@@ -556,11 +556,49 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	deepSeekEventName := ""
 	deepSeekDataTerminal := false
 	deepSeekSawData := false
+	var sensitiveGuard *deepSeekSSESensitiveEventGuard
+	if account.IsDeepSeekAPIKey() {
+		sensitiveGuard = newDeepSeekSSESensitiveEventGuard(account, deepSeekSSESensitiveProtocolAnthropic)
+	}
+	writeWireLine := func(wireLine string, eventBoundary bool) {
+		if clientDisconnected {
+			return
+		}
+		if _, err := io.WriteString(w, wireLine); err != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+		} else if _, err := io.WriteString(w, "\n"); err != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+		} else if eventBoundary {
+			// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
+			flusher.Flush()
+			lastDataAt = time.Now()
+			resetKeepaliveTimer()
+			inPartialEvent = false
+		} else {
+			inPartialEvent = true
+		}
+	}
+	emitGuardedWire := func(safeWire []byte) error {
+		safeLine := bytes.TrimSuffix(safeWire, []byte{'\n'})
+		writeWireLine(string(safeLine), len(bytes.TrimSpace(deepSeekSSEWireLineContent(safeWire))) == 0)
+		return nil
+	}
+	finishSensitiveGuard := func() error {
+		if sensitiveGuard == nil {
+			return nil
+		}
+		return sensitiveGuard.Finish(emitGuardedWire)
+	}
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				if guardErr := finishSensitiveGuard(); guardErr != nil {
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, guardErr
+				}
 				if !clientDisconnected {
 					// 兜底补刷，确保最后一个未以空行结尾的事件也能及时送达客户端。
 					flusher.Flush()
@@ -577,6 +615,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 			}
 			if ev.err != nil {
+				if guardErr := finishSensitiveGuard(); guardErr != nil {
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, guardErr
+				}
 				if sawTerminalEvent {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
@@ -629,28 +670,13 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				deepSeekSawData = false
 			}
 
-			if !clientDisconnected {
-				var wireLine string
-				if account.IsDeepSeekAPIKey() {
-					wireLine = string(redactDeepSeekAPIKey(account, []byte(line)))
-				} else {
-					wireLine = string(reverseToolNamesIfPresent(c, []byte(line)))
+			if sensitiveGuard != nil {
+				guardErr := sensitiveGuard.PushWireLine(append([]byte(line), '\n'), emitGuardedWire)
+				if guardErr != nil {
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, guardErr
 				}
-				if _, err := io.WriteString(w, wireLine); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if _, err := io.WriteString(w, "\n"); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if eventBoundary {
-					// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
-					flusher.Flush()
-					lastDataAt = time.Now()
-					resetKeepaliveTimer()
-					inPartialEvent = false
-				} else {
-					inPartialEvent = true
-				}
+			} else {
+				writeWireLine(string(reverseToolNamesIfPresent(c, []byte(line))), eventBoundary)
 			}
 			if terminalDispatched {
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil

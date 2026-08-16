@@ -57,6 +57,37 @@ func newOpenAIWSUnsupportedModelSwitchError(model string) error {
 	return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "model switch requires reconnect", cause)
 }
 
+func validateResponsesWebSocketTurnPlatform(
+	c *gin.Context,
+	apiKey *service.APIKey,
+	ctx context.Context,
+	connectionPlatform string,
+	model string,
+) error {
+	if apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
+		return nil
+	}
+	_, targetPlatform, err := resolveResponsesWebSocketTarget(c, apiKey, ctx, model)
+	if err != nil {
+		return service.NewOpenAIWSClientCloseError(
+			coderws.StatusPolicyViolation,
+			"Responses WebSocket model route could not be resolved",
+			err,
+		)
+	}
+	if targetPlatform == connectionPlatform {
+		return nil
+	}
+	cause := fmt.Errorf(
+		"%w: connection platform %q cannot serve target platform %q for model %q",
+		errOpenAIWSUnsupportedModelSwitch,
+		strings.TrimSpace(connectionPlatform),
+		strings.TrimSpace(targetPlatform),
+		strings.TrimSpace(model),
+	)
+	return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "model switch requires reconnect", cause)
+}
+
 func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 	return err != nil && !errors.Is(err, errOpenAIWSUnsupportedModelSwitch)
 }
@@ -346,6 +377,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if isDeepSeekRequest {
 		if err := service.ValidateDeepSeekAuthenticatedUserContext(c.Request.Context()); err != nil {
 			h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
+			return
+		}
+		if err := service.ValidateDeepSeekUserIdentityRequest(body, service.DeepSeekUserIdentityResponses); err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "invalid DeepSeek user identity field")
 			return
 		}
 	}
@@ -1784,6 +1819,34 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	return wrapReleaseOnDone(ctx, accountReleaseFunc), openAISlotAcquireOK
 }
 
+func (h *OpenAIGatewayHandler) restoreDeepSeekCompactInputForResponsesWebSocket(
+	ctx context.Context,
+	payload []byte,
+	targetPlatform string,
+) ([]byte, error) {
+	if h == nil || h.gatewayService == nil {
+		return nil, service.NewOpenAIWSClientCloseError(
+			coderws.StatusInternalError,
+			"Responses WebSocket checkpoint restore is unavailable",
+			errors.New("gateway service is nil"),
+		)
+	}
+	restored, changed, err := h.gatewayService.RestoreDeepSeekCompactInputForTarget(ctx, payload, targetPlatform)
+	if err != nil {
+		status := coderws.StatusPolicyViolation
+		reason := "invalid DeepSeek compact encrypted_content"
+		if errors.Is(err, service.ErrDeepSeekCompactRequestTooLarge) {
+			status = coderws.StatusMessageTooBig
+			reason = "Responses WebSocket request exceeds gateway max_body_size"
+		}
+		return nil, service.NewOpenAIWSClientCloseError(status, reason, err)
+	}
+	if changed {
+		return restored, nil
+	}
+	return payload, nil
+}
+
 // ResponsesWebSocket handles OpenAI Responses API WebSocket ingress endpoint
 // GET /openai/v1/responses (Upgrade: websocket)
 func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
@@ -1914,6 +1977,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	if requestPlatform == service.PlatformDeepSeek {
 		h.responsesDeepSeekWebSocket(c, ctx, clientLifecycleCtx, wsConn, apiKey, subject, reqLog, firstMessage, reqModel, clientIP, userAgent)
+		return
+	}
+	firstMessage, err = h.restoreDeepSeekCompactInputForResponsesWebSocket(ctx, firstMessage, requestPlatform)
+	if err != nil {
+		var closeErr *service.OpenAIWSClientCloseError
+		if errors.As(err, &closeErr) {
+			closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+		} else {
+			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "invalid DeepSeek compact encrypted_content")
+		}
 		return
 	}
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(firstMessage, "previous_response_id").String())
@@ -2235,6 +2308,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			InitialRequestModel:     reqModel,
 			MaxReasoningEffort:      maxReasoningEffort,
 			ReasoningEffortMappings: reasoningEffortMappings,
+			PrepareRequest: func(_ int, payload []byte, _ string) ([]byte, error) {
+				return h.restoreDeepSeekCompactInputForResponsesWebSocket(ctx, payload, requestPlatform)
+			},
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
 				c.Set(securityAuditWSTurnContextKey, turn)
 				if turn == 1 {
@@ -2260,6 +2336,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				model := strings.TrimSpace(originalModel)
 				if model == "" {
 					model = reqModel
+				}
+				if turn > 1 {
+					// A generic WS connection stays bound to its first provider/account.
+					// Resolve the public model before any mapping or request preparation.
+					if err := validateResponsesWebSocketTurnPlatform(c, apiKey, ctx, requestPlatform, model); err != nil {
+						return "", err
+					}
 				}
 				mapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, model)
 				mappedModelUnchanged := false
@@ -3451,6 +3534,12 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithUsage(c *gin.Context
 		resultSnapshot.ResponseHeaders = result.ResponseHeaders.Clone()
 		usageResult = &resultSnapshot
 	}
+	requestKind := service.UsageRequestKindNormal
+	if usageResult != nil && usageResult.RequestKind.IsValid() {
+		requestKind = usageResult.RequestKind
+	} else if service.IsDeepSeekCompactionMarked(c) {
+		requestKind = service.UsageRequestKindCompact
+	}
 	opsMeta := cyberPolicyOpsErrorMeta{
 		RequestID:       requestID,
 		ClientRequestID: clientRequestID,
@@ -3497,6 +3586,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithUsage(c *gin.Context
 				Result:             usageResult,
 				RequestID:          requestID,
 				Model:              model,
+				RequestKind:        requestKind,
 				Stream:             stream,
 				InputTokens:        mark.UpstreamInTok,
 				OutputTokens:       mark.UpstreamOutTok,

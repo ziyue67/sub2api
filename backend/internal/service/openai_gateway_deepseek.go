@@ -215,6 +215,7 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	requestID := openAICompatibleUpstreamRequestID(resp.Header)
+	sensitiveGuard := newDeepSeekSSESensitiveEventGuard(account, deepSeekSSESensitiveProtocolResponses)
 
 	result := func() *deepSeekResponsesRelayResult {
 		return &deepSeekResponsesRelayResult{
@@ -292,7 +293,6 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 		if clientDisconnected || len(wire) == 0 {
 			return
 		}
-		wire = redactDeepSeekAPIKey(account, wire)
 		if _, writeErr := c.Writer.Write(wire); writeErr != nil {
 			clientDisconnected = true
 			return
@@ -317,7 +317,12 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 				line := wireLine[:newline]
 				pendingLine = pendingLine[newline+1:]
 				atTerminalBoundary := processLine(line)
-				writeWire(wireLine)
+				if guardErr := sensitiveGuard.PushWireLine(wireLine, func(safeWire []byte) error {
+					writeWire(safeWire)
+					return nil
+				}); guardErr != nil {
+					return result(), guardErr
+				}
 				if atTerminalBoundary {
 					return finishTerminal()
 				}
@@ -329,7 +334,18 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 		if readErr != nil {
 			if len(pendingLine) > 0 {
 				_ = processLine(pendingLine)
-				writeWire(pendingLine)
+				if guardErr := sensitiveGuard.PushWireLine(pendingLine, func(safeWire []byte) error {
+					writeWire(safeWire)
+					return nil
+				}); guardErr != nil {
+					return result(), guardErr
+				}
+			}
+			if guardErr := sensitiveGuard.Finish(func(safeWire []byte) error {
+				writeWire(safeWire)
+				return nil
+			}); guardErr != nil {
+				return result(), guardErr
 			}
 			if terminalEvent != "" {
 				return finishTerminal()

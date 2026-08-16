@@ -190,6 +190,40 @@ func TestPromptSnapshotResponsesCompactionIncludesToolOutputsInBlockingScope(t *
 	require.Contains(t, blocking.ScanText, "blocked tool payload")
 }
 
+func TestPromptSnapshotResponsesOrdinaryTurnIncludesAllToolOutputs(t *testing.T) {
+	body := []byte(`{"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"latest request"}]},
+		{"type":"function_call_output","call_id":"call_1","output":"function result"},
+		{"type":"custom_tool_call_output","call_id":"call_2","output":[{"type":"input_text","text":"custom result"}]},
+		{"type":"mcp_tool_call_output","call_id":"call_3","output":{"result":"mcp result"}},
+		{"type":"tool_search_output","call_id":"call_4","output":"search result"}
+	]}`)
+	req := Request{Protocol: "openai_responses", Body: body}
+
+	full, err := ExtractPromptSnapshot(req)
+	require.NoError(t, err)
+	blocking, err := ExtractBlockingPromptSnapshot(req, true)
+	require.NoError(t, err)
+
+	for _, snapshot := range []PromptSnapshot{full, blocking} {
+		require.Contains(t, snapshot.ScanText, "latest request")
+		for _, expected := range []string{"function result", "custom result", "mcp result", "search result"} {
+			require.Contains(t, snapshot.ScanText, expected)
+		}
+		require.Equal(t, 5, snapshot.MessageCount)
+	}
+}
+
+func TestPromptSnapshotResponsesWebSocketOrdinaryToolOutputObject(t *testing.T) {
+	body := []byte(`{"type":"response.create","input":{"type":"mcp_tool_call_output","call_id":"call_1","output":"single result"}}`)
+
+	snapshot, err := ExtractBlockingPromptSnapshot(Request{Protocol: "responses_websocket", Body: body}, true)
+
+	require.NoError(t, err)
+	require.Equal(t, "single result", snapshot.ScanText)
+	require.Equal(t, 1, snapshot.MessageCount)
+}
+
 func TestPromptSnapshotGeminiBatchShapesAndMediaExclusion(t *testing.T) {
 	body := []byte(`{
 		"contents":{"role":"user","parts":[{"text":"root content"},{"inlineData":{"data":"ROOT_BASE64"}}]},

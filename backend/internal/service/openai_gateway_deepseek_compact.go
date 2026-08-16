@@ -254,6 +254,7 @@ const (
 
 type deepSeekResponsesJSONScan struct {
 	hasCompactState bool
+	strict          bool
 }
 
 var deepSeekResponsesRootJSONKeys = [...]string{
@@ -279,9 +280,22 @@ func deepSeekResponsesCanonicalJSONKey(key string, candidates []string) (string,
 }
 
 func scanDeepSeekResponsesJSON(body []byte) (bool, error) {
+	return scanDeepSeekResponsesJSONWithMode(body, true)
+}
+
+// probeDeepSeekResponsesCompactionState performs a streaming, fixed-state
+// probe. Provider-native fields remain opaque unless an input item identifies
+// itself as compaction state, at which point the caller runs the strict scan.
+// Root model and input stay strict even for ordinary requests because routing
+// and policy inspection consume them before the original JSON reaches upstream.
+func probeDeepSeekResponsesCompactionState(body []byte) (bool, error) {
+	return scanDeepSeekResponsesJSONWithMode(body, false)
+}
+
+func scanDeepSeekResponsesJSONWithMode(body []byte, strict bool) (bool, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
-	scan := &deepSeekResponsesJSONScan{}
+	scan := &deepSeekResponsesJSONScan{strict: strict}
 	if err := consumeDeepSeekResponsesJSONValue(decoder, deepSeekResponsesJSONScanRoot, 0, scan); err != nil {
 		return false, err
 	}
@@ -350,7 +364,8 @@ func consumeDeepSeekResponsesJSONToken(
 			case deepSeekResponsesJSONScanContentItem:
 				canonical, bit, recognized = deepSeekResponsesCanonicalJSONKey(key, deepSeekResponsesContentItemJSONKeys[:])
 			}
-			if recognized {
+			strictKey := scan.strict || (mode == deepSeekResponsesJSONScanRoot && (canonical == "model" || canonical == "input"))
+			if recognized && strictKey {
 				if key != canonical {
 					return ErrDeepSeekResponsesNonCanonicalJSONKey
 				}
@@ -429,21 +444,21 @@ func (s *OpenAIGatewayService) RestoreDeepSeekCompactInput(ctx context.Context, 
 // DeepSeek target rejects foreign opaque state; other targets preserve it.
 func (s *OpenAIGatewayService) RestoreDeepSeekCompactInputForTarget(ctx context.Context, body []byte, targetPlatform string) ([]byte, bool, error) {
 	rejectForeign := targetPlatform == PlatformDeepSeek
-	if !rejectForeign && !bytes.Contains(body, []byte(deepSeekCompactEnvelopePrefix)) {
-		return body, false, nil
-	}
 	if s.deepSeekCompactRequestTooLarge(body) {
 		return nil, false, ErrDeepSeekCompactRequestTooLarge
 	}
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return body, false, nil
 	}
-	hasCompactState, err := scanDeepSeekResponsesJSON(body)
+	hasCompactState, err := probeDeepSeekResponsesCompactionState(body)
 	if err != nil {
 		return nil, false, err
 	}
 	if !hasCompactState {
 		return body, false, nil
+	}
+	if _, err := scanDeepSeekResponsesJSON(body); err != nil {
+		return nil, false, err
 	}
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
@@ -602,6 +617,9 @@ func (s *OpenAIGatewayService) NormalizeDeepSeekLegacyCompactRequest(c *gin.Cont
 func (s *OpenAIGatewayService) PrepareDeepSeekRemoteCompactionRequest(c *gin.Context, body []byte) error {
 	if s.deepSeekCompactRequestTooLarge(body) {
 		return ErrDeepSeekCompactRequestTooLarge
+	}
+	if _, err := scanDeepSeekResponsesJSON(body); err != nil {
+		return err
 	}
 	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	if model == "" {
@@ -1165,8 +1183,10 @@ func (s *OpenAIGatewayService) executeDeepSeekRemoteCompaction(
 	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 	if resp.StatusCode >= http.StatusBadRequest {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
-		if failoverErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); failoverErr != nil {
-			return execution, failoverErr
+		if hit, _, _ := detectOpenAICyberPolicy(respBody); !hit {
+			if failoverErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); failoverErr != nil {
+				return execution, failoverErr
+			}
 		}
 		return execution, &deepSeekCompactUpstreamHTTPError{
 			StatusCode:  resp.StatusCode,
@@ -1194,6 +1214,7 @@ func (s *OpenAIGatewayService) executeDeepSeekRemoteCompaction(
 		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
 		UpstreamEndpoint:              deepSeekResponsesEndpoint,
 		ReasoningEffort:               optionalTrimmedStringPtr(gjson.GetBytes(responsesBody, "reasoning.effort").String()),
+		RequestKind:                   UsageRequestKindCompact,
 		UpstreamTerminalEvent:         terminalEvent,
 		Stream:                        clientStream,
 		OpenAIWSMode:                  false,
@@ -1272,9 +1293,17 @@ func (s *OpenAIGatewayService) forwardDeepSeekRemoteCompactionV2(
 			Body:       io.NopCloser(bytes.NewReader(upstreamHTTPError.Body)),
 		}
 		if StopOpenAICompactSSEKeepaliveCommitted(c) {
-			return s.handleCommittedDeepSeekCompactHTTPError(ctx, c, account, resp, upstreamHTTPError.Body, upstreamModel)
+			result, handleErr := s.handleCommittedDeepSeekCompactHTTPError(ctx, c, account, resp, upstreamHTTPError.Body, upstreamModel)
+			if result != nil {
+				result.RequestKind = UsageRequestKindCompact
+			}
+			return result, handleErr
 		}
-		return s.handleErrorResponse(ctx, resp, c, account, upstreamHTTPError.RequestBody, billingModel)
+		result, handleErr := s.handleErrorResponse(ctx, resp, c, account, upstreamHTTPError.RequestBody, billingModel)
+		if result != nil {
+			result.RequestKind = UsageRequestKindCompact
+		}
+		return result, handleErr
 	}
 	result := execution.Result
 	syntheticResp := &http.Response{StatusCode: http.StatusOK, Header: execution.Headers.Clone()}

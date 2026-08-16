@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -26,6 +27,7 @@ type deepSeekPartialUsageHTTPUpstream struct {
 	calls      int
 	lastPath   string
 	lastBody   []byte
+	delay      time.Duration
 }
 
 type deepSeekCompactBlockingAuditEngine struct {
@@ -94,6 +96,9 @@ func (e *deepSeekCompactBlockingAuditEngine) Evaluate(_ context.Context, req sec
 }
 
 func (u *deepSeekPartialUsageHTTPUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	if u.delay > 0 {
+		time.Sleep(u.delay)
+	}
 	u.calls++
 	if req != nil && req.URL != nil {
 		u.lastPath = req.URL.Path
@@ -240,6 +245,57 @@ func TestDeepSeekUserIdentityAmbiguityFailsBeforeScheduling(t *testing.T) {
 			select {
 			case <-usageRepo.created:
 				t.Fatal("invalid identity request must not create usage")
+			default:
+			}
+		})
+	}
+}
+
+func TestDeepSeekResponsesRoutingAndAuditAmbiguityFailsBeforeScheduling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name      string
+		composite bool
+		body      string
+	}{
+		{
+			name: "direct duplicate model",
+			body: `{"model":"deepseek-v4-pro","model":"gpt-5.6-sol","input":"hello"}`,
+		},
+		{
+			name: "direct non-canonical input",
+			body: `{"model":"deepseek-v4-pro","Input":"hidden from audit","input":"visible to audit"}`,
+		},
+		{
+			name:      "composite non-canonical model",
+			composite: true,
+			body:      `{"model":"deepseek-v4-pro","Model":"gpt-5.6-sol","input":"hello"}`,
+		},
+		{
+			name:      "composite duplicate input",
+			composite: true,
+			body:      `{"model":"deepseek-v4-pro","input":"audited","input":"forwarded"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, usageRepo, apiKey, upstream := newDeepSeekPartialUsageHandler(t, "unused")
+			c, recorder := deepSeekPartialUsageContext("/v1/responses", tt.body, apiKey)
+			if tt.composite {
+				apiKey.Group.Platform = service.PlatformComposite
+				c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), service.PlatformDeepSeek))
+			}
+
+			h.Responses(c)
+
+			require.Equal(t, http.StatusBadRequest, recorder.Code)
+			require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+			require.Zero(t, upstream.calls, "ambiguous routing/audit input must not reach an upstream account")
+			require.Equal(t, service.OpenAIAccountSchedulerMetricsSnapshot{}, h.gatewayService.SnapshotOpenAIAccountSchedulerMetrics())
+			select {
+			case <-usageRepo.created:
+				t.Fatal("ambiguous routing/audit input must not create usage")
 			default:
 			}
 		})
@@ -483,6 +539,84 @@ func TestOpenAIResponsesDeepSeekRemoteCompactionUpstreamErrorBillsOnceAndFailsSt
 	require.Equal(t, "upstream_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
 	require.NotContains(t, recorder.Body.String(), `"type":"compaction"`)
 	require.NotContains(t, recorder.Body.String(), "response.completed")
+}
+
+func TestOpenAIResponsesDeepSeekCompactionHTTPCyberRecordsCompactOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	longContext := strings.Repeat("important compact context ", 100)
+	tests := []struct {
+		name               string
+		path               string
+		body               string
+		remoteV2           bool
+		committedKeepalive bool
+	}{
+		{
+			name:     "remote_v2_sse_immediate",
+			path:     "/v1/responses",
+			body:     `{"model":"deepseek-v4-flash","stream":true,"input":[{"type":"message","role":"user","content":"` + longContext + `"},{"type":"compaction_trigger"}]}`,
+			remoteV2: true,
+		},
+		{
+			name: "legacy_body_sse_immediate",
+			path: "/v1/responses",
+			body: `{"model":"deepseek-v4-flash","stream":true,"input":[{"type":"message","role":"user","content":"` + longContext + `"},{"type":"compaction_trigger"}]}`,
+		},
+		{
+			name: "legacy_body_unary_immediate",
+			path: "/v1/responses",
+			body: `{"model":"deepseek-v4-flash","stream":false,"input":[{"type":"message","role":"user","content":"` + longContext + `"},{"type":"compaction_trigger"}]}`,
+		},
+		{
+			name: "legacy_endpoint_unary_immediate",
+			path: "/v1/responses/compact",
+			body: `{"model":"deepseek-v4-flash","input":"` + longContext + `"}`,
+		},
+		{
+			name:               "remote_v2_sse_committed_keepalive",
+			path:               "/v1/responses",
+			body:               `{"model":"deepseek-v4-flash","stream":true,"input":[{"type":"message","role":"user","content":"` + longContext + `"},{"type":"compaction_trigger"}]}`,
+			remoteV2:           true,
+			committedKeepalive: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, usageRepo, apiKey, upstream := newDeepSeekPartialUsageHandler(t, `{"error":{"code":"cyber_policy","message":"blocked"}}`)
+			usageRepo.created = make(chan *service.UsageLog, 2)
+			upstream.statusCode = http.StatusBadRequest
+			if tt.committedKeepalive {
+				h.cfg.Gateway.StreamKeepaliveInterval = 1
+				upstream.delay = 1100 * time.Millisecond
+			}
+			c, recorder := deepSeekPartialUsageContext(tt.path, tt.body, apiKey)
+			if tt.remoteV2 {
+				c.Request.Header.Set("X-Codex-Beta-Features", "remote_compaction_v2")
+			}
+
+			h.Responses(c)
+
+			select {
+			case log := <-usageRepo.created:
+				require.Equal(t, service.RequestTypeCyberBlocked, log.RequestType)
+				require.Equal(t, service.UsageRequestKindCompact, log.RequestKind)
+			case <-time.After(time.Second):
+				t.Fatal("expected DeepSeek compact cyber usage to be recorded")
+			}
+			select {
+			case extra := <-usageRepo.created:
+				t.Fatalf("expected one usage row, got duplicate request_id=%q", extra.RequestID)
+			case <-time.After(20 * time.Millisecond):
+			}
+			require.Equal(t, 1, upstream.calls)
+			if tt.committedKeepalive {
+				require.Equal(t, http.StatusOK, recorder.Code)
+				require.Contains(t, recorder.Body.String(), ": keepalive\n\n")
+				require.Contains(t, recorder.Body.String(), "event: response.failed")
+			}
+		})
+	}
 }
 
 func TestOpenAIResponsesDeepSeekRemoteCompactionRejectsAmbiguousContentBeforeAudit(t *testing.T) {

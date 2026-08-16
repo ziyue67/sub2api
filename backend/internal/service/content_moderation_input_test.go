@@ -135,7 +135,7 @@ func TestExtractContentModerationInput_GeminiMultiTurnExtractsLatestUser(t *test
 	require.Equal(t, "Q2", input.Text)
 }
 
-func TestExtractContentModerationInput_ResponsesAgentToolLoopSkipsAudit(t *testing.T) {
+func TestExtractContentModerationInput_ResponsesAgentToolLoopAuditsOutput(t *testing.T) {
 	body := []byte(`{
 		"input":[
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"运行测试"}]},
@@ -146,8 +146,48 @@ func TestExtractContentModerationInput_ResponsesAgentToolLoopSkipsAudit(t *testi
 
 	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIResponses, body)
 
-	require.Empty(t, input.Text)
+	require.Equal(t, "all passed", input.Text)
 	require.Empty(t, input.Images)
+}
+
+func TestExtractContentModerationInput_ResponsesOrdinaryTurnIncludesAllToolOutputs(t *testing.T) {
+	body := []byte(`{
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"latest request"}]},
+			{"type":"function_call_output","call_id":"call_1","output":"function result"},
+			{"type":"custom_tool_call_output","call_id":"call_2","output":[{"type":"input_text","text":"custom result"}]},
+			{"type":"mcp_tool_call_output","call_id":"call_3","output":{"result":"mcp result"}},
+			{"type":"tool_search_output","call_id":"call_4","output":"search result"}
+		]
+	}`)
+
+	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIResponses, body)
+
+	require.NotContains(t, input.Text, "latest request")
+	for _, expected := range []string{"function result", "custom result", "mcp result", "search result"} {
+		require.Contains(t, input.Text, expected)
+	}
+}
+
+func TestExtractContentModerationInput_ResponsesOrdinaryUserTurnKeepsToolOutputs(t *testing.T) {
+	body := []byte(`{
+		"input":[
+			{"type":"function_call_output","call_id":"call_1","output":"model-visible result"},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"latest request"}]}
+		]
+	}`)
+
+	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIResponses, body)
+
+	require.Equal(t, "latest request model-visible result", input.Text)
+}
+
+func TestExtractContentModerationInput_ResponsesSingleToolOutputObject(t *testing.T) {
+	body := []byte(`{"input":{"type":"mcp_tool_call_output","call_id":"call_1","output":"single result"}}`)
+
+	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIResponses, body)
+
+	require.Equal(t, "single result", input.Text)
 }
 
 func TestExtractContentModerationInput_ResponsesLastUserMessageExtracted(t *testing.T) {

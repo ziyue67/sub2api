@@ -133,37 +133,31 @@ func collectLastResponsesInput(input gjson.Result, parts *[]string, images *[]st
 			return
 		}
 		lastIndex := len(array) - 1
-		if array[lastIndex].Get("type").String() == "compaction_trigger" {
-			var toolParts []string
-			var toolImages []string
-			for _, item := range array[:lastIndex] {
-				if isResponsesToolOutputType(item.Get("type").String()) {
-					collectResponsesToolOutput(item.Get("output"), &toolParts, &toolImages)
-				}
-			}
+		compactionRequest := array[lastIndex].Get("type").String() == "compaction_trigger"
+		if compactionRequest {
 			for lastIndex--; lastIndex >= 0; lastIndex-- {
 				if isResponsesUserTextItem(array[lastIndex]) {
 					break
 				}
 			}
-			if lastIndex >= 0 {
-				last := array[lastIndex]
+		}
+		if lastIndex >= 0 {
+			last := array[lastIndex]
+			if isResponsesUserTextItem(last) {
 				collectContentValue(last.Get("content"), parts, images)
 				if last.Get("type").String() == "input_text" || last.Get("text").Exists() {
 					collectContentValue(last, parts, images)
 				}
 			}
-			*parts = append(*parts, toolParts...)
-			*images = append(*images, toolImages...)
-			return
 		}
-		last := array[lastIndex]
-		if !isResponsesUserTextItem(last) {
-			return
+		toolOutputEnd := len(array)
+		if compactionRequest {
+			toolOutputEnd--
 		}
-		collectContentValue(last.Get("content"), parts, images)
-		if last.Get("type").String() == "input_text" || last.Get("text").Exists() {
-			collectContentValue(last, parts, images)
+		for _, item := range array[:toolOutputEnd] {
+			if isResponsesToolOutputType(item.Get("type").String()) {
+				collectResponsesToolOutput(item.Get("output"), parts, images)
+			}
 		}
 	case input.IsObject():
 		if isResponsesUserTextItem(input) {
@@ -172,12 +166,15 @@ func collectLastResponsesInput(input gjson.Result, parts *[]string, images *[]st
 				collectContentValue(input, parts, images)
 			}
 		}
+		if isResponsesToolOutputType(input.Get("type").String()) {
+			collectResponsesToolOutput(input.Get("output"), parts, images)
+		}
 	}
 }
 
 func isResponsesToolOutputType(itemType string) bool {
 	switch strings.ToLower(strings.TrimSpace(itemType)) {
-	case "function_call_output", "custom_tool_call_output", "tool_search_output":
+	case "function_call_output", "custom_tool_call_output", "mcp_tool_call_output", "tool_search_output":
 		return true
 	default:
 		return false

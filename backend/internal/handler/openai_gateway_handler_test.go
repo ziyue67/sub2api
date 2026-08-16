@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -1521,6 +1523,110 @@ func TestOpenAIResponsesWebSocket_PassthroughTracksModelPerTurn(t *testing.T) {
 		"each turn must be billed with its own channel-mapped model")
 }
 
+func TestOpenAIResponsesWebSocket_CompositePlatformSwitchRequiresReconnect(t *testing.T) {
+	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
+		firstPayload:              `{"type":"response.create","model":"company-openai","stream":false}`,
+		secondPayload:             `{"type":"response.create","model":"company-deepseek","stream":false}`,
+		groupPlatform:             service.PlatformComposite,
+		expectedSecondCloseStatus: coderws.StatusPolicyViolation,
+		expectedSecondCloseReason: "model switch requires reconnect",
+		compositeRoutes: []service.CompositeModelRoute{
+			{
+				ID:             1,
+				GroupID:        4201,
+				PublicModel:    "company-openai",
+				MatchType:      service.CompositeRouteMatchExact,
+				TargetPlatform: service.PlatformOpenAI,
+				UpstreamModel:  "gpt-5.6-sol",
+				Endpoint:       service.CompositeRouteEndpointResponses,
+				Enabled:        true,
+			},
+			{
+				ID:             2,
+				GroupID:        4201,
+				PublicModel:    "company-deepseek",
+				MatchType:      service.CompositeRouteMatchExact,
+				TargetPlatform: service.PlatformDeepSeek,
+				UpstreamModel:  "deepseek-v4-pro",
+				Endpoint:       service.CompositeRouteEndpointResponses,
+				Enabled:        true,
+			},
+		},
+	})
+
+	require.Len(t, got.upstreamPayloads, 1, "the cross-platform turn must not reach the bound OpenAI account")
+	require.Len(t, got.logs, 1)
+}
+
+func TestValidateResponsesWebSocketTurnPlatform(t *testing.T) {
+	tests := []struct {
+		name               string
+		groupPlatform      string
+		connectionPlatform string
+		targetPlatform     string
+		wantErr            bool
+	}{
+		{
+			name:               "direct group remains unchanged",
+			groupPlatform:      service.PlatformOpenAI,
+			connectionPlatform: service.PlatformOpenAI,
+			targetPlatform:     service.PlatformDeepSeek,
+		},
+		{
+			name:               "composite Grok connection keeps Grok target",
+			groupPlatform:      service.PlatformComposite,
+			connectionPlatform: service.PlatformGrok,
+			targetPlatform:     service.PlatformGrok,
+		},
+		{
+			name:               "composite Grok connection rejects OpenAI target",
+			groupPlatform:      service.PlatformComposite,
+			connectionPlatform: service.PlatformGrok,
+			targetPlatform:     service.PlatformOpenAI,
+			wantErr:            true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodGet, "/openai/v1/responses", nil)
+			apiKey := &service.APIKey{Group: &service.Group{ID: 42, Platform: tc.groupPlatform}}
+			resolver := service.NewCompositeRouteResolver(&responsesWSCompositeRouteRepoStub{routes: []service.CompositeModelRoute{{
+				ID:             1,
+				GroupID:        42,
+				PublicModel:    "turn-model",
+				MatchType:      service.CompositeRouteMatchExact,
+				TargetPlatform: tc.targetPlatform,
+				UpstreamModel:  "upstream-model",
+				Endpoint:       service.CompositeRouteEndpointResponses,
+				Enabled:        true,
+			}}})
+			AttachResponsesWebSocketCompositeResolver(c, resolver)
+
+			err := validateResponsesWebSocketTurnPlatform(
+				c,
+				apiKey,
+				c.Request.Context(),
+				tc.connectionPlatform,
+				"turn-model",
+			)
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+
+			var closeErr *service.OpenAIWSClientCloseError
+			require.ErrorAs(t, err, &closeErr)
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.StatusCode())
+			require.Equal(t, "model switch requires reconnect", closeErr.Reason())
+			require.ErrorIs(t, err, errOpenAIWSUnsupportedModelSwitch)
+			require.False(t, shouldReportOpenAIWSProxyAccountFailure(err))
+		})
+	}
+}
+
 func TestOpenAIResponsesWebSocket_UnchangedChannelTargetOutsideAccountMappingKeysRemainsValid(t *testing.T) {
 	got := runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload:  `{"type":"response.create","model":"public-alias","stream":false}`,
@@ -1858,6 +1964,13 @@ type openAIResponsesWSUsageLogCase struct {
 	billingModelSource        string
 	accountModelMapping       map[string]any
 	afterFirstUpstreamRequest func(channelSvc *service.ChannelService) error
+	jwtSecret                 string
+	userID                    int64
+	groupPlatform             string
+	compositeRoutes           []service.CompositeModelRoute
+	securityAuditCoordinator  *securityaudit.Coordinator
+	expectedSecondCloseStatus coderws.StatusCode
+	expectedSecondCloseReason string
 }
 
 type openAIResponsesWSUsageLogResult struct {
@@ -2780,6 +2893,11 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	if strings.TrimSpace(tc.secondPayload) != "" {
 		turnCount = 2
 	}
+	completedTurnCount := turnCount
+	if tc.expectedSecondCloseStatus != 0 {
+		require.Equal(t, 2, turnCount, "a second payload is required when expecting a second-turn close")
+		completedTurnCount = 1
+	}
 	upstreamPayloadCh := make(chan []byte, turnCount)
 	upstreamErrCh := make(chan error, 1)
 	var channelSvc *service.ChannelService
@@ -2795,7 +2913,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 			_ = conn.CloseNow()
 		}()
 
-		for turn := 1; turn <= turnCount; turn++ {
+		for turn := 1; turn <= completedTurnCount; turn++ {
 			readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
 			msgType, payload, readErr := conn.Read(readCtx)
 			cancelRead()
@@ -2825,6 +2943,15 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 			cancelWrite()
 			if writeErr != nil {
 				upstreamErrCh <- writeErr
+				return
+			}
+		}
+		if tc.expectedSecondCloseStatus != 0 {
+			readCtx, cancelRead := context.WithTimeout(r.Context(), 3*time.Second)
+			_, unexpectedPayload, readErr := conn.Read(readCtx)
+			cancelRead()
+			if readErr == nil {
+				upstreamErrCh <- fmt.Errorf("rejected second turn leaked upstream: %s", unexpectedPayload)
 				return
 			}
 		}
@@ -2867,6 +2994,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
 	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	cfg.JWT.Secret = tc.jwtSecret
 
 	accountRepo := &openAIWSUsageHandlerAccountRepoStub{account: account}
 	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, turnCount)}
@@ -2920,21 +3048,37 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		},
 	}
 	h := &OpenAIGatewayHandler{
-		gatewayService:      gatewaySvc,
-		billingCacheService: billingCacheSvc,
-		apiKeyService:       &service.APIKeyService{},
-		concurrencyHelper:   NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
+		gatewayService:           gatewaySvc,
+		billingCacheService:      billingCacheSvc,
+		apiKeyService:            &service.APIKeyService{},
+		securityAuditCoordinator: tc.securityAuditCoordinator,
+		concurrencyHelper:        NewConcurrencyHelper(service.NewConcurrencyService(cache), SSEPingFormatNone, time.Second),
 	}
 
+	userID := tc.userID
+	if userID <= 0 {
+		userID = 1701
+	}
 	apiKey := &service.APIKey{
 		ID:      1801,
 		GroupID: &groupID,
-		User:    &service.User{ID: 1701, Status: service.StatusActive},
+		User:    &service.User{ID: userID, Status: service.StatusActive},
+	}
+	if groupPlatform := strings.TrimSpace(tc.groupPlatform); groupPlatform != "" {
+		apiKey.Group = &service.Group{ID: groupID, Platform: groupPlatform, Status: service.StatusActive, RateMultiplier: 1}
+	}
+	var compositeResolver *service.CompositeRouteResolver
+	if len(tc.compositeRoutes) > 0 {
+		compositeResolver = service.NewCompositeRouteResolver(&responsesWSCompositeRouteRepoStub{routes: tc.compositeRoutes})
 	}
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.UserID, userID))
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
+		if compositeResolver != nil {
+			AttachResponsesWebSocketCompositeResolver(c, compositeResolver)
+		}
 		c.Next()
 	})
 	router.GET("/openai/v1/responses", h.ResponsesWebSocket)
@@ -2977,12 +3121,26 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		err = clientConn.Write(writeCtx, coderws.MessageText, []byte(tc.secondPayload))
 		cancelWrite()
 		require.NoError(t, err)
-		readCompleted()
+		if tc.expectedSecondCloseStatus == 0 {
+			readCompleted()
+		} else {
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, _, readErr := clientConn.Read(readCtx)
+			cancelRead()
+			var closeErr coderws.CloseError
+			require.ErrorAs(t, readErr, &closeErr)
+			require.Equal(t, tc.expectedSecondCloseStatus, closeErr.Code)
+			if tc.expectedSecondCloseReason != "" {
+				require.Contains(t, closeErr.Reason, tc.expectedSecondCloseReason)
+			}
+		}
 	}
-	_ = clientConn.Close(coderws.StatusNormalClosure, "done")
+	if tc.expectedSecondCloseStatus == 0 {
+		_ = clientConn.Close(coderws.StatusNormalClosure, "done")
+	}
 
-	usageLogs := make([]*service.UsageLog, 0, turnCount)
-	for len(usageLogs) < turnCount {
+	usageLogs := make([]*service.UsageLog, 0, completedTurnCount)
+	for len(usageLogs) < completedTurnCount {
 		select {
 		case usageLog := <-usageRepo.created:
 			require.NotNil(t, usageLog)
@@ -2992,8 +3150,8 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		}
 	}
 
-	upstreamPayloads := make([][]byte, 0, turnCount)
-	for len(upstreamPayloads) < turnCount {
+	upstreamPayloads := make([][]byte, 0, completedTurnCount)
+	for len(upstreamPayloads) < completedTurnCount {
 		select {
 		case payload := <-upstreamPayloadCh:
 			upstreamPayloads = append(upstreamPayloads, payload)

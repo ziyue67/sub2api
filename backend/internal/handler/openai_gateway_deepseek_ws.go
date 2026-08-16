@@ -31,6 +31,9 @@ func deepSeekResponsesWSScheduleOutcome(result *service.OpenAIForwardResult, for
 		return false, false
 	}
 	if forwardErr != nil {
+		if service.IsDeepSeekWSAccountNeutralError(forwardErr) {
+			return false, false
+		}
 		var clientCloseErr *service.OpenAIWSClientCloseError
 		if errors.As(forwardErr, &clientCloseErr) {
 			return false, false
@@ -337,7 +340,7 @@ func (h *OpenAIGatewayHandler) responsesDeepSeekWebSocket(
 				}
 
 				var failoverErr *service.UpstreamFailoverError
-				if errors.As(forwardErr, &failoverErr) {
+				if !service.IsDeepSeekWSAccountNeutralError(forwardErr) && errors.As(forwardErr, &failoverErr) {
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(state.upstreamModel), false, nil)
 					}
@@ -351,11 +354,16 @@ func (h *OpenAIGatewayHandler) responsesDeepSeekWebSocket(
 					return result, forwardErr
 				}
 
+				actualUpstreamModel := strings.TrimSpace(account.GetMappedModel(state.upstreamModel))
 				if result != nil {
-					result.BillingModel = openAIWSTurnBillingModel(result, state.channelMapping, state.requestedModel, state.upstreamModel)
+					if strings.TrimSpace(result.UpstreamModel) != "" {
+						actualUpstreamModel = strings.TrimSpace(result.UpstreamModel)
+					}
+					result.BillingModel = openAIWSTurnBillingModel(result, state.channelMapping, state.requestedModel, actualUpstreamModel)
 				}
 				quotaPlatform := service.QuotaPlatform(admissionCtx, apiKey)
-				h.recordCyberPolicyIfMarkedWithUsage(c, apiKey, account, subscription, state.requestedModel, forwardErr != nil, state.cyberBlockKey, clientRequestedUsageFields(c, state.channelMapping, state.requestedModel, state.upstreamModel), state.requestBodyHash, result, quotaPlatform, pricingAt)
+				turnUsageFields := state.channelMapping.ToUsageFields(state.requestedModel, actualUpstreamModel)
+				h.recordCyberPolicyIfMarkedWithUsage(c, apiKey, account, subscription, state.requestedModel, forwardErr != nil, state.cyberBlockKey, turnUsageFields, state.requestBodyHash, result, quotaPlatform, pricingAt)
 				if service.GetOpsCyberPolicy(c) != nil {
 					cyberBlockedThisConn = true
 				}
@@ -365,13 +373,14 @@ func (h *OpenAIGatewayHandler) responsesDeepSeekWebSocket(
 					if scheduleSucceeded && result != nil {
 						firstTokenMs = result.FirstTokenMs
 					}
-					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(state.upstreamModel), scheduleSucceeded, firstTokenMs)
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, actualUpstreamModel, scheduleSucceeded, firstTokenMs)
 				}
 
 				if result != nil && result.HasBillableTokenUsage() && service.GetOpsCyberPolicy(c) == nil {
 					inboundEndpoint := GetInboundEndpoint(c)
 					upstreamEndpoint := resolveOpenAIUpstreamEndpoint(c, account, result)
 					sessionID := service.ExtractClientSessionID(c)
+					usageFields := turnUsageFields
 					h.submitOpenAIUsageRecordTask(admissionCtx, result, func(recordCtx context.Context) {
 						if err := h.gatewayService.RecordUsage(recordCtx, &service.OpenAIRecordUsageInput{
 							Result:             result,
@@ -387,7 +396,7 @@ func (h *OpenAIGatewayHandler) responsesDeepSeekWebSocket(
 							APIKeyService:      h.apiKeyService,
 							QuotaPlatform:      quotaPlatform,
 							SessionID:          sessionID,
-							ChannelUsageFields: clientRequestedUsageFields(c, state.channelMapping, state.requestedModel, result.UpstreamModel),
+							ChannelUsageFields: usageFields,
 							PricingAt:          pricingAt,
 							CyberBlocked:       false,
 						}); err != nil {

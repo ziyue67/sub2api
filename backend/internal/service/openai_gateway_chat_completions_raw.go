@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -293,6 +294,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	var streamProtocolErr error
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
+	var sensitiveGuard *deepSeekSSESensitiveEventGuard
+	if account.IsDeepSeekAPIKey() {
+		sensitiveGuard = newDeepSeekSSESensitiveEventGuard(account, deepSeekSSESensitiveProtocolChat)
+	}
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -328,6 +333,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			)
 		}
 	}
+	emitGuardedWire := func(wire []byte) error {
+		line := bytes.TrimSuffix(wire, []byte{'\n'})
+		writeLine(string(line))
+		return nil
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -354,7 +364,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 		}
 
-		writeLine(line)
+		if sensitiveGuard != nil {
+			if guardErr := sensitiveGuard.PushWireLine(append([]byte(line), '\n'), emitGuardedWire); guardErr != nil {
+				streamProtocolErr = guardErr
+				break
+			}
+		} else {
+			writeLine(line)
+		}
 		if eventBoundary {
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
@@ -367,6 +384,11 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 		if !clientDisconnected && clientOutputStarted {
 			c.Writer.Flush()
+		}
+	}
+	if sensitiveGuard != nil {
+		if guardErr := sensitiveGuard.Finish(emitGuardedWire); guardErr != nil && streamProtocolErr == nil {
+			streamProtocolErr = guardErr
 		}
 	}
 
@@ -417,6 +439,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	}
 	if account.IsDeepSeek() {
 		if streamProtocolErr != nil {
+			if errors.Is(streamProtocolErr, errDeepSeekSSESensitiveData) {
+				return result, streamProtocolErr
+			}
 			if !clientOutputStarted {
 				return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, nil, streamProtocolErr.Error(), resp.Header)
 			}

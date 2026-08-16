@@ -157,6 +157,112 @@ func TestDeepSeekResponsesWebSocketHandlerBridgesNativeHTTPAndRecordsUsage(t *te
 	_ = conn.Close(coderws.StatusNormalClosure, http.StatusText(http.StatusOK))
 }
 
+func TestDeepSeekResponsesWebSocketRejectsRoutingAndAuditAmbiguityBeforeScheduling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name      string
+		composite bool
+		payload   string
+	}{
+		{
+			name:    "direct duplicate model",
+			payload: `{"type":"response.create","model":"deepseek-v4-pro","model":"gpt-5.6-sol","input":"hello"}`,
+		},
+		{
+			name:    "direct non-canonical input",
+			payload: `{"type":"response.create","model":"deepseek-v4-pro","Input":"hidden from audit","input":"visible to audit"}`,
+		},
+		{
+			name:      "composite non-canonical model",
+			composite: true,
+			payload:   `{"type":"response.create","model":"company-coding-model","Model":"gpt-5.6-sol","input":"hello"}`,
+		},
+		{
+			name:      "composite duplicate input",
+			composite: true,
+			payload:   `{"type":"response.create","model":"company-coding-model","input":"audited","input":"forwarded"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, usageRepo, apiKey, upstream := newDeepSeekPartialUsageHandler(t, "unused")
+			h.cfg.Gateway.OpenAIWS.Enabled = true
+			h.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+			h.cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
+			h.cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+			h.cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+			h.cfg.DeepSeek.UserIDSecret = "deepseek-ws-ambiguity-test-secret"
+
+			var resolver *service.CompositeRouteResolver
+			if tt.composite {
+				apiKey.Group.Platform = service.PlatformComposite
+				resolver = service.NewCompositeRouteResolver(&responsesWSCompositeRouteRepoStub{routes: []service.CompositeModelRoute{{
+					ID:             7891,
+					GroupID:        apiKey.Group.ID,
+					PublicModel:    "company-coding-model",
+					MatchType:      service.CompositeRouteMatchExact,
+					TargetPlatform: service.PlatformDeepSeek,
+					UpstreamModel:  "deepseek-v4-pro",
+					Endpoint:       service.CompositeRouteEndpointResponses,
+					Enabled:        true,
+				}}})
+			}
+
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID))
+				c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID})
+				if resolver != nil {
+					AttachResponsesWebSocketCompositeResolver(c, resolver)
+				}
+				c.Next()
+			})
+			router.GET("/backend-api/codex/responses", h.ResponsesWebSocket)
+			server := httptest.NewServer(router)
+			defer server.Close()
+
+			dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+			conn, _, err := coderws.Dial(
+				dialCtx,
+				"ws"+strings.TrimPrefix(server.URL, "http")+"/backend-api/codex/responses",
+				&coderws.DialOptions{CompressionMode: coderws.CompressionContextTakeover},
+			)
+			cancelDial()
+			require.NoError(t, err)
+			defer func() { _ = conn.CloseNow() }()
+
+			writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+			err = conn.Write(writeCtx, coderws.MessageText, []byte(tt.payload))
+			cancelWrite()
+			require.NoError(t, err)
+
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, event, err := conn.Read(readCtx)
+			cancelRead()
+			require.NoError(t, err)
+			require.Equal(t, "error", gjson.GetBytes(event, "type").String())
+			require.Equal(t, "invalid_request_error", gjson.GetBytes(event, "error.type").String())
+
+			readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+			_, _, err = conn.Read(readCtx)
+			cancelRead()
+			var closeErr coderws.CloseError
+			require.ErrorAs(t, err, &closeErr)
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+
+			require.Zero(t, upstream.calls, "ambiguous WS input must not reach account scheduling or upstream")
+			require.Equal(t, service.OpenAIAccountSchedulerMetricsSnapshot{}, h.gatewayService.SnapshotOpenAIAccountSchedulerMetrics())
+			select {
+			case <-usageRepo.created:
+				t.Fatal("ambiguous WS input must not create usage")
+			default:
+			}
+		})
+	}
+}
+
 func TestDeepSeekResponsesWebSocketCyberPolicyBlocksNextTurnAndRecordsOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstreamBody := "event: response.failed\n" +
@@ -255,6 +361,11 @@ func TestDeepSeekResponsesWebSocketHTTPCyberPolicyDoesNotFailoverAndRecordsOnce(
 	cancelRead()
 	require.NoError(t, err)
 	require.Equal(t, "error", gjson.GetBytes(event, "type").String())
+	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+	_, _, closeErr := conn.Read(readCtx)
+	cancelRead()
+	require.Error(t, closeErr)
+	require.Equal(t, coderws.StatusPolicyViolation, coderws.CloseStatus(closeErr))
 
 	select {
 	case usageLog := <-usageRepo.created:
@@ -298,6 +409,67 @@ func TestDeepSeekResponsesWSScheduleOutcome(t *testing.T) {
 	report, succeeded = deepSeekResponsesWSScheduleOutcome(nil, clientErr, nil)
 	require.False(t, report, "client protocol errors must not punish account health")
 	require.False(t, succeeded)
+
+	clientDisconnectErr := service.NewOpenAIWSClientCloseError(coderws.StatusGoingAway, "client disconnected", nil)
+	report, succeeded = deepSeekResponsesWSScheduleOutcome(nil, clientDisconnectErr, nil)
+	require.False(t, report, "client write failures must not punish account health")
+	require.False(t, succeeded)
+
+	accountNeutralErr := service.NewDeepSeekWSAccountNeutralError(errors.New("upstream rejected invalid client input"))
+	report, succeeded = deepSeekResponsesWSScheduleOutcome(nil, accountNeutralErr, nil)
+	require.False(t, report, "deterministic client errors and cyber policy must not punish account health")
+	require.False(t, succeeded)
+}
+
+func TestDeepSeekResponsesWebSocketUnprocessableRequestClosesAsPolicyViolation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, usageRepo, apiKey, upstream := newDeepSeekPartialUsageHandler(t, `{"error":{"type":"invalid_request_error","message":"invalid client field"}}`)
+	upstream.statusCode = http.StatusUnprocessableEntity
+	h.cfg.Gateway.OpenAIWS.Enabled = true
+	h.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	h.cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
+	h.cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+	h.cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+	h.cfg.DeepSeek.UserIDSecret = "deepseek-ws-422-user-secret"
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID))
+		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID})
+		c.Next()
+	})
+	router.GET("/responses", h.ResponsesWebSocket)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+	conn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(server.URL, "http")+"/responses", nil)
+	cancelDial()
+	require.NoError(t, err)
+	defer func() { _ = conn.CloseNow() }()
+
+	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+	require.NoError(t, conn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"deepseek-v4-pro","input":"invalid"}`)))
+	cancelWrite()
+	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	_, event, err := conn.Read(readCtx)
+	cancelRead()
+	require.NoError(t, err)
+	require.Equal(t, "error", gjson.GetBytes(event, "type").String())
+	require.Equal(t, int64(http.StatusUnprocessableEntity), gjson.GetBytes(event, "status").Int())
+
+	readCtx, cancelRead = context.WithTimeout(context.Background(), 3*time.Second)
+	_, _, closeErr := conn.Read(readCtx)
+	cancelRead()
+	require.Error(t, closeErr)
+	require.Equal(t, coderws.StatusPolicyViolation, coderws.CloseStatus(closeErr))
+	require.Equal(t, 1, upstream.calls)
+	select {
+	case usageLog := <-usageRepo.created:
+		t.Fatalf("unexpected usage row for rejected request: %+v", usageLog)
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func TestDeepSeekResponsesWebSocketHandlerCompositeFailoverAndPerTurnSlots(t *testing.T) {
@@ -307,8 +479,12 @@ func TestDeepSeekResponsesWebSocketHandlerCompositeFailoverAndPerTurnSlots(t *te
 		{
 			ID: 8801, Name: "deepseek-ws-first", Platform: service.PlatformDeepSeek,
 			Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 1, Priority: 1,
-			GroupIDs:    []int64{groupID},
-			Credentials: map[string]any{"api_key": "sk-first", "base_url": "https://deepseek.first.test"},
+			GroupIDs: []int64{groupID},
+			Credentials: map[string]any{
+				"api_key":       "sk-first",
+				"base_url":      "https://deepseek.first.test",
+				"model_mapping": map[string]any{"deepseek-v4-pro": "deepseek-first-attempt-model"},
+			},
 			Extra: map[string]any{
 				service.DeepSeekUserIsolationModeKey:      service.DeepSeekUserIsolationModeAuthenticatedUser,
 				service.DeepSeekResponsesWebSocketModeKey: service.DeepSeekResponsesWebSocketModeHTTPBridge,
@@ -375,6 +551,9 @@ func TestDeepSeekResponsesWebSocketHandlerCompositeFailoverAndPerTurnSlots(t *te
 			ID: groupID, Platform: service.PlatformComposite, Status: service.StatusActive, RateMultiplier: 1,
 		},
 	}
+	identityCtx := context.WithValue(context.Background(), ctxkey.UserID, apiKey.User.ID)
+	wantUpstreamUserID, err := service.DeriveDeepSeekAuthenticatedUserID(identityCtx, cfg)
+	require.NoError(t, err)
 	resolver := service.NewCompositeRouteResolver(&responsesWSCompositeRouteRepoStub{routes: []service.CompositeModelRoute{{
 		ID: 8805, GroupID: groupID, PublicModel: "company-coding-model", MatchType: service.CompositeRouteMatchExact,
 		TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointResponses,
@@ -382,7 +561,9 @@ func TestDeepSeekResponsesWebSocketHandlerCompositeFailoverAndPerTurnSlots(t *te
 	}}})
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID))
+		requestCtx := context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID)
+		requestCtx = context.WithValue(requestCtx, ctxkey.ClientRequestID, "shared-deepseek-ws-client-request")
+		c.Request = c.Request.WithContext(requestCtx)
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
 		AttachResponsesWebSocketCompositeResolver(c, resolver)
@@ -417,13 +598,13 @@ func TestDeepSeekResponsesWebSocketHandlerCompositeFailoverAndPerTurnSlots(t *te
 		}
 	}
 
-	writeTurn(`{"type":"response.create","model":"company-coding-model","input":"first"}`)
+	writeTurn(`{"type":"response.create","model":"company-coding-model","prompt_cache_key":"session-one","input":"first","user":"client-spoof-one"}`)
 	readCompleted("resp_ds_ws_failover_1")
 	require.Eventually(t, func() bool {
 		return atomic.LoadInt32(&cache.releaseUserCalled) == 1 && atomic.LoadInt32(&cache.releaseAccountCalled) == 2
 	}, 3*time.Second, 10*time.Millisecond, "the idle socket must release first-turn user/account slots")
 
-	writeTurn(`{"type":"response.create","input":"second"}`)
+	writeTurn(`{"type":"response.create","prompt_cache_key":"session-two","input":"second","user":"client-spoof-two"}`)
 	readCompleted("resp_ds_ws_failover_2")
 	require.Eventually(t, func() bool {
 		return atomic.LoadInt32(&cache.releaseUserCalled) == 2 && atomic.LoadInt32(&cache.releaseAccountCalled) == 4
@@ -431,7 +612,7 @@ func TestDeepSeekResponsesWebSocketHandlerCompositeFailoverAndPerTurnSlots(t *te
 	require.Equal(t, int32(2), userAcquires.Load())
 	require.Equal(t, int32(4), accountAcquires.Load())
 
-	writeTurn(`{"type":"response.create","input":"third","reasoning":{"effort":"max"}}`)
+	writeTurn(`{"type":"response.create","prompt_cache_key":"session-three","input":"third","reasoning":{"effort":"max"},"user":"client-spoof-three"}`)
 	for {
 		readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
 		_, event, readErr := conn.Read(readCtx)
@@ -458,13 +639,17 @@ func TestDeepSeekResponsesWebSocketHandlerCompositeFailoverAndPerTurnSlots(t *te
 		}
 	}
 	require.Len(t, logs, 3, "each successful or billable cyber turn must record usage exactly once")
+	requestIDs := make(map[string]struct{}, len(logs))
 	var cyberLog *service.UsageLog
 	for _, log := range logs {
+		require.NotEmpty(t, log.RequestID)
+		requestIDs[log.RequestID] = struct{}{}
 		if log.RequestType == service.RequestTypeCyberBlocked {
 			cyberLog = log
 			break
 		}
 	}
+	require.Len(t, requestIDs, 3, "connection-level client request IDs must not collapse distinct WS turns")
 	require.NotNil(t, cyberLog)
 	require.Equal(t, "deepseek-v4-pro", cyberLog.Model)
 	require.Equal(t, "company-coding-model", cyberLog.RequestedModel)
@@ -480,8 +665,12 @@ func TestDeepSeekResponsesWebSocketHandlerCompositeFailoverAndPerTurnSlots(t *te
 	calls, bodies := upstream.snapshot()
 	require.Equal(t, []int64{8801, 8802, 8801, 8802, 8801, 8802}, calls)
 	require.Len(t, bodies, 6)
-	for _, body := range bodies {
-		require.Equal(t, "deepseek-v4-pro", gjson.GetBytes(body, "model").String())
-		require.True(t, strings.HasPrefix(gjson.GetBytes(body, "user").String(), "dsu_v1_"))
+	for index, body := range bodies {
+		wantModel := "deepseek-v4-pro"
+		if calls[index] == 8801 {
+			wantModel = "deepseek-first-attempt-model"
+		}
+		require.Equal(t, wantModel, gjson.GetBytes(body, "model").String(), "account mapping must be recomputed for every failover attempt")
+		require.Equal(t, wantUpstreamUserID, gjson.GetBytes(body, "user").String(), "composite turns and account failover must retain one authenticated-user identity")
 	}
 }

@@ -326,6 +326,20 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			normalized = next
 		}
+		if hooks != nil && hooks.PrepareRequest != nil {
+			prepared, prepareErr := hooks.PrepareRequest(turn, normalized, originalModel)
+			if prepareErr != nil {
+				return openAIWSClientPayload{}, prepareErr
+			}
+			if len(bytes.TrimSpace(prepared)) == 0 || !gjson.ValidBytes(prepared) {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(
+					coderws.StatusPolicyViolation,
+					"invalid websocket request payload",
+					errors.New("request preparation returned invalid JSON"),
+				)
+			}
+			normalized = prepared
+		}
 		if isCodexCLI && codexImageGenerationExplicitToolPolicy == codexImageGenerationExplicitToolPolicyStrip {
 			if stripped, changed, stripErr := stripOpenAIImageGenerationToolsFromRawPayload(normalized); stripErr != nil {
 				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", stripErr)

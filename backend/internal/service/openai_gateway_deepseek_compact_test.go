@@ -106,6 +106,7 @@ func TestForwardDeepSeekRemoteCompactionUsesNativeResponsesAndSynthesizesOneItem
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, deepSeekResponsesEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, UsageRequestKindCompact, result.RequestKind)
 	require.Equal(t, "/responses", upstream.lastReq.URL.Path)
 	require.Equal(t, "text/event-stream", upstream.lastReq.Header.Get("Accept"))
 	require.True(t, gjson.GetBytes(upstream.lastBody, "stream").Bool())
@@ -144,6 +145,7 @@ func TestForwardDeepSeekLegacyCompactReturnsUnaryResponsesJSON(t *testing.T) {
 	result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), normalized)
 	require.NoError(t, err)
 	require.False(t, result.Stream)
+	require.Equal(t, UsageRequestKindCompact, result.RequestKind)
 	require.Equal(t, deepSeekResponsesEndpoint, result.UpstreamEndpoint)
 	require.Equal(t, "response", gjson.GetBytes(recorder.Body.Bytes(), "object").String())
 	require.Equal(t, "compaction", gjson.GetBytes(recorder.Body.Bytes(), "output.0.type").String())
@@ -199,6 +201,57 @@ func TestReadDeepSeekCompactResponsesStreamStrictTerminalContract(t *testing.T) 
 	}
 }
 
+func TestReadDeepSeekCompactResponsesStreamRejectsMalformedWireAndImageOnlyTerminal(t *testing.T) {
+	completed := deepSeekRemoteCompactCompletedPayload(deepSeekRemoteCompactTestSummary, true, nil)
+	imageOnly := deepSeekRemoteCompactCompletedPayload("", true, []any{map[string]any{
+		"id": "msg_image_only", "type": "message", "role": "assistant", "status": "completed",
+		"content": []any{map[string]any{"type": "output_image", "image_url": "data:image/png;base64,aW1hZ2U="}},
+	}})
+	tests := []struct {
+		name          string
+		wire          string
+		wantCompleted bool
+		wantUsage     bool
+	}{
+		{
+			name: "malformed JSON data",
+			wire: "event: response.completed\n" +
+				"data: {\"type\":\"response.completed\",\"response\":\n\n",
+		},
+		{
+			name: "malformed SSE data field",
+			wire: "event: response.completed\n" +
+				"data " + completed + "\n\n",
+		},
+		{
+			name:          "image-only completed terminal",
+			wire:          deepSeekRemoteCompactSSEWire(imageOnly),
+			wantCompleted: true,
+			wantUsage:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := newDeepSeekRemoteCompactTestContext(t, deepSeekRemoteCompactTestRequestBody())
+			svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
+			resp := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader(tt.wire)),
+			}
+
+			result, err := svc.readDeepSeekCompactResponsesStream(c, resp, deepSeekForwardTestAccount(), time.Now())
+
+			require.Error(t, err)
+			require.True(t, result.UpstreamFailed)
+			require.Equal(t, tt.wantCompleted, result.Completed)
+			require.Equal(t, tt.wantUsage, hasBillableOpenAIUsage(result.Usage))
+			require.Empty(t, result.Summary)
+		})
+	}
+}
+
 func TestForwardDeepSeekRemoteCompactionMissingUsageAllowsFailover(t *testing.T) {
 	body := deepSeekRemoteCompactDetailedTestRequestBody(t)
 	c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
@@ -235,9 +288,116 @@ func TestForwardDeepSeekRemoteCompactionUsageBeforeTruncationDoesNotFailover(t *
 	require.NotNil(t, result)
 	require.Error(t, err)
 	require.True(t, result.HasBillableTokenUsage())
+	require.Equal(t, UsageRequestKindCompact, result.RequestKind)
 	var failoverErr *UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr))
 	require.Empty(t, recorder.Body.Bytes())
+}
+
+type scriptedDeepSeekCompactHTTPUpstream struct {
+	HTTPUpstream
+	responses []*http.Response
+	calls     int
+}
+
+func (u *scriptedDeepSeekCompactHTTPUpstream) Do(*http.Request, string, int64, int) (*http.Response, error) {
+	if u.calls >= len(u.responses) {
+		return nil, errors.New("unexpected DeepSeek compact upstream call")
+	}
+	resp := u.responses[u.calls]
+	u.calls++
+	return resp, nil
+}
+
+func TestForwardDeepSeekRemoteCompactionHTTPFailureAllowsFailoverBeforeSemanticOutput(t *testing.T) {
+	for _, statusCode := range []int{http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			body := deepSeekRemoteCompactDetailedTestRequestBody(t)
+			c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
+			upstream := &scriptedDeepSeekCompactHTTPUpstream{responses: []*http.Response{
+				deepSeekCompactHTTPErrorResponse(statusCode, "first-attempt"),
+			}}
+			svc := newDeepSeekRemoteCompactScriptedTestService(upstream)
+
+			result, err := svc.Forward(deepSeekCompactTestContext(42), c, deepSeekForwardTestAccount(), body)
+
+			require.Nil(t, result, "an HTTP failure before a semantic event must not expose billable usage")
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, statusCode, failoverErr.StatusCode)
+			require.True(t, failoverErr.ShouldRetryNextAccount())
+			require.False(t, c.Writer.Written())
+			require.Empty(t, recorder.Body.Bytes())
+			require.Equal(t, 1, upstream.calls)
+		})
+	}
+}
+
+func TestForwardDeepSeekRemoteCompactionFailoverUsageCardinalityAndExhaustion(t *testing.T) {
+	for _, firstStatus := range []int{http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(http.StatusText(firstStatus)+" then success", func(t *testing.T) {
+			body := deepSeekRemoteCompactDetailedTestRequestBody(t)
+			c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
+			upstream := &scriptedDeepSeekCompactHTTPUpstream{responses: []*http.Response{
+				deepSeekCompactHTTPErrorResponse(firstStatus, "failed-account"),
+				deepSeekRemoteCompactResponsesResponse(deepSeekRemoteCompactTestSummary),
+			}}
+			svc := newDeepSeekRemoteCompactScriptedTestService(upstream)
+			billableResults := 0
+
+			for attempt := 0; attempt < 2; attempt++ {
+				account := deepSeekForwardTestAccount()
+				account.ID += int64(attempt)
+				result, err := svc.Forward(deepSeekCompactTestContext(42), c, account, body)
+				if attempt == 0 {
+					require.Nil(t, result)
+					var failoverErr *UpstreamFailoverError
+					require.ErrorAs(t, err, &failoverErr)
+					require.Equal(t, firstStatus, failoverErr.StatusCode)
+					continue
+				}
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				if result.HasBillableTokenUsage() {
+					billableResults++
+				}
+			}
+
+			require.Equal(t, 1, billableResults, "only the successful account attempt may be recorded")
+			require.Equal(t, 2, upstream.calls)
+			require.Len(t, parseCompactBridgeSSE(t, recorder.Body.String()), 2)
+		})
+	}
+
+	t.Run("429 then 500 exhausts without usage", func(t *testing.T) {
+		body := deepSeekRemoteCompactDetailedTestRequestBody(t)
+		c, recorder := newDeepSeekRemoteCompactTestContext(t, body)
+		upstream := &scriptedDeepSeekCompactHTTPUpstream{responses: []*http.Response{
+			deepSeekCompactHTTPErrorResponse(http.StatusTooManyRequests, "first-account"),
+			deepSeekCompactHTTPErrorResponse(http.StatusInternalServerError, "last-account"),
+		}}
+		svc := newDeepSeekRemoteCompactScriptedTestService(upstream)
+		billableResults := 0
+		var lastFailoverErr *UpstreamFailoverError
+
+		for attempt := 0; attempt < 2; attempt++ {
+			account := deepSeekForwardTestAccount()
+			account.ID += int64(attempt)
+			result, err := svc.Forward(deepSeekCompactTestContext(42), c, account, body)
+			if result != nil && result.HasBillableTokenUsage() {
+				billableResults++
+			}
+			require.Nil(t, result)
+			require.ErrorAs(t, err, &lastFailoverErr)
+		}
+
+		require.NotNil(t, lastFailoverErr)
+		require.Equal(t, http.StatusInternalServerError, lastFailoverErr.StatusCode)
+		require.Equal(t, 0, billableResults)
+		require.Equal(t, 2, upstream.calls)
+		require.False(t, c.Writer.Written(), "the caller can render the final exhaustion error without prior semantic output")
+		require.Empty(t, recorder.Body.Bytes())
+	})
 }
 
 func TestReadDeepSeekCompactResponsesStreamRecomputesTotalFromLatestUsage(t *testing.T) {
@@ -404,8 +564,6 @@ func TestRestoreDeepSeekCompactInputRejectsDuplicateJSONKeys(t *testing.T) {
 		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"message","role":"user","content":"benign-first"}],"input":[{"type":"compaction","encrypted_content":"foreign"}]}`),
 		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"compaction","encrypted_content":"foreign","type":"message","role":"user","content":"benign-last"}]}`),
 		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"compaction","encrypted_content":"foreign","encrypted_content":"also-foreign"}]}`),
-		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"benign","text":"malicious"}]}]}`),
-		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"benign","text":"malicious"}]}]}`),
 	}
 	for _, body := range tests {
 		restored, changed, err := svc.RestoreDeepSeekCompactInput(deepSeekCompactTestContext(42), body)
@@ -418,14 +576,68 @@ func TestRestoreDeepSeekCompactInputRejectsDuplicateJSONKeys(t *testing.T) {
 func TestRestoreDeepSeekCompactInputRejectsNonCanonicalStructuralKeys(t *testing.T) {
 	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
 	for _, body := range [][]byte{
-		[]byte(`{"model":"deepseek-v4-flash","Input":[{"type":"message","role":"user","content":"hidden"}]}`),
+		[]byte(`{"model":"deepseek-v4-flash","Input":[{"type":"compaction","encrypted_content":"foreign"}]}`),
 		[]byte(`{"model":"deepseek-v4-flash","input":[{"Type":"compaction","encrypted_content":"foreign"}]}`),
-		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"message","role":"user","content":[{"type":"input_text","Text":"hidden"}]}]}`),
+		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"compaction","Encrypted_Content":"foreign"}]}`),
 	} {
 		restored, changed, err := svc.RestoreDeepSeekCompactInput(deepSeekCompactTestContext(42), body)
 		require.ErrorIs(t, err, ErrDeepSeekResponsesNonCanonicalJSONKey)
 		require.Nil(t, restored)
 		require.False(t, changed)
+	}
+}
+
+func TestRestoreDeepSeekCompactInputLeavesOrdinaryProviderFieldsOpaque(t *testing.T) {
+	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
+	for _, body := range [][]byte{
+		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"benign","text":"provider-owned"}]}]}`),
+		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"benign","text":"provider-owned"}]}]}`),
+		[]byte(`{"model":"deepseek-v4-flash","include":[],"Include":{"future":true},"provider_extension":"first","provider_extension":"second","input":"provider-owned"}`),
+		[]byte(`{"model":"deepseek-v4-flash","input":[{"type":"message","role":"user","content":[{"type":"input_text","Text":"provider-owned"}]}]}`),
+	} {
+		restored, changed, err := svc.RestoreDeepSeekCompactInput(deepSeekCompactTestContext(42), body)
+		require.NoError(t, err)
+		require.False(t, changed)
+		require.Equal(t, body, restored)
+	}
+}
+
+func TestRestoreDeepSeekCompactInputRejectsOrdinaryRootModelAndInputAmbiguity(t *testing.T) {
+	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
+	tests := []struct {
+		name    string
+		body    []byte
+		wantErr error
+	}{
+		{
+			name:    "duplicate model",
+			body:    []byte(`{"model":"deepseek-v4-flash","model":"gpt-5.6-sol","input":"hello"}`),
+			wantErr: ErrDeepSeekResponsesDuplicateJSONKey,
+		},
+		{
+			name:    "non-canonical model",
+			body:    []byte(`{"model":"deepseek-v4-flash","Model":"gpt-5.6-sol","input":"hello"}`),
+			wantErr: ErrDeepSeekResponsesNonCanonicalJSONKey,
+		},
+		{
+			name:    "duplicate input",
+			body:    []byte(`{"model":"deepseek-v4-flash","input":"audited","input":"forwarded"}`),
+			wantErr: ErrDeepSeekResponsesDuplicateJSONKey,
+		},
+		{
+			name:    "non-canonical input",
+			body:    []byte(`{"model":"deepseek-v4-flash","Input":"hidden","input":"visible"}`),
+			wantErr: ErrDeepSeekResponsesNonCanonicalJSONKey,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restored, changed, err := svc.RestoreDeepSeekCompactInput(deepSeekCompactTestContext(42), tt.body)
+			require.ErrorIs(t, err, tt.wantErr)
+			require.Nil(t, restored)
+			require.False(t, changed)
+		})
 	}
 }
 
@@ -435,6 +647,51 @@ func TestPrepareDeepSeekRemoteCompactionRequestUsesGatewayMaxBodySize(t *testing
 	svc.cfg.Gateway.MaxBodySize = int64(len(body))
 	require.NoError(t, svc.PrepareDeepSeekRemoteCompactionRequest(nil, body))
 	require.ErrorIs(t, svc.PrepareDeepSeekRemoteCompactionRequest(nil, append(body, ' ')), ErrDeepSeekCompactRequestTooLarge)
+}
+
+func TestPrepareDeepSeekRemoteCompactionRequestStrictlyScansTriggerHistory(t *testing.T) {
+	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
+	tests := []struct {
+		name           string
+		body           []byte
+		wantErr        error
+		restoreRejects bool
+	}{
+		{
+			name:    "duplicate content text",
+			body:    []byte(`{"model":"deepseek-v4-flash","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"first","text":"second"}]},{"type":"compaction_trigger"}]}`),
+			wantErr: ErrDeepSeekResponsesDuplicateJSONKey,
+		},
+		{
+			name:           "non-canonical root Input",
+			body:           []byte(`{"model":"deepseek-v4-flash","Input":[{"type":"message","role":"user","content":"history"},{"type":"compaction_trigger"}]}`),
+			wantErr:        ErrDeepSeekResponsesNonCanonicalJSONKey,
+			restoreRejects: true,
+		},
+		{
+			name:    "non-canonical history Type",
+			body:    []byte(`{"model":"deepseek-v4-flash","input":[{"Type":"message","role":"user","content":"history"},{"type":"compaction_trigger"}]}`),
+			wantErr: ErrDeepSeekResponsesNonCanonicalJSONKey,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restored, changed, err := svc.RestoreDeepSeekCompactInput(deepSeekCompactTestContext(42), tt.body)
+			if tt.restoreRejects {
+				require.ErrorIs(t, err, tt.wantErr)
+				require.Nil(t, restored)
+			} else {
+				require.NoError(t, err, "compaction_trigger is not persisted checkpoint state")
+				require.Equal(t, tt.body, restored)
+			}
+			require.False(t, changed)
+
+			c, _ := newDeepSeekRemoteCompactTestContext(t, tt.body)
+			err = svc.PrepareDeepSeekRemoteCompactionRequest(c, tt.body)
+			require.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 func TestRestoreDeepSeekCompactInputUsesGatewayMaxBodySize(t *testing.T) {
@@ -469,7 +726,7 @@ func TestRestoreDeepSeekCompactInputUsesGatewayMaxBodySize(t *testing.T) {
 }
 
 func TestForwardDeepSeekResponsesOrdinaryWireRemainsByteForByteUnchanged(t *testing.T) {
-	body := []byte("{\n  \"model\": \"deepseek-v4-pro\",\n  \"stream\": false,\n  \"input\": [{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"ordinary request\"}]}]\n}")
+	body := []byte("{\n  \"model\": \"deepseek-v4-pro\",\n  \"model_hint\": \"first\",\n  \"model_hint\": \"second\",\n  \"include\": [],\n  \"Include\": {\"future\": true},\n  \"stream\": false,\n  \"input\": [{\"Type\":\"provider-native-message\",\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"ordinary request\"}]}]\n}")
 	responseBody := "{\n  \"id\": \"resp_ds_opaque\",\n  \"object\": \"response\",\n  \"model\": \"deepseek-v4-pro\",\n  \"status\": \"completed\",\n  \"output\": [{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\n  \"usage\": {\"input_tokens\": 4, \"output_tokens\": 1, \"total_tokens\": 5}\n}"
 	c, recorder := newDeepSeekResponsesTestContext(t, body)
 	c.Request.Header.Set("X-DeepSeek-Harness-Compact", "1")
@@ -485,6 +742,26 @@ func TestForwardDeepSeekResponsesOrdinaryWireRemainsByteForByteUnchanged(t *test
 	require.NotNil(t, result)
 	require.Equal(t, body, upstream.lastBody)
 	require.Equal(t, responseBody, recorder.Body.String())
+}
+
+func TestRestoreDeepSeekCompactInputForOpenAITargetRestoresEscapedOwnedEnvelope(t *testing.T) {
+	svc := newDeepSeekRemoteCompactTestService(&httpUpstreamRecorder{})
+	ctx := deepSeekCompactTestContext(42)
+	checkpoint := frameDeepSeekCompactSummary("resume escaped checkpoint")
+	envelope, err := svc.sealDeepSeekCompactCheckpoint(ctx, checkpoint)
+	require.NoError(t, err)
+	escapedEnvelope := strings.ReplaceAll(envelope, ".", `\u002e`)
+	body := []byte(`{"model":"gpt-5.6-sol","input":[{"type":"compaction","encrypted_content":"` + escapedEnvelope + `"},{"type":"message","role":"user","content":"continue"}]}`)
+	require.NotContains(t, string(body), deepSeekCompactEnvelopePrefix)
+
+	restored, changed, err := svc.RestoreDeepSeekCompactInputForTarget(ctx, body, PlatformOpenAI)
+	require.NoError(t, err)
+	require.True(t, changed)
+	items := gjson.GetBytes(restored, "input").Array()
+	require.Len(t, items, 2)
+	require.Equal(t, "message", items[0].Get("type").String())
+	require.Equal(t, "user", items[0].Get("role").String())
+	require.Equal(t, checkpoint, items[0].Get("content.0.text").String())
 }
 
 func TestForwardDeepSeekResponsesRejectsForeignCompactItemBeforeUpstream(t *testing.T) {
@@ -588,6 +865,17 @@ func deepSeekRemoteCompactResponsesResponse(summary string) *http.Response {
 			`{"type":"response.output_item.done","output_index":0,"item":{"id":"msg_intermediate","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"this intermediate item is not the checkpoint"}]}}`,
 			completed,
 		))),
+	}
+}
+
+func deepSeekCompactHTTPErrorResponse(statusCode int, requestID string) *http.Response {
+	return &http.Response{
+		StatusCode: statusCode,
+		Header: http.Header{
+			"Content-Type":          []string{"application/json"},
+			"X-Deepseek-Request-Id": []string{requestID},
+		},
+		Body: io.NopCloser(strings.NewReader(`{"error":{"message":"temporary compact failure"}}`)),
 	}
 }
 
@@ -707,6 +995,12 @@ func newDeepSeekResponsesTestContext(t *testing.T, body []byte) (*gin.Context, *
 }
 
 func newDeepSeekRemoteCompactTestService(upstream *httpUpstreamRecorder) *OpenAIGatewayService {
+	cfg := deepSeekForwardTestConfig()
+	cfg.JWT = config.JWTConfig{Secret: "deepseek-compact-test-jwt-secret-32-bytes"}
+	return &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}
+}
+
+func newDeepSeekRemoteCompactScriptedTestService(upstream HTTPUpstream) *OpenAIGatewayService {
 	cfg := deepSeekForwardTestConfig()
 	cfg.JWT = config.JWTConfig{Secret: "deepseek-compact-test-jwt-secret-32-bytes"}
 	return &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream}

@@ -197,9 +197,40 @@ func TestForwardDeepSeekResponsesWebSocketTurnUsesNativeHTTPResponses(t *testing
 	require.Equal(t, 2, result.Usage.CacheReadInputTokens)
 	require.Equal(t, 1, result.Usage.ReasoningTokens)
 	require.Equal(t, deepSeekResponsesEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, "rid_ds_ws", result.RequestID)
 	require.True(t, result.OpenAIWSMode)
 	require.True(t, result.wsReplayInputExists)
 	require.Len(t, result.wsReplayInput, 1)
+}
+
+func TestForwardDeepSeekResponsesWebSocketTurnAppliesAccountModelMapping(t *testing.T) {
+	ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(42))
+	c := newDeepSeekWSTestGinContext(ctx)
+	sse := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mapped\",\"model\":\"deepseek-account-model\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":4,\"output_tokens\":2}}}\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}}
+	account := deepSeekWSTestAccount()
+	account.Credentials["model_mapping"] = map[string]any{"deepseek-public-model": "deepseek-account-model"}
+	svc := &OpenAIGatewayService{cfg: deepSeekWSTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.ForwardDeepSeekResponsesWebSocketTurn(
+		ctx,
+		c,
+		account,
+		account.GetDeepSeekAPIKey(),
+		[]byte(`{"model":"deepseek-public-model","input":"hello"}`),
+		4,
+		func([]byte) error { return nil },
+	)
+	require.NoError(t, err)
+	require.Equal(t, "deepseek-account-model", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "deepseek-public-model", result.Model)
+	require.Equal(t, "deepseek-account-model", result.BillingModel)
+	require.Equal(t, "deepseek-account-model", result.UpstreamModel)
+	require.Equal(t, "deepseek-ws:normal:turn:4:resp_mapped", result.RequestID)
 }
 
 func TestForwardDeepSeekResponsesWebSocketTurnDoesNotFailoverAfterSemanticOutput(t *testing.T) {
@@ -270,6 +301,7 @@ func TestForwardDeepSeekResponsesWebSocketTurnRejectsInvalidSuccessWire(t *testi
 				require.Equal(t, "cyber_policy", mark.Code)
 				require.Equal(t, 9, mark.UpstreamInTok)
 				require.Equal(t, 2, mark.UpstreamOutTok)
+				require.True(t, IsDeepSeekWSAccountNeutralError(err), "SSE cyber failures must not affect account health")
 			}
 		})
 	}
@@ -301,12 +333,129 @@ func TestForwardDeepSeekResponsesWebSocketTurnMarksHTTPCyberPolicyBeforeFailover
 	require.True(t, result.OpenAIWSMode)
 	var failoverErr *UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr), "cyber policy must never retry another account")
+	require.True(t, IsDeepSeekWSAccountNeutralError(err), "cyber policy must not affect account health")
+	var closeErr *OpenAIWSClientCloseError
+	require.ErrorAs(t, err, &closeErr)
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.StatusCode())
+	require.Contains(t, result.RequestID, "deepseek-ws:cyber:turn:1:")
 	require.Len(t, writes, 1)
 	require.Equal(t, "error", gjson.GetBytes(writes[0], "type").String())
 	mark := GetOpsCyberPolicy(c)
 	require.NotNil(t, mark)
 	require.Equal(t, "cyber_policy", mark.Code)
 	require.Equal(t, http.StatusBadRequest, mark.UpstreamStatus)
+}
+
+func TestForwardDeepSeekResponsesWebSocketTurnMarksDeterministicClientErrorsAccountNeutral(t *testing.T) {
+	for _, statusCode := range []int{http.StatusBadRequest, http.StatusUnprocessableEntity} {
+		t.Run(fmt.Sprintf("status_%d", statusCode), func(t *testing.T) {
+			ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(42))
+			c := newDeepSeekWSTestGinContext(ctx)
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: statusCode,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"invalid client field"}}`)),
+			}}
+			svc := &OpenAIGatewayService{cfg: deepSeekWSTestConfig(), httpUpstream: upstream}
+			writes := 0
+			result, err := svc.ForwardDeepSeekResponsesWebSocketTurn(
+				ctx,
+				c,
+				deepSeekWSTestAccount(),
+				"sk-deepseek-test",
+				[]byte(`{"model":"deepseek-v4","input":"hello"}`),
+				1,
+				func([]byte) error { writes++; return nil },
+			)
+
+			require.Nil(t, result)
+			require.Error(t, err)
+			require.True(t, IsDeepSeekWSAccountNeutralError(err))
+			var closeErr *OpenAIWSClientCloseError
+			require.ErrorAs(t, err, &closeErr)
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.StatusCode())
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr))
+			require.Equal(t, 1, writes)
+		})
+	}
+}
+
+func TestEnsureDeepSeekWSUsageRequestIDSeparatesTurnKinds(t *testing.T) {
+	normalCtx := newDeepSeekWSTestGinContext(context.Background())
+	normal := &OpenAIForwardResult{ResponseID: "resp_shared", OpenAIWSMode: true}
+	ensureDeepSeekWSUsageRequestID(normalCtx, normal, 1)
+	require.Equal(t, "deepseek-ws:normal:turn:1:resp_shared", normal.RequestID)
+
+	compactCtx := newDeepSeekWSTestGinContext(context.Background())
+	compact := &OpenAIForwardResult{ResponseID: "resp_shared", RequestKind: UsageRequestKindCompact, OpenAIWSMode: true}
+	ensureDeepSeekWSUsageRequestID(compactCtx, compact, 1)
+	require.Equal(t, "deepseek-ws:compact:turn:1:resp_shared", compact.RequestID)
+
+	cyberCtx := newDeepSeekWSTestGinContext(context.Background())
+	MarkOpsCyberPolicy(cyberCtx, CyberPolicyMark{Code: "cyber_policy"})
+	cyber := &OpenAIForwardResult{ResponseID: "resp_shared", OpenAIWSMode: true}
+	ensureDeepSeekWSUsageRequestID(cyberCtx, cyber, 1)
+	require.Equal(t, "deepseek-ws:cyber:turn:1:resp_shared", cyber.RequestID)
+}
+
+func TestForwardDeepSeekResponsesWebSocketTurnClientWriteFailuresAreGoingAway(t *testing.T) {
+	clientGone := errors.New("client websocket disconnected")
+
+	t.Run("HTTP error event", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(42))
+		c := newDeepSeekWSTestGinContext(ctx)
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"invalid_request_error","message":"invalid client field"}}`)),
+		}}
+		svc := &OpenAIGatewayService{cfg: deepSeekWSTestConfig(), httpUpstream: upstream}
+
+		result, err := svc.ForwardDeepSeekResponsesWebSocketTurn(
+			ctx,
+			c,
+			deepSeekWSTestAccount(),
+			"sk-deepseek-test",
+			[]byte(`{"model":"deepseek-v4","input":"hello"}`),
+			1,
+			func([]byte) error { return clientGone },
+		)
+		require.Nil(t, result)
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, err, &closeErr)
+		require.Equal(t, coderws.StatusGoingAway, closeErr.StatusCode())
+	})
+
+	t.Run("compact success event", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(51))
+		c := newDeepSeekWSTestGinContext(ctx)
+		MarkDeepSeekCompaction(c, DeepSeekCompactionModeRemoteV2SSE)
+		completed := `{"type":"response.completed","response":{"id":"resp_summary_disconnect","status":"completed","output":[{"id":"msg_summary","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"checkpoint summary"}]}],"usage":{"input_tokens":21,"output_tokens":5}}}`
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: " + completed + "\n\n")),
+		}}
+		svc := &OpenAIGatewayService{cfg: deepSeekWSTestConfig(), httpUpstream: upstream}
+		payload := []byte(`{"model":"deepseek-v4","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"large history"}]},{"type":"compaction_trigger"}]}`)
+
+		result, err := svc.ForwardDeepSeekResponsesWebSocketTurn(
+			ctx,
+			c,
+			deepSeekWSTestAccount(),
+			"sk-deepseek-test",
+			payload,
+			1,
+			func([]byte) error { return clientGone },
+		)
+		require.NotNil(t, result)
+		require.True(t, result.OpenAIWSMode)
+		require.Equal(t, UsageRequestKindCompact, result.RequestKind)
+		var closeErr *OpenAIWSClientCloseError
+		require.ErrorAs(t, err, &closeErr)
+		require.Equal(t, coderws.StatusGoingAway, closeErr.StatusCode())
+	})
 }
 
 func TestForwardDeepSeekResponsesWebSocketTurnFailsClosedOnSplitCredentialCanary(t *testing.T) {
@@ -577,6 +726,7 @@ func TestForwardDeepSeekResponsesWebSocketCompactionReusesNativeCore(t *testing.
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "http://deepseek.example/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "1", upstream.lastReq.Header.Get("X-DeepSeek-Harness-Compact"))
 	require.False(t, HasCompactionTriggerInInput(upstream.lastBody))
 	compactInput := gjson.GetBytes(upstream.lastBody, "input").Array()
 	require.NotEmpty(t, compactInput)
@@ -591,8 +741,43 @@ func TestForwardDeepSeekResponsesWebSocketCompactionReusesNativeCore(t *testing.
 	require.Equal(t, 21, result.Usage.InputTokens)
 	require.Equal(t, 5, result.Usage.OutputTokens)
 	require.Equal(t, deepSeekResponsesEndpoint, result.UpstreamEndpoint)
+	require.Equal(t, UsageRequestKindCompact, result.RequestKind)
 	require.True(t, result.deepSeekWSCompaction)
 	require.Len(t, result.wsReplayInput, 1)
+}
+
+func TestForwardDeepSeekResponsesWebSocketCompactionCyberSkipsFailover(t *testing.T) {
+	ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(51))
+	c := newDeepSeekWSTestGinContext(ctx)
+	MarkDeepSeekCompaction(c, DeepSeekCompactionModeRemoteV2SSE)
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"cyber_policy","message":"blocked"}}`)),
+	}}
+	svc := &OpenAIGatewayService{cfg: deepSeekWSTestConfig(), httpUpstream: upstream}
+	payload := []byte(`{"model":"deepseek-v4","reasoning":{"effort":"max"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"large history"}]},{"type":"compaction_trigger"}]}`)
+	writes := 0
+
+	result, err := svc.ForwardDeepSeekResponsesWebSocketTurn(ctx, c, deepSeekWSTestAccount(), "sk-deepseek-test", payload, 2, func([]byte) error {
+		writes++
+		return nil
+	})
+	require.Error(t, err)
+	require.True(t, IsDeepSeekWSAccountNeutralError(err))
+	var closeErr *OpenAIWSClientCloseError
+	require.ErrorAs(t, err, &closeErr)
+	require.Equal(t, coderws.StatusPolicyViolation, closeErr.StatusCode())
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "cyber policy must bypass compact failover even for 403")
+	require.NotNil(t, result)
+	require.Equal(t, UsageRequestKindCompact, result.RequestKind)
+	require.Contains(t, result.RequestID, "deepseek-ws:cyber:turn:2:")
+	require.Equal(t, "1", upstream.lastReq.Header.Get("X-DeepSeek-Harness-Compact"))
+	require.Equal(t, 1, writes)
+	mark := GetOpsCyberPolicy(c)
+	require.NotNil(t, mark)
+	require.Equal(t, http.StatusForbidden, mark.UpstreamStatus)
 }
 
 func TestProxyDeepSeekResponsesWebSocketReplaysFullToolContextAndResetsIndependentTurns(t *testing.T) {

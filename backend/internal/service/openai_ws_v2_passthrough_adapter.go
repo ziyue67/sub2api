@@ -729,6 +729,20 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if capturedSessionModel != "" && capturedSessionModel != strings.TrimSpace(gjson.GetBytes(firstClientMessage, "model").String()) {
 		firstClientMessage = s.ReplaceModelInBody(firstClientMessage, capturedSessionModel)
 	}
+	if hooks != nil && hooks.PrepareRequest != nil {
+		prepared, prepareErr := hooks.PrepareRequest(1, firstClientMessage, initialRequestModel)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		if len(prepared) == 0 || !gjson.ValidBytes(prepared) {
+			return NewOpenAIWSClientCloseError(
+				coderws.StatusPolicyViolation,
+				"invalid websocket request payload",
+				errors.New("request preparation returned invalid JSON"),
+			)
+		}
+		firstClientMessage = prepared
+	}
 	usageMeta := newOpenAIWSPassthroughUsageMeta(initialRequestModel, firstClientMessage)
 	updatedFirst, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, capturedSessionModel, firstClientMessage)
 	if policyErr != nil {
@@ -977,11 +991,6 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if requestModelForThisFrame == "" {
 					requestModelForThisFrame = capturedSessionModel
 				}
-				if hooks != nil && hooks.BeforeRequest != nil {
-					if err := hooks.BeforeRequest(turnNo, payload, requestModelForThisFrame); err != nil {
-						return payload, nil, err
-					}
-				}
 				if hooks != nil && hooks.MapRequestModel != nil {
 					upstreamModel, err := hooks.MapRequestModel(turnNo, requestModelForThisFrame)
 					if err != nil {
@@ -1017,6 +1026,25 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			}
 			if isResponseCreate && model != "" && model != strings.TrimSpace(gjson.GetBytes(payload, "model").String()) {
 				payload = s.ReplaceModelInBody(payload, model)
+			}
+			if isResponseCreate && hooks != nil && hooks.PrepareRequest != nil {
+				prepared, prepareErr := hooks.PrepareRequest(turnNo, payload, requestModelForThisFrame)
+				if prepareErr != nil {
+					return payload, nil, prepareErr
+				}
+				if len(prepared) == 0 || !gjson.ValidBytes(prepared) {
+					return payload, nil, NewOpenAIWSClientCloseError(
+						coderws.StatusPolicyViolation,
+						"invalid websocket request payload",
+						errors.New("request preparation returned invalid JSON"),
+					)
+				}
+				payload = prepared
+			}
+			if isResponseCreate && hooks != nil && hooks.BeforeRequest != nil {
+				if err := hooks.BeforeRequest(turnNo, payload, requestModelForThisFrame); err != nil {
+					return payload, nil, err
+				}
 			}
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, model, payload)
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）

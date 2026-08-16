@@ -306,8 +306,7 @@ func ValidateDeepSeekUserIdentityRequest(body []byte, protocol DeepSeekUserIdent
 	case DeepSeekUserIdentityChatCompletions:
 		return validateDeepSeekIdentityObjectKeys(body, "user_id", false)
 	case DeepSeekUserIdentityResponses:
-		_, err := scanDeepSeekResponsesJSON(body)
-		return err
+		return validateDeepSeekIdentityObjectKeys(body, "user", false)
 	case DeepSeekUserIdentityMessages:
 		return validateDeepSeekIdentityObjectKeys(body, "metadata", true)
 	default:
