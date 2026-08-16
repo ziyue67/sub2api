@@ -286,6 +286,10 @@ type CodexWebSocketCapabilityResolver interface {
 	GroupCodexSupportsWebSockets(ctx context.Context, group *Group) bool
 }
 
+type CodexWebSocketCapabilityBatchResolver interface {
+	GroupsCodexSupportsWebSockets(ctx context.Context, groups []*Group) map[int64]bool
+}
+
 type APIKeyService struct {
 	apiKeyRepo                APIKeyRepository
 	userRepo                  UserRepository
@@ -606,18 +610,43 @@ func (s *APIKeyService) fillCodexWebSocketCapabilities(ctx context.Context, keys
 	if s == nil || s.codexWebSocketCapability == nil {
 		return
 	}
-	resolved := make(map[int64]bool)
+	groups := make([]*Group, 0, len(keys))
 	for i := range keys {
 		group := keys[i].Group
 		if group == nil || group.ID <= 0 {
 			continue
 		}
-		capable, ok := resolved[group.ID]
-		if !ok {
-			capable = s.codexWebSocketCapability.GroupCodexSupportsWebSockets(ctx, group)
-			resolved[group.ID] = capable
+		groups = append(groups, group)
+	}
+	s.fillGroupCodexWebSocketCapabilities(ctx, groups)
+}
+
+func (s *APIKeyService) fillGroupCodexWebSocketCapabilities(ctx context.Context, groups []*Group) {
+	if s == nil || s.codexWebSocketCapability == nil || len(groups) == 0 {
+		return
+	}
+	unique := make(map[int64]*Group, len(groups))
+	for _, group := range groups {
+		if group != nil && group.ID > 0 {
+			unique[group.ID] = group
 		}
-		group.CodexSupportsWebSockets = capable
+	}
+	uniqueGroups := make([]*Group, 0, len(unique))
+	for _, group := range unique {
+		uniqueGroups = append(uniqueGroups, group)
+	}
+	resolved := make(map[int64]bool, len(uniqueGroups))
+	if batchResolver, ok := s.codexWebSocketCapability.(CodexWebSocketCapabilityBatchResolver); ok {
+		resolved = batchResolver.GroupsCodexSupportsWebSockets(ctx, uniqueGroups)
+	} else {
+		for _, group := range uniqueGroups {
+			resolved[group.ID] = s.codexWebSocketCapability.GroupCodexSupportsWebSockets(ctx, group)
+		}
+	}
+	for _, group := range groups {
+		if group != nil && group.ID > 0 {
+			group.CodexSupportsWebSockets = resolved[group.ID]
+		}
 	}
 }
 
@@ -1076,12 +1105,14 @@ func (s *APIKeyService) GetAvailableGroups(ctx context.Context, userID int64) ([
 	availableGroups := make([]Group, 0)
 	for _, group := range allGroups {
 		if s.canUserBindGroupInternal(user, &group, subscribedGroupIDs) {
-			if s.codexWebSocketCapability != nil {
-				group.CodexSupportsWebSockets = s.codexWebSocketCapability.GroupCodexSupportsWebSockets(ctx, &group)
-			}
 			availableGroups = append(availableGroups, group)
 		}
 	}
+	groupPointers := make([]*Group, 0, len(availableGroups))
+	for i := range availableGroups {
+		groupPointers = append(groupPointers, &availableGroups[i])
+	}
+	s.fillGroupCodexWebSocketCapabilities(ctx, groupPointers)
 
 	return availableGroups, nil
 }

@@ -37,6 +37,32 @@ func (r *compositeModelRouteRepository) ListByGroup(ctx context.Context, groupID
 	return out, nil
 }
 
+func (r *compositeModelRouteRepository) ListByGroups(ctx context.Context, groupIDs []int64, includeDisabled bool) ([]service.CompositeModelRoute, error) {
+	groupIDs = uniquePositiveInt64s(groupIDs)
+	if len(groupIDs) == 0 {
+		return []service.CompositeModelRoute{}, nil
+	}
+	q := clientFromContext(ctx, r.client).CompositeModelRoute.Query().
+		Where(compositemodelroute.GroupIDIn(groupIDs...)).
+		Order(
+			dbent.Asc(compositemodelroute.FieldGroupID),
+			dbent.Asc(compositemodelroute.FieldPriority),
+			dbent.Asc(compositemodelroute.FieldID),
+		)
+	if !includeDisabled {
+		q = q.Where(compositemodelroute.EnabledEQ(true))
+	}
+	rows, err := q.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]service.CompositeModelRoute, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, *compositeModelRouteEntityToService(row))
+	}
+	return out, nil
+}
+
 func (r *compositeModelRouteRepository) Create(ctx context.Context, route *service.CompositeModelRoute) error {
 	if route == nil {
 		return service.ErrCompositeRouteNotFound

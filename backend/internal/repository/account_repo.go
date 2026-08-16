@@ -1886,6 +1886,60 @@ func (r *accountRepository) ListSchedulableByGroupID(ctx context.Context, groupI
 	})
 }
 
+func (r *accountRepository) ListSchedulableByGroupIDsAndPlatforms(ctx context.Context, groupIDs []int64, platforms []string) ([]service.Account, error) {
+	groupIDs = uniquePositiveInt64s(groupIDs)
+	platformSet := make(map[string]struct{}, len(platforms))
+	normalizedPlatforms := make([]string, 0, len(platforms))
+	for _, platform := range platforms {
+		platform = strings.TrimSpace(platform)
+		if platform == "" {
+			continue
+		}
+		if _, exists := platformSet[platform]; exists {
+			continue
+		}
+		platformSet[platform] = struct{}{}
+		normalizedPlatforms = append(normalizedPlatforms, platform)
+	}
+	platforms = normalizedPlatforms
+	if len(groupIDs) == 0 || len(platforms) == 0 {
+		return []service.Account{}, nil
+	}
+	now := time.Now()
+	bindings, err := r.client.AccountGroup.Query().
+		Where(
+			dbaccountgroup.GroupIDIn(groupIDs...),
+			dbaccountgroup.HasAccountWith(
+				dbaccount.DeletedAtIsNil(),
+				dbaccount.PlatformIn(platforms...),
+				dbaccount.StatusEQ(service.StatusActive),
+				dbaccount.SchedulableEQ(true),
+				tempUnschedulablePredicate(),
+				notExpiredPredicate(now),
+				dbaccount.Or(dbaccount.OverloadUntilIsNil(), dbaccount.OverloadUntilLTE(now)),
+				dbaccount.Or(dbaccount.RateLimitResetAtIsNil(), dbaccount.RateLimitResetAtLTE(now)),
+			),
+		).
+		WithAccount().
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	accounts := make([]*dbent.Account, 0, len(bindings))
+	seen := make(map[int64]struct{}, len(bindings))
+	for _, binding := range bindings {
+		if binding.Edges.Account == nil {
+			continue
+		}
+		if _, exists := seen[binding.AccountID]; exists {
+			continue
+		}
+		seen[binding.AccountID] = struct{}{}
+		accounts = append(accounts, binding.Edges.Account)
+	}
+	return r.accountsToService(ctx, accounts)
+}
+
 func (r *accountRepository) ListSchedulableCapacityByGroupIDs(ctx context.Context, groupIDs []int64) ([]service.GroupAccountCapacityRow, error) {
 	groupIDs = uniquePositiveInt64s(groupIDs)
 	if len(groupIDs) == 0 {
