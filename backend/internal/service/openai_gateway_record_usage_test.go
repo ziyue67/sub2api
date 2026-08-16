@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +117,7 @@ func TestRecordCyberPolicyUsageLog_PreservesForwardResultMetadata(t *testing.T) 
 		UpstreamModel:   "deepseek-v4-pro",
 		ReasoningEffort: &effort,
 		ServiceTier:     &tier,
+		RequestKind:     UsageRequestKindCompact,
 		Stream:          true,
 		OpenAIWSMode:    true,
 		Duration:        2 * time.Second,
@@ -157,6 +159,7 @@ func TestRecordCyberPolicyUsageLog_PreservesForwardResultMetadata(t *testing.T) 
 	require.True(t, usageRepo.lastLog.Stream)
 	require.True(t, usageRepo.lastLog.OpenAIWSMode)
 	require.Equal(t, RequestTypeCyberBlocked, usageRepo.lastLog.RequestType)
+	require.Equal(t, UsageRequestKindCompact, usageRepo.lastLog.RequestKind)
 	require.Equal(t, 9, usageRepo.lastLog.InputTokens)
 	require.Equal(t, 2, usageRepo.lastLog.OutputTokens)
 	require.NotNil(t, usageRepo.lastLog.ModelMappingChain)
@@ -184,6 +187,24 @@ func TestRecordCyberPolicyUsageLog_NonStreamZeroTokensZeroCost(t *testing.T) {
 	require.Equal(t, 0, usageRepo.lastLog.OutputTokens)
 	require.Zero(t, usageRepo.lastLog.TotalCost)
 	require.Equal(t, RequestTypeCyberBlocked, usageRepo.lastLog.RequestType)
+}
+
+func TestRecordCyberPolicyUsageLog_UsesInputRequestKindWithoutForwardResult(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	svc.RecordCyberPolicyUsageLog(context.Background(), CyberPolicyUsageInput{
+		APIKey:      &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:     &Account{ID: 3, Platform: PlatformDeepSeek},
+		RequestID:   "rid-compact-cyber",
+		Model:       "deepseek-v4-flash",
+		RequestKind: UsageRequestKindCompact,
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, RequestTypeCyberBlocked, usageRepo.lastLog.RequestType)
+	require.Equal(t, UsageRequestKindCompact, usageRepo.lastLog.RequestKind)
 }
 
 func TestRecordCyberPolicyUsageLog_SkipsWhenIncomplete(t *testing.T) {
@@ -346,6 +367,100 @@ func expectedOpenAICost(t *testing.T, svc *OpenAIGatewayService, model string, u
 	return cost
 }
 
+func TestOpenAIGatewayServiceRecordUsage_DeepSeekCachedReasoningAndIsolationModeCostInvariant(t *testing.T) {
+	const (
+		model                 = "deepseek-v4-pro"
+		inputTokens           = 1000
+		cacheReadTokens       = 400
+		outputTokens          = 200
+		reasoningTokens       = 150
+		inputPricePerToken    = 4.35e-7
+		cachePricePerToken    = 3.625e-9
+		outputPricePerToken   = 8.7e-7
+		groupRateMultiplier   = 1.25
+		accountRateMultiplier = 0.8
+	)
+	type costSnapshot struct {
+		InputCost      float64
+		CacheReadCost  float64
+		OutputCost     float64
+		TotalCost      float64
+		ActualCost     float64
+		RateMultiplier float64
+	}
+
+	var snapshots []costSnapshot
+	for index, isolationMode := range []string{DeepSeekUserIsolationModeAuthenticatedUser, DeepSeekUserIsolationModeOff} {
+		t.Run(isolationMode, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			userRepo := &openAIRecordUsageUserRepoStub{}
+			svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
+			groupID := int64(4200 + index)
+			accountRate := accountRateMultiplier
+			account := &Account{
+				ID:       int64(5200 + index),
+				Platform: PlatformDeepSeek,
+				Type:     AccountTypeAPIKey,
+				Extra: map[string]any{
+					DeepSeekUserIsolationModeKey: isolationMode,
+				},
+				RateMultiplier: &accountRate,
+			}
+
+			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+				Result: &OpenAIForwardResult{
+					RequestID: fmt.Sprintf("resp_deepseek_billing_%d", index),
+					Model:     model,
+					Usage: OpenAIUsage{
+						InputTokens:          inputTokens,
+						CacheReadInputTokens: cacheReadTokens,
+						OutputTokens:         outputTokens,
+						ReasoningTokens:      reasoningTokens,
+					},
+					Duration: time.Second,
+				},
+				APIKey: &APIKey{
+					ID:      int64(6200 + index),
+					GroupID: &groupID,
+					Group:   &Group{ID: groupID, RateMultiplier: groupRateMultiplier},
+				},
+				User:    &User{ID: int64(7200 + index)},
+				Account: account,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, usageRepo.lastLog)
+
+			log := usageRepo.lastLog
+			require.Equal(t, inputTokens-cacheReadTokens, log.InputTokens)
+			require.Equal(t, cacheReadTokens, log.CacheReadTokens)
+			require.Equal(t, outputTokens, log.OutputTokens, "reasoning tokens are a subset of output_tokens")
+			require.InDelta(t, float64(inputTokens-cacheReadTokens)*inputPricePerToken, log.InputCost, 1e-15)
+			require.InDelta(t, float64(cacheReadTokens)*cachePricePerToken, log.CacheReadCost, 1e-15)
+			require.InDelta(t, float64(outputTokens)*outputPricePerToken, log.OutputCost, 1e-15,
+				"reasoning tokens must not be charged a second time")
+			expectedTotal := log.InputCost + log.CacheReadCost + log.OutputCost
+			require.InDelta(t, expectedTotal, log.TotalCost, 1e-15)
+			require.InDelta(t, expectedTotal*groupRateMultiplier, log.ActualCost, 1e-15)
+			require.InDelta(t, log.ActualCost, userRepo.lastAmount, 1e-15)
+			require.Equal(t, groupRateMultiplier, log.RateMultiplier)
+			require.NotNil(t, log.AccountRateMultiplier)
+			require.Equal(t, accountRateMultiplier, *log.AccountRateMultiplier)
+
+			snapshots = append(snapshots, costSnapshot{
+				InputCost:      log.InputCost,
+				CacheReadCost:  log.CacheReadCost,
+				OutputCost:     log.OutputCost,
+				TotalCost:      log.TotalCost,
+				ActualCost:     log.ActualCost,
+				RateMultiplier: log.RateMultiplier,
+			})
+		})
+	}
+
+	require.Len(t, snapshots, 2)
+	require.Equal(t, snapshots[0], snapshots[1], "user isolation mode must not affect token billing")
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a
@@ -394,6 +509,7 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, usageRepo.lastLog.OutputCost)
 	require.Zero(t, usageRepo.lastLog.TotalCost)
 	require.Zero(t, usageRepo.lastLog.ActualCost)
+	require.Equal(t, UsageRequestKindNormal, usageRepo.lastLog.RequestKind)
 
 	require.NotNil(t, billingRepo.lastCmd)
 	require.Zero(t, billingRepo.lastCmd.BalanceCost)

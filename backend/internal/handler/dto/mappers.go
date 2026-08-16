@@ -664,6 +664,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		LongContextBillingApplied: l.LongContextBillingApplied,
 		BillingType:               l.BillingType,
 		RequestType:               requestType.String(),
+		RequestKind:               l.RequestKind.Normalize().String(),
 		Stream:                    stream,
 		OpenAIWSMode:              openAIWSMode,
 		DurationMs:                l.DurationMs,

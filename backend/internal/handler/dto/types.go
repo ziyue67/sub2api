@@ -517,6 +517,7 @@ type UsageLog struct {
 
 	BillingType  int8   `json:"billing_type"`
 	RequestType  string `json:"request_type"`
+	RequestKind  string `json:"request_kind"`
 	Stream       bool   `json:"stream"`
 	OpenAIWSMode bool   `json:"openai_ws_mode"`
 	DurationMs   *int   `json:"duration_ms"`

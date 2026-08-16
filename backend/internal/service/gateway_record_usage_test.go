@@ -80,6 +80,94 @@ func (s *openAIRecordUsageBestEffortLogRepoStub) Create(ctx context.Context, log
 	return false, s.createErr
 }
 
+func TestGatewayServiceRecordUsage_DeepSeekMessagesCacheAndIsolationModeCostInvariant(t *testing.T) {
+	const (
+		model                 = "deepseek-v4-pro"
+		inputTokens           = 600
+		cacheReadTokens       = 400
+		outputTokens          = 200
+		inputPricePerToken    = 4.35e-7
+		cachePricePerToken    = 3.625e-9
+		outputPricePerToken   = 8.7e-7
+		groupRateMultiplier   = 1.25
+		accountRateMultiplier = 0.8
+	)
+	type costSnapshot struct {
+		InputCost      float64
+		CacheReadCost  float64
+		OutputCost     float64
+		TotalCost      float64
+		ActualCost     float64
+		RateMultiplier float64
+	}
+
+	var snapshots []costSnapshot
+	for index, isolationMode := range []string{DeepSeekUserIsolationModeAuthenticatedUser, DeepSeekUserIsolationModeOff} {
+		t.Run(isolationMode, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			userRepo := &openAIRecordUsageUserRepoStub{}
+			svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+			groupID := int64(8200 + index)
+			accountRate := accountRateMultiplier
+
+			err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+				Result: &ForwardResult{
+					RequestID: "msg_deepseek_billing_" + isolationMode,
+					Model:     model,
+					Usage: ClaudeUsage{
+						InputTokens:          inputTokens,
+						CacheReadInputTokens: cacheReadTokens,
+						OutputTokens:         outputTokens,
+					},
+					Duration: time.Second,
+				},
+				APIKey: &APIKey{
+					ID:      int64(9200 + index),
+					GroupID: &groupID,
+					Group:   &Group{ID: groupID, RateMultiplier: groupRateMultiplier},
+				},
+				User: &User{ID: int64(10200 + index)},
+				Account: &Account{
+					ID:             int64(11200 + index),
+					Platform:       PlatformDeepSeek,
+					Type:           AccountTypeAPIKey,
+					Extra:          map[string]any{DeepSeekUserIsolationModeKey: isolationMode},
+					RateMultiplier: &accountRate,
+				},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, usageRepo.lastLog)
+
+			log := usageRepo.lastLog
+			require.Equal(t, inputTokens, log.InputTokens)
+			require.Equal(t, cacheReadTokens, log.CacheReadTokens)
+			require.Equal(t, outputTokens, log.OutputTokens)
+			require.InDelta(t, float64(inputTokens)*inputPricePerToken, log.InputCost, 1e-15)
+			require.InDelta(t, float64(cacheReadTokens)*cachePricePerToken, log.CacheReadCost, 1e-15)
+			require.InDelta(t, float64(outputTokens)*outputPricePerToken, log.OutputCost, 1e-15)
+			expectedTotal := log.InputCost + log.CacheReadCost + log.OutputCost
+			require.InDelta(t, expectedTotal, log.TotalCost, 1e-15)
+			require.InDelta(t, expectedTotal*groupRateMultiplier, log.ActualCost, 1e-15)
+			require.InDelta(t, log.ActualCost, userRepo.lastAmount, 1e-15)
+			require.Equal(t, groupRateMultiplier, log.RateMultiplier)
+			require.NotNil(t, log.AccountRateMultiplier)
+			require.Equal(t, accountRateMultiplier, *log.AccountRateMultiplier)
+
+			snapshots = append(snapshots, costSnapshot{
+				InputCost:      log.InputCost,
+				CacheReadCost:  log.CacheReadCost,
+				OutputCost:     log.OutputCost,
+				TotalCost:      log.TotalCost,
+				ActualCost:     log.ActualCost,
+				RateMultiplier: log.RateMultiplier,
+			})
+		})
+	}
+
+	require.Len(t, snapshots, 2)
+	require.Equal(t, snapshots[0], snapshots[1], "user isolation mode must not affect Messages billing")
+}
+
 func TestGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: false, err: context.DeadlineExceeded}
 	userRepo := &openAIRecordUsageUserRepoStub{}

@@ -34,6 +34,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 		ActualCost:     1,
 		BillingType:    service.BillingTypeBalance,
 		RequestType:    service.RequestTypeWSV2,
+		RequestKind:    service.UsageRequestKindCompact,
 		Stream:         false,
 		OpenAIWSMode:   false,
 		CreatedAt:      createdAt,
@@ -72,6 +73,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			log.AccountRateMultiplier,
 			log.BillingType,
 			int16(service.RequestTypeWSV2),
+			service.UsageRequestKindCompact.String(),
 			true,
 			true,
 			sqlmock.AnyArg(), // duration_ms
@@ -109,6 +111,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 	require.Equal(t, int64(99), log.ID)
 	require.Nil(t, log.ServiceTier)
 	require.Equal(t, service.RequestTypeWSV2, log.RequestType)
+	require.Equal(t, service.UsageRequestKindCompact, log.RequestKind)
 	require.True(t, log.Stream)
 	require.True(t, log.OpenAIWSMode)
 	require.NoError(t, mock.ExpectationsWereMet())
@@ -164,6 +167,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			log.AccountRateMultiplier,
 			log.BillingType,
 			int16(service.RequestTypeSync),
+			service.UsageRequestKindNormal.String(),
 			false,
 			false,
 			sqlmock.AnyArg(),
@@ -277,11 +281,11 @@ func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 		CreatedAt:          time.Date(2025, 1, 6, 12, 0, 0, 0, time.UTC),
 	})
 
-	require.Equal(t, sql.NullString{String: imageSize, Valid: true}, prepared.args[38])
-	require.Equal(t, sql.NullString{String: inputSize, Valid: true}, prepared.args[39])
-	require.Equal(t, sql.NullString{String: outputSize, Valid: true}, prepared.args[40])
-	require.Equal(t, sql.NullString{String: source, Valid: true}, prepared.args[41])
-	breakdownJSON, ok := prepared.args[42].(string)
+	require.Equal(t, sql.NullString{String: imageSize, Valid: true}, prepared.args[39])
+	require.Equal(t, sql.NullString{String: inputSize, Valid: true}, prepared.args[40])
+	require.Equal(t, sql.NullString{String: outputSize, Valid: true}, prepared.args[41])
+	require.Equal(t, sql.NullString{String: source, Valid: true}, prepared.args[42])
+	breakdownJSON, ok := prepared.args[43].(string)
 	require.True(t, ok)
 	require.JSONEq(t, `{"1K":1,"4K":1}`, breakdownJSON)
 }
@@ -825,6 +829,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			int16(service.BillingTypeBalance),
 			int16(service.RequestTypeSync),
+			service.UsageRequestKindNormal.String(),
 			false,
 			false,
 			sql.NullInt64{},
@@ -902,6 +907,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_rate_multiplier
 			int16(service.BillingTypeBalance),
 			int16(service.RequestTypeWSV2),
+			service.UsageRequestKindCompact.String(),
 			false, // legacy stream
 			false, // legacy openai ws
 			sql.NullInt64{},
@@ -935,6 +941,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.NotNil(t, log.ServiceTier)
 		require.Equal(t, "priority", *log.ServiceTier)
 		require.Equal(t, service.RequestTypeWSV2, log.RequestType)
+		require.Equal(t, service.UsageRequestKindCompact, log.RequestKind)
 		require.True(t, log.Stream)
 		require.True(t, log.OpenAIWSMode)
 	})
@@ -962,6 +969,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			int16(service.BillingTypeBalance),
 			int16(service.RequestTypeUnknown),
+			service.UsageRequestKindNormal.String(),
 			true,
 			false,
 			sql.NullInt64{},
@@ -1022,6 +1030,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			int16(service.BillingTypeBalance),
 			int16(service.RequestTypeSync),
+			service.UsageRequestKindNormal.String(),
 			false,
 			false,
 			sql.NullInt64{},

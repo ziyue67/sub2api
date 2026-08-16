@@ -68,6 +68,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// usage_logs: billing_type used by filters/stats
 	requireColumn(t, tx, "usage_logs", "billing_type", "smallint", 0, false)
 	requireColumn(t, tx, "usage_logs", "request_type", "smallint", 0, false)
+	requireColumn(t, tx, "usage_logs", "request_kind", "text", 0, false)
+	requireColumnDefaultContains(t, tx, "usage_logs", "request_kind", "'normal'::text")
 	requireColumn(t, tx, "usage_logs", "openai_ws_mode", "boolean", 0, false)
 	requireColumn(t, tx, "usage_logs", "image_input_size", "character varying", 32, true)
 	requireColumn(t, tx, "usage_logs", "image_output_size", "character varying", 32, true)

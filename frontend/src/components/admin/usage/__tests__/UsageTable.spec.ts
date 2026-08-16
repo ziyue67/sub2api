@@ -66,6 +66,8 @@ const messages: Record<string, string> = {
 	'usage.upstreamResponseModel': 'Upstream response',
 	'usage.modelVariant': 'Possible version variant',
 	'usage.modelMismatch': 'Different model',
+	'usage.compact': 'Compact',
+	'usage.unknown': 'Unknown',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -84,6 +86,7 @@ const DataTableStub = {
     <div>
       <div v-for="row in data" :key="row.request_id">
         <slot name="cell-model" :row="row" :value="row.model" />
+        <slot name="cell-stream" :row="row" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
@@ -92,6 +95,27 @@ const DataTableStub = {
     </div>
   `,
 }
+
+describe('admin UsageTable request kind', () => {
+  it('shows compact as a read-only marker and leaves normal rows unmarked', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          { ...baseImageRow, request_id: 'req-compact', request_kind: 'compact' },
+          { ...baseImageRow, request_id: 'req-normal', request_kind: 'normal' },
+        ],
+        loading: false,
+        columns: [{ key: 'stream', label: 'Type' }],
+      },
+      global: {
+        stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true },
+      },
+    })
+
+    expect(wrapper.findAll('[data-testid="usage-request-kind-compact"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="usage-request-kind-compact"]').text()).toBe('Compact')
+  })
+})
 
 const baseImageRow = {
   request_id: 'req-admin-image',

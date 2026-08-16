@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -48,6 +49,61 @@ func TestUsageLogFromService_PrefersRequestTypeForLegacyFields(t *testing.T) {
 	require.Equal(t, "ws_v2", adminDTO.RequestType)
 	require.True(t, adminDTO.Stream)
 	require.True(t, adminDTO.OpenAIWSMode)
+}
+
+func TestUsageLogFromService_IncludesNormalizedRequestKind(t *testing.T) {
+	t.Parallel()
+
+	compact := &service.UsageLog{RequestKind: service.UsageRequestKindCompact}
+	legacy := &service.UsageLog{}
+
+	require.Equal(t, "compact", UsageLogFromService(compact).RequestKind)
+	require.Equal(t, "compact", UsageLogFromServiceAdmin(compact).RequestKind)
+	require.Equal(t, "normal", UsageLogFromService(legacy).RequestKind)
+	require.Equal(t, "normal", UsageLogFromServiceAdmin(legacy).RequestKind)
+}
+
+func TestUsageLogFromServiceDeepSeekCanariesExposeOnlyInternalUserID(t *testing.T) {
+	t.Parallel()
+
+	const upstreamAPIKeyCanary = "sk-deepseek-upstream-usage-canary"
+	derivedUserIDCanary := "dsu_v1_" + strings.Repeat("A", 43)
+	log := &service.UsageLog{
+		ID:        100,
+		UserID:    4242,
+		APIKeyID:  200,
+		AccountID: 300,
+		RequestID: "resp_deepseek_usage_canary",
+		Model:     "deepseek-v4-pro",
+		Account: &service.Account{
+			ID:       300,
+			Name:     "deepseek-account",
+			Platform: service.PlatformDeepSeek,
+			Type:     service.AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key": upstreamAPIKeyCanary,
+				"user":    derivedUserIDCanary,
+			},
+			Extra: map[string]any{"last_upstream_user": derivedUserIDCanary},
+		},
+	}
+
+	for name, value := range map[string]any{
+		"user":  UsageLogFromService(log),
+		"admin": UsageLogFromServiceAdmin(log),
+	} {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(value)
+			require.NoError(t, err)
+			wire := string(encoded)
+			require.Contains(t, wire, `"user_id":4242`)
+			require.Contains(t, wire, `"api_key_id":200`)
+			require.NotContains(t, wire, upstreamAPIKeyCanary)
+			require.NotContains(t, wire, derivedUserIDCanary)
+			require.NotContains(t, wire, `"credentials"`)
+			require.NotContains(t, wire, `"extra"`)
+		})
+	}
 }
 
 func TestUsageCleanupTaskFromService_RequestTypeMapping(t *testing.T) {

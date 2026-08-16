@@ -55,6 +55,7 @@ type CyberPolicyUsageInput struct {
 	Result       *OpenAIForwardResult
 	RequestID    string
 	Model        string
+	RequestKind  UsageRequestKind
 	Stream       bool
 	InputTokens  int
 	OutputTokens int
@@ -96,6 +97,9 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 	}
 	if strings.TrimSpace(result.Model) == "" {
 		result.Model = model
+	}
+	if !result.RequestKind.IsValid() {
+		result.RequestKind = in.RequestKind.Normalize()
 	}
 	if in.Result == nil {
 		result.Stream = in.Stream
@@ -347,6 +351,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		UpstreamModelMismatch: upstreamModelMismatch(sentModel, result.UpstreamResponseModel),
 		ServiceTier:           result.ServiceTier,
 		ReasoningEffort:       result.ReasoningEffort,
+		RequestKind:           result.RequestKind.Normalize(),
 		InboundEndpoint:       optionalTrimmedStringPtr(input.InboundEndpoint),
 		UpstreamEndpoint:      optionalTrimmedStringPtr(input.UpstreamEndpoint),
 		InputTokens:           actualInputTokens,

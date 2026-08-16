@@ -37,6 +37,9 @@ const messages: Record<string, string> = {
 	'usage.sentUpstreamModel': 'Sent upstream model',
 	'usage.upstreamResponseModel': 'Upstream response model',
 	'usage.upstreamModelMismatch': 'Upstream model mismatch',
+	'usage.requestKind': 'Request kind',
+	'usage.normal': 'Normal',
+	'usage.compact': 'Compact',
 	'common.yes': 'Yes',
 	'common.no': 'No',
 }
@@ -642,6 +645,7 @@ describe('admin UsageView model audit export', () => {
 				upstream_response_model: 'gpt-5.4',
 				upstream_model_mismatch: true,
 				request_type: 'sync',
+				request_kind: 'compact',
 				input_tokens: 1,
 				output_tokens: 1,
 				cache_read_tokens: 0,
@@ -684,6 +688,9 @@ describe('admin UsageView model audit export', () => {
 		])
 		const row = sheetAddAoa.mock.calls[0][1][0]
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
+		const requestKindColumn = headers.indexOf('Request kind')
+		expect(requestKindColumn).toBeGreaterThan(-1)
+		expect(row[requestKindColumn]).toBe('Compact')
 		expect(saveAs).toHaveBeenCalledTimes(1)
 	})
 })
