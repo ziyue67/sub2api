@@ -164,6 +164,32 @@ func TestExtractContentModerationInput_ResponsesLastUserMessageExtracted(t *test
 	require.Equal(t, "latest", input.Text)
 }
 
+func TestExtractContentModerationInput_ResponsesCompactionTriggerUsesLatestUserText(t *testing.T) {
+	body := []byte(`{
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"review this compact content"}]},
+			{"type":"function_call_output","call_id":"call_1","output":"tool output"},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIResponses, body)
+	require.Equal(t, "review this compact content tool output", input.Text)
+}
+
+func TestExtractContentModerationInput_ResponsesCompactionIncludesStructuredToolOutput(t *testing.T) {
+	body := []byte(`{
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"benign request"}]},
+			{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":{"result":"blocked tool payload"}},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIResponses, body)
+	require.Contains(t, input.Text, "benign request")
+	require.Contains(t, input.Text, "blocked tool payload")
+}
+
 func TestExtractContentModerationInput_ResponsesLastIsAssistantSkipped(t *testing.T) {
 	body := []byte(`{
 		"input":[

@@ -96,8 +96,8 @@ func redactDeepSeekHeaderValue(value, apiKey string) string {
 	for start := 0; start < len(value); {
 		end, ok := deepSeekEscapedHeaderMatchEnd(value, start, keyRunes)
 		if ok {
-			out.WriteString(value[last:start])
-			out.WriteString(deepSeekCredentialRedaction)
+			_, _ = out.WriteString(value[last:start])
+			_, _ = out.WriteString(deepSeekCredentialRedaction)
 			last = end
 			start = end
 			continue
@@ -111,7 +111,7 @@ func redactDeepSeekHeaderValue(value, apiKey string) string {
 	if last == 0 {
 		return value
 	}
-	out.WriteString(value[last:])
+	_, _ = out.WriteString(value[last:])
 	return out.String()
 }
 
@@ -252,8 +252,8 @@ func redactDeepSeekPlainText(body []byte, apiKey string) []byte {
 
 func redactDeepSeekSSE(body []byte, apiKey string) ([]byte, bool) {
 	first := bytes.TrimSpace(body)
-	if !(bytes.HasPrefix(first, []byte("data:")) || bytes.HasPrefix(first, []byte("event:")) ||
-		bytes.HasPrefix(first, []byte("id:")) || bytes.HasPrefix(first, []byte("retry:")) || bytes.HasPrefix(first, []byte(":"))) {
+	if !bytes.HasPrefix(first, []byte("data:")) && !bytes.HasPrefix(first, []byte("event:")) &&
+		!bytes.HasPrefix(first, []byte("id:")) && !bytes.HasPrefix(first, []byte("retry:")) && !bytes.HasPrefix(first, []byte(":")) {
 		return body, false
 	}
 

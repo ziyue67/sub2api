@@ -63,6 +63,16 @@ func RegisterGatewayRoutes(
 			next(c)
 		}
 	}
+	allowDeepSeekStandaloneCompact := func(feature string, next gin.HandlerFunc) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			exactCompactPath := c.Request != nil && c.Request.URL != nil && c.Request.URL.RawPath == "" && c.Param("subpath") == "/compact"
+			if getGroupPlatform(c) == service.PlatformDeepSeek && !exactCompactPath {
+				writeUnsupportedPlatformFeature(c, feature)
+				return
+			}
+			next(c)
+		}
+	}
 	isOpenAIGatewayPlatform := func(c *gin.Context) bool {
 		return getGroupPlatform(c) == service.PlatformOpenAI
 	}
@@ -213,7 +223,7 @@ func RegisterGatewayRoutes(
 		gateway.POST("/responses", func(c *gin.Context) {
 			dispatchChatResponsesGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 		})
-		gateway.POST("/responses/*subpath", guardResponsesSubpath(rejectDeepSeekFeature("Responses subpaths", func(c *gin.Context) {
+		gateway.POST("/responses/*subpath", guardResponsesSubpath(allowDeepSeekStandaloneCompact("Responses subpaths", func(c *gin.Context) {
 			dispatchChatResponsesGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 		})))
 		gateway.POST("/alpha/search", textBodyLimit, rejectDeepSeekFeature("Alpha search API", h.OpenAIGateway.AlphaSearch))
@@ -342,7 +352,7 @@ func RegisterGatewayRoutes(
 		dispatchChatResponsesGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 	}
 	r.POST("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, responsesHandler)
-	r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, guardResponsesSubpath(rejectDeepSeekFeature("Responses subpaths", responsesHandler)))
+	r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, guardResponsesSubpath(allowDeepSeekStandaloneCompact("Responses subpaths", responsesHandler)))
 	r.POST("/alpha/search", textBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, rejectDeepSeekFeature("Alpha search API", h.OpenAIGateway.AlphaSearch))
 	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
 		rejectDeepSeekFeature("Responses WebSocket", h.OpenAIGateway.ResponsesWebSocket)(c)
@@ -354,8 +364,8 @@ func RegisterGatewayRoutes(
 	{
 		codexDirect.POST("/realtime/calls", rejectDeepSeekFeature("Codex Live API", h.OpenAIGateway.Live))
 		codexDirect.GET("/:call_id", rejectDeepSeekFeature("Codex Live API", h.OpenAIGateway.LiveSideband))
-		codexDirect.POST("/responses", rejectDeepSeekFeature("Codex Responses API", responsesHandler))
-		codexDirect.POST("/responses/*subpath", guardResponsesSubpath(rejectDeepSeekFeature("Codex Responses API", responsesHandler)))
+		codexDirect.POST("/responses", responsesHandler)
+		codexDirect.POST("/responses/*subpath", guardResponsesSubpath(allowDeepSeekStandaloneCompact("Codex Responses API", responsesHandler)))
 		codexDirect.POST("/alpha/search", textBodyLimit, rejectDeepSeekFeature("Codex alpha search API", h.OpenAIGateway.AlphaSearch))
 		codexDirect.GET("/responses", rejectDeepSeekFeature("Codex Responses WebSocket", func(c *gin.Context) {
 			h.OpenAIGateway.ResponsesWebSocket(c)

@@ -623,7 +623,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			}
 
 			if !clientDisconnected {
-				wireLine := line
+				var wireLine string
 				if account.IsDeepSeekAPIKey() {
 					wireLine = string(redactDeepSeekAPIKey(account, []byte(line)))
 				} else {

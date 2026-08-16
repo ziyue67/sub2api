@@ -171,6 +171,25 @@ func TestPromptSnapshotResponsesShapes(t *testing.T) {
 	}
 }
 
+func TestPromptSnapshotResponsesCompactionIncludesToolOutputsInBlockingScope(t *testing.T) {
+	body := []byte(`{"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"benign request"}]},
+		{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_1","output":"blocked tool payload"},
+		{"type":"compaction_trigger"}
+	]}`)
+	req := Request{Protocol: "openai_responses", Body: body}
+	full, err := ExtractPromptSnapshot(req)
+	require.NoError(t, err)
+	require.Contains(t, full.ScanText, "benign request")
+	require.Contains(t, full.ScanText, "blocked tool payload")
+
+	blocking, err := ExtractBlockingPromptSnapshot(req, true)
+	require.NoError(t, err)
+	require.Contains(t, blocking.ScanText, "benign request")
+	require.Contains(t, blocking.ScanText, "blocked tool payload")
+}
+
 func TestPromptSnapshotGeminiBatchShapesAndMediaExclusion(t *testing.T) {
 	body := []byte(`{
 		"contents":{"role":"user","parts":[{"text":"root content"},{"inlineData":{"data":"ROOT_BASE64"}}]},

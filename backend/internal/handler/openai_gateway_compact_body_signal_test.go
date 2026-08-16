@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -87,6 +88,239 @@ func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2StaysOnResponses(t *test
 			require.False(t, streamMarkerExists)
 		})
 	}
+}
+
+func TestMarkDeepSeekRemoteCompactionV2Request_RequiresDedicatedServerSignals(t *testing.T) {
+	remoteBody := []byte(`{"model":"deepseek-v4-pro","stream":true,"input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}]}`)
+	tests := []struct {
+		name       string
+		platform   string
+		path       string
+		body       []byte
+		betaHeader string
+		harnessTag string
+		wantMarked bool
+		wantMode   service.DeepSeekCompactionMode
+		wantStream bool
+	}{
+		{
+			name:       "resolved_deepseek",
+			platform:   service.PlatformDeepSeek,
+			path:       "/v1/responses",
+			body:       remoteBody,
+			betaHeader: "responses_websockets_v2, remote_compaction_v2",
+			wantMarked: true,
+			wantMode:   service.DeepSeekCompactionModeRemoteV2SSE,
+			wantStream: true,
+		},
+		{
+			name:       "openai_platform",
+			platform:   service.PlatformOpenAI,
+			path:       "/v1/responses",
+			body:       remoteBody,
+			betaHeader: "remote_compaction_v2",
+		},
+		{
+			name:       "ordinary_deepseek_response",
+			platform:   service.PlatformDeepSeek,
+			path:       "/v1/responses",
+			body:       []byte(`{"model":"deepseek-v4-pro","stream":true,"input":[{"type":"message","role":"user","content":"hello"}]}`),
+			betaHeader: "remote_compaction_v2",
+			harnessTag: "1",
+		},
+		{
+			name:       "legacy_body_stream_without_codex_feature",
+			platform:   service.PlatformDeepSeek,
+			path:       "/v1/responses",
+			body:       remoteBody,
+			wantMarked: true,
+			wantMode:   service.DeepSeekCompactionModeLegacyBodySSE,
+			wantStream: true,
+		},
+		{
+			name:       "non_stream_request",
+			platform:   service.PlatformDeepSeek,
+			path:       "/v1/responses",
+			body:       []byte(`{"model":"deepseek-v4-pro","stream":false,"input":[{"type":"compaction_trigger"}]}`),
+			betaHeader: "remote_compaction_v2",
+			wantMarked: true,
+			wantMode:   service.DeepSeekCompactionModeLegacyUnary,
+		},
+		{
+			name:       "missing_stream_request",
+			platform:   service.PlatformDeepSeek,
+			path:       "/responses",
+			body:       []byte(`{"model":"deepseek-v4-pro","input":[{"type":"compaction_trigger"}]}`),
+			wantMarked: true,
+			wantMode:   service.DeepSeekCompactionModeLegacyUnary,
+		},
+		{
+			name:       "standalone_compact_path",
+			platform:   service.PlatformDeepSeek,
+			path:       "/v1/responses/compact",
+			body:       remoteBody,
+			betaHeader: "remote_compaction_v2",
+			wantMarked: true,
+			wantMode:   service.DeepSeekCompactionModeLegacyUnary,
+		},
+		{
+			name:       "nested_responses_suffix",
+			platform:   service.PlatformDeepSeek,
+			path:       "/v1/responses/foo/responses",
+			body:       remoteBody,
+			betaHeader: "remote_compaction_v2",
+		},
+		{
+			name:       "compact_nested_subpath",
+			platform:   service.PlatformDeepSeek,
+			path:       "/responses/compact/detail",
+			body:       remoteBody,
+			betaHeader: "remote_compaction_v2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newCompactBodySignalTestContext(t, tt.path, tt.body)
+			if tt.betaHeader != "" {
+				c.Request.Header.Set("x-codex-beta-features", tt.betaHeader)
+			}
+			if tt.harnessTag != "" {
+				c.Request.Header.Set("x-deepseek-harness-compact", tt.harnessTag)
+			}
+
+			marked := markDeepSeekRemoteCompactionV2Request(c, zap.NewNop(), tt.body, tt.platform)
+			require.Equal(t, tt.wantMarked, marked)
+			require.Equal(t, tt.wantMarked, service.IsDeepSeekRemoteCompactionV2Marked(c))
+			require.Equal(t, tt.wantMode, service.DeepSeekCompactionModeFromContext(c))
+			value, exists := c.Get(service.OpenAICompactClientStreamKeyForTest())
+			require.Equal(t, tt.wantStream, exists)
+			if tt.wantStream {
+				require.Equal(t, true, value)
+			}
+		})
+	}
+}
+
+func TestMarkDeepSeekRemoteCompactionV2Request_UsesResolvedCompositePlatform(t *testing.T) {
+	body := []byte(`{"model":"deepseek-v4-pro","stream":true,"input":[{"type":"compaction_trigger"}]}`)
+	c := newCompactBodySignalTestContext(t, "/v1/responses", body)
+	c.Request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
+	apiKey := &service.APIKey{Group: &service.Group{Platform: service.PlatformComposite}}
+
+	ensureCompositeTargetPlatform(c, apiKey, "deepseek-v4-pro")
+	platform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+
+	require.Equal(t, service.PlatformDeepSeek, platform)
+	require.True(t, markDeepSeekRemoteCompactionV2Request(c, zap.NewNop(), body, platform))
+	require.True(t, service.IsDeepSeekRemoteCompactionV2Marked(c))
+}
+
+func TestDeepSeekRemoteCompactionV2Keepalive_WritesSSEHeartbeat(t *testing.T) {
+	body := []byte(`{"model":"deepseek-v4-pro","stream":true,"input":[{"type":"compaction_trigger"}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	c.Request.Header.Set("x-codex-beta-features", "remote_compaction_v2")
+
+	marked := markDeepSeekRemoteCompactionV2Request(c, zap.NewNop(), body, service.PlatformDeepSeek)
+	stop := service.StartOpenAICompactSSEKeepalive(c, 5*time.Millisecond)
+	t.Cleanup(stop)
+	require.True(t, marked)
+	require.True(t, service.IsDeepSeekRemoteCompactionV2Marked(c))
+	time.Sleep(25 * time.Millisecond)
+	require.True(t, service.StopOpenAICompactSSEKeepaliveCommitted(c))
+	stop()
+	require.Contains(t, recorder.Body.String(), ": keepalive\n\n")
+	written := recorder.Body.Len()
+	time.Sleep(15 * time.Millisecond)
+	require.Equal(t, written, recorder.Body.Len())
+}
+
+func TestRestoreDeepSeekCompactInputBeforeAudit_RejectsInvalidEnvelope(t *testing.T) {
+	body := []byte(`{"model":"deepseek-v4-pro","stream":false,"input":[{"type":"compaction","encrypted_content":"sub2api.deepseek.compact.v1.invalid!"}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	h := &OpenAIGatewayHandler{gatewayService: newDeepSeekCompactRestoreTestGateway()}
+
+	restored, ok := h.restoreDeepSeekCompactInputBeforeAudit(c, body, service.PlatformDeepSeek)
+
+	require.False(t, ok)
+	require.Nil(t, restored)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+	require.Equal(t, "invalid DeepSeek compact encrypted_content", gjson.GetBytes(recorder.Body.Bytes(), "error.message").String())
+}
+
+func TestRestoreDeepSeekCompactInputBeforeAudit_RejectsNonArrayCompactState(t *testing.T) {
+	body := []byte(`{"model":"deepseek-v4-pro","stream":false,"input":{"type":"compaction","encrypted_content":"foreign"}}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	h := &OpenAIGatewayHandler{gatewayService: newDeepSeekCompactRestoreTestGateway()}
+
+	restored, ok := h.restoreDeepSeekCompactInputBeforeAudit(c, body, service.PlatformDeepSeek)
+
+	require.False(t, ok)
+	require.Nil(t, restored)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(recorder.Body.Bytes(), "error.type").String())
+}
+
+func TestRestoreDeepSeekCompactInputBeforeAudit_OnlyAppliesToDeepSeek(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-sol","stream":false,"input":[{"type":"compaction","encrypted_content":"untrusted"}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	h := &OpenAIGatewayHandler{}
+
+	restored, ok := h.restoreDeepSeekCompactInputBeforeAudit(c, body, service.PlatformOpenAI)
+
+	require.True(t, ok)
+	require.Equal(t, body, restored)
+	require.False(t, c.Writer.Written())
+}
+
+func TestRestoreDeepSeekCompactInputBeforeAudit_OrdinaryDeepSeekBodyUnchanged(t *testing.T) {
+	body := []byte(`{"model":"deepseek-v4-pro","stream":false,"input":[{"type":"message","role":"user","content":"hello"}]}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	h := &OpenAIGatewayHandler{gatewayService: newDeepSeekCompactRestoreTestGateway()}
+
+	restored, ok := h.restoreDeepSeekCompactInputBeforeAudit(c, body, service.PlatformDeepSeek)
+
+	require.True(t, ok)
+	require.Equal(t, body, restored)
+	require.False(t, c.Writer.Written())
+}
+
+func newDeepSeekCompactRestoreTestGateway() *service.OpenAIGatewayService {
+	return service.NewOpenAIGatewayService(
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 }
 
 func TestNormalizeOpenAIResponsesCompactRequest_RemoteV2PathAliasesStayOnResponses(t *testing.T) {

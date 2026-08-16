@@ -132,7 +132,32 @@ func collectLastResponsesInput(input gjson.Result, parts *[]string, images *[]st
 		if len(array) == 0 {
 			return
 		}
-		last := array[len(array)-1]
+		lastIndex := len(array) - 1
+		if array[lastIndex].Get("type").String() == "compaction_trigger" {
+			var toolParts []string
+			var toolImages []string
+			for _, item := range array[:lastIndex] {
+				if isResponsesToolOutputType(item.Get("type").String()) {
+					collectResponsesToolOutput(item.Get("output"), &toolParts, &toolImages)
+				}
+			}
+			for lastIndex--; lastIndex >= 0; lastIndex-- {
+				if isResponsesUserTextItem(array[lastIndex]) {
+					break
+				}
+			}
+			if lastIndex >= 0 {
+				last := array[lastIndex]
+				collectContentValue(last.Get("content"), parts, images)
+				if last.Get("type").String() == "input_text" || last.Get("text").Exists() {
+					collectContentValue(last, parts, images)
+				}
+			}
+			*parts = append(*parts, toolParts...)
+			*images = append(*images, toolImages...)
+			return
+		}
+		last := array[lastIndex]
 		if !isResponsesUserTextItem(last) {
 			return
 		}
@@ -147,6 +172,27 @@ func collectLastResponsesInput(input gjson.Result, parts *[]string, images *[]st
 				collectContentValue(input, parts, images)
 			}
 		}
+	}
+}
+
+func isResponsesToolOutputType(itemType string) bool {
+	switch strings.ToLower(strings.TrimSpace(itemType)) {
+	case "function_call_output", "custom_tool_call_output", "tool_search_output":
+		return true
+	default:
+		return false
+	}
+}
+
+func collectResponsesToolOutput(output gjson.Result, parts *[]string, images *[]string) {
+	partsBefore := len(*parts)
+	imagesBefore := len(*images)
+	collectContentValue(output, parts, images)
+	if len(*parts) != partsBefore || len(*images) != imagesBefore || !output.Exists() {
+		return
+	}
+	if raw := strings.TrimSpace(output.Raw); raw != "" && raw != "null" {
+		addModerationText(parts, raw)
 	}
 }
 

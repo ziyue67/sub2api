@@ -448,19 +448,15 @@ func TestGatewayRoutesResponsesSubpathRejectsNonConformingSubpaths(t *testing.T)
 	}
 }
 
-func TestGatewayRoutesDeepSeekAllowsOnlyBareHTTPResponsesSurface(t *testing.T) {
+func TestGatewayRoutesDeepSeekRejectsUnsupportedResponsesSurfaces(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformDeepSeek)
 
 	for _, tc := range []struct {
 		method string
 		path   string
 	}{
-		{http.MethodPost, "/v1/responses/compact"},
-		{http.MethodPost, "/responses/compact"},
 		{http.MethodGet, "/v1/responses"},
 		{http.MethodGet, "/responses"},
-		{http.MethodPost, "/backend-api/codex/responses"},
-		{http.MethodPost, "/backend-api/codex/responses/compact"},
 		{http.MethodGet, "/backend-api/codex/responses"},
 		{http.MethodPost, "/v1/live"},
 		{http.MethodPost, "/v1/alpha/search"},
@@ -479,6 +475,54 @@ func TestGatewayRoutesDeepSeekAllowsOnlyBareHTTPResponsesSurface(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesDeepSeekAllowsExactStandaloneCompactAndCodexResponses(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformDeepSeek)
+
+	for _, path := range []string{
+		"/v1/responses/compact",
+		"/responses/compact",
+		"/backend-api/codex/responses",
+		"/backend-api/codex/responses/compact",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-v4-pro","input":"hello"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusInternalServerError, w.Code, "path=%s should reach the existing Responses handler stub", path)
+		require.Contains(t, w.Body.String(), "User context not found", "path=%s", path)
+		require.NotContains(t, w.Body.String(), "not supported for this platform", "path=%s", path)
+	}
+}
+
+func TestGatewayRoutesDeepSeekRejectsNonExactResponsesCompactSubpaths(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformDeepSeek)
+
+	for _, path := range []string{
+		"/v1/responses/compact/",
+		"/v1/responses/compact/detail",
+		"/responses/compact/detail",
+		"/backend-api/codex/responses/compact/detail",
+		"/v1/responses/compactx",
+		"/responses/compaction",
+		"/backend-api/codex/responses/resp_123/cancel",
+		"/v1/responses/%63ompact",
+		"/responses/compact%2fdetail",
+		"/backend-api/codex/responses/compact%2f..",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-v4-pro","input":"hello"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNotFound, w.Code, "path=%s must remain blocked", path)
+		require.True(t,
+			strings.Contains(w.Body.String(), "not supported for this platform") || strings.Contains(w.Body.String(), "Unsupported responses subpath"),
+			"path=%s body=%s", path, w.Body.String(),
+		)
+	}
+}
+
 func TestGatewayRoutesDeepSeekBareChatAndResponsesReachOpenAICompatibleHandlers(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformDeepSeek)
 
@@ -487,6 +531,7 @@ func TestGatewayRoutesDeepSeekBareChatAndResponsesReachOpenAICompatibleHandlers(
 		"/chat/completions",
 		"/v1/responses",
 		"/responses",
+		"/backend-api/codex/responses",
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-v4-pro","input":"hello"}`))
 		req.Header.Set("Content-Type", "application/json")
@@ -527,7 +572,7 @@ func TestGatewayRoutesCompositeDeepSeekBareAPIsUseNativeProtocolHandlers(t *test
 	}
 }
 
-func TestGatewayRoutesCompositeDeepSeekEffectivePlatformAppliesFeatureGuards(t *testing.T) {
+func TestGatewayRoutesCompositeDeepSeekAllowsExactCompactAndAppliesOtherFeatureGuards(t *testing.T) {
 	resolver := service.NewCompositeRouteResolver(compositeRouteRepoStub{
 		routes: []service.CompositeModelRoute{
 			{ID: 1, GroupID: 1, PublicModel: "deepseek-alias", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformDeepSeek, UpstreamModel: "deepseek-v4-pro", Endpoint: service.CompositeRouteEndpointResponses, Priority: 100, Enabled: true},
@@ -537,7 +582,27 @@ func TestGatewayRoutesCompositeDeepSeekEffectivePlatformAppliesFeatureGuards(t *
 		Gateway: config.GatewayConfig{MaxBodySize: 1024 * 1024, TextMaxBodySize: 1024 * 1024},
 	}, resolver, service.PlatformComposite)
 
-	for _, path := range []string{"/v1/responses/compact", "/responses/compact", "/backend-api/codex/responses"} {
+	for _, path := range []string{
+		"/v1/responses/compact",
+		"/responses/compact",
+		"/backend-api/codex/responses",
+		"/backend-api/codex/responses/compact",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-alias","input":"hello"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusInternalServerError, w.Code, "path=%s should reach the existing Responses handler stub", path)
+		require.Contains(t, w.Body.String(), "User context not found", "path=%s", path)
+		require.NotContains(t, w.Body.String(), "not supported for this platform", "path=%s", path)
+	}
+
+	for _, path := range []string{
+		"/v1/responses/compact/detail",
+		"/responses/compactx",
+		"/backend-api/codex/responses/resp_123/cancel",
+	} {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"deepseek-alias","input":"hello"}`))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -555,6 +620,29 @@ func TestGatewayRoutesCompositeDeepSeekEffectivePlatformAppliesFeatureGuards(t *
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusNotFound, w.Code, "path=%s", path)
 		require.Contains(t, w.Body.String(), "not supported for this platform", "path=%s", path)
+	}
+}
+
+func TestGatewayRoutesDeepSeekCompactGateLeavesOpenAIAndGrokUnchanged(t *testing.T) {
+	for _, platform := range []string{service.PlatformOpenAI, service.PlatformGrok} {
+		t.Run(platform, func(t *testing.T) {
+			router := newGatewayRoutesTestRouter(platform)
+			for _, path := range []string{
+				"/v1/responses/compact",
+				"/v1/responses/compact/detail",
+				"/responses/compactx",
+				"/backend-api/codex/responses",
+				"/backend-api/codex/responses/resp_123/cancel",
+			} {
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-compatible","input":"hello"}`))
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+
+				router.ServeHTTP(w, req)
+				require.NotEqual(t, http.StatusNotFound, w.Code, "platform=%s path=%s", platform, path)
+				require.NotContains(t, w.Body.String(), "not supported for this platform", "platform=%s path=%s", platform, path)
+			}
+		})
 	}
 }
 
