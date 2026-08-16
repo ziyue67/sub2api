@@ -67,6 +67,24 @@ node scripts/sub2api-admin.js accounts apply-oauth 40 --file credentials.json
 node scripts/sub2api-admin.js accounts reset-temp-unschedulable 40
 ```
 
+DeepSeek 目前仅支持 API Key 账号，`account.json` 示例：
+
+```json
+{
+  "name": "DeepSeek Official",
+  "platform": "deepseek",
+  "type": "apikey",
+  "credentials": {
+    "api_key": "YOUR_DEEPSEEK_API_KEY",
+    "base_url": "https://api.deepseek.com"
+  }
+}
+```
+
+`base_url` 是 Chat Completions、Responses 和 Anthropic Messages 共用的 API 根地址，
+不要填写 `/v1`、`/responses` 或 `/chat/completions` 等后缀。导出/备份文件会包含明文
+`api_key`，应限制文件权限并避免将其上传到日志、工单或版本库。
+
 ### 删除与清理
 
 删除前先列出目标账号名和 ID。

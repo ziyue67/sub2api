@@ -400,6 +400,9 @@ type PublicSettings struct {
 
 	// 允许终端用户在用量页查看自己的失败请求
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
+
+	// Dedicated DeepSeek Responses WS ingress is accepted and bridged to HTTP.
+	DeepSeekResponsesWebSocketHTTPBridgeEnabled bool `json:"deepseek_responses_websocket_http_bridge_enabled"`
 }
 
 type LoginAgreementDocument struct {
@@ -644,8 +647,9 @@ const (
 	OpenAIFastTierPriority = "priority" // 仅匹配 fast（priority）
 	OpenAIFastTierFlex     = "flex"     // 仅匹配 flex
 
-	// OpenAIFastPolicyActionForcePriority 会保留 service_tier 字段并强制写成
-	// priority，用于把 flex/auto/default/scale 等已识别 tier 收敛为 fast。
+	// OpenAIFastPolicyActionForcePriority 会强制写入 service_tier=priority，
+	// 包括请求未携带 service_tier 的情况。该动作不再按入站 tier 过滤，
+	// 保存时会把 ServiceTier 规范化为 all。
 	OpenAIFastPolicyActionForcePriority = "force_priority"
 )
 

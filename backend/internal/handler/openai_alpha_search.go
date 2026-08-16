@@ -30,7 +30,8 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
-	if apiKey.Group.Platform != service.PlatformOpenAI {
+	if apiKey.Group.Platform != service.PlatformOpenAI &&
+		(apiKey.Group.Platform != service.PlatformComposite || effectiveAPIKeyPlatform(c, apiKey) != service.PlatformOpenAI) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Codex alpha search is only available for OpenAI groups")
 		return
 	}

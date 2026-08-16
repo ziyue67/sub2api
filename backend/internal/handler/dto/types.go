@@ -89,13 +89,14 @@ type APIKey struct {
 }
 
 type Group struct {
-	ID             int64   `json:"id"`
-	Name           string  `json:"name"`
-	Description    string  `json:"description"`
-	Platform       string  `json:"platform"`
-	RateMultiplier float64 `json:"rate_multiplier"`
-	IsExclusive    bool    `json:"is_exclusive"`
-	Status         string  `json:"status"`
+	ID                      int64   `json:"id"`
+	Name                    string  `json:"name"`
+	Description             string  `json:"description"`
+	Platform                string  `json:"platform"`
+	RateMultiplier          float64 `json:"rate_multiplier"`
+	IsExclusive             bool    `json:"is_exclusive"`
+	Status                  string  `json:"status"`
+	CodexSupportsWebSockets bool    `json:"codex_supports_websockets"`
 
 	SubscriptionType          string   `json:"subscription_type"`
 	DailyLimitUSD             *float64 `json:"daily_limit_usd"`
@@ -523,6 +524,7 @@ type UsageLog struct {
 
 	BillingType  int8   `json:"billing_type"`
 	RequestType  string `json:"request_type"`
+	RequestKind  string `json:"request_kind"`
 	Stream       bool   `json:"stream"`
 	OpenAIWSMode bool   `json:"openai_ws_mode"`
 	DurationMs   *int   `json:"duration_ms"`

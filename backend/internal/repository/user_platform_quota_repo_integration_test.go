@@ -98,6 +98,28 @@ func TestUserPlatformQuotaRepository_BulkInsertInitial_GrokAllowed(t *testing.T)
 	require.InDelta(t, 9.0, *rec.DailyLimitUSD, 1e-9)
 }
 
+// TestUserPlatformQuotaRepository_BulkInsertInitial_DeepSeekAllowed guards the
+// Ent validator and migration 222 CHECK constraint as one persistence contract.
+func TestUserPlatformQuotaRepository_BulkInsertInitial_DeepSeekAllowed(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	txCtx := dbent.NewTxContext(ctx, tx)
+	client := tx.Client()
+
+	userID := mustCreateUserForQuota(t, client)
+	repo := NewUserPlatformQuotaRepository(client)
+	daily := 11.0
+	require.NoError(t, repo.BulkInsertInitial(txCtx, []UserPlatformQuotaRecord{
+		{UserID: userID, Platform: service.PlatformDeepSeek, DailyLimitUSD: &daily},
+	}))
+
+	rec, err := repo.GetByUserPlatform(txCtx, userID, service.PlatformDeepSeek)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.NotNil(t, rec.DailyLimitUSD)
+	require.InDelta(t, daily, *rec.DailyLimitUSD, 1e-9)
+}
+
 func TestUserPlatformQuotaRepository_GetByUserPlatform(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)

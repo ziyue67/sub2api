@@ -78,13 +78,13 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	if c != nil {
 		c.Set("anthropic_passthrough", true)
 	}
-	// Pre-filter: strip empty text blocks (including nested in tool_result) to prevent upstream 400.
-	input.Body = StripEmptyTextBlocks(input.Body)
-	// Pre-filter: strip web-search history blocks the upstream cannot accept
-	// (emulation-synthesized ones always; genuine ones additionally for
-	// passback-required third-party upstreams such as GLM/Kimi/DeepSeek,
-	// which reject server_tool_use with 400). input.RequestModel 已是映射后的模型 ID。
-	input.Body = FilterWebSearchHistoryBlocks(input.Body, input.RequestModel)
+	if !account.IsDeepSeekAPIKey() {
+		// Anthropic-compatible relays may reject these blocks. DeepSeek's native
+		// Anthropic endpoint supports thinking/server_tool/web_search history and
+		// must receive the original body without compatibility filtering.
+		input.Body = StripEmptyTextBlocks(input.Body)
+		input.Body = FilterWebSearchHistoryBlocks(input.Body, input.RequestModel)
+	}
 	if input.Parsed != nil {
 		// 透传分支也会改写实际 wire body，成功 usage hash 依赖这里同步当前 body。
 		if err := input.Parsed.ReplaceBody(input.Body); err != nil {
@@ -119,6 +119,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				scheduleOpenCodeGoUsageActivity(s.deferredService, account)
 			}
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
+			safeErr = redactDeepSeekAPIKeyString(account, safeErr)
 			setOpsUpstreamError(c, 0, safeErr, "")
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
@@ -139,6 +140,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			})
 			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 		}
+		sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 
 		// 透传分支禁止 400 请求体降级重试（该重试会改写请求体）
 		if resp.StatusCode >= 400 && resp.StatusCode != 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
@@ -158,13 +160,14 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				}
 
 				respBody, _ := s.readUpstreamErrorBody(resp)
+				respBody = redactDeepSeekAPIKey(account, respBody)
 				_ = resp.Body.Close()
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 					Platform:           account.Platform,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
 					UpstreamStatusCode: resp.StatusCode,
-					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 					UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
 					Passthrough:        true,
 					Kind:               "retry",
@@ -196,11 +199,12 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
 		if s.shouldFailoverUpstreamError(resp.StatusCode) {
 			respBody, _ := s.readUpstreamErrorBody(resp)
+			respBody = redactDeepSeekAPIKey(account, respBody)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 			logger.LegacyPrintf("service.gateway", "[Anthropic Passthrough] Upstream error (retry exhausted, failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-				account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+				account.ID, account.Name, resp.StatusCode, openAICompatibleUpstreamRequestID(resp.Header), truncateString(string(respBody), 1000))
 
 			s.handleRetryExhaustedSideEffects(ctx, resp, account)
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -208,7 +212,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 				Passthrough:        true,
 				Kind:               "retry_exhausted_failover",
 				Message:            extractUpstreamErrorMessage(respBody),
@@ -222,6 +226,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
+				ResponseHeaders:        resp.Header.Clone(),
 				RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			}
 		}
@@ -230,11 +235,12 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 
 	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(resp.StatusCode) {
 		respBody, _ := s.readUpstreamErrorBody(resp)
+		respBody = redactDeepSeekAPIKey(account, respBody)
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 		logger.LegacyPrintf("service.gateway", "[Anthropic Passthrough] Upstream error (failover): Account=%d(%s) Status=%d RequestID=%s Body=%s",
-			account.ID, account.Name, resp.StatusCode, resp.Header.Get("x-request-id"), truncateString(string(respBody), 1000))
+			account.ID, account.Name, resp.StatusCode, openAICompatibleUpstreamRequestID(resp.Header), truncateString(string(respBody), 1000))
 
 		s.handleFailoverSideEffects(ctx, resp, account, input.RequestModel)
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -242,7 +248,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			AccountID:          account.ID,
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
-			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 			Passthrough:        true,
 			Kind:               "failover",
 			Message:            extractUpstreamErrorMessage(respBody),
@@ -256,6 +262,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,
+			ResponseHeaders:        resp.Header.Clone(),
 			RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 		}
 	}
@@ -277,6 +284,14 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			}
 			return nil, err
 		}
+		if account.IsDeepSeekAPIKey() && (streamResult.usage == nil || !hasBillableClaudeUsage(*streamResult.usage)) {
+			_ = newDeepSeekMissingUsageFailoverError(c, account, openAICompatibleUpstreamRequestID(resp.Header))
+			missingUsageErr := errors.New(deepSeekMissingUsageMsg)
+			if partial := partialStreamUsageResult(c, resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, missingUsageErr); partial != nil {
+				return partial, missingUsageErr
+			}
+			return nil, missingUsageErr
+		}
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
 		clientDisconnect = streamResult.clientDisconnect
@@ -291,7 +306,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	}
 
 	return &ForwardResult{
-		RequestID:                     resp.Header.Get("x-request-id"),
+		RequestID:                     openAICompatibleUpstreamRequestID(resp.Header),
 		Usage:                         *usage,
 		Model:                         input.OriginalModel,
 		UpstreamModel:                 input.RequestModel,
@@ -312,8 +327,17 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	token string,
 ) (*http.Request, []byte, error) {
 	targetURL := claudeAPIURL
-	baseURL := account.GetBaseURL()
-	if baseURL != "" {
+	if account.IsDeepSeekAPIKey() {
+		root, err := normalizeDeepSeekBaseURL(account.GetDeepSeekBaseURL())
+		if err != nil {
+			return nil, nil, err
+		}
+		validatedURL, err := s.validateUpstreamBaseURL(root)
+		if err != nil {
+			return nil, nil, err
+		}
+		targetURL = strings.TrimRight(validatedURL, "/") + "/anthropic/v1/messages"
+	} else if baseURL := account.GetBaseURL(); baseURL != "" {
 		validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
 			return nil, nil, err
@@ -321,21 +345,31 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 		targetURL = validatedURL + "/v1/messages?beta=true"
 	}
 
-	// 能力维度 body sanitize：透传路径上 anthropic-beta header 原样透传客户端值，
-	// 依此决定是否保留 body 中的 context_management。避免“客户端 body 带字段但
-	// header 忘记带 beta token”的客户端 bug 在透传场景下让上游 400。
-	clientBeta := ""
-	if c != nil && c.Request != nil {
-		clientBeta = getHeaderRaw(c.Request.Header, "anthropic-beta")
+	if !account.IsDeepSeekAPIKey() {
+		// 能力维度 body sanitize：透传路径上 anthropic-beta header 原样透传客户端值，
+		// 依此决定是否保留 body 中的 context_management。DeepSeek 使用官方原生
+		// Anthropic 协议，body 必须保持原样，不套用 Anthropic beta 清理策略。
+		clientBeta := ""
+		if c != nil && c.Request != nil {
+			clientBeta = getHeaderRaw(c.Request.Header, "anthropic-beta")
+		}
+		// 账号覆写了 anthropic-beta 时，覆写值即最终上游值：净化以覆写值为准
+		if beta, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
+			clientBeta = beta
+		}
+		if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, clientBeta); changed {
+			body = sanitized
+		}
 	}
-	// 账号覆写了 anthropic-beta 时，覆写值即最终上游值：净化以覆写值为准
-	if beta, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
-		clientBeta = beta
-	}
-	if sanitized, changed := sanitizeAnthropicBodyForBetaTokens(body, clientBeta); changed {
-		body = sanitized
+	if account.IsDeepSeekAPIKey() {
+		var err error
+		body, err = applyDeepSeekAuthenticatedUserID(ctx, s.cfg, account, DeepSeekUserIdentityMessages, body)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
+	ctx = withDeepSeekRedirectsDisabled(ctx, account)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
@@ -359,7 +393,13 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
 	req.Header.Del("cookie")
-	setAnthropicAPIKeyAuthHeader(req.Header, account, token)
+	if account.IsDeepSeekAPIKey() {
+		// DeepSeek Anthropic API 的原生鉴权契约是 x-api-key；不继承
+		// Anthropic 账号可配置的 Authorization Bearer 兼容模式。
+		setHeaderRaw(req.Header, "x-api-key", token)
+	} else {
+		setAnthropicAPIKeyAuthHeader(req.Header, account, token)
+	}
 
 	if getHeaderRaw(req.Header, "content-type") == "" {
 		setHeaderRaw(req.Header, "content-type", "application/json")
@@ -370,6 +410,14 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）
 	account.ApplyHeaderOverrides(req.Header)
+	if account.IsDeepSeekAPIKey() {
+		// Account header overrides are not allowed to replace the credential or
+		// switch DeepSeek's native Anthropic endpoint to Bearer authentication.
+		req.Header.Del("authorization")
+		req.Header.Del("x-api-key")
+		req.Header.Del("x-goog-api-key")
+		setHeaderRaw(req.Header, "x-api-key", token)
+	}
 
 	return req, body, nil
 }
@@ -382,6 +430,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	startTime time.Time,
 	model string,
 ) (*streamingResult, error) {
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -404,8 +453,11 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		c.Header("Connection", "keep-alive")
 	}
 	c.Header("X-Accel-Buffering", "no")
-	if v := resp.Header.Get("x-request-id"); v != "" {
+	if v := openAICompatibleUpstreamRequestID(resp.Header); v != "" {
 		c.Header("x-request-id", v)
+	}
+	if v := strings.TrimSpace(resp.Header.Get("x-deepseek-request-id")); v != "" {
+		c.Header("x-deepseek-request-id", v)
 	}
 
 	w := c.Writer
@@ -420,6 +472,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	sawTerminalEvent := false
 
 	scanner := bufio.NewScanner(resp.Body)
+	if account.IsDeepSeekAPIKey() {
+		scanner.Split(scanSSELinesPreserveCR)
+	}
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -473,7 +528,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	}
 
 	keepaliveInterval := time.Duration(0)
-	if s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
+	if !account.IsDeepSeekAPIKey() && s.cfg != nil && s.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
 	var keepaliveTimer *time.Timer
@@ -499,11 +554,52 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		keepaliveTimer.Reset(keepaliveInterval)
 	}
 	inPartialEvent := false
+	deepSeekEventName := ""
+	deepSeekDataTerminal := false
+	deepSeekSawData := false
+	var sensitiveGuard *deepSeekSSESensitiveEventGuard
+	if account.IsDeepSeekAPIKey() {
+		sensitiveGuard = newDeepSeekSSESensitiveEventGuard(account, deepSeekSSESensitiveProtocolAnthropic)
+	}
+	writeWireLine := func(wireLine string, eventBoundary bool) {
+		if clientDisconnected {
+			return
+		}
+		if _, err := io.WriteString(w, wireLine); err != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+		} else if _, err := io.WriteString(w, "\n"); err != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+		} else if eventBoundary {
+			// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
+			flusher.Flush()
+			lastDataAt = time.Now()
+			resetKeepaliveTimer()
+			inPartialEvent = false
+		} else {
+			inPartialEvent = true
+		}
+	}
+	emitGuardedWire := func(safeWire []byte) error {
+		safeLine := bytes.TrimSuffix(safeWire, []byte{'\n'})
+		writeWireLine(string(safeLine), len(bytes.TrimSpace(deepSeekSSEWireLineContent(safeWire))) == 0)
+		return nil
+	}
+	finishSensitiveGuard := func() error {
+		if sensitiveGuard == nil {
+			return nil
+		}
+		return sensitiveGuard.Finish(emitGuardedWire)
+	}
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				if guardErr := finishSensitiveGuard(); guardErr != nil {
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, guardErr
+				}
 				if !clientDisconnected {
 					// 兜底补刷，确保最后一个未以空行结尾的事件也能及时送达客户端。
 					flusher.Flush()
@@ -520,6 +616,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 			}
 			if ev.err != nil {
+				if guardErr := finishSensitiveGuard(); guardErr != nil {
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, guardErr
+				}
 				if sawTerminalEvent {
 					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 				}
@@ -537,10 +636,15 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			}
 
 			line := ev.line
+			eventBoundary := line == "" || line == "\r"
+			terminalDispatched := false
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
 				trimmed := strings.TrimSpace(data)
 				observer.ObserveAnthropic([]byte(trimmed))
-				if anthropicStreamEventIsTerminal("", trimmed) {
+				if account.IsDeepSeekAPIKey() {
+					deepSeekSawData = deepSeekSawData || trimmed != ""
+					deepSeekDataTerminal = deepSeekDataTerminal || anthropicStreamEventIsTerminal("", trimmed)
+				} else if anthropicStreamEventIsTerminal("", trimmed) {
 					sawTerminalEvent = true
 				}
 				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
@@ -550,28 +654,33 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				s.parseSSEUsagePassthrough(data, usage)
 			} else {
 				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
-					sawTerminalEvent = true
+				if strings.HasPrefix(trimmed, "event:") {
+					eventName := strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
+					if account.IsDeepSeekAPIKey() {
+						deepSeekEventName = eventName
+					} else if anthropicStreamEventIsTerminal(eventName, "") {
+						sawTerminalEvent = true
+					}
 				}
 			}
+			if account.IsDeepSeekAPIKey() && eventBoundary {
+				terminalDispatched = deepSeekSawData && (deepSeekDataTerminal || anthropicStreamEventIsTerminal(deepSeekEventName, ""))
+				sawTerminalEvent = terminalDispatched
+				deepSeekEventName = ""
+				deepSeekDataTerminal = false
+				deepSeekSawData = false
+			}
 
-			if !clientDisconnected {
-				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
-				if _, err := io.WriteString(w, restored); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if _, err := io.WriteString(w, "\n"); err != nil {
-					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if line == "" {
-					// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
-					flusher.Flush()
-					lastDataAt = time.Now()
-					resetKeepaliveTimer()
-					inPartialEvent = false
-				} else {
-					inPartialEvent = true
+			if sensitiveGuard != nil {
+				guardErr := sensitiveGuard.PushWireLine(append([]byte(line), '\n'), emitGuardedWire)
+				if guardErr != nil {
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, guardErr
 				}
+			} else {
+				writeWireLine(string(reverseToolNamesIfPresent(c, []byte(line))), eventBoundary)
+			}
+			if terminalDispatched {
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
 			}
 
 		case <-intervalCh:
@@ -610,6 +719,16 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			resetKeepaliveTimer()
 		}
 	}
+}
+
+func scanSSELinesPreserveCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if newline := bytes.IndexByte(data, '\n'); newline >= 0 {
+		return newline + 1, data[:newline], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 func extractAnthropicSSEDataLine(line string) (string, bool) {
@@ -756,7 +875,7 @@ func (s *GatewayService) invalidNonStreamingJSONFailoverError(
 		accountID,
 		accountName,
 		resp.StatusCode,
-		resp.Header.Get("x-request-id"),
+		openAICompatibleUpstreamRequestID(resp.Header),
 		parseErr,
 	)
 
@@ -771,7 +890,7 @@ func (s *GatewayService) invalidNonStreamingJSONFailoverError(
 	return &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           body,
-		ResponseHeaders:        resp.Header,
+		ResponseHeaders:        resp.Header.Clone(),
 		RetryableOnSameAccount: retryableOnSameAccount,
 	}
 }
@@ -782,6 +901,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	c *gin.Context,
 	account *Account,
 ) (*ClaudeUsage, error) {
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 	if s.rateLimitService != nil {
 		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 	}
@@ -789,6 +909,11 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, anthropicTooLargeError)
 	if err != nil {
 		return nil, err
+	}
+	if account.IsDeepSeekAPIKey() {
+		// Invalid/non-JSON 2xx responses can enter failover and rate-limit error
+		// handling before the normal response writer. Redact before that boundary.
+		body = redactDeepSeekAPIKey(account, body)
 	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -804,7 +929,10 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	}
 
 	usage := parseClaudeUsageFromResponseBody(body)
-	if IsForceCacheBilling(ctx) && usage.InputTokens > 0 {
+	if account.IsDeepSeekAPIKey() && !hasBillableClaudeUsage(*usage) {
+		return nil, newDeepSeekMissingUsageFailoverError(c, account, openAICompatibleUpstreamRequestID(resp.Header))
+	}
+	if !account.IsDeepSeekAPIKey() && IsForceCacheBilling(ctx) && usage.InputTokens > 0 {
 		body, err = classifyAnthropicResponseInputAsCacheRead(body, usage)
 		if err != nil {
 			return nil, err
@@ -816,7 +944,9 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	body = reverseToolNamesIfPresent(c, body)
+	if !account.IsDeepSeekAPIKey() {
+		body = reverseToolNamesIfPresent(c, body)
+	}
 	c.Data(resp.StatusCode, contentType, body)
 	return usage, nil
 }
@@ -846,5 +976,8 @@ func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, 
 	}
 	if v := strings.TrimSpace(src.Get("x-request-id")); v != "" {
 		dst.Set("x-request-id", v)
+	}
+	if v := strings.TrimSpace(src.Get("x-deepseek-request-id")); v != "" {
+		dst.Set("x-deepseek-request-id", v)
 	}
 }

@@ -267,12 +267,99 @@ func (a *Account) IsGrok() bool {
 	return a.Platform == PlatformGrok
 }
 
+func (a *Account) IsDeepSeek() bool {
+	return a != nil && a.Platform == PlatformDeepSeek
+}
+
+func (a *Account) IsDeepSeekAPIKey() bool {
+	return a.IsDeepSeek() && a.Type == AccountTypeAPIKey
+}
+
+func (a *Account) GetDeepSeekBaseURL() string {
+	if !a.IsDeepSeek() {
+		return ""
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/")
+	if baseURL == "" {
+		return DefaultDeepSeekBaseURL
+	}
+	if normalized, err := normalizeDeepSeekBaseURL(baseURL); err == nil {
+		return normalized
+	}
+	return baseURL
+}
+
+func (a *Account) GetDeepSeekAPIKey() string {
+	if !a.IsDeepSeekAPIKey() {
+		return ""
+	}
+	return strings.TrimSpace(a.GetCredential("api_key"))
+}
+
+const (
+	DeepSeekUserIsolationModeKey               = "deepseek_user_isolation_mode"
+	DeepSeekUserIsolationModeAuthenticatedUser = "authenticated_user"
+	DeepSeekUserIsolationModeOff               = "off"
+
+	DeepSeekResponsesWebSocketModeKey        = "deepseek_responses_websockets_v2_mode"
+	DeepSeekResponsesWebSocketModeOff        = "off"
+	DeepSeekResponsesWebSocketModeHTTPBridge = "http_bridge"
+)
+
+// ResolveDeepSeekUserIsolationMode returns the trusted upstream user identity
+// policy. Existing accounts without the field retain their pre-feature wire.
+func (a *Account) ResolveDeepSeekUserIsolationMode() string {
+	if a == nil || !a.IsDeepSeek() {
+		return DeepSeekUserIsolationModeOff
+	}
+	if a.Extra != nil {
+		if mode, ok := a.Extra[DeepSeekUserIsolationModeKey].(string); ok {
+			switch strings.ToLower(strings.TrimSpace(mode)) {
+			case DeepSeekUserIsolationModeOff:
+				return DeepSeekUserIsolationModeOff
+			case DeepSeekUserIsolationModeAuthenticatedUser:
+				return DeepSeekUserIsolationModeAuthenticatedUser
+			}
+		}
+	}
+	return DeepSeekUserIsolationModeOff
+}
+
+// ResolveDeepSeekResponsesWebSocketMode returns the effective client-facing
+// Responses WebSocket mode for a DeepSeek account. DeepSeek never uses an
+// upstream WebSocket: http_bridge terminates WS at sub2api and creates one
+// stateless HTTP /responses request per turn.
+func (a *Account) ResolveDeepSeekResponsesWebSocketMode(globalBridgeEnabled bool) string {
+	if a == nil || !a.IsDeepSeekAPIKey() || !globalBridgeEnabled {
+		return DeepSeekResponsesWebSocketModeOff
+	}
+	if a.Extra == nil {
+		return DeepSeekResponsesWebSocketModeHTTPBridge
+	}
+	raw, exists := a.Extra[DeepSeekResponsesWebSocketModeKey]
+	if !exists {
+		return DeepSeekResponsesWebSocketModeHTTPBridge
+	}
+	mode, ok := raw.(string)
+	if !ok {
+		return DeepSeekResponsesWebSocketModeOff
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case DeepSeekResponsesWebSocketModeHTTPBridge:
+		return DeepSeekResponsesWebSocketModeHTTPBridge
+	case DeepSeekResponsesWebSocketModeOff:
+		return DeepSeekResponsesWebSocketModeOff
+	default:
+		return DeepSeekResponsesWebSocketModeOff
+	}
+}
+
 func (a *Account) IsGrokOAuth() bool {
 	return a.IsGrok() && a.Type == AccountTypeOAuth
 }
 
 func (a *Account) IsOpenAICompatible() bool {
-	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok)
+	return a != nil && (a.Platform == PlatformOpenAI || a.Platform == PlatformGrok || a.Platform == PlatformDeepSeek)
 }
 
 func (a *Account) GeminiOAuthType() string {
@@ -1481,6 +1568,17 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 			// forwarding gate itself fails closed if that probe is unavailable or
 			// cannot produce positive paid-entitlement evidence.
 			return eligible || reason == "billing_unobserved"
+		default:
+			return false
+		}
+	}
+	if a.IsDeepSeek() {
+		if !a.IsDeepSeekAPIKey() {
+			return false
+		}
+		switch capability {
+		case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses:
+			return true
 		default:
 			return false
 		}

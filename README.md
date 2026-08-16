@@ -573,6 +573,60 @@ Long-running OpenAI/Grok image generation and editing can be submitted through `
 
 ---
 
+## DeepSeek Support
+
+Sub2API supports DeepSeek as an independent API-key-only platform. Create an
+account with `platform: deepseek`, `type: apikey`, `credentials.api_key`, and
+the protocol-neutral API root in `credentials.base_url` (default:
+`https://api.deepseek.com`).
+
+The gateway preserves the client's native protocol instead of converting all
+traffic through Chat Completions:
+
+| Client endpoint | DeepSeek upstream endpoint | Authentication |
+| --- | --- | --- |
+| `/v1/chat/completions` | `/chat/completions` | Bearer API key |
+| `/v1/responses` | `/responses` | Bearer API key |
+| `/v1/messages` | `/anthropic/v1/messages` | `x-api-key` |
+
+Streaming and non-streaming text, reasoning, and tool calls are forwarded in
+their original protocol. The built-in model catalog contains
+`deepseek-v4-flash` and `deepseek-v4-pro`; custom relay model IDs can be added
+explicitly. Images, embeddings, audio/video, realtime, most Responses subpaths,
+and Messages `count_tokens` are not enabled for DeepSeek.
+
+Codex remote compaction is implemented as a gateway checkpoint bridge. The
+summary helper is a normal streaming `POST /responses` request to DeepSeek,
+using the Codex checkpoint prompt and the request's explicit reasoning effort;
+it never calls Chat Completions or DeepSeek `/responses/compact`. The gateway
+fully validates the terminal event and billable usage before returning one
+encrypted Codex compaction item. Exact `/responses/compact`, remote-v2 SSE, and
+legacy compact wires share this implementation.
+
+DeepSeek accounts support client Responses WebSocket mode `off` or
+`http_bridge`. In `http_bridge`, Sub2API accepts Codex WebSocket ingress and
+maps each `response.create` to an independent streaming DeepSeek HTTP
+`POST /responses`; DeepSeek upstream is never contacted over WebSocket. The
+account mode also requires the global `gateway.openai_ws` v2 router/bridge.
+Accordingly, generated Codex `supports_websockets` describes Sub2API ingress
+capability, not native DeepSeek WebSocket support.
+
+New DeepSeek accounts default to authenticated-user isolation. Sub2API derives
+a stable anonymous DeepSeek `user`/`user_id` from the authenticated local user,
+overrides untrusted client identity fields, and uses the same identity across
+Chat Completions, Responses, Anthropic Messages, compaction, and WebSocket
+turns. Account mode `off` remains available for compatibility. Keep
+`deepseek.user_id_secret` stable across replicas and restarts; rotating it
+changes every upstream identity and causes a DeepSeek KVCache cold start.
+
+`base_url` must be the shared API root, not a versioned path or a complete
+endpoint. The official `https://api.deepseek.com/v1` alias is normalized to the
+canonical root. A custom relay root must expose all three paths shown above.
+Credential-bearing DeepSeek requests do not follow HTTP redirects.
+For production custom relays, enable `security.url_allowlist`, add only the
+intended relay hosts, and set both `allow_private_hosts` and
+`allow_insecure_http` to `false`.
+
 ## Grok / xAI Support
 
 Sub2API supports both Grok subscription accounts through xAI OAuth and standard xAI API-key accounts. Both account types forward OpenAI-compatible Responses traffic to xAI.

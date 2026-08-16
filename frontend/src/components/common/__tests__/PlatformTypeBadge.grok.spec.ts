@@ -114,3 +114,15 @@ describe('PlatformTypeBadge OpenAI authentication modes', () => {
     expect(wrapper.text()).toContain('OAuth')
   })
 })
+
+describe('PlatformTypeBadge DeepSeek', () => {
+  it('renders the DeepSeek platform label and API key type styling', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: { platform: 'deepseek', type: 'apikey' },
+    })
+
+    expect(wrapper.text()).toContain('DeepSeek')
+    expect(wrapper.text()).toContain('Key')
+    expect(wrapper.html()).toContain('bg-indigo-100')
+  })
+})

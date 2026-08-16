@@ -45,7 +45,7 @@ func (s *GatewayService) shouldRetryUpstreamError(account *Account, statusCode i
 // shouldFailoverUpstreamError determines whether an upstream error should trigger account failover.
 func (s *GatewayService) shouldFailoverUpstreamError(statusCode int) bool {
 	switch statusCode {
-	case 401, 403, 429, 529:
+	case 401, 402, 403, 429, 529:
 		return true
 	default:
 		return statusCode >= 500
@@ -94,12 +94,17 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	}
 	beginUpstreamResponseModelObservation(c)
 
-	// Web Search 模拟：纯 web_search 请求时，直接调用搜索 API 构造响应
-	if account != nil && s.shouldEmulateWebSearch(ctx, account, parsed.GroupID, parsed.Body.Bytes()) {
+	// DeepSeek API Key 的 Anthropic Messages 是官方原生协议，必须先于任何
+	// web-search 模拟或 Claude 兼容改写进入透传路径。
+	deepSeekNativeMessagesPassthrough := account != nil && account.IsDeepSeekAPIKey()
+
+	// Web Search 模拟：纯 web_search 请求时，直接调用搜索 API 构造响应。
+	// DeepSeek 官方上游原生支持 server_tool/web_search block，不在此拦截。
+	if account != nil && !deepSeekNativeMessagesPassthrough && s.shouldEmulateWebSearch(ctx, account, parsed.GroupID, parsed.Body.Bytes()) {
 		return s.handleWebSearchEmulation(ctx, c, account, parsed)
 	}
 
-	if account != nil && account.IsAnthropicAPIKeyPassthroughEnabled() {
+	if account != nil && (deepSeekNativeMessagesPassthrough || account.IsAnthropicAPIKeyPassthroughEnabled()) {
 		passthroughBody := parsed.Body.Bytes()
 		passthroughModel := parsed.Model
 		if passthroughModel != "" {

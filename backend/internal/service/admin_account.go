@@ -259,6 +259,10 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 			"accounts with rotating or unsupported credential types cannot be duplicated",
 		)
 	}
+	platform, err := normalizeAccountPlatform(source.Platform)
+	if err != nil {
+		return nil, err
+	}
 
 	credentials, err := cloneAccountJSONMap(source.Credentials)
 	if err != nil {
@@ -273,6 +277,10 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 			extra = make(map[string]any, 1)
 		}
 		extra[duplicateAccountOperationIDExtraKey] = operationID
+	}
+	credentials, err = normalizeAccountCredentialsForPlatform(platform, source.Type, credentials)
+	if err != nil {
+		return nil, err
 	}
 
 	var expiresAt *int64
@@ -290,7 +298,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	input := &CreateAccountInput{
 		Name:                  duplicateAccountName(source.Name),
 		Notes:                 cloneAccountValuePointer(source.Notes),
-		Platform:              source.Platform,
+		Platform:              platform,
 		Type:                  source.Type,
 		Credentials:           credentials,
 		Extra:                 extra,
@@ -308,6 +316,10 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, fmt.Errorf("normalize duplicate account extra: %w", err)
+	}
+	accountExtra, err = normalizeDeepSeekAccountExtra(input.Platform, accountExtra, source.ResolveDeepSeekUserIsolationMode())
+	if err != nil {
+		return nil, fmt.Errorf("normalize duplicate DeepSeek account extra: %w", err)
 	}
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
 		return nil, err
@@ -459,11 +471,29 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 }
 
 func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	if input == nil {
+		return nil, infraerrors.BadRequest("ACCOUNT_INPUT_REQUIRED", "account input is required")
+	}
+	platform, err := normalizeAccountPlatform(input.Platform)
+	if err != nil {
+		return nil, err
+	}
+	input.Platform = platform
+	credentials, err := normalizeAccountCredentialsForPlatform(platform, input.Type, input.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	input.Credentials = credentials
+
 	accountExtra, err := normalizeOpenAILongContextBillingExtra(input.Platform, input.Extra)
 	if err != nil {
 		return nil, err
 	}
 	accountExtra, err = normalizeGrokMediaEligibilityExtra(input.Platform, accountExtra)
+	if err != nil {
+		return nil, err
+	}
+	accountExtra, err = normalizeDeepSeekAccountExtra(input.Platform, accountExtra, DeepSeekUserIsolationModeAuthenticatedUser)
 	if err != nil {
 		return nil, err
 	}
@@ -556,6 +586,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err != nil {
 			return nil, err
 		}
+		normalizedExtra, err = normalizeDeepSeekAccountExtra(account.Platform, normalizedExtra, account.ResolveDeepSeekUserIsolationMode())
+		if err != nil {
+			return nil, err
+		}
 	}
 	previousProbeIdentity := upstreamBillingProbeIdentity(account)
 	previousOllamaUsageIdentity := ollamaCloudUsageIdentity(account)
@@ -609,6 +643,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		// Strip SSO/password residue that must never sit next to OAuth tokens.
 		account.Credentials = SanitizeStoredCredentials(account.Platform, account.Credentials)
+	}
+	account.Credentials, err = normalizeAccountCredentialsForPlatform(account.Platform, account.Type, account.Credentials)
+	if err != nil {
+		return nil, err
 	}
 	// Extra 使用 map：需要区分“未提供(nil)”与“显式清空({})”。
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库。
@@ -867,6 +905,34 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 			return err
 		}
 	}
+	_, hasDeepSeekUserIsolationUpdate := updates[DeepSeekUserIsolationModeKey]
+	_, hasDeepSeekWebSocketModeUpdate := updates[DeepSeekResponsesWebSocketModeKey]
+	if hasDeepSeekUserIsolationUpdate || hasDeepSeekWebSocketModeUpdate {
+		account, err := s.accountRepo.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if account.Platform != PlatformDeepSeek {
+			if hasDeepSeekUserIsolationUpdate {
+				return infraerrors.BadRequest("DEEPSEEK_USER_ISOLATION_PLATFORM_INVALID", "DeepSeek user isolation mode is only valid for DeepSeek accounts")
+			}
+			return infraerrors.BadRequest("DEEPSEEK_RESPONSES_WEBSOCKET_MODE_PLATFORM_INVALID", "DeepSeek Responses WebSocket mode is only valid for DeepSeek accounts")
+		}
+		if hasDeepSeekUserIsolationUpdate {
+			normalizedMode, err := normalizeDeepSeekUserIsolationMode(updates[DeepSeekUserIsolationModeKey])
+			if err != nil {
+				return err
+			}
+			updates[DeepSeekUserIsolationModeKey] = normalizedMode
+		}
+		if hasDeepSeekWebSocketModeUpdate {
+			normalizedMode, err := normalizeDeepSeekResponsesWebSocketMode(updates[DeepSeekResponsesWebSocketModeKey])
+			if err != nil {
+				return err
+			}
+			updates[DeepSeekResponsesWebSocketModeKey] = normalizedMode
+		}
+	}
 	if len(updates) == 0 {
 		return nil
 	}
@@ -909,10 +975,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 	_, hasLongContextBillingUpdate := input.Extra[openAILongContextBillingEnabledKey]
+	_, hasDeepSeekUserIsolationUpdate := input.Extra[DeepSeekUserIsolationModeKey]
+	_, hasDeepSeekWebSocketModeUpdate := input.Extra[DeepSeekResponsesWebSocketModeKey]
+	hasDeepSeekExtraUpdate := hasDeepSeekUserIsolationUpdate || hasDeepSeekWebSocketModeUpdate
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || hasLongContextBillingUpdate || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || hasLongContextBillingUpdate || hasDeepSeekExtraUpdate || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -946,6 +1015,33 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			}
 			break
 		}
+	}
+	if hasDeepSeekExtraUpdate {
+		for _, account := range cachedTargets {
+			if account == nil {
+				continue
+			}
+			if account.Platform != PlatformDeepSeek {
+				if hasDeepSeekUserIsolationUpdate {
+					return nil, infraerrors.BadRequest("DEEPSEEK_USER_ISOLATION_PLATFORM_INVALID", "DeepSeek user isolation mode can only be bulk-updated on DeepSeek accounts")
+				}
+				return nil, infraerrors.BadRequest("DEEPSEEK_RESPONSES_WEBSOCKET_MODE_PLATFORM_INVALID", "DeepSeek Responses WebSocket mode can only be bulk-updated on DeepSeek accounts")
+			}
+		}
+	}
+	if hasDeepSeekUserIsolationUpdate {
+		normalizedMode, err := normalizeDeepSeekUserIsolationMode(input.Extra[DeepSeekUserIsolationModeKey])
+		if err != nil {
+			return nil, err
+		}
+		input.Extra[DeepSeekUserIsolationModeKey] = normalizedMode
+	}
+	if hasDeepSeekWebSocketModeUpdate {
+		normalizedMode, err := normalizeDeepSeekResponsesWebSocketMode(input.Extra[DeepSeekResponsesWebSocketModeKey])
+		if err != nil {
+			return nil, err
+		}
+		input.Extra[DeepSeekResponsesWebSocketModeKey] = normalizedMode
 	}
 
 	// 影子账号绝不持有凭据:批量更新携带凭据时,目标中不得含影子(外审 G5,与单账号
@@ -1024,6 +1120,11 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if input.Credentials != nil {
 		input.Credentials = SanitizeStoredCredentials("", input.Credentials)
 	}
+	normalizedCredentials, err := normalizeBulkAccountCredentials(cachedTargets, input.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	input.Credentials = normalizedCredentials
 
 	// Prepare bulk updates for columns and JSONB fields.
 	repoUpdates := AccountBulkUpdate{
@@ -1119,6 +1220,39 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	}
 
 	return result, nil
+}
+
+func normalizeBulkAccountCredentials(targets []*Account, delta map[string]any) (map[string]any, error) {
+	if len(delta) == 0 {
+		return delta, nil
+	}
+
+	normalizedDelta := make(map[string]any, len(delta))
+	for key, value := range delta {
+		normalizedDelta[key] = value
+	}
+	for _, account := range targets {
+		if account == nil || !strings.EqualFold(strings.TrimSpace(account.Platform), PlatformDeepSeek) {
+			continue
+		}
+		effective := make(map[string]any, len(account.Credentials)+len(normalizedDelta))
+		for key, value := range account.Credentials {
+			effective[key] = value
+		}
+		for key, value := range normalizedDelta {
+			effective[key] = value
+		}
+		normalized, err := normalizeAccountCredentialsForPlatform(PlatformDeepSeek, account.Type, effective)
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range []string{"api_key", "base_url"} {
+			if _, provided := delta[key]; provided {
+				normalizedDelta[key] = normalized[key]
+			}
+		}
+	}
+	return normalizedDelta, nil
 }
 
 func updatesUpstreamBillingProbeIdentity(credentials map[string]any) bool {

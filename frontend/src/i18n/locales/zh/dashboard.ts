@@ -207,6 +207,18 @@ export default {
         codexNoteWindows:
           '设置 $env:SUB2API_API_KEY，将 config.toml 保存到 %USERPROFILE%\\.codex。优先 env_key，勿提交密钥。'
       },
+      deepseek: {
+        description: '配置 Claude Code、Codex 或 OpenCode，通过 Sub2API 的原生 DeepSeek 协议端点访问。',
+        codexDescription:
+          '配置 Codex 通过 Sub2API Responses 使用 DeepSeek，包括网关压缩和可选的客户端 WebSocket 入口。',
+        codexConfigTomlHint:
+          'provider name 必须精确保持为 "OpenAI"，以便 Codex 启用 remote_compaction_v2。supports_websockets 表示 Sub2API 客户端入口能力；DeepSeek 上游仍使用 HTTP /responses。',
+        note: '所选客户端通过 DeepSeek API Key 分组发送请求。请勿提交包含 API Key 的配置文件。',
+        codexNote:
+          '导出 SUB2API_API_KEY，将 config.toml 保存到 ~/.codex。启用 WebSocket 时，由 Sub2API 桥接到 DeepSeek HTTP /responses。',
+        codexNoteWindows:
+          '设置 $env:SUB2API_API_KEY，将 config.toml 保存到 %USERPROFILE%\\.codex。启用 WebSocket 时，由 Sub2API 桥接到 DeepSeek HTTP /responses。'
+      },
       opencode: {
         title: 'OpenCode 配置示例',
         subtitle: 'opencode.json',
@@ -349,6 +361,9 @@ export default {
     ws: 'WS',
     stream: '流式',
     sync: '同步',
+    requestKind: '请求用途',
+    normal: '普通',
+    compact: '压缩',
     cyber: '安全策略',
     live: 'Live',
     unknown: '未知',
@@ -450,7 +465,8 @@ export default {
       openai: 'OpenAI',
       anthropic: 'Anthropic',
       gemini: 'Gemini',
-      grok: 'Grok'
+      grok: 'Grok',
+      deepseek: 'DeepSeek'
     },
     extraModelsHeader: '附加模型',
     extraModelsEmpty: '无附加模型',

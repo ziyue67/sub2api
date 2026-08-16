@@ -243,7 +243,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	responsesSemanticOutputSeen := false
 	failedMessage := ""
 	clientOutputStarted := false
-	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
+	upstreamRequestID := openAICompatibleUpstreamRequestID(resp.Header)
 	var streamEarlyErr error
 	eventInProgress := false
 	eventStartsClientOutput := false
@@ -1147,10 +1147,28 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	if inputTokens == 0 {
 		inputTokens = value.Get("prompt_tokens").Int()
 	}
+	if inputTokens == 0 {
+		// DeepSeek also exposes the disjoint cache hit/miss counts at the usage
+		// top level. Prefer prompt_tokens when present, but retain billable usage
+		// for compatible gateways that only return the two component fields.
+		cacheHitTokens := value.Get("prompt_cache_hit_tokens").Int()
+		cacheMissTokens := value.Get("prompt_cache_miss_tokens").Int()
+		if cacheHitTokens < 0 {
+			cacheHitTokens = 0
+		}
+		if cacheMissTokens < 0 {
+			cacheMissTokens = 0
+		}
+		inputTokens = cacheHitTokens + cacheMissTokens
+	}
 	outputTokens := value.Get("output_tokens").Int()
 	if outputTokens == 0 {
 		outputTokens = value.Get("completion_tokens").Int()
 	}
+	reasoningTokens := firstPositiveGJSONInt(
+		value.Get("output_tokens_details.reasoning_tokens"),
+		value.Get("completion_tokens_details.reasoning_tokens"),
+	)
 	cacheReadTokens := openAICacheReadTokensFromUsage(value)
 	cacheCreationTokens := openAICacheCreationTokensFromUsage(value)
 	imageOutputTokens := value.Get("output_tokens_details.image_tokens").Int()
@@ -1168,6 +1186,7 @@ func openAIUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 		InputTokens:              int(inputTokens),
 		ImageInputTokens:         imageInputTokens,
 		OutputTokens:             int(outputTokens),
+		ReasoningTokens:          reasoningTokens,
 		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     cacheReadTokens,
 		ImageOutputTokens:        int(imageOutputTokens),
@@ -1178,6 +1197,7 @@ func openAICacheReadTokensFromUsage(value gjson.Result) int {
 	for _, nested := range []gjson.Result{
 		value.Get("input_tokens_details.cached_tokens"),
 		value.Get("prompt_tokens_details.cached_tokens"),
+		value.Get("prompt_cache_hit_tokens"),
 	} {
 		if nested.Exists() {
 			return max(int(nested.Int()), 0)

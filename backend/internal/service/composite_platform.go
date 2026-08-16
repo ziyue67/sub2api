@@ -45,7 +45,27 @@ func WithCompositeRouteDecision(ctx context.Context, decision CompositeRouteDeci
 	if source := strings.TrimSpace(decision.Source); source != "" {
 		ctx = context.WithValue(ctx, ctxkey.CompositeRouteSource, source)
 	}
+	ctx = WithCompositeRouteEndpoint(ctx, decision.Endpoint)
 	return ctx
+}
+
+func WithCompositeRouteEndpoint(ctx context.Context, endpoint string) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxkey.CompositeRouteEndpoint, normalizeCompositeRouteEndpoint(endpoint))
+}
+
+func CompositeRouteEndpointFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	endpoint, ok := ctx.Value(ctxkey.CompositeRouteEndpoint).(string)
+	endpoint = strings.TrimSpace(endpoint)
+	if !ok || endpoint == "" {
+		return "", false
+	}
+	return normalizeCompositeRouteEndpoint(endpoint), true
 }
 
 func ResolvedUpstreamModelFromContext(ctx context.Context) (string, bool) {
@@ -106,6 +126,8 @@ func DetectModelPlatform(model string) (string, bool) {
 			return PlatformGemini, true
 		case "xai", "x-ai", "grok":
 			return PlatformGrok, true
+		case "deepseek":
+			return PlatformDeepSeek, true
 		}
 		if rest != "" {
 			normalized = strings.TrimPrefix(rest, "models/")
@@ -133,6 +155,8 @@ func DetectModelPlatform(model string) (string, bool) {
 		return PlatformGemini, true
 	case normalized == "grok" || strings.HasPrefix(normalized, "grok-"):
 		return PlatformGrok, true
+	case normalized == "deepseek" || strings.HasPrefix(normalized, "deepseek-"):
+		return PlatformDeepSeek, true
 	default:
 		return "", false
 	}
@@ -151,35 +175,60 @@ func (s *GatewayService) resolveCompositeRouteDecision(ctx context.Context, grou
 	if group == nil || group.Platform != PlatformComposite {
 		return CompositeRouteDecision{}, false, nil
 	}
-	if platform, ok := ResolvedTargetPlatformFromContext(ctx); ok {
+	if resolvedEndpoint, ok := CompositeRouteEndpointFromContext(ctx); ok {
+		endpoint = resolvedEndpoint
+	}
+	endpoint = normalizeCompositeRouteEndpoint(endpoint)
+	publicModel := requestedModel
+	if resolvedModel, ok := RequestedPublicModelFromContext(ctx); ok {
+		publicModel = resolvedModel
+	}
+	platform, platformResolved := ResolvedTargetPlatformFromContext(ctx)
+	source, sourceResolved := CompositeRouteSourceFromContext(ctx)
+	if platformResolved && sourceResolved && source == CompositeRouteSourceExplicit {
 		upstreamModel := requestedModel
 		if resolvedModel, modelOK := ResolvedUpstreamModelFromContext(ctx); modelOK {
 			upstreamModel = resolvedModel
-		}
-		source := CompositeRouteSourceDetector
-		if resolvedSource, sourceOK := CompositeRouteSourceFromContext(ctx); sourceOK {
-			source = resolvedSource
 		}
 		return CompositeRouteDecision{
 			Matched:        true,
 			Source:         source,
 			GroupID:        group.ID,
-			PublicModel:    requestedModel,
+			PublicModel:    publicModel,
 			TargetPlatform: platform,
 			UpstreamModel:  upstreamModel,
-			Endpoint:       normalizeCompositeRouteEndpoint(endpoint),
+			Endpoint:       endpoint,
 		}, true, nil
 	}
-	decision, err := s.compositeResolver.Resolve(ctx, group.ID, requestedModel, endpoint)
+	resolver := s.compositeResolver
+	if resolver == nil {
+		resolver = NewCompositeRouteResolver(nil)
+	}
+	decision, err := resolver.Resolve(ctx, group.ID, publicModel, endpoint)
 	if err != nil {
 		return decision, false, err
+	}
+	if !decision.Matched && platformResolved {
+		upstreamModel := requestedModel
+		if resolvedModel, ok := ResolvedUpstreamModelFromContext(ctx); ok {
+			upstreamModel = resolvedModel
+		}
+		decision = CompositeRouteDecision{
+			Matched:        true,
+			Source:         CompositeRouteSourceDetector,
+			GroupID:        group.ID,
+			PublicModel:    publicModel,
+			TargetPlatform: platform,
+			UpstreamModel:  upstreamModel,
+			Endpoint:       endpoint,
+		}
 	}
 	return decision, decision.Matched, nil
 }
 
 func isConcreteRequestPlatform(platform string) bool {
 	switch platform {
-	case PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformGrok:
+	case PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity, PlatformGrok, PlatformDeepSeek:
 		return true
 	default:
 		return false

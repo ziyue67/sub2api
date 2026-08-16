@@ -104,6 +104,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        deepseek: 'DeepSeek',
       },
       types: {
         oauth: 'OAuth',
@@ -113,6 +114,7 @@ export default {
         codeAssist: 'Code Assist',
         antigravityOauth: 'Antigravity OAuth',
         grokOauth: 'Grok OAuth',
+        deepseekApikey: 'DeepSeek API Key',
         antigravityApikey: 'Connect via Base URL + API Key',
         upstream: 'Upstream',
         upstreamDesc: 'Connect via Base URL + API Key'
@@ -533,6 +535,20 @@ export default {
       apiKeyRequired: 'API Key *',
       apiKeyPlaceholder: 'sk-ant-api03-...',
       apiKeyHint: 'Your Claude Console API Key',
+      deepseek: {
+        baseUrlHint: 'Leave the default value for the official DeepSeek API',
+        apiKeyHint: 'Your DeepSeek API Key',
+        wsMode: 'Responses WebSocket mode',
+        wsModeDesc:
+          'HTTP bridge accepts client Responses WebSocket sessions at Sub2API and forwards each turn to DeepSeek over HTTP /responses. DeepSeek upstream does not use native WebSocket. The global gateway bridge must also be enabled.',
+        wsModeOff: 'Off (off)',
+        wsModeHttpBridge: 'HTTP bridge (http_bridge)',
+        userIsolationMode: 'User isolation',
+        userIsolationModeDesc:
+          'Authenticated user derives a stable anonymous upstream identity from each request\'s authenticated Sub2API user. Off disables identity injection. Raw and derived user IDs cannot be entered or viewed here.',
+        userIsolationAuthenticatedUser: 'Authenticated user (authenticated_user)',
+        userIsolationOff: 'Off (off)',
+      },
       // OpenAI specific hints
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',

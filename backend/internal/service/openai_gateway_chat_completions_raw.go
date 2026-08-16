@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -26,7 +27,8 @@ import (
 //   - 400 "unknown parameter"（严格上游）——可见错误
 //
 // 这里仅放行通用 HTTP header；content-type / authorization / accept 由上下文
-// 显式设置，不依赖透传。
+// 显式设置，不依赖透传。DeepSeek 专属 header 由发送管线按目标账号另行判断，
+// 避免复用本表的 embeddings 等路径把身份信息带到其他上游。
 //
 // 参见决策记录：
 // pensieve/short-term/maxims/dont-reuse-shared-headers-whitelist-across-different-upstream-trust-domains
@@ -35,16 +37,24 @@ var openaiCCRawAllowedHeaders = map[string]bool{
 	"user-agent":      true,
 }
 
-// forwardAsRawChatCompletions 直转客户端的 Chat Completions 请求到上游
-// `{base_url}/v1/chat/completions`，**不**做 CC↔Responses 协议转换。
+var deepSeekHarnessForwardHeaders = map[string]bool{
+	"x-deepseek-harness-user-id":    true,
+	"x-deepseek-harness-session-id": true,
+	"x-deepseek-harness-compact":    true,
+}
+
+const deepSeekHarnessForwardHeaderMaxBytes = 1024
+
+// forwardAsRawChatCompletions 直转客户端的 Chat Completions 请求到上游原生
+// Chat Completions 端点，**不**做 CC↔Responses 协议转换。
 //
-// 适用场景：account.platform=openai && account.type=apikey && 上游已被探测确认
-// 不支持 /v1/responses 端点（如 DeepSeek/Kimi/GLM/Qwen 等第三方 OpenAI 兼容上游）。
+// 适用场景包括：OpenAI-compatible APIKey 上游被探测确认不支持 Responses，
+// 以及同时原生支持 Chat 与 Responses 的独立 DeepSeek 平台。
 //
 // 与 ForwardAsChatCompletions 的关键差异：
 //
 //   - 不调用 apicompat.ChatCompletionsToResponses，body 仅做模型 ID 改写
-//   - 上游 URL 拼到 /v1/chat/completions 而非 /v1/responses
+//   - 上游 URL 使用提供方原生 Chat Completions 端点而非 Responses
 //   - 流式响应 SSE 直接透传给客户端（上游 chunk 已是 CC 格式）
 //   - 非流式响应 JSON 直接透传，仅按需提取 usage
 //   - 不应用 codex OAuth transform（APIKey 路径无 OAuth）
@@ -69,9 +79,6 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	clientStream := gjson.GetBytes(body, "stream").Bool()
 
-	// 1b. Extract service tier from the raw body before any transformation.
-	serviceTier := extractOpenAIServiceTierFromBody(body)
-
 	// 2. Resolve model mapping (same as ForwardAsChatCompletions)
 	billingModel := resolveOpenAIForwardModel(account, originalModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
@@ -81,7 +88,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		// anchored to the client's stable conversation prefix.
 		grokCacheIdentity = resolveGrokCacheIdentity(c, body, "", upstreamModel)
 	}
-	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
+	reasoningEffort := extractOpenAIReasoningEffortFromBodyForAccount(account, body, upstreamModel, billingModel, originalModel)
 	// 国产模型默认 effort 补充：需要 mappedModel 判定，推迟到 billingModel 算出之后。
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, billingModel)
 
@@ -94,17 +101,21 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		upstreamBody = normalizedBody
 	}
 
-	// 4. Apply OpenAI fast policy on the CC body
-	updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, upstreamBody)
-	if policyErr != nil {
-		var blocked *OpenAIFastBlockedError
-		if errors.As(policyErr, &blocked) {
-			MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
-			writeChatCompletionsError(c, http.StatusForbidden, "permission_error", blocked.Message)
+	// 4. Apply the OpenAI fast policy only to providers that use OpenAI's
+	// service_tier semantics. DeepSeek's native Chat Completions body is opaque.
+	if !account.IsDeepSeek() {
+		updatedBody, policyErr := s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, upstreamBody)
+		if policyErr != nil {
+			var blocked *OpenAIFastBlockedError
+			if errors.As(policyErr, &blocked) {
+				MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+				writeChatCompletionsError(c, http.StatusForbidden, "permission_error", blocked.Message)
+			}
+			return nil, policyErr
 		}
-		return nil, policyErr
+		upstreamBody = updatedBody
 	}
-	upstreamBody = updatedBody
+	serviceTier := extractOpenAIServiceTierFromBody(upstreamBody)
 
 	// Grok Composer does not accept image_url parts directly, but Grok Build
 	// can describe the images first. Bridge only this exact failure mode.
@@ -163,7 +174,11 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	if err != nil {
 		return nil, err
 	}
-	SetActualOpenAIUpstreamEndpoint(c, grokChatRawEndpoint)
+	upstreamEndpoint := grokChatRawEndpoint
+	if account.IsDeepSeek() {
+		upstreamEndpoint = deepSeekChatCompletionsEndpoint
+	}
+	SetActualOpenAIUpstreamEndpoint(c, upstreamEndpoint)
 	customUA := account.GetOpenAIUserAgent()
 	if customUA == "" && account.IsGrokOAuth() {
 		customUA = "sub2api-grok/1.0"
@@ -173,6 +188,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 
 	// 7. Handle error response with failover
 	if resp.StatusCode >= 400 {
@@ -187,7 +203,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 				AccountID:          account.ID,
 				AccountName:        account.Name,
 				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
+				UpstreamRequestID:  openAICompatibleUpstreamRequestID(resp.Header),
 				Kind:               kind,
 				Message:            upstreamMsg,
 			})
@@ -222,12 +238,15 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	}
 	if result != nil {
 		addOpenAIUsage(&result.Usage, bridgeUsage)
-		result.UpstreamEndpoint = grokChatRawEndpoint
+		result.UpstreamEndpoint = upstreamEndpoint
 	}
 	return result, forwardErr
 }
 
 func (s *OpenAIGatewayService) rawChatCompletionsURL(account *Account) (string, error) {
+	if account.IsDeepSeek() {
+		return s.deepSeekEndpointURL(account, deepSeekChatCompletionsEndpoint)
+	}
 	if account.Platform == PlatformGrok {
 		targetURL, err := buildGrokChatCompletionsURL(account, s.cfg, s.settingService)
 		if err != nil {
@@ -257,11 +276,12 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	startTime time.Time,
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
 	}
-	requestID := resp.Header.Get("x-request-id")
+	requestID := openAICompatibleUpstreamRequestID(resp.Header)
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -269,12 +289,22 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	var firstTokenMs *int
 	clientDisconnected := false
 	clientOutputStarted := false
+	sawDone := false
+	pendingDone := false
+	var streamProtocolErr error
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
+	var sensitiveGuard *deepSeekSSESensitiveEventGuard
+	if account.IsDeepSeekAPIKey() {
+		sensitiveGuard = newDeepSeekSSESensitiveEventGuard(account, deepSeekSSESensitiveProtocolChat)
+	}
 
 	writeLine := func(line string) {
 		if clientDisconnected {
 			return
+		}
+		if account.IsDeepSeekAPIKey() {
+			line = string(redactDeepSeekAPIKey(account, []byte(line)))
 		}
 		if !clientOutputStarted && !refusalDetector.ShouldReleaseClientOutput() {
 			pendingLines = append(pendingLines, line)
@@ -303,13 +333,25 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			)
 		}
 	}
+	emitGuardedWire := func(wire []byte) error {
+		line := bytes.TrimSuffix(wire, []byte{'\n'})
+		writeLine(string(line))
+		return nil
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		eventBoundary := line == "" || line == "\r"
 		refusalDetector.ObserveSSELine(line)
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			trimmedPayload := strings.TrimSpace(payload)
-			if trimmedPayload != "[DONE]" {
+			if trimmedPayload == "[DONE]" {
+				pendingDone = true
+			} else {
+				if account.IsDeepSeek() && trimmedPayload != "" && !gjson.Valid(trimmedPayload) {
+					streamProtocolErr = errors.New("DeepSeek Chat stream returned malformed JSON data")
+					break
+				}
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsage(payload); u != nil {
@@ -322,10 +364,21 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			}
 		}
 
-		writeLine(line)
-		if line == "" {
+		if sensitiveGuard != nil {
+			if guardErr := sensitiveGuard.PushWireLine(append([]byte(line), '\n'), emitGuardedWire); guardErr != nil {
+				streamProtocolErr = guardErr
+				break
+			}
+		} else {
+			writeLine(line)
+		}
+		if eventBoundary {
 			if !clientDisconnected && clientOutputStarted {
 				c.Writer.Flush()
+			}
+			if account.IsDeepSeek() && pendingDone {
+				sawDone = true
+				break
 			}
 			continue
 		}
@@ -333,15 +386,21 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			c.Writer.Flush()
 		}
 	}
+	if sensitiveGuard != nil {
+		if guardErr := sensitiveGuard.Finish(emitGuardedWire); guardErr != nil && streamProtocolErr == nil {
+			streamProtocolErr = guardErr
+		}
+	}
 
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+	scanErr := scanner.Err()
+	if scanErr != nil {
+		if !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
 			logger.L().Warn("openai chat_completions raw: stream read error",
-				zap.Error(err),
+				zap.Error(scanErr),
 				zap.String("request_id", requestID),
 			)
 		}
-	} else if !clientDisconnected && !clientOutputStarted {
+	} else if streamProtocolErr == nil && !clientDisconnected && !clientOutputStarted {
 		if refusalDetector.IsSilentRefusal() {
 			return nil, newOpenAISilentRefusalFailoverError(c, account, requestID)
 		}
@@ -364,7 +423,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 	}
 
-	return &OpenAIForwardResult{
+	result := &OpenAIForwardResult{
 		RequestID:                     requestID,
 		Usage:                         usage,
 		Model:                         originalModel,
@@ -377,7 +436,35 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		Stream:                        true,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
-	}, nil
+	}
+	if account.IsDeepSeek() {
+		if streamProtocolErr != nil {
+			if errors.Is(streamProtocolErr, errDeepSeekSSESensitiveData) {
+				return result, streamProtocolErr
+			}
+			if !clientOutputStarted {
+				return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, nil, streamProtocolErr.Error(), resp.Header)
+			}
+			return result, streamProtocolErr
+		}
+		if scanErr != nil {
+			if !clientOutputStarted {
+				return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, nil, "DeepSeek Chat stream read failed before completion", resp.Header)
+			}
+			return result, fmt.Errorf("DeepSeek Chat stream read error: %w", scanErr)
+		}
+		if !sawDone {
+			if !clientOutputStarted {
+				return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, nil, "DeepSeek Chat stream ended before [DONE]", resp.Header)
+			}
+			return result, errors.New("DeepSeek Chat stream closed before [DONE]")
+		}
+		if !hasBillableOpenAIUsage(usage) {
+			_ = newDeepSeekMissingUsageFailoverError(c, account, requestID)
+			return result, errors.New(deepSeekMissingUsageMsg)
+		}
+	}
+	return result, nil
 }
 
 // ensureOpenAIChatStreamUsage 确保 raw Chat Completions 流式请求会让上游返回 usage。
@@ -428,7 +515,8 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	serviceTier *string,
 	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	requestID := resp.Header.Get("x-request-id")
+	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
+	requestID := openAICompatibleUpstreamRequestID(resp.Header)
 
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
@@ -447,6 +535,9 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {
 		usage = parsedUsage
 	}
+	if account.IsDeepSeek() && !hasBillableOpenAIUsage(usage) {
+		return nil, newDeepSeekMissingUsageFailoverError(c, account, requestID)
+	}
 	responseModel := gjson.GetBytes(respBody, "model").String()
 	if requiresBillableGrokChatUsage(account, billingModel, upstreamModel, responseModel) && !hasBillableGrokChatUsage(usage) {
 		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
@@ -462,7 +553,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		c.Writer.Header().Set("Content-Type", "application/json")
 	}
 	c.Writer.WriteHeader(http.StatusOK)
-	_, _ = c.Writer.Write(respBody)
+	_, _ = c.Writer.Write(redactDeepSeekAPIKey(account, respBody))
 
 	return &OpenAIForwardResult{
 		RequestID:                     requestID,

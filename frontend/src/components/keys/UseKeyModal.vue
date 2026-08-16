@@ -209,6 +209,7 @@ interface Props {
   baseUrl: string
   platform: GroupPlatform | null
   allowMessagesDispatch?: boolean
+  supportsWebsockets?: boolean
 }
 
 interface Emits {
@@ -239,6 +240,8 @@ const activeTab = ref<string>('unix')
 const activeClientTab = ref<string>('claude')
 type CodexAuthMode = 'legacy' | 'api-key'
 const codexAuthMode = ref<CodexAuthMode>('legacy')
+const DEEPSEEK_FLASH_MODEL = 'deepseek-v4-flash'
+const DEEPSEEK_PRO_MODEL = 'deepseek-v4-pro'
 
 // Reset tabs when platform changes
 const defaultClientTab = computed(() => {
@@ -250,6 +253,8 @@ const defaultClientTab = computed(() => {
     case 'gemini':
       return 'gemini'
     case 'antigravity':
+      return 'claude'
+    case 'deepseek':
       return 'claude'
     default:
       return 'claude'
@@ -368,6 +373,12 @@ const clientTabs = computed((): TabConfig[] => {
         { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
         { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
       ]
+    case 'deepseek':
+      return [
+        { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
+        { id: 'codex', label: t('keys.useKeyModal.cliTabs.codexCli'), icon: TerminalIcon },
+        { id: 'opencode', label: t('keys.useKeyModal.cliTabs.opencode'), icon: TerminalIcon }
+      ]
     default:
       return [
         { id: 'claude', label: t('keys.useKeyModal.cliTabs.claudeCode'), icon: TerminalIcon },
@@ -423,6 +434,11 @@ const platformDescription = computed(() => {
         return t('keys.useKeyModal.grok.codexDescription')
       }
       return t('keys.useKeyModal.grok.description')
+    case 'deepseek':
+      if (activeClientTab.value === 'codex') {
+        return t('keys.useKeyModal.deepseek.codexDescription')
+      }
+      return t('keys.useKeyModal.deepseek.description')
     default:
       return t('keys.useKeyModal.description')
   }
@@ -460,6 +476,13 @@ const platformNote = computed(() => {
         return t('keys.useKeyModal.grok.noteWindows')
       }
       return t('keys.useKeyModal.grok.note')
+    case 'deepseek':
+      if (activeClientTab.value === 'codex') {
+        return activeTab.value === 'windows'
+          ? t('keys.useKeyModal.deepseek.codexNoteWindows')
+          : t('keys.useKeyModal.deepseek.codexNote')
+      }
+      return t('keys.useKeyModal.deepseek.note')
     default:
       return t('keys.useKeyModal.note')
   }
@@ -519,6 +542,8 @@ const currentFiles = computed((): FileConfig[] => {
         ]
       case 'grok':
         return [generateOpenCodeConfig('grok', apiBase, apiKey)]
+      case 'deepseek':
+        return [generateOpenCodeConfig('deepseek', apiBase, apiKey)]
       default:
         return [generateOpenCodeConfig('openai', apiBase, apiKey)]
     }
@@ -548,6 +573,11 @@ const currentFiles = computed((): FileConfig[] => {
         return generateGrokCodexFiles(apiBase, apiKey)
       }
       return generateGrokFiles(apiBase, apiKey)
+    case 'deepseek':
+      if (activeClientTab.value === 'codex') {
+        return generateDeepSeekCodexFiles(apiBase, apiKey, props.supportsWebsockets === true)
+      }
+      return generateDeepSeekClaudeFiles(baseRoot, apiKey)
     default:
       return generateAnthropicFiles(baseUrl, apiKey)
   }
@@ -608,16 +638,29 @@ $env:CLAUDE_CODE_ATTRIBUTION_HEADER=0`
   ]
 }
 
-function generateGrokClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] {
+interface ClaudeModelAliases {
+  default: string
+  opus: string
+  sonnet: string
+  haiku: string
+  fable: string
+  subagent: string
+}
+
+function generateMappedClaudeFiles(
+  baseUrl: string,
+  apiKey: string,
+  models: ClaudeModelAliases
+): FileConfig[] {
   const environment = {
     ANTHROPIC_BASE_URL: baseUrl,
     ANTHROPIC_AUTH_TOKEN: apiKey,
-    ANTHROPIC_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_OPUS_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_SONNET_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'grok-4.5',
-    ANTHROPIC_DEFAULT_FABLE_MODEL: 'grok-4.5',
-    CLAUDE_CODE_SUBAGENT_MODEL: 'grok-4.5',
+    ANTHROPIC_MODEL: models.default,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: models.opus,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: models.sonnet,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: models.haiku,
+    ANTHROPIC_DEFAULT_FABLE_MODEL: models.fable,
+    CLAUDE_CODE_SUBAGENT_MODEL: models.subagent,
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     CLAUDE_CODE_ATTRIBUTION_HEADER: '0'
   }
@@ -663,6 +706,28 @@ function generateGrokClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] 
       hint: t('keys.useKeyModal.claudeSettingsHint')
     }
   ]
+}
+
+function generateGrokClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] {
+  return generateMappedClaudeFiles(baseUrl, apiKey, {
+    default: 'grok-4.5',
+    opus: 'grok-4.5',
+    sonnet: 'grok-4.5',
+    haiku: 'grok-4.5',
+    fable: 'grok-4.5',
+    subagent: 'grok-4.5'
+  })
+}
+
+function generateDeepSeekClaudeFiles(baseUrl: string, apiKey: string): FileConfig[] {
+  return generateMappedClaudeFiles(baseUrl, apiKey, {
+    default: DEEPSEEK_PRO_MODEL,
+    opus: DEEPSEEK_PRO_MODEL,
+    sonnet: DEEPSEEK_PRO_MODEL,
+    haiku: DEEPSEEK_FLASH_MODEL,
+    fable: DEEPSEEK_FLASH_MODEL,
+    subagent: DEEPSEEK_FLASH_MODEL
+  })
 }
 
 function generateGeminiCliContent(baseUrl: string, apiKey: string): FileConfig {
@@ -969,6 +1034,50 @@ supports_websockets = false
       path: joinConfigPath(configDir, 'config.toml', isWindowsPath),
       content: configContent,
       hint: t('keys.useKeyModal.grok.codexConfigTomlHint')
+    }
+  ]
+}
+
+function generateDeepSeekCodexFiles(
+  baseUrl: string,
+  apiKey: string,
+  supportsWebsockets: boolean
+): FileConfig[] {
+  const shell = activeTab.value
+  const isWindowsPath = shell === 'windows' || shell === 'cmd' || shell === 'powershell'
+  const configDir = isWindowsPath ? '%userprofile%\\.codex' : '~/.codex'
+
+  const envContent = isWindowsPath
+    ? `$env:SUB2API_API_KEY="${apiKey}"`
+    : `export SUB2API_API_KEY="${apiKey}"`
+  const websocketFeature = supportsWebsockets
+    ? `\n[features]\nresponses_websockets_v2 = true`
+    : ''
+  const configContent = `# Codex CLI -> Sub2API DeepSeek group
+model_provider = "sub2api"
+model = "${DEEPSEEK_PRO_MODEL}"
+review_model = "${DEEPSEEK_PRO_MODEL}"
+disable_response_storage = true
+
+[model_providers.sub2api]
+# Keep this exact name so Codex enables remote_compaction_v2.
+name = "OpenAI"
+base_url = "${baseUrl}"
+env_key = "SUB2API_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+# This describes Sub2API client ingress, not native DeepSeek upstream WebSocket support.
+supports_websockets = ${supportsWebsockets}${websocketFeature}`
+
+  return [
+    {
+      path: isWindowsPath ? 'PowerShell' : 'Terminal',
+      content: envContent
+    },
+    {
+      path: joinConfigPath(configDir, 'config.toml', isWindowsPath),
+      content: configContent,
+      hint: t('keys.useKeyModal.deepseek.codexConfigTomlHint')
     }
   ]
 }
@@ -1501,6 +1610,14 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
       limit: { context: 500000, output: 64000 }
     }
   }
+  const deepseekModels = {
+    [DEEPSEEK_FLASH_MODEL]: {
+      name: 'DeepSeek V4 Flash'
+    },
+    [DEEPSEEK_PRO_MODEL]: {
+      name: 'DeepSeek V4 Pro'
+    }
+  }
 
   if (platform === 'gemini') {
     provider[platform].npm = '@ai-sdk/google'
@@ -1522,6 +1639,10 @@ function generateOpenCodeConfig(platform: string, baseUrl: string, apiKey: strin
     provider[platform].npm = '@ai-sdk/openai-compatible'
     provider[platform].name = 'Grok via Sub2API'
     provider[platform].models = grokModels
+  } else if (platform === 'deepseek') {
+    provider[platform].npm = '@ai-sdk/openai-compatible'
+    provider[platform].name = 'DeepSeek via Sub2API'
+    provider[platform].models = deepseekModels
   }
 
   const agent =

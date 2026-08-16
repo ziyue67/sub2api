@@ -377,7 +377,7 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 		return
 	}
 	if lastErr != nil {
-		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
+		copyFailoverResponseHeaders(c, lastErr.ResponseHeaders)
 	}
 	if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(lastErr)

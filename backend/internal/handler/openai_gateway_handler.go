@@ -57,6 +57,37 @@ func newOpenAIWSUnsupportedModelSwitchError(model string) error {
 	return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "model switch requires reconnect", cause)
 }
 
+func validateResponsesWebSocketTurnPlatform(
+	c *gin.Context,
+	apiKey *service.APIKey,
+	ctx context.Context,
+	connectionPlatform string,
+	model string,
+) error {
+	if apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
+		return nil
+	}
+	_, targetPlatform, err := resolveResponsesWebSocketTarget(c, apiKey, ctx, model)
+	if err != nil {
+		return service.NewOpenAIWSClientCloseError(
+			coderws.StatusPolicyViolation,
+			"Responses WebSocket model route could not be resolved",
+			err,
+		)
+	}
+	if targetPlatform == connectionPlatform {
+		return nil
+	}
+	cause := fmt.Errorf(
+		"%w: connection platform %q cannot serve target platform %q for model %q",
+		errOpenAIWSUnsupportedModelSwitch,
+		strings.TrimSpace(connectionPlatform),
+		strings.TrimSpace(targetPlatform),
+		strings.TrimSpace(model),
+	)
+	return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "model switch requires reconnect", cause)
+}
+
 func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 	return err != nil && !errors.Is(err, errOpenAIWSUnsupportedModelSwitch)
 }
@@ -96,6 +127,15 @@ const maxOpenAIFirstOutputTimeoutSwitches = 1
 
 func openAIForwardSucceededForScheduling(result *service.OpenAIForwardResult) bool {
 	return result.SucceededForScheduling()
+}
+
+func shouldRecordDeepSeekPartialUsage(account *service.Account, result *service.OpenAIForwardResult, forwardErr error) bool {
+	if account == nil || !account.IsDeepSeekAPIKey() || result == nil || forwardErr == nil ||
+		result.ImageCount > 0 || result.UpstreamTerminalEvent == "response.failed" || !result.HasBillableTokenUsage() {
+		return false
+	}
+	var failoverErr *service.UpstreamFailoverError
+	return !errors.As(forwardErr, &failoverErr)
 }
 
 func resolveOpenAIMessagesDispatchMappedModel(apiKey *service.APIKey, requestedModel string) string {
@@ -164,18 +204,26 @@ func wrapUsageRecordTaskContext(parent context.Context, task service.UsageRecord
 
 func openAICompatibleRequestPlatform(ctx context.Context, apiKey *service.APIKey) string {
 	if platform, ok := service.ResolvedTargetPlatformFromContext(ctx); ok {
-		if platform == service.PlatformGrok {
-			return service.PlatformGrok
+		switch platform {
+		case service.PlatformGrok, service.PlatformDeepSeek:
+			return platform
+		default:
+			return service.PlatformOpenAI
 		}
-		return service.PlatformOpenAI
 	}
-	if apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformGrok {
-		return service.PlatformGrok
+	if apiKey != nil && apiKey.Group != nil {
+		switch apiKey.Group.Platform {
+		case service.PlatformGrok, service.PlatformDeepSeek:
+			return apiKey.Group.Platform
+		}
 	}
 	return service.PlatformOpenAI
 }
 
 func openAIResponsesRequiredCapability(imageIntent bool, platform string) service.OpenAIEndpointCapability {
+	if platform == service.PlatformDeepSeek {
+		return service.OpenAIEndpointCapabilityResponses
+	}
 	if imageIntent && platform == service.PlatformOpenAI {
 		return service.OpenAIEndpointCapabilityResponses
 	}
@@ -191,19 +239,25 @@ func openAIResponsesRequiredCapabilityForRequest(imageIntent bool, needsResponse
 	}
 	return openAIResponsesRequiredCapability(imageIntent, platform)
 }
-
-func allowOpenAICompatibleMessagesDispatch(apiKey *service.APIKey) bool {
+func allowOpenAICompatibleMessagesDispatch(c *gin.Context, apiKey *service.APIKey) bool {
 	if apiKey == nil || apiKey.Group == nil {
 		return true
 	}
 	if apiKey.Group.Platform == service.PlatformGrok {
 		return true
 	}
+	if apiKey.Group.Platform == service.PlatformComposite {
+		if c == nil || c.Request == nil {
+			return false
+		}
+		platform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+		return ok && (platform == service.PlatformOpenAI || platform == service.PlatformGrok)
+	}
 	return apiKey.Group.AllowMessagesDispatch
 }
 
 func openAICompatibleTextTargetAllowed(c *gin.Context, apiKey *service.APIKey, model string) bool {
-	return compositeTargetPlatformAllowed(c, apiKey, model, service.PlatformOpenAI, service.PlatformGrok)
+	return compositeTargetPlatformAllowed(c, apiKey, model, service.PlatformOpenAI, service.PlatformGrok, service.PlatformDeepSeek)
 }
 
 // NewOpenAIGatewayHandler creates a new OpenAIGatewayHandler
@@ -259,7 +313,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
 		return
 	}
-
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
@@ -294,22 +347,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	setOpsRequestContext(c, "", false)
 	sessionHashBody := body
-	body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
-	if !ok {
-		return
-	}
-	legacyCompact := service.IsOpenAIResponsesCompactPath(c)
-	nativeV2 := isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(body)
-	if nativeV2 {
-		// 原生 v2 压缩出站前补注 x-codex-beta-features: remote_compaction_v2，
-		// 与真实 Codex 线型一致（网关链剥头后本级负责恢复，#5586）。
-		service.MarkOpenAINativeCompactionV2(c)
-	}
-	// body-signal compact：上游 unary 等待期间向下游发 SSE 注释行心跳，防止
+	// body-signal compact：上游等待或缓冲期间向下游发 SSE 注释行心跳，防止
 	// 反向代理空闲超时掐断长压缩连接（#3887）。首拍延迟一个心跳间隔，快速
 	// 失败仍走 JSON+状态码链路；未标记客户端流式或间隔为 0 时是 no-op。
-	stopCompactKeepalive := service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
-	defer stopCompactKeepalive()
+	stopCompactKeepalive := func() {}
+	defer func() { stopCompactKeepalive() }()
 
 	// 校验请求体 JSON 合法性
 	if !gjson.ValidBytes(body) {
@@ -326,12 +368,60 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 	reqModel := modelResult.String()
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
-	if !compositeTargetPlatformAllowed(c, apiKey, reqModel, service.PlatformOpenAI, service.PlatformGrok) {
+	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
 		return
 	}
-	if cappedBody, changed := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body); changed {
-		body = cappedBody
+	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+	isDeepSeekRequest := requestPlatform == service.PlatformDeepSeek
+	if isDeepSeekRequest {
+		if err := service.ValidateDeepSeekAuthenticatedUserContext(c.Request.Context()); err != nil {
+			h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
+			return
+		}
+		if err := service.ValidateDeepSeekUserIdentityRequest(body, service.DeepSeekUserIdentityResponses); err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "invalid DeepSeek user identity field")
+			return
+		}
+	}
+	deepSeekCompactMode := classifyDeepSeekCompactionRequest(c, body, requestPlatform)
+	// Restore gateway-owned checkpoints before policy inspection so moderation
+	// evaluates the model-visible text instead of opaque encrypted_content.
+	body, ok = h.restoreDeepSeekCompactInputBeforeAudit(c, body, requestPlatform)
+	if !ok {
+		return
+	}
+	deepSeekCompactBridge := deepSeekCompactMode != service.DeepSeekCompactionModeNone
+	if isDeepSeekRequest && deepSeekCompactBridge {
+		if deepSeekCompactMode == service.DeepSeekCompactionModeLegacyUnary && isExactDeepSeekResponsesCompactPath(c) {
+			body, err = h.gatewayService.NormalizeDeepSeekLegacyCompactRequest(c, body)
+			if err != nil {
+				if errors.Is(err, service.ErrDeepSeekCompactRequestTooLarge) {
+					h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", err.Error())
+					return
+				}
+				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+				return
+			}
+		}
+		service.MarkDeepSeekCompaction(c, deepSeekCompactMode)
+		reqLog.Info("deepseek.compact_bridge.detected", zap.String("compact_mode", string(deepSeekCompactMode)))
+	} else if !isDeepSeekRequest {
+		body, ok = h.normalizeOpenAIResponsesCompactRequest(c, reqLog, body)
+		if !ok {
+			return
+		}
+		stopCompactKeepalive = service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
+		if cappedBody, changed := applyOpenAIReasoningEffortPolicyForRequest(c, apiKey, body); changed {
+			body = cappedBody
+		}
+	}
+	legacyCompact := isOpenAILegacyCompactPath(c)
+	nativeV2 := !isDeepSeekRequest && isBareOpenAIResponsesPath(c) && isOpenAIRemoteCompactionV2Request(body)
+	if nativeV2 {
+		// 原生 v2 压缩出站前补注 x-codex-beta-features: remote_compaction_v2，
+		// 与真实 Codex 线型一致（网关链剥头后本级负责恢复，#5586）。
+		service.MarkOpenAINativeCompactionV2(c)
 	}
 
 	reqStream, ok := parseOpenAICompatibleStream(body)
@@ -341,7 +431,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
-	if previousResponseID != "" {
+	if previousResponseID != "" && !isDeepSeekRequest {
 		previousResponseIDKind := service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
 		reqLog = reqLog.With(
 			zap.Bool("has_previous_response_id", true),
@@ -373,7 +463,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 使用 IsExplicitImageGenerationIntent 排除被动 image_gen namespace 声明。
 	// Codex 在所有请求中被动声明 image_gen namespace，宽泛检测会导致禁了生图的
 	// 分组中所有 Codex 请求被 403（#4447），并误占生图并发槽位。
-	imageIntent := service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)
+	imageIntent := !isDeepSeekRequest && service.IsExplicitImageGenerationIntent("/v1/responses", reqModel, body)
 	if imageIntent && !service.GroupAllowsImageGeneration(apiKey.Group) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
@@ -392,7 +482,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-	seedOpenAIForwardImageIntentHint(c, channelMapping.Mapped, imageIntent)
+	forwardBody := openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+	if !isDeepSeekRequest {
+		seedOpenAIForwardImageIntentHint(c, channelMapping.Mapped, imageIntent)
+	}
 	forwardModel := reqModel
 	if channelMapping.Mapped {
 		forwardModel = channelMapping.MappedModel
@@ -400,11 +493,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	c.Request = c.Request.WithContext(service.WithOpenAIForwardModel(
 		c.Request.Context(),
 		forwardModel,
-		legacyCompact,
+		legacyCompact && !deepSeekCompactBridge,
 	))
 
-	// 提前校验 function_call_output 是否具备可关联上下文，避免上游 400。
-	if !h.validateFunctionCallOutputRequest(c, body, reqLog) {
+	// OpenAI/Codex requires local function_call_output validation. DeepSeek's
+	// native Responses contract is forwarded unchanged and validated upstream.
+	if !isDeepSeekRequest && !h.validateFunctionCallOutputRequest(c, body, reqLog) {
 		return
 	}
 
@@ -415,8 +509,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	// Get subscription info (may be nil)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	requestPlatform := openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
-
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	routingStart := time.Now()
 
@@ -445,7 +537,17 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if h.rejectIfCyberSessionBlocked(c, apiKey, sessionHashBody, reqModel, cyberBlockFormatResponses) {
 		return
 	}
-	requireCompact := legacyCompact
+	if deepSeekCompactBridge {
+		if err := h.gatewayService.PrepareDeepSeekRemoteCompactionRequest(c, forwardBody); err != nil {
+			if errors.Is(err, service.ErrDeepSeekCompactRequestTooLarge) {
+				h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", err.Error())
+				return
+			}
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+	}
+	requireCompact := legacyCompact && !deepSeekCompactBridge
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
@@ -475,6 +577,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// token 计费部分仍受利润门保护，独立图片/视频端点才在门外。
 	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(pricingCtx)
+	if deepSeekCompactBridge {
+		stopCompactKeepalive = service.StartOpenAICompactSSEKeepalive(c, h.openAICompactKeepaliveInterval())
+	}
 
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
@@ -483,9 +588,6 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if !openAIRequestAllowsFailoverReplay(c) {
 			return
 		}
-		attemptChannelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
-		forwardBody := openAIModelMappedBody(body, attemptChannelMapping.Mapped, attemptChannelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
-		seedOpenAIForwardImageIntentHint(c, attemptChannelMapping.Mapped, imageIntent)
 		requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
 		// Select account supporting the requested model
 		reqLog.Debug("openai.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
@@ -627,11 +729,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}()
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
+		partialUsageFailure := shouldRecordDeepSeekPartialUsage(account, result, err)
 		cyberBlockKeyHTTP := ""
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockKeyHTTP = service.CyberSessionBlockKey(apiKey.ID, c, sessionHashBody)
 		}
-		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil, cyberBlockKeyHTTP, clientRequestedUsageFields(c, attemptChannelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
+		h.recordCyberPolicyIfMarked(c, apiKey, account, subscription, reqModel, err != nil && !partialUsageFailure, cyberBlockKeyHTTP, clientRequestedUsageFields(c, channelMapping, reqModel, ""), service.HashUsageRequestPayload(body))
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -647,6 +750,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				reqLog.Warn("openai.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
 					zap.Int("image_count", result.ImageCount),
+					zap.Error(err),
+				)
+			} else if result != nil && result.UpstreamTerminalEvent == "response.failed" {
+				reqLog.Warn("openai.forward_partial_error_with_usage_result",
+					zap.Int64("account_id", account.ID),
+					zap.String("terminal_event", result.UpstreamTerminalEvent),
 					zap.Error(err),
 				)
 			} else {
@@ -746,7 +855,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 					continue
 				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
+				if partialUsageFailure && result.UpstreamTerminalEvent == "response.completed" {
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), true, result.FirstTokenMs)
+				} else {
+					h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), false, nil)
+				}
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -760,20 +873,24 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				}
 				if shouldLogOpenAIForwardFailureAsWarn(c, wroteFallback) {
 					reqLog.Warn("openai.forward_failed", fields...)
+				} else {
+					reqLog.Error("openai.forward_failed", fields...)
+				}
+				if !partialUsageFailure {
 					return
 				}
-				reqLog.Error("openai.forward_failed", fields...)
-				return
 			}
 		}
-		if result != nil {
-			// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
-			if account.Type == service.AccountTypeOAuth && !account.IsShadow() {
-				h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), account.ID, result.ResponseHeaders)
+		if !partialUsageFailure {
+			if result != nil {
+				// 排除 spark 影子:其 codex_* 仅由 QueryUsage(/wham/usage bengalfox)更新(外审第7轮 P1)。
+				if account.Type == service.AccountTypeOAuth && !account.IsShadow() {
+					h.gatewayService.UpdateCodexUsageSnapshotFromHeaders(c.Request.Context(), account.ID, result.ResponseHeaders)
+				}
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
+			} else {
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), nil)
 			}
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), result.FirstTokenMs)
-		} else {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, account.GetMappedModel(reqModel), openAIForwardSucceededForScheduling(result), nil)
 		}
 
 		// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
@@ -802,7 +919,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				APIKeyService:      h.apiKeyService,
 				QuotaPlatform:      quotaPlatform,
 				SessionID:          sessionID,
-				ChannelUsageFields: clientRequestedUsageFields(c, attemptChannelMapping, reqModel, result.UpstreamModel),
+				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
 				PricingAt:          pricingAt,
 				CyberBlocked:       cyberBlocked,
 			}); err != nil {
@@ -843,9 +960,109 @@ func isBareOpenAIResponsesPath(c *gin.Context) bool {
 	}
 }
 
+func isExactDeepSeekResponsesPath(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	switch strings.TrimSpace(c.Request.URL.Path) {
+	case "/v1/responses", "/openai/v1/responses", "/responses", "/backend-api/codex/responses":
+		return true
+	default:
+		return false
+	}
+}
+
+func isExactDeepSeekResponsesCompactPath(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	switch strings.TrimSpace(c.Request.URL.Path) {
+	case "/v1/responses/compact", "/openai/v1/responses/compact", "/responses/compact", "/backend-api/codex/responses/compact":
+		return true
+	default:
+		return false
+	}
+}
+
 func isOpenAIRemoteCompactionV2Request(body []byte) bool {
 	stream, valid := parseOpenAICompatibleStream(body)
 	return valid && stream && service.HasCompactionTriggerInInput(body)
+}
+
+func isDeepSeekRemoteCompactionV2Request(c *gin.Context, body []byte) bool {
+	if !isOpenAIRemoteCompactionV2Request(body) || c == nil || c.Request == nil {
+		return false
+	}
+	for _, header := range c.Request.Header.Values("x-codex-beta-features") {
+		for _, feature := range strings.Split(header, ",") {
+			if strings.TrimSpace(feature) == "remote_compaction_v2" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func classifyDeepSeekCompactionRequest(c *gin.Context, body []byte, requestPlatform string) service.DeepSeekCompactionMode {
+	if requestPlatform != service.PlatformDeepSeek {
+		return service.DeepSeekCompactionModeNone
+	}
+	if isExactDeepSeekResponsesCompactPath(c) {
+		return service.DeepSeekCompactionModeLegacyUnary
+	}
+	if !isExactDeepSeekResponsesPath(c) || !service.HasCompactionTriggerInInput(body) {
+		return service.DeepSeekCompactionModeNone
+	}
+	stream, valid := parseOpenAICompatibleStream(body)
+	if !valid {
+		return service.DeepSeekCompactionModeNone
+	}
+	if !stream {
+		return service.DeepSeekCompactionModeLegacyUnary
+	}
+	if isDeepSeekRemoteCompactionV2Request(c, body) {
+		return service.DeepSeekCompactionModeRemoteV2SSE
+	}
+	return service.DeepSeekCompactionModeLegacyBodySSE
+}
+
+// markDeepSeekRemoteCompactionV2Request marks only the dedicated DeepSeek
+// bridge after the effective platform (including composite routing) has been
+// resolved. Client-provided attribution headers alone never select the bridge.
+func markDeepSeekRemoteCompactionV2Request(c *gin.Context, reqLog *zap.Logger, body []byte, requestPlatform string) bool {
+	mode := classifyDeepSeekCompactionRequest(c, body, requestPlatform)
+	if mode == service.DeepSeekCompactionModeNone {
+		return false
+	}
+	service.MarkDeepSeekCompaction(c, mode)
+	if reqLog != nil {
+		reqLog.Info("deepseek.compact_bridge.detected", zap.String("compact_mode", string(mode)))
+	}
+	return true
+}
+
+func (h *OpenAIGatewayHandler) restoreDeepSeekCompactInputBeforeAudit(c *gin.Context, body []byte, requestPlatform string) ([]byte, bool) {
+	restoredBody, changed, err := h.gatewayService.RestoreDeepSeekCompactInputForTarget(c.Request.Context(), body, requestPlatform)
+	if err != nil {
+		if errors.Is(err, service.ErrDeepSeekCompactRequestTooLarge) {
+			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", err.Error())
+			return nil, false
+		}
+		message := "invalid DeepSeek compact encrypted_content"
+		if errors.Is(err, service.ErrDeepSeekResponsesDuplicateJSONKey) ||
+			errors.Is(err, service.ErrDeepSeekResponsesNonCanonicalJSONKey) {
+			message = err.Error()
+		}
+		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", message)
+		return nil, false
+	}
+	if requestPlatform == service.PlatformDeepSeek {
+		service.MarkDeepSeekResponsesInputValidated(c)
+	}
+	if changed {
+		return restoredBody, true
+	}
+	return body, true
 }
 
 // normalizeOpenAIResponsesCompactRequest keeps Codex remote compaction v2 on
@@ -884,7 +1101,7 @@ func (h *OpenAIGatewayHandler) normalizeOpenAIResponsesCompactRequest(c *gin.Con
 }
 
 func (h *OpenAIGatewayHandler) logOpenAIRemoteCompactOutcome(c *gin.Context, startedAt time.Time) {
-	if !isOpenAILegacyCompactPath(c) {
+	if !isOpenAILegacyCompactPath(c) && !service.IsDeepSeekCompactionMarked(c) {
 		return
 	}
 
@@ -962,8 +1179,8 @@ func (h *OpenAIGatewayHandler) logOpenAIRemoteCompactOutcome(c *gin.Context, sta
 	log.Warn("codex.remote_compact.failed")
 }
 
-// Messages handles Anthropic Messages API requests routed to OpenAI platform.
-// POST /v1/messages (when group platform is OpenAI)
+// Messages handles Anthropic Messages API requests routed to an OpenAI-compatible target.
+// POST /v1/messages
 func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	streamStarted := false
 	defer h.recoverAnthropicMessagesPanic(c, &streamStarted)
@@ -990,7 +1207,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	)
 
 	// 检查分组是否允许 /v1/messages 调度
-	if !allowOpenAICompatibleMessagesDispatch(apiKey) {
+	if !allowOpenAICompatibleMessagesDispatch(c, apiKey) {
 		h.anthropicErrorResponse(c, http.StatusForbidden, "permission_error",
 			"This group does not allow /v1/messages dispatch")
 		return
@@ -1394,7 +1611,7 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
 	if failoverErr != nil {
-		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
+		copyFailoverResponseHeaders(c, failoverErr.ResponseHeaders)
 	}
 	if failoverErr != nil && failoverErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(failoverErr)
@@ -1662,6 +1879,34 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	return wrapReleaseOnDone(ctx, accountReleaseFunc), openAISlotAcquireOK
 }
 
+func (h *OpenAIGatewayHandler) restoreDeepSeekCompactInputForResponsesWebSocket(
+	ctx context.Context,
+	payload []byte,
+	targetPlatform string,
+) ([]byte, error) {
+	if h == nil || h.gatewayService == nil {
+		return nil, service.NewOpenAIWSClientCloseError(
+			coderws.StatusInternalError,
+			"Responses WebSocket checkpoint restore is unavailable",
+			errors.New("gateway service is nil"),
+		)
+	}
+	restored, changed, err := h.gatewayService.RestoreDeepSeekCompactInputForTarget(ctx, payload, targetPlatform)
+	if err != nil {
+		status := coderws.StatusPolicyViolation
+		reason := "invalid DeepSeek compact encrypted_content"
+		if errors.Is(err, service.ErrDeepSeekCompactRequestTooLarge) {
+			status = coderws.StatusMessageTooBig
+			reason = "Responses WebSocket request exceeds gateway max_body_size"
+		}
+		return nil, service.NewOpenAIWSClientCloseError(status, reason, err)
+	}
+	if changed {
+		return restored, nil
+	}
+	return payload, nil
+}
+
 // ResponsesWebSocket handles OpenAI Responses API WebSocket ingress endpoint
 // GET /openai/v1/responses (Upgrade: websocket)
 func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
@@ -1778,14 +2023,31 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
-	ensureCompositeTargetPlatform(c, apiKey, reqModel)
+	_, requestPlatform, resolveErr := resolveResponsesWebSocketTarget(c, apiKey, ctx, reqModel)
+	if resolveErr != nil {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "Responses WebSocket model route could not be resolved")
+		return
+	}
 	ctx = c.Request.Context()
 	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
-		platform, ok := service.ResolvedTargetPlatformFromContext(ctx)
-		if !ok || (platform != service.PlatformOpenAI && platform != service.PlatformGrok) {
+		if requestPlatform != service.PlatformOpenAI && requestPlatform != service.PlatformGrok && requestPlatform != service.PlatformDeepSeek {
 			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "Responses WebSocket API only supports OpenAI-compatible models for composite groups")
 			return
 		}
+	}
+	if requestPlatform == service.PlatformDeepSeek {
+		h.responsesDeepSeekWebSocket(c, ctx, clientLifecycleCtx, wsConn, apiKey, subject, reqLog, firstMessage, reqModel, clientIP, userAgent)
+		return
+	}
+	firstMessage, err = h.restoreDeepSeekCompactInputForResponsesWebSocket(ctx, firstMessage, requestPlatform)
+	if err != nil {
+		var closeErr *service.OpenAIWSClientCloseError
+		if errors.As(err, &closeErr) {
+			closeOpenAIClientWS(wsConn, closeErr.StatusCode(), closeErr.Reason())
+		} else {
+			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "invalid DeepSeek compact encrypted_content")
+		}
+		return
 	}
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(firstMessage, "previous_response_id").String())
 	previousResponseIDKind := service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
@@ -1878,7 +2140,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	requestPlatform := openAICompatibleRequestPlatform(ctx, apiKey)
+	requestPlatform = openAICompatibleRequestPlatform(ctx, apiKey)
 	requiredTransport := service.OpenAIUpstreamTransportResponsesWebsocketV2Ingress
 	if requestPlatform == service.PlatformGrok {
 		requiredTransport = service.OpenAIUpstreamTransportHTTPSSE
@@ -2106,6 +2368,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			InitialRequestModel:     reqModel,
 			MaxReasoningEffort:      maxReasoningEffort,
 			ReasoningEffortMappings: reasoningEffortMappings,
+			PrepareRequest: func(_ int, payload []byte, _ string) ([]byte, error) {
+				return h.restoreDeepSeekCompactInputForResponsesWebSocket(ctx, payload, requestPlatform)
+			},
 			BeforeRequest: func(turn int, payload []byte, originalModel string) error {
 				c.Set(securityAuditWSTurnContextKey, turn)
 				if turn == 1 {
@@ -2131,6 +2396,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				model := strings.TrimSpace(originalModel)
 				if model == "" {
 					model = reqModel
+				}
+				if turn > 1 {
+					// A generic WS connection stays bound to its first provider/account.
+					// Resolve the public model before any mapping or request preparation.
+					if err := validateResponsesWebSocketTurnPlatform(c, apiKey, ctx, requestPlatform, model); err != nil {
+						return "", err
+					}
 				}
 				mapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(ctx, apiKey.GroupID, model)
 				mappedModelUnchanged := false
@@ -2578,7 +2850,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		)
 		return
 	}
-	copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
+	copyFailoverResponseHeaders(c, failoverErr.ResponseHeaders)
 	if failoverErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(failoverErr)
 		h.handleStreamingAwareError(c, status, "upstream_error", message, streamStarted)
@@ -2594,7 +2866,11 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 
 	// 先检查透传规则
 	if h.errorPassthroughService != nil && len(responseBody) > 0 {
-		if rule := h.errorPassthroughService.MatchRule("openai", statusCode, responseBody); rule != nil {
+		platform := strings.TrimSpace(failoverErr.Platform)
+		if platform == "" {
+			platform = service.PlatformOpenAI
+		}
+		if rule := h.errorPassthroughService.MatchRule(platform, statusCode, responseBody); rule != nil {
 			// 确定响应状态码
 			respCode := statusCode
 			if !rule.PassthroughCode && rule.ResponseCode != nil {
@@ -2632,15 +2908,20 @@ func credentialFailoverClientResponse(failoverErr *service.UpstreamFailoverError
 	return http.StatusServiceUnavailable, service.GrokCredentialUnavailableClientMessage
 }
 
-func copyFailoverRetryAfter(c *gin.Context, headers http.Header) {
+func copyFailoverResponseHeaders(c *gin.Context, headers http.Header) {
 	if c == nil || headers == nil {
 		return
 	}
 	retryAfter := strings.TrimSpace(headers.Get("Retry-After"))
-	if retryAfter == "" || len(retryAfter) > 128 || strings.ContainsAny(retryAfter, "\r\n") || !isSafeRetryAfter(retryAfter) {
-		return
+	if retryAfter != "" && len(retryAfter) <= 128 && !strings.ContainsAny(retryAfter, "\r\n") && isSafeRetryAfter(retryAfter) {
+		c.Header("Retry-After", retryAfter)
 	}
-	c.Header("Retry-After", retryAfter)
+	for _, key := range []string{"x-request-id", "x-deepseek-request-id"} {
+		value := strings.TrimSpace(headers.Get(key))
+		if value != "" && len(value) <= 256 && !strings.ContainsAny(value, "\r\n") {
+			c.Header(key, value)
+		}
+	}
 }
 
 func isSafeRetryAfter(value string) bool {
@@ -2673,6 +2954,8 @@ func (h *OpenAIGatewayHandler) mapUpstreamError(statusCode int) (int, string, st
 	switch statusCode {
 	case 401:
 		return http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator"
+	case 402:
+		return http.StatusPaymentRequired, "billing_error", "Upstream account has insufficient balance, please contact administrator"
 	case 403:
 		return http.StatusBadGateway, "upstream_error", "Upstream access forbidden, please contact administrator"
 	case 429:
@@ -3233,10 +3516,14 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 }
 
 // recordCyberPolicyIfMarked 在 gateway forward 返回后检查 cyber 标记，异步写风控日志/邮件，
-// 并在 forward 返回错误时写一条 tokens=0 用量行。标记由 gateway 服务层在透传 cyber 后设置；
+// 并在 forward 返回错误时按上游报告的真实 token 写一条用量行。标记由 gateway 服务层在透传 cyber 后设置；
 // 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行，
 // 避免与正常 RecordUsage(forward 成功路径)重复。每请求至多记录一次。
 func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+	h.recordCyberPolicyIfMarkedWithUsage(c, apiKey, account, subscription, model, forwardErrored, cyberBlockKey, channelFields, requestPayloadHash, nil, "", time.Time{})
+}
+
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithUsage(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, result *service.OpenAIForwardResult, quotaPlatform string, pricingAt time.Time) {
 	mark := service.GetOpsCyberPolicy(c)
 	if mark == nil {
 		return
@@ -3268,7 +3555,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	var accountID int64
 	if account != nil {
 		accountID = account.ID
-		upstreamEndpoint = resolveOpenAIUpstreamEndpoint(c, account, nil)
+		upstreamEndpoint = resolveOpenAIUpstreamEndpoint(c, account, result)
 	}
 	stream := false
 	if v, ok := c.Get(opsStreamKey); ok {
@@ -3300,6 +3587,18 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	apiKeyPrefix := ""
 	if apiKey != nil {
 		apiKeyPrefix = keyPrefix(apiKey.Key, 8)
+	}
+	var usageResult *service.OpenAIForwardResult
+	if result != nil {
+		resultSnapshot := *result
+		resultSnapshot.ResponseHeaders = result.ResponseHeaders.Clone()
+		usageResult = &resultSnapshot
+	}
+	requestKind := service.UsageRequestKindNormal
+	if usageResult != nil && usageResult.RequestKind.IsValid() {
+		requestKind = usageResult.RequestKind
+	} else if service.IsDeepSeekCompactionMarked(c) {
+		requestKind = service.UsageRequestKindCompact
 	}
 	opsMeta := cyberPolicyOpsErrorMeta{
 		RequestID:       requestID,
@@ -3344,8 +3643,10 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 				APIKey:             apiKey,
 				Account:            account,
 				Subscription:       subscription,
+				Result:             usageResult,
 				RequestID:          requestID,
 				Model:              model,
+				RequestKind:        requestKind,
 				Stream:             stream,
 				InputTokens:        mark.UpstreamInTok,
 				OutputTokens:       mark.UpstreamOutTok,
@@ -3356,6 +3657,8 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 				SessionID:          sessionID,
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      apiKeySvc,
+				QuotaPlatform:      quotaPlatform,
+				PricingAt:          pricingAt,
 				ChannelUsageFields: channelFields,
 			})
 		}

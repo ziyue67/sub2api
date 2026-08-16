@@ -285,6 +285,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	// Route to platform-specific test method
+	if account.IsDeepSeek() {
+		return s.testDeepSeekAccountConnection(c, account, modelID)
+	}
+
 	if account.IsOpenAI() {
 		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
 	}
@@ -302,6 +306,41 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
+}
+
+// testDeepSeekAccountConnection verifies an API-key account through DeepSeek's
+// lightweight model-list endpoint. This avoids consuming completion tokens and
+// exercises the same base URL, bearer credential, proxy, TLS profile, and
+// account-level header overrides as live model discovery.
+func (s *AccountTestService) testDeepSeekAccountConnection(c *gin.Context, account *Account, modelID string) error {
+	testModelID := strings.TrimSpace(modelID)
+	if testModelID == "" {
+		defaults := DeepSeekDefaultModelIDs()
+		if len(defaults) > 0 {
+			testModelID = defaults[0]
+		}
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
+	s.sendEvent(c, TestEvent{Type: "status", Text: "正在通过 /models 测试 DeepSeek 连接"})
+
+	models, err := s.FetchUpstreamSupportedModels(c.Request.Context(), account)
+	if err != nil {
+		message := "DeepSeek model list request failed"
+		var syncErr *UpstreamModelSyncError
+		if errors.As(err, &syncErr) {
+			message = syncErr.SafeMessage()
+		}
+		return s.sendErrorAndEnd(c, message)
+	}
+
+	s.sendEvent(c, TestEvent{Type: "content", Text: strings.Join(models, ", ")})
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
 }
 
 // testClaudeAccountConnection tests an Anthropic Claude account's connection

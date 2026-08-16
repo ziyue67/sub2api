@@ -20,6 +20,9 @@ const (
 	// CompositeRouteSource 标识 composite 解析结果来自显式路由还是内置模型探测。
 	CompositeRouteSource Key = "ctx_composite_route_source"
 
+	// CompositeRouteEndpoint 标识 composite 路由匹配使用的入站端点类型。
+	CompositeRouteEndpoint Key = "ctx_composite_route_endpoint"
+
 	// RequestID 为服务端生成/透传的请求 ID。
 	RequestID Key = "ctx_request_id"
 

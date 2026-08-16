@@ -13,6 +13,33 @@ const (
 
 type RequestType int16
 
+type UsageRequestKind string
+
+const (
+	UsageRequestKindNormal  UsageRequestKind = "normal"
+	UsageRequestKindCompact UsageRequestKind = "compact"
+)
+
+func (k UsageRequestKind) IsValid() bool {
+	switch k {
+	case UsageRequestKindNormal, UsageRequestKindCompact:
+		return true
+	default:
+		return false
+	}
+}
+
+func (k UsageRequestKind) Normalize() UsageRequestKind {
+	if k.IsValid() {
+		return k
+	}
+	return UsageRequestKindNormal
+}
+
+func (k UsageRequestKind) String() string {
+	return string(k.Normalize())
+}
+
 const (
 	RequestTypeUnknown      RequestType = 0
 	RequestTypeSync         RequestType = 1
@@ -170,6 +197,7 @@ type UsageLog struct {
 
 	BillingType  int8
 	RequestType  RequestType
+	RequestKind  UsageRequestKind
 	Stream       bool
 	OpenAIWSMode bool
 	DurationMs   *int

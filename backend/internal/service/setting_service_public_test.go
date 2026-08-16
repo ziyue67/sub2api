@@ -142,6 +142,24 @@ func TestSettingService_GetPublicSettings_ExposesAllowUserViewErrorRequests(t *t
 	require.True(t, settings.AllowUserViewErrorRequests)
 }
 
+func TestSettingService_GetPublicSettings_ExposesDeepSeekWebSocketHTTPBridgeCapability(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIWS.Enabled = true
+	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
+	cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = true
+	svc := NewSettingService(&settingPublicRepoStub{values: map[string]string{}}, cfg)
+
+	settings, err := svc.GetPublicSettings(context.Background())
+
+	require.NoError(t, err)
+	require.True(t, settings.DeepSeekResponsesWebSocketHTTPBridgeEnabled)
+
+	cfg.Gateway.OpenAIWS.HTTPBridgeEnabled = false
+	settings, err = svc.GetPublicSettings(context.Background())
+	require.NoError(t, err)
+	require.False(t, settings.DeepSeekResponsesWebSocketHTTPBridgeEnabled)
+}
+
 func TestSettingService_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *testing.T) {
 	svc := NewSettingService(&settingPublicRepoStub{
 		values: map[string]string{

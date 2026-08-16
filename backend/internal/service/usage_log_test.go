@@ -51,6 +51,17 @@ func TestRequestTypeNormalizeAndString(t *testing.T) {
 	require.Equal(t, "ws_v2", RequestTypeWSV2.String())
 }
 
+func TestUsageRequestKindNormalizeAndString(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, UsageRequestKindNormal.IsValid())
+	require.True(t, UsageRequestKindCompact.IsValid())
+	require.False(t, UsageRequestKind("other").IsValid())
+	require.Equal(t, UsageRequestKindNormal, UsageRequestKind("").Normalize())
+	require.Equal(t, "normal", UsageRequestKind("").String())
+	require.Equal(t, "compact", UsageRequestKindCompact.String())
+}
+
 func TestRequestTypeFromLegacy(t *testing.T) {
 	t.Parallel()
 

@@ -34,17 +34,7 @@
             v-model="editBaseUrl"
             type="text"
             class="input"
-            :placeholder="
-              account.platform === 'openai'
-                ? 'https://api.openai.com'
-                : account.platform === 'gemini'
-                  ? 'https://generativelanguage.googleapis.com'
-                  : account.platform === 'antigravity'
-                    ? 'https://cloudcode-pa.googleapis.com'
-                    : account.platform === 'grok'
-                      ? 'https://api.x.ai/v1'
-                      : 'https://api.anthropic.com'
-            "
+            :placeholder="defaultBaseUrl"
           />
           <p v-if="baseUrlHint" class="input-hint">{{ baseUrlHint }}</p>
           <GrokBaseUrlPresets
@@ -63,17 +53,7 @@
             data-1p-ignore
             data-lpignore="true"
             data-bwignore="true"
-            :placeholder="
-              account.platform === 'openai'
-                ? 'sk-proj-...'
-                : account.platform === 'gemini'
-                  ? 'AIza...'
-                  : account.platform === 'antigravity'
-                    ? 'sk-...'
-                    : account.platform === 'grok'
-                      ? 'xai-...'
-                      : 'sk-ant-...'
-            "
+            :placeholder="apiKeyPlaceholder"
           />
           <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
         </div>
@@ -433,7 +413,7 @@
         v-if="account.platform === 'grok' && account.type === 'oauth'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
-        <div class="flex items-center justify-between gap-4">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
             <label class="input-label mb-0">{{ t('admin.accounts.grokClientToolCache.title') }}</label>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -1662,6 +1642,49 @@
         </div>
       </div>
 
+      <div
+        v-if="account?.platform === 'deepseek' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.deepseek.wsMode') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.deepseek.wsModeDesc') }}
+            </p>
+          </div>
+          <div class="w-full sm:w-56 sm:shrink-0">
+            <Select
+              :model-value="deepSeekResponsesWebSocketV2Mode"
+              :options="deepSeekWSModeOptions"
+              data-testid="edit-deepseek-ws-mode-select"
+              @update:model-value="setDeepSeekWSMode"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="account?.platform === 'deepseek' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.deepseek.userIsolationMode') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.deepseek.userIsolationModeDesc') }}
+            </p>
+          </div>
+          <div class="w-full sm:w-56 sm:shrink-0">
+            <Select
+              v-model="deepSeekUserIsolationMode"
+              :options="deepSeekUserIsolationModeOptions"
+              data-testid="edit-deepseek-user-isolation-mode-select"
+            />
+          </div>
+        </div>
+      </div>
+
       <!-- OpenAI APIKey Responses API support mode -->
       <div
         v-if="account?.platform === 'openai' && account?.type === 'apikey'"
@@ -1719,7 +1742,7 @@
       </div>
 
       <div
-        v-if="account?.type === 'apikey'"
+        v-if="account && isUpstreamBillingProbeIdentity(account.platform, account.type)"
         class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div>
@@ -2844,6 +2867,7 @@ import {
 import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
+import { isUpstreamBillingProbeIdentity } from '@/utils/upstreamBillingProbe'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -2855,6 +2879,13 @@ import {
   type OpenAIWSMode,
   resolveOpenAIWSModeFromExtra
 } from '@/utils/openaiWsMode'
+import {
+  DEEPSEEK_WS_MODE_HTTP_BRIDGE,
+  DEEPSEEK_WS_MODE_OFF,
+  normalizeDeepSeekWSMode,
+  resolveDeepSeekWSModeFromExtra,
+  type DeepSeekWSMode
+} from '@/utils/deepseekWsMode'
 import {
   getPresetMappingsByPlatform,
   commonErrorCodes,
@@ -2878,6 +2909,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+void appStore.fetchPublicSettings?.()?.catch(() => {})
 const authStore = useAuthStore()
 
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
@@ -2975,6 +3007,7 @@ const baseUrlHint = computed(() => {
   if (!props.account) return t('admin.accounts.baseUrlHint')
   if (props.account.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (props.account.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
+  if (props.account.platform === 'deepseek') return t('admin.accounts.deepseek.baseUrlHint')
   if (props.account.platform === 'grok') return ''
   return t('admin.accounts.baseUrlHint')
 })
@@ -3147,6 +3180,11 @@ const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>(['chat_completions', 'embeddings'])
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
+type DeepSeekUserIsolationMode = 'authenticated_user' | 'off'
+const deepSeekUserIsolationMode = ref<DeepSeekUserIsolationMode>('off')
+const deepSeekResponsesWebSocketV2Mode = ref<DeepSeekWSMode>(DEEPSEEK_WS_MODE_OFF)
+const deepSeekWSModeExplicit = ref(false)
+const deepSeekWSModeTouched = ref(false)
 const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type CodexFingerprintMode = 'off' | 'device' | 'session' | 'full'
@@ -3195,6 +3233,35 @@ const openAIWSModeOptions = computed(() => [
   { value: OPENAI_WS_MODE_PASSTHROUGH, label: t('admin.accounts.openai.wsModePassthrough') },
   { value: OPENAI_WS_MODE_HTTP_BRIDGE, label: t('admin.accounts.openai.wsModeHttpBridge') }
 ])
+const deepSeekUserIsolationModeOptions = computed(() => [
+  {
+    value: 'authenticated_user' as DeepSeekUserIsolationMode,
+    label: t('admin.accounts.deepseek.userIsolationAuthenticatedUser')
+  },
+  {
+    value: 'off' as DeepSeekUserIsolationMode,
+    label: t('admin.accounts.deepseek.userIsolationOff')
+  }
+])
+const deepSeekWSModeOptions = computed(() => [
+  {
+    value: DEEPSEEK_WS_MODE_OFF,
+    label: t('admin.accounts.deepseek.wsModeOff')
+  },
+  {
+    value: DEEPSEEK_WS_MODE_HTTP_BRIDGE,
+    label: t('admin.accounts.deepseek.wsModeHttpBridge')
+  }
+])
+const deepSeekWSBridgeGloballyEnabled = computed(() =>
+  appStore.cachedPublicSettings?.deepseek_responses_websocket_http_bridge_enabled === true
+)
+const setDeepSeekWSMode = (value: unknown) => {
+  const mode = normalizeDeepSeekWSMode(value)
+  if (!mode) return
+  deepSeekWSModeTouched.value = true
+  deepSeekResponsesWebSocketV2Mode.value = mode
+}
 const openaiResponsesWebSocketV2Mode = computed({
   get: () => {
     if (props.account?.type === 'apikey') {
@@ -3437,12 +3504,24 @@ const tempUnschedPresets = computed(() => [
   }
 ])
 
-// Computed: default base URL based on platform
-const defaultBaseUrl = computed(() => {
-  if (props.account?.platform === 'openai') return 'https://api.openai.com'
-  if (props.account?.platform === 'gemini') return 'https://generativelanguage.googleapis.com'
-  if (props.account?.platform === 'grok') return 'https://api.x.ai/v1'
+const getAccountDefaultBaseUrl = (platform?: Account['platform']): string => {
+  if (platform === 'openai') return 'https://api.openai.com'
+  if (platform === 'gemini') return 'https://generativelanguage.googleapis.com'
+  if (platform === 'antigravity') return 'https://cloudcode-pa.googleapis.com'
+  if (platform === 'grok') return 'https://api.x.ai/v1'
+  if (platform === 'deepseek') return 'https://api.deepseek.com'
   return 'https://api.anthropic.com'
+}
+
+// Computed: default base URL based on platform
+const defaultBaseUrl = computed(() => getAccountDefaultBaseUrl(props.account?.platform))
+
+const apiKeyPlaceholder = computed(() => {
+  if (props.account?.platform === 'openai') return 'sk-proj-...'
+  if (props.account?.platform === 'gemini') return 'AIza...'
+  if (props.account?.platform === 'grok') return 'xai-...'
+  if (props.account?.platform === 'deepseek' || props.account?.platform === 'antigravity') return 'sk-...'
+  return 'sk-ant-...'
 })
 
 const mixedChannelWarningMessageText = computed(() => {
@@ -3593,7 +3672,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
 	autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
 	autoPause7dDisabled.value = extra?.auto_pause_7d_disabled === true
-	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
+	upstreamBillingAutoProbeEnabled.value =
+    isUpstreamBillingProbeIdentity(newAccount.platform, newAccount.type) &&
+    extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
     upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
@@ -3608,6 +3689,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openAICompactModelMappings.value = []
   openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
   openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
+  deepSeekUserIsolationMode.value = 'off'
+  deepSeekResponsesWebSocketV2Mode.value = DEEPSEEK_WS_MODE_OFF
+  deepSeekWSModeExplicit.value = false
+  deepSeekWSModeTouched.value = false
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   codexFingerprintMode.value = 'off'
@@ -3674,6 +3759,19 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     if (compactMappings && typeof compactMappings === 'object') {
       openAICompactModelMappings.value = Object.entries(compactMappings).map(([from, to]) => ({ from, to }))
     }
+  }
+  if (newAccount.platform === 'deepseek' && newAccount.type === 'apikey') {
+    deepSeekUserIsolationMode.value = extra?.deepseek_user_isolation_mode === 'authenticated_user'
+      ? 'authenticated_user'
+      : 'off'
+    deepSeekWSModeExplicit.value = !!extra && Object.prototype.hasOwnProperty.call(
+      extra,
+      'deepseek_responses_websockets_v2_mode'
+    )
+    deepSeekResponsesWebSocketV2Mode.value = resolveDeepSeekWSModeFromExtra(
+      extra,
+      deepSeekWSBridgeGloballyEnabled.value
+    )
   }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
@@ -3792,14 +3890,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Initialize API Key fields for apikey type
   if (newAccount.type === 'apikey' && newAccount.credentials) {
     const credentials = newAccount.credentials as Record<string, unknown>
-    const platformDefaultUrl =
-      newAccount.platform === 'openai'
-        ? 'https://api.openai.com'
-        : newAccount.platform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newAccount.platform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : 'https://api.anthropic.com'
+    const platformDefaultUrl = getAccountDefaultBaseUrl(newAccount.platform)
     editBaseUrl.value = (credentials.base_url as string) || platformDefaultUrl
 
     // Load model mappings and detect mode
@@ -3863,14 +3954,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     // Load model mappings for service_account
     loadModelRestrictionFromMapping(credentials.model_mapping as Record<string, unknown> | undefined)
   } else {
-    const platformDefaultUrl =
-      newAccount.platform === 'openai'
-        ? 'https://api.openai.com'
-        : newAccount.platform === 'gemini'
-          ? 'https://generativelanguage.googleapis.com'
-          : newAccount.platform === 'grok'
-            ? 'https://api.x.ai/v1'
-            : 'https://api.anthropic.com'
+    const platformDefaultUrl = getAccountDefaultBaseUrl(newAccount.platform)
     editBaseUrl.value = platformDefaultUrl
 
     // Load model mappings for OpenAI/Grok OAuth accounts
@@ -4056,6 +4140,17 @@ const addTempUnschedRule = (preset?: TempUnschedRuleForm) => {
     description: ''
   })
 }
+
+watch(deepSeekWSBridgeGloballyEnabled, (enabled) => {
+  if (
+    props.account?.platform !== 'deepseek' ||
+    deepSeekWSModeExplicit.value ||
+    deepSeekWSModeTouched.value
+  ) {
+    return
+  }
+  deepSeekResponsesWebSocketV2Mode.value = resolveDeepSeekWSModeFromExtra(undefined, enabled)
+})
 
 const removeTempUnschedRule = (index: number) => {
   tempUnschedRules.value.splice(index, 1)
@@ -4449,9 +4544,13 @@ const handleSubmit = async () => {
     }
     updatePayload.auto_pause_on_expired = autoPauseOnExpired.value
     if (props.account.type === 'apikey') {
-      updatePayload.upstream_billing_probe_enabled = upstreamBillingAutoProbeEnabled.value
-      updatePayload.upstream_billing_rate_sync_enabled = upstreamBillingRateSyncEnabled.value
-      if (upstreamBillingRateSyncEnabled.value) {
+      const upstreamBillingProbeEnabled =
+        isUpstreamBillingProbeIdentity(props.account.platform, props.account.type) &&
+        upstreamBillingAutoProbeEnabled.value
+      const upstreamBillingRateSync = upstreamBillingProbeEnabled && upstreamBillingRateSyncEnabled.value
+      updatePayload.upstream_billing_probe_enabled = upstreamBillingProbeEnabled
+      updatePayload.upstream_billing_rate_sync_enabled = upstreamBillingRateSync
+      if (upstreamBillingRateSync) {
         delete updatePayload.rate_multiplier
       }
     }
@@ -4912,6 +5011,21 @@ const handleSubmit = async () => {
         delete newExtra.web_search_emulation
       } else {
         newExtra.web_search_emulation = webSearchEmulationMode.value
+      }
+      updatePayload.extra = newExtra
+    }
+
+    if (props.account.platform === 'deepseek' && props.account.type === 'apikey') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = {
+        ...currentExtra,
+        deepseek_user_isolation_mode: deepSeekUserIsolationMode.value
+      }
+      if (deepSeekWSModeExplicit.value || deepSeekWSModeTouched.value) {
+        newExtra.deepseek_responses_websockets_v2_mode = deepSeekResponsesWebSocketV2Mode.value
+      } else {
+        delete newExtra.deepseek_responses_websockets_v2_mode
       }
       updatePayload.extra = newExtra
     }

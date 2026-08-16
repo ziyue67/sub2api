@@ -30,6 +30,12 @@ func MarkOpenAICompactClientStream(c *gin.Context) {
 	c.Set(openAICompactClientStreamKey, true)
 }
 
+func clearOpenAICompactClientStream(c *gin.Context) {
+	if c != nil {
+		c.Set(openAICompactClientStreamKey, false)
+	}
+}
+
 func OpenAICompactClientStreamKeyForTest() string {
 	return openAICompactClientStreamKey
 }

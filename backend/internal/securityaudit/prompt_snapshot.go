@@ -198,12 +198,18 @@ func extractResponses(value any) []promptSegment {
 			case string:
 				result = append(result, promptSegment{text: entry, user: true, role: "user"})
 			case map[string]any:
+				itemType := strings.ToLower(stringValue(entry["type"]))
+				if isResponsesToolOutputType(itemType) {
+					result = append(result, responsesToolOutputSegments(entry["output"])...)
+					continue
+				}
 				role := strings.ToLower(stringValue(entry["role"]))
 				if role != "" && !isClientInstructionRole(role) {
 					continue
 				}
 				if content, exists := entry["content"]; exists {
-					for _, text := range contentTexts(content) {
+					texts := contentTexts(content)
+					for _, text := range texts {
 						result = append(result, promptSegment{text: text, user: role == "" || role == "user", role: role})
 					}
 				} else if text := stringValue(entry["text"]); text != "" {
@@ -213,6 +219,9 @@ func extractResponses(value any) []promptSegment {
 		}
 		return result
 	case map[string]any:
+		if isResponsesToolOutputType(stringValue(typed["type"])) {
+			return responsesToolOutputSegments(typed["output"])
+		}
 		role := strings.ToLower(stringValue(typed["role"]))
 		if role != "" && !isClientInstructionRole(role) {
 			return nil
@@ -220,6 +229,42 @@ func extractResponses(value any) []promptSegment {
 		return promptSegmentsForRole(contentTexts(typed["content"]), role)
 	default:
 		return nil
+	}
+}
+
+func isResponsesToolOutputType(itemType string) bool {
+	switch strings.ToLower(strings.TrimSpace(itemType)) {
+	case "function_call_output", "custom_tool_call_output", "mcp_tool_call_output", "tool_search_output":
+		return true
+	default:
+		return false
+	}
+}
+
+func responsesToolOutputSegments(value any) []promptSegment {
+	texts := responsesToolOutputTexts(value)
+	result := make([]promptSegment, 0, len(texts))
+	for _, text := range texts {
+		result = append(result, promptSegment{text: text, role: "tool_output"})
+	}
+	return result
+}
+
+func responsesToolOutputTexts(value any) []string {
+	if texts := contentTexts(value); len(texts) > 0 {
+		return texts
+	}
+	switch value.(type) {
+	case nil:
+		return nil
+	case string:
+		return nil
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil || string(encoded) == "null" {
+			return nil
+		}
+		return []string{string(encoded)}
 	}
 }
 
@@ -481,6 +526,11 @@ func blockingSegmentsLatestUserAndPreviousOutput(values []promptSegment) []strin
 	// priority segment so every part of the latest input is scanned before the
 	// prior output begins.
 	selected := []promptSegment{{text: strings.Join(currentUserText, "\n\n"), user: true, role: "user"}}
+	for _, segment := range normalized {
+		if segment.role == "tool_output" {
+			selected = append(selected, segment)
+		}
+	}
 	for index := latestUserStart - 1; index >= 0; index-- {
 		if !isAssistantOutputSegment(normalized[index]) {
 			continue

@@ -72,6 +72,21 @@ type DataAccount struct {
 	AutoPauseOnExpired *bool          `json:"auto_pause_on_expired,omitempty"`
 }
 
+func normalizeImportedDeepSeekExtra(platform string, extra map[string]any) map[string]any {
+	if !strings.EqualFold(strings.TrimSpace(platform), service.PlatformDeepSeek) {
+		return extra
+	}
+	if _, exists := extra[service.DeepSeekUserIsolationModeKey]; exists {
+		return extra
+	}
+	normalized := make(map[string]any, len(extra)+1)
+	for key, value := range extra {
+		normalized[key] = value
+	}
+	normalized[service.DeepSeekUserIsolationModeKey] = service.DeepSeekUserIsolationModeOff
+	return normalized
+}
+
 type DataImportRequest struct {
 	Data                 DataPayload `json:"data"`
 	SkipDefaultGroupBind *bool       `json:"skip_default_group_bind"`
@@ -428,6 +443,7 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		}
 
 		enrichCredentialsFromIDToken(&item)
+		item.Extra = normalizeImportedDeepSeekExtra(item.Platform, item.Extra)
 
 		accountInput := &service.CreateAccountInput{
 			Name:                 item.Name,

@@ -289,6 +289,14 @@ type RateLimitCacheInvalidator interface {
 	InvalidateAPIKeyRateLimit(ctx context.Context, keyID int64) error
 }
 
+type CodexWebSocketCapabilityResolver interface {
+	GroupCodexSupportsWebSockets(ctx context.Context, group *Group) bool
+}
+
+type CodexWebSocketCapabilityBatchResolver interface {
+	GroupsCodexSupportsWebSockets(ctx context.Context, groups []*Group) map[int64]bool
+}
+
 type APIKeyService struct {
 	apiKeyRepo                APIKeyRepository
 	userRepo                  UserRepository
@@ -297,6 +305,7 @@ type APIKeyService struct {
 	userGroupRateRepo         UserGroupRateRepository
 	cache                     APIKeyCache
 	rateLimitCacheInvalid     RateLimitCacheInvalidator // optional: invalidate Redis rate limit cache
+	codexWebSocketCapability  CodexWebSocketCapabilityResolver
 	concurrencyService        *ConcurrencyService
 	cfg                       *config.Config
 	authCacheL1               *ristretto.Cache
@@ -378,6 +387,10 @@ func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidat
 
 func (s *APIKeyService) SetConcurrencyService(concurrencyService *ConcurrencyService) {
 	s.concurrencyService = concurrencyService
+}
+
+func (s *APIKeyService) SetCodexWebSocketCapabilityResolver(resolver CodexWebSocketCapabilityResolver) {
+	s.codexWebSocketCapability = resolver
 }
 
 func (s *APIKeyService) compileAPIKeyIPRules(apiKey *APIKey) {
@@ -876,6 +889,7 @@ func (s *APIKeyService) List(ctx context.Context, userID int64, params paginatio
 		return nil, nil, fmt.Errorf("list api keys: %w", err)
 	}
 	s.fillCurrentConcurrency(ctx, keys)
+	s.fillCodexWebSocketCapabilities(ctx, keys)
 	return keys, pagination, nil
 }
 
@@ -890,8 +904,53 @@ func (s *APIKeyService) listByCurrentConcurrency(ctx context.Context, userID int
 		return nil, nil, fmt.Errorf("list api keys: %w", err)
 	}
 	s.fillCurrentConcurrency(ctx, keys)
+	s.fillCodexWebSocketCapabilities(ctx, keys)
 	sortAPIKeysByCurrentConcurrency(keys, params.NormalizedSortOrder(pagination.SortOrderDesc))
 	return paginateAPIKeys(keys, params), apiKeyPaginationResult(int64(len(keys)), params), nil
+}
+
+func (s *APIKeyService) fillCodexWebSocketCapabilities(ctx context.Context, keys []APIKey) {
+	if s == nil || s.codexWebSocketCapability == nil {
+		return
+	}
+	groups := make([]*Group, 0, len(keys))
+	for i := range keys {
+		group := keys[i].Group
+		if group == nil || group.ID <= 0 {
+			continue
+		}
+		groups = append(groups, group)
+	}
+	s.fillGroupCodexWebSocketCapabilities(ctx, groups)
+}
+
+func (s *APIKeyService) fillGroupCodexWebSocketCapabilities(ctx context.Context, groups []*Group) {
+	if s == nil || s.codexWebSocketCapability == nil || len(groups) == 0 {
+		return
+	}
+	unique := make(map[int64]*Group, len(groups))
+	for _, group := range groups {
+		if group != nil && group.ID > 0 {
+			unique[group.ID] = group
+		}
+	}
+	uniqueGroups := make([]*Group, 0, len(unique))
+	for _, group := range unique {
+		uniqueGroups = append(uniqueGroups, group)
+	}
+	resolved := make(map[int64]bool, len(uniqueGroups))
+	if batchResolver, ok := s.codexWebSocketCapability.(CodexWebSocketCapabilityBatchResolver); ok {
+		resolved = batchResolver.GroupsCodexSupportsWebSockets(ctx, uniqueGroups)
+	} else {
+		for _, group := range uniqueGroups {
+			resolved[group.ID] = s.codexWebSocketCapability.GroupCodexSupportsWebSockets(ctx, group)
+		}
+	}
+	for _, group := range groups {
+		if group != nil && group.ID > 0 {
+			group.CodexSupportsWebSockets = resolved[group.ID]
+		}
+	}
 }
 
 func normalizedAPIKeySortBy(sortBy string) string {
@@ -1367,6 +1426,11 @@ func (s *APIKeyService) GetAvailableGroups(ctx context.Context, userID int64) ([
 			availableGroups = append(availableGroups, group)
 		}
 	}
+	groupPointers := make([]*Group, 0, len(availableGroups))
+	for i := range availableGroups {
+		groupPointers = append(groupPointers, &availableGroups[i])
+	}
+	s.fillGroupCodexWebSocketCapabilities(ctx, groupPointers)
 
 	return availableGroups, nil
 }

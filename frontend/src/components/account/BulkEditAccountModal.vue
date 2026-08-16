@@ -931,7 +931,7 @@
         </div>
       </div>
 
-      <!-- Upstream billing auto probe (any API-key platform) -->
+      <!-- Upstream billing auto probe (eligible API-key platforms) -->
       <div v-if="allBillingProbeCapable" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
           <div class="flex-1 pr-4">
@@ -1352,6 +1352,7 @@ import {
   resolveOpenAIWSModeConcurrencyHintKey
 } from '@/utils/openaiWsMode'
 import type { OpenAIWSMode } from '@/utils/openaiWsMode'
+import { isUpstreamBillingProbeIdentity } from '@/utils/upstreamBillingProbe'
 interface Props {
   show: boolean
   accountIds: number[]
@@ -1427,12 +1428,13 @@ const allOpenAIAPIKey = computed(() => {
   )
 })
 
-// 上游倍率自动探测已放宽到全部 API-key 平台：只要求所选类型全为 apikey，
-// 平台不限（sub2api 上游即可应答 /v1/sub2api/billing）。
 const allBillingProbeCapable = computed(() => {
   return (
+    targetSelectedPlatforms.value.length > 0 &&
     targetSelectedTypes.value.length > 0 &&
-    targetSelectedTypes.value.every(t => t === 'apikey')
+    targetSelectedPlatforms.value.every(platform =>
+      targetSelectedTypes.value.every(type => isUpstreamBillingProbeIdentity(platform, type))
+    )
   )
 })
 

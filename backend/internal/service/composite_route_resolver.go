@@ -11,8 +11,50 @@ type CompositeRouteResolver struct {
 	repo CompositeModelRouteRepository
 }
 
+type compositeModelRouteBatchLister interface {
+	ListByGroups(ctx context.Context, groupIDs []int64, includeDisabled bool) ([]CompositeModelRoute, error)
+}
+
 func NewCompositeRouteResolver(repo CompositeModelRouteRepository) *CompositeRouteResolver {
 	return &CompositeRouteResolver{repo: repo}
+}
+
+func (r *CompositeRouteResolver) ListActiveRoutes(ctx context.Context, groupID int64) ([]CompositeModelRoute, error) {
+	if r == nil || r.repo == nil || groupID <= 0 {
+		return nil, nil
+	}
+	return r.repo.ListByGroup(ctx, groupID, false)
+}
+
+func (r *CompositeRouteResolver) ListActiveRoutesByGroups(ctx context.Context, groupIDs []int64) (map[int64][]CompositeModelRoute, error) {
+	groupIDs = normalizeInt64IDs(groupIDs)
+	routesByGroup := make(map[int64][]CompositeModelRoute, len(groupIDs))
+	if r == nil || r.repo == nil || len(groupIDs) == 0 {
+		return routesByGroup, nil
+	}
+
+	var (
+		routes []CompositeModelRoute
+		err    error
+	)
+	if batchRepo, ok := r.repo.(compositeModelRouteBatchLister); ok {
+		routes, err = batchRepo.ListByGroups(ctx, groupIDs, false)
+	} else {
+		for _, groupID := range groupIDs {
+			groupRoutes, listErr := r.repo.ListByGroup(ctx, groupID, false)
+			if listErr != nil {
+				return nil, listErr
+			}
+			routes = append(routes, groupRoutes...)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, route := range routes {
+		routesByGroup[route.GroupID] = append(routesByGroup[route.GroupID], route)
+	}
+	return routesByGroup, nil
 }
 
 func (r *CompositeRouteResolver) Resolve(ctx context.Context, groupID int64, model, endpoint string) (CompositeRouteDecision, error) {

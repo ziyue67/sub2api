@@ -11,16 +11,74 @@ import (
 const (
 	grokMissingUsageErrorCode = "grok_missing_usage"
 	grokMissingUsageMessage   = "xAI upstream returned a successful chat completion without billable usage"
+	deepSeekMissingUsageCode  = "deepseek_missing_usage"
+	deepSeekMissingUsageMsg   = "DeepSeek upstream returned a successful response without billable usage"
 )
 
 // hasBillableGrokChatUsage stays aligned with the aggregate token buckets used
 // to account for chat completions. Detail fields alone do not prove that the
 // successful response can be settled safely.
 func hasBillableGrokChatUsage(usage OpenAIUsage) bool {
+	return hasBillableOpenAIUsage(usage)
+}
+
+func hasBillableOpenAIUsage(usage OpenAIUsage) bool {
 	return usage.InputTokens > 0 ||
 		usage.OutputTokens > 0 ||
 		usage.CacheCreationInputTokens > 0 ||
 		usage.CacheReadInputTokens > 0
+}
+
+// HasBillableTokenUsage reports whether an OpenAI-compatible result contains
+// token usage that must be settled even when a streamed response ends in error.
+func (r *OpenAIForwardResult) HasBillableTokenUsage() bool {
+	return r != nil && hasBillableOpenAIUsage(r.Usage)
+}
+
+func hasBillableClaudeUsage(usage ClaudeUsage) bool {
+	return usage.InputTokens > 0 ||
+		usage.OutputTokens > 0 ||
+		usage.CacheCreationInputTokens > 0 ||
+		usage.CacheReadInputTokens > 0
+}
+
+func newDeepSeekMissingUsageFailoverError(c *gin.Context, account *Account, upstreamRequestID string) *UpstreamFailoverError {
+	accountID := int64(0)
+	accountName := ""
+	if account != nil {
+		accountID = account.ID
+		accountName = account.Name
+	}
+
+	setOpsUpstreamError(c, http.StatusBadGateway, deepSeekMissingUsageMsg, "")
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform:           PlatformDeepSeek,
+		AccountID:          accountID,
+		AccountName:        accountName,
+		UpstreamStatusCode: http.StatusBadGateway,
+		UpstreamRequestID:  strings.TrimSpace(upstreamRequestID),
+		Kind:               "failover",
+		Message:            deepSeekMissingUsageMsg,
+	})
+
+	body, _ := json.Marshal(gin.H{
+		"error": gin.H{
+			"type":    "upstream_error",
+			"code":    deepSeekMissingUsageCode,
+			"message": deepSeekMissingUsageMsg,
+		},
+	})
+	headers := http.Header{}
+	if requestID := strings.TrimSpace(upstreamRequestID); requestID != "" {
+		headers.Set("x-request-id", requestID)
+		headers.Set("x-deepseek-request-id", requestID)
+	}
+	return &UpstreamFailoverError{
+		Platform:        PlatformDeepSeek,
+		StatusCode:      http.StatusBadGateway,
+		ResponseBody:    body,
+		ResponseHeaders: headers,
+	}
 }
 
 // requiresBillableGrokChatUsage identifies Grok traffic by both account

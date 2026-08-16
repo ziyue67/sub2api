@@ -532,6 +532,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { sanitizeUrl } from '@/utils/url'
 import { getFloatingPanelPosition } from '@/utils/floatingPanel'
 import { formatMultiplier } from '@/utils/formatters'
+import { isUpstreamBillingProbeAccount } from '@/utils/upstreamBillingProbe'
 import type { Account, AccountPlatform, AccountSchedulerGroupScore, AccountType, AccountUsageInfo, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel, UpstreamBillingProbeSnapshot } from '@/types'
 
 const { t } = useI18n()
@@ -542,6 +543,10 @@ const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
 const accountTableRef = ref<HTMLElement | null>(null)
 const dataTableRef = ref<InstanceType<typeof DataTable> | null>(null)
+type AccountProbeIdentity = Pick<Account, 'id' | 'platform' | 'type'>
+const accountProbeIdentities = reactive(new Map<number, AccountProbeIdentity>())
+const UNKNOWN_SELECTED_PLATFORM = 'unknown' as AccountPlatform
+const UNKNOWN_SELECTED_TYPE = 'unknown' as AccountType
 type AccountBulkEditTarget =
   | {
       mode: 'selected'
@@ -567,7 +572,7 @@ type AccountBulkEditTarget =
     }
 const selPlatforms = computed<AccountPlatform[]>(() => {
   const platforms = new Set(
-    accounts.value
+    [...accountProbeIdentities.values()]
       .filter(a => isSelected(a.id))
       .map(a => a.platform)
   )
@@ -575,7 +580,7 @@ const selPlatforms = computed<AccountPlatform[]>(() => {
 })
 const selTypes = computed<AccountType[]>(() => {
   const types = new Set(
-    accounts.value
+    [...accountProbeIdentities.values()]
       .filter(a => isSelected(a.id))
       .map(a => a.type)
   )
@@ -1082,6 +1087,12 @@ const {
     sort_order: sortState.sort_order
   }
 })
+
+watch(
+  accounts,
+  rows => rows.forEach(account => accountProbeIdentities.set(account.id, account)),
+  { immediate: true }
+)
 
 const {
   selectedSet,
@@ -1839,17 +1850,35 @@ const handleBulkRefreshToken = async () => {
   }
 }
 const handleBulkProbeUpstreamBilling = async () => {
-  const accountIDs = [...selIds.value]
-  if (accountIDs.length === 0) {
+  const selectedAccountIDs = [...selIds.value]
+  if (selectedAccountIDs.length === 0) {
     appStore.showError(t('admin.accounts.upstreamBilling.noEligibleAccounts'))
     return
   }
-  if (accountIDs.length > 20) {
-    appStore.showError(t('admin.accounts.upstreamBilling.batchLimit'))
-    return
-  }
-  accountIDs.forEach(id => probingUpstreamBilling.add(id))
+  let accountIDs: number[] = []
   try {
+    for (let offset = 0; offset < selectedAccountIDs.length; offset += 20) {
+      const identities = await Promise.all(
+        selectedAccountIDs.slice(offset, offset + 20).map(async id => {
+          const cached = accountProbeIdentities.get(id)
+          if (cached) return cached
+          const account = await adminAPI.accounts.getById(id)
+          accountProbeIdentities.set(id, account)
+          return account
+        })
+      )
+      accountIDs.push(...identities.filter(isUpstreamBillingProbeAccount).map(account => account.id))
+      if (accountIDs.length > 20) {
+        appStore.showError(t('admin.accounts.upstreamBilling.batchLimit'))
+        return
+      }
+    }
+    if (accountIDs.length === 0) {
+      appStore.showError(t('admin.accounts.upstreamBilling.noEligibleAccounts'))
+      return
+    }
+
+    accountIDs.forEach(id => probingUpstreamBilling.add(id))
     const results = await adminAPI.accounts.probeUpstreamBillingBatch(accountIDs)
     let patched = false
     results.forEach(result => {
@@ -2022,11 +2051,16 @@ const collectSelectionMetadata = (rows: Account[]) => {
 }
 
 const openBulkEditSelected = () => {
+  const metadataComplete = selIds.value.every(id => accountProbeIdentities.has(id))
   bulkEditTarget.value = {
     mode: 'selected',
     accountIds: [...selIds.value],
-    selectedPlatforms: [...selPlatforms.value],
-    selectedTypes: [...selTypes.value]
+    selectedPlatforms: metadataComplete
+      ? [...selPlatforms.value]
+      : [...selPlatforms.value, UNKNOWN_SELECTED_PLATFORM],
+    selectedTypes: metadataComplete
+      ? [...selTypes.value]
+      : [...selTypes.value, UNKNOWN_SELECTED_TYPE]
   }
   showBulkEdit.value = true
 }
@@ -2039,8 +2073,8 @@ const openBulkEditFiltered = async () => {
     mode: 'filtered',
     filters,
     previewCount: preview.total,
-    selectedPlatforms,
-    selectedTypes
+    selectedPlatforms: [...selectedPlatforms, UNKNOWN_SELECTED_PLATFORM],
+    selectedTypes: [...selectedTypes, UNKNOWN_SELECTED_TYPE]
   }
   showBulkEdit.value = true
 }
@@ -2165,7 +2199,7 @@ const refreshAccountsAfterUpstreamBillingProbe = async () => {
   }
 }
 const handleProbeUpstreamBilling = async (account: Account) => {
-  if (probingUpstreamBilling.has(account.id)) return
+  if (!isUpstreamBillingProbeAccount(account) || probingUpstreamBilling.has(account.id)) return
   probingUpstreamBilling.add(account.id)
   try {
     const result = await adminAPI.accounts.probeUpstreamBilling(account.id)
