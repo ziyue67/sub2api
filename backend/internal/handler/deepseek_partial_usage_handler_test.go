@@ -21,10 +21,11 @@ import (
 
 type deepSeekPartialUsageHTTPUpstream struct {
 	service.HTTPUpstream
-	body     string
-	calls    int
-	lastPath string
-	lastBody []byte
+	body       string
+	statusCode int
+	calls      int
+	lastPath   string
+	lastBody   []byte
 }
 
 type deepSeekCompactBlockingAuditEngine struct {
@@ -100,8 +101,12 @@ func (u *deepSeekPartialUsageHTTPUpstream) Do(req *http.Request, _ string, _ int
 	if req != nil && req.Body != nil {
 		u.lastBody, _ = io.ReadAll(req.Body)
 	}
+	statusCode := u.statusCode
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
 	return &http.Response{
-		StatusCode: http.StatusOK,
+		StatusCode: statusCode,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body:       io.NopCloser(strings.NewReader(u.body)),
 	}, nil

@@ -425,6 +425,8 @@ type PublicSettings struct {
 	RiskControlEnabled bool `json:"risk_control_enabled"`
 
 	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
+
+	DeepSeekResponsesWebSocketHTTPBridgeEnabled bool `json:"deepseek_responses_websocket_http_bridge_enabled"`
 }
 
 type LoginAgreementDocument struct {

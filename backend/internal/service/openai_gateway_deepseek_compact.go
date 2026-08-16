@@ -1093,7 +1093,34 @@ func (s *OpenAIGatewayService) handleCommittedDeepSeekCompactHTTPError(
 	return nil, fmt.Errorf("non-streaming openai protocol error: DeepSeek compact upstream HTTP %d", resp.StatusCode)
 }
 
-func (s *OpenAIGatewayService) forwardDeepSeekRemoteCompactionV2(
+type deepSeekCompactExecution struct {
+	Result      *OpenAIForwardResult
+	FinalJSON   []byte
+	Headers     http.Header
+	RequestBody []byte
+}
+
+type deepSeekCompactUpstreamHTTPError struct {
+	StatusCode  int
+	Headers     http.Header
+	Body        []byte
+	Message     string
+	RequestBody []byte
+}
+
+func (e *deepSeekCompactUpstreamHTTPError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("DeepSeek compact upstream HTTP %d: %s", e.StatusCode, strings.TrimSpace(e.Message))
+}
+
+type deepSeekCompactUpstreamSender func(responsesBody []byte) (*http.Response, error)
+
+// executeDeepSeekRemoteCompaction is the transport-neutral compaction core used
+// by unary HTTP, HTTP SSE and Responses WebSocket clients. Callers provide the
+// cancellable upstream sender and own only their final downstream wire.
+func (s *OpenAIGatewayService) executeDeepSeekRemoteCompaction(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,
@@ -1101,56 +1128,56 @@ func (s *OpenAIGatewayService) forwardDeepSeekRemoteCompactionV2(
 	originalModel string,
 	billingModel string,
 	upstreamModel string,
-) (*OpenAIForwardResult, error) {
+	clientStream bool,
+	send deepSeekCompactUpstreamSender,
+) (deepSeekCompactExecution, error) {
+	var execution deepSeekCompactExecution
 	startTime := time.Now()
 	if s.deepSeekCompactRequestTooLarge(body) {
-		return nil, ErrDeepSeekCompactRequestTooLarge
+		return execution, ErrDeepSeekCompactRequestTooLarge
 	}
 	if _, err := deepSeekCompactUserAAD(ctx); err != nil {
-		return nil, err
+		return execution, err
 	}
 	if _, err := s.deepSeekCompactAEAD(); err != nil {
-		return nil, err
+		return execution, err
 	}
 	responsesBody, prepared := preparedDeepSeekCompactResponsesRequest(c, body, upstreamModel)
 	if !prepared {
 		var err error
 		responsesBody, err = deepSeekCompactResponsesRequest(body, upstreamModel)
 		if err != nil {
-			return nil, err
+			return execution, err
 		}
 	}
-	token := account.GetDeepSeekAPIKey()
-	if token == "" {
-		return nil, fmt.Errorf("account %d missing api_key", account.ID)
-	}
-	targetURL, err := s.deepSeekEndpointURL(account, deepSeekResponsesEndpoint)
-	if err != nil {
-		return nil, err
+	execution.RequestBody = responsesBody
+	if send == nil {
+		return execution, errors.New("DeepSeek compact upstream sender is nil")
 	}
 	SetActualOpenAIUpstreamEndpoint(c, deepSeekResponsesEndpoint)
-
 	upstreamStart := time.Now()
-	resp, err := s.sendCCUpstreamRequest(ctx, c, account, targetURL, responsesBody, true, token, "", "")
+	resp, err := send(responsesBody)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		return nil, err
+		return execution, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	sanitizeDeepSeekResponseHeadersInPlace(account, resp.Header)
 	if resp.StatusCode >= http.StatusBadRequest {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
 		if failoverErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); failoverErr != nil {
-			return nil, failoverErr
+			return execution, failoverErr
 		}
-		if StopOpenAICompactSSEKeepaliveCommitted(c) {
-			return s.handleCommittedDeepSeekCompactHTTPError(ctx, c, account, resp, respBody, upstreamModel)
+		return execution, &deepSeekCompactUpstreamHTTPError{
+			StatusCode:  resp.StatusCode,
+			Headers:     resp.Header.Clone(),
+			Body:        redactDeepSeekAPIKey(account, respBody),
+			Message:     redactDeepSeekAPIKeyString(account, upstreamMsg),
+			RequestBody: responsesBody,
 		}
-		return s.handleErrorResponse(ctx, resp, c, account, responsesBody, billingModel)
 	}
 
 	streamResult, streamErr := s.readDeepSeekCompactResponsesStream(c, resp, account, startTime)
-	clientStream := openAICompactClientWantsStream(c)
 	requestID := openAICompatibleUpstreamRequestID(resp.Header)
 	terminalEvent := ""
 	if streamResult.Completed && !streamResult.UpstreamFailed {
@@ -1169,38 +1196,96 @@ func (s *OpenAIGatewayService) forwardDeepSeekRemoteCompactionV2(
 		ReasoningEffort:               optionalTrimmedStringPtr(gjson.GetBytes(responsesBody, "reasoning.effort").String()),
 		UpstreamTerminalEvent:         terminalEvent,
 		Stream:                        clientStream,
+		OpenAIWSMode:                  false,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  streamResult.FirstTokenMs,
 		ResponseHeaders:               resp.Header.Clone(),
 	}
+	execution.Result = result
+	execution.Headers = resp.Header.Clone()
+	if ctx.Err() != nil {
+		return execution, context.Cause(ctx)
+	}
 	if streamErr != nil {
 		if result.HasBillableTokenUsage() {
-			return result, streamErr
+			return execution, streamErr
 		}
-		return nil, s.newOpenAIStreamFailoverError(c, account, false, requestID, nil, streamErr.Error(), resp.Header)
+		return deepSeekCompactExecution{}, s.newOpenAIStreamFailoverError(c, account, false, requestID, nil, streamErr.Error(), resp.Header)
 	}
 
 	checkpoint := frameDeepSeekCompactSummary(streamResult.Summary)
 	encryptedContent, err := s.sealDeepSeekCompactCheckpoint(ctx, checkpoint)
 	if err != nil {
-		return result, err
+		return execution, err
 	}
 	responseID := "resp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	itemID := "cmp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	finalJSON, err := deepSeekCompactResponsesJSON(responseID, itemID, originalModel, encryptedContent, streamResult.Usage, streamResult.TotalTokens)
 	if err != nil {
-		return result, fmt.Errorf("encode DeepSeek compact response: %w", err)
+		return execution, fmt.Errorf("encode DeepSeek compact response: %w", err)
 	}
 	result.ResponseID = responseID
+	execution.FinalJSON = finalJSON
 	s.bindHTTPResponseAccount(ctx, c, account, responseID)
-	s.writeDeepSeekResponsesHeaders(c, resp, clientStream)
+	return execution, nil
+}
+
+func (s *OpenAIGatewayService) forwardDeepSeekRemoteCompactionV2(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	originalModel string,
+	billingModel string,
+	upstreamModel string,
+) (*OpenAIForwardResult, error) {
+	token := account.GetDeepSeekAPIKey()
+	if token == "" {
+		return nil, fmt.Errorf("account %d missing api_key", account.ID)
+	}
+	targetURL, err := s.deepSeekEndpointURL(account, deepSeekResponsesEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	clientStream := openAICompactClientWantsStream(c)
+	execution, err := s.executeDeepSeekRemoteCompaction(
+		ctx,
+		c,
+		account,
+		body,
+		originalModel,
+		billingModel,
+		upstreamModel,
+		clientStream,
+		func(responsesBody []byte) (*http.Response, error) {
+			return s.sendCCUpstreamRequest(ctx, c, account, targetURL, responsesBody, true, token, "", "")
+		},
+	)
+	if err != nil {
+		var upstreamHTTPError *deepSeekCompactUpstreamHTTPError
+		if !errors.As(err, &upstreamHTTPError) {
+			return execution.Result, err
+		}
+		resp := &http.Response{
+			StatusCode: upstreamHTTPError.StatusCode,
+			Header:     upstreamHTTPError.Headers.Clone(),
+			Body:       io.NopCloser(bytes.NewReader(upstreamHTTPError.Body)),
+		}
+		if StopOpenAICompactSSEKeepaliveCommitted(c) {
+			return s.handleCommittedDeepSeekCompactHTTPError(ctx, c, account, resp, upstreamHTTPError.Body, upstreamModel)
+		}
+		return s.handleErrorResponse(ctx, resp, c, account, upstreamHTTPError.RequestBody, billingModel)
+	}
+	result := execution.Result
+	syntheticResp := &http.Response{StatusCode: http.StatusOK, Header: execution.Headers.Clone()}
+	s.writeDeepSeekResponsesHeaders(c, syntheticResp, clientStream)
 	if clientStream {
-		if !writeOpenAICompactSSEBridge(c, http.StatusOK, finalJSON) {
+		if !writeOpenAICompactSSEBridge(c, http.StatusOK, execution.FinalJSON) {
 			return result, errors.New("failed to synthesize DeepSeek remote compaction response")
 		}
 	} else {
 		c.Header("Content-Type", "application/json")
-		c.Data(http.StatusOK, "application/json", finalJSON)
+		c.Data(http.StatusOK, "application/json", execution.FinalJSON)
 	}
 	return result, nil
 }

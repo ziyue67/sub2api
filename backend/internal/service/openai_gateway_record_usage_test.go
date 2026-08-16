@@ -103,6 +103,66 @@ func TestRecordCyberPolicyUsageLog_BillsRealUpstreamTokens(t *testing.T) {
 	require.InDelta(t, expected.ActualCost, userRepo.lastAmount, 1e-12)
 }
 
+func TestRecordCyberPolicyUsageLog_PreservesForwardResultMetadata(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	effort := "max"
+	tier := "priority"
+	pricingAt := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	result := &OpenAIForwardResult{
+		RequestID:       "resp-deepseek-ws-cyber",
+		Model:           "deepseek-v4-pro",
+		BillingModel:    "deepseek-v4-pro",
+		UpstreamModel:   "deepseek-v4-pro",
+		ReasoningEffort: &effort,
+		ServiceTier:     &tier,
+		Stream:          true,
+		OpenAIWSMode:    true,
+		Duration:        2 * time.Second,
+		Usage: OpenAIUsage{
+			InputTokens:  100,
+			OutputTokens: 50,
+		},
+	}
+
+	svc.RecordCyberPolicyUsageLog(context.Background(), CyberPolicyUsageInput{
+		APIKey:        &APIKey{ID: 2, User: &User{ID: 1}},
+		Account:       &Account{ID: 3, Platform: PlatformDeepSeek},
+		Result:        result,
+		RequestID:     "handler-request-id",
+		Model:         "company-coding-model",
+		Stream:        false,
+		InputTokens:   9,
+		OutputTokens:  2,
+		QuotaPlatform: PlatformDeepSeek,
+		PricingAt:     pricingAt,
+		ChannelUsageFields: ChannelUsageFields{
+			OriginalModel:      "company-coding-model",
+			ChannelMappedModel: "deepseek-v4-pro",
+			ModelMappingChain:  "company-coding-model->deepseek-v4-pro",
+		},
+	})
+
+	require.Equal(t, 1, usageRepo.calls)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, "resp-deepseek-ws-cyber", usageRepo.lastLog.RequestID)
+	require.Equal(t, "deepseek-v4-pro", usageRepo.lastLog.Model)
+	require.Equal(t, "company-coding-model", usageRepo.lastLog.RequestedModel)
+	require.NotNil(t, usageRepo.lastLog.UpstreamModel)
+	require.Equal(t, "deepseek-v4-pro", *usageRepo.lastLog.UpstreamModel)
+	require.NotNil(t, usageRepo.lastLog.ReasoningEffort)
+	require.Equal(t, "max", *usageRepo.lastLog.ReasoningEffort)
+	require.NotNil(t, usageRepo.lastLog.ServiceTier)
+	require.Equal(t, "priority", *usageRepo.lastLog.ServiceTier)
+	require.True(t, usageRepo.lastLog.Stream)
+	require.True(t, usageRepo.lastLog.OpenAIWSMode)
+	require.Equal(t, RequestTypeCyberBlocked, usageRepo.lastLog.RequestType)
+	require.Equal(t, 9, usageRepo.lastLog.InputTokens)
+	require.Equal(t, 2, usageRepo.lastLog.OutputTokens)
+	require.NotNil(t, usageRepo.lastLog.ModelMappingChain)
+	require.Equal(t, "company-coding-model->deepseek-v4-pro", *usageRepo.lastLog.ModelMappingChain)
+}
+
 func TestRecordCyberPolicyUsageLog_NonStreamZeroTokensZeroCost(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}

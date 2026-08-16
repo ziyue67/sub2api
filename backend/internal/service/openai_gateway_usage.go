@@ -49,6 +49,10 @@ type CyberPolicyUsageInput struct {
 	APIKey       *APIKey
 	Account      *Account
 	Subscription *UserSubscription
+	// Result preserves the actual upstream turn metadata when cyber_policy is
+	// reported after a billable streaming response. Nil is valid for immediate
+	// HTTP rejections that have no forward result.
+	Result       *OpenAIForwardResult
 	RequestID    string
 	Model        string
 	Stream       bool
@@ -63,6 +67,8 @@ type CyberPolicyUsageInput struct {
 	SessionID          string
 	RequestPayloadHash string
 	APIKeyService      APIKeyQuotaUpdater
+	QuotaPlatform      string
+	PricingAt          time.Time
 	ChannelUsageFields
 }
 
@@ -73,18 +79,29 @@ type CyberPolicyUsageInput struct {
 // 扣费与用量行写入（request_type=cyber 由 CyberBlocked 置位）。仅 forward 返回错误的
 // 路径由 handler 调用，避免与成功路径的正常 RecordUsage 重复。
 func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in CyberPolicyUsageInput) {
-	if s == nil || in.APIKey == nil || in.APIKey.User == nil || in.Account == nil || strings.TrimSpace(in.Model) == "" {
+	model := strings.TrimSpace(in.Model)
+	if in.Result != nil && strings.TrimSpace(in.Result.Model) != "" {
+		model = strings.TrimSpace(in.Result.Model)
+	}
+	if s == nil || in.APIKey == nil || in.APIKey.User == nil || in.Account == nil || model == "" {
 		return
 	}
-	result := &OpenAIForwardResult{
-		RequestID: in.RequestID,
-		Model:     in.Model,
-		Stream:    in.Stream,
-		Usage: OpenAIUsage{
-			InputTokens:  in.InputTokens,
-			OutputTokens: in.OutputTokens,
-		},
+	result := &OpenAIForwardResult{}
+	if in.Result != nil {
+		*result = *in.Result
+		result.ResponseHeaders = in.Result.ResponseHeaders.Clone()
 	}
+	if strings.TrimSpace(result.RequestID) == "" {
+		result.RequestID = in.RequestID
+	}
+	if strings.TrimSpace(result.Model) == "" {
+		result.Model = model
+	}
+	if in.Result == nil {
+		result.Stream = in.Stream
+	}
+	result.Usage.InputTokens = in.InputTokens
+	result.Usage.OutputTokens = in.OutputTokens
 	if err := s.RecordUsage(ctx, &OpenAIRecordUsageInput{
 		Result:             result,
 		APIKey:             in.APIKey,
@@ -98,6 +115,8 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 		SessionID:          in.SessionID,
 		RequestPayloadHash: in.RequestPayloadHash,
 		APIKeyService:      in.APIKeyService,
+		QuotaPlatform:      in.QuotaPlatform,
+		PricingAt:          in.PricingAt,
 		ChannelUsageFields: in.ChannelUsageFields,
 		CyberBlocked:       true,
 	}); err != nil {

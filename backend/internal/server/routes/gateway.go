@@ -227,9 +227,7 @@ func RegisterGatewayRoutes(
 			dispatchChatResponsesGateway(c, h.OpenAIGateway.Responses, h.Gateway.Responses)
 		})))
 		gateway.POST("/alpha/search", textBodyLimit, rejectDeepSeekFeature("Alpha search API", h.OpenAIGateway.AlphaSearch))
-		gateway.GET("/responses", rejectDeepSeekFeature("Responses WebSocket", func(c *gin.Context) {
-			h.OpenAIGateway.ResponsesWebSocket(c)
-		}))
+		gateway.GET("/responses", h.OpenAIGateway.ResponsesWebSocket)
 		// OpenAI Chat Completions API: auto-route based on group platform
 		gateway.POST("/chat/completions", func(c *gin.Context) {
 			dispatchChatResponsesGateway(c, h.OpenAIGateway.ChatCompletions, h.Gateway.ChatCompletions)
@@ -354,9 +352,7 @@ func RegisterGatewayRoutes(
 	r.POST("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, responsesHandler)
 	r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, guardResponsesSubpath(allowDeepSeekStandaloneCompact("Responses subpaths", responsesHandler)))
 	r.POST("/alpha/search", textBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, rejectDeepSeekFeature("Alpha search API", h.OpenAIGateway.AlphaSearch))
-	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
-		rejectDeepSeekFeature("Responses WebSocket", h.OpenAIGateway.ResponsesWebSocket)(c)
-	})
+	r.GET("/responses", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, h.OpenAIGateway.ResponsesWebSocket)
 	r.GET("/models", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, modelsHandler)
 	r.POST("/messages/count_tokens", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
@@ -367,9 +363,7 @@ func RegisterGatewayRoutes(
 		codexDirect.POST("/responses", responsesHandler)
 		codexDirect.POST("/responses/*subpath", guardResponsesSubpath(allowDeepSeekStandaloneCompact("Codex Responses API", responsesHandler)))
 		codexDirect.POST("/alpha/search", textBodyLimit, rejectDeepSeekFeature("Codex alpha search API", h.OpenAIGateway.AlphaSearch))
-		codexDirect.GET("/responses", rejectDeepSeekFeature("Codex Responses WebSocket", func(c *gin.Context) {
-			h.OpenAIGateway.ResponsesWebSocket(c)
-		}))
+		codexDirect.GET("/responses", h.OpenAIGateway.ResponsesWebSocket)
 		codexDirect.GET("/models", rejectDeepSeekFeature("Codex models API", h.OpenAIGateway.CodexModels))
 	}
 	// OpenAI Chat Completions API（不带v1前缀的别名）— auto-route based on group platform
@@ -541,6 +535,7 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 			return
 		}
 		if c.Request == nil || c.Request.Method == http.MethodGet {
+			handler.AttachResponsesWebSocketCompositeResolver(c, resolver)
 			c.Next()
 			return
 		}

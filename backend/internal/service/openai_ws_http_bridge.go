@@ -42,6 +42,17 @@ func (s *OpenAIGatewayService) openAIWSHTTPBridgeEnabled() bool {
 	return s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.HTTPBridgeEnabled
 }
 
+// DeepSeekResponsesWSHTTPBridgeEnabled is the single deployment capability
+// gate used by routing, account resolution and generated client settings.
+// ResponsesWebsocketsV2 is intentionally excluded because DeepSeek's upstream
+// transport is always HTTP SSE.
+func DeepSeekResponsesWSHTTPBridgeEnabled(cfg *config.Config) bool {
+	return cfg != nil &&
+		cfg.Gateway.OpenAIWS.Enabled &&
+		cfg.Gateway.OpenAIWS.ModeRouterV2Enabled &&
+		cfg.Gateway.OpenAIWS.HTTPBridgeEnabled
+}
+
 func (s *OpenAIGatewayService) openAIWSHTTPBridgeThresholdBytes() int64 {
 	if s == nil || s.cfg == nil || s.cfg.Gateway.OpenAIWS.HTTPBridgeThresholdBytes <= 0 {
 		return openAIWSHTTPBridgeThresholdBytesDefault

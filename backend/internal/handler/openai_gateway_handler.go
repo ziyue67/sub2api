@@ -1900,14 +1900,21 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
-	ensureCompositeTargetPlatform(c, apiKey, reqModel)
+	_, requestPlatform, resolveErr := resolveResponsesWebSocketTarget(c, apiKey, ctx, reqModel)
+	if resolveErr != nil {
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "Responses WebSocket model route could not be resolved")
+		return
+	}
 	ctx = c.Request.Context()
 	if apiKey.Group != nil && apiKey.Group.Platform == service.PlatformComposite {
-		platform, ok := service.ResolvedTargetPlatformFromContext(ctx)
-		if !ok || (platform != service.PlatformOpenAI && platform != service.PlatformGrok) {
+		if requestPlatform != service.PlatformOpenAI && requestPlatform != service.PlatformGrok && requestPlatform != service.PlatformDeepSeek {
 			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "Responses WebSocket API only supports OpenAI-compatible models for composite groups")
 			return
 		}
+	}
+	if requestPlatform == service.PlatformDeepSeek {
+		h.responsesDeepSeekWebSocket(c, ctx, clientLifecycleCtx, wsConn, apiKey, subject, reqLog, firstMessage, reqModel, clientIP, userAgent)
+		return
 	}
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(firstMessage, "previous_response_id").String())
 	previousResponseIDKind := service.ClassifyOpenAIPreviousResponseIDKind(previousResponseID)
@@ -2000,7 +2007,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	requestPlatform := openAICompatibleRequestPlatform(ctx, apiKey)
+	requestPlatform = openAICompatibleRequestPlatform(ctx, apiKey)
 	requiredTransport := service.OpenAIUpstreamTransportResponsesWebsocketV2Ingress
 	if requestPlatform == service.PlatformGrok {
 		requiredTransport = service.OpenAIUpstreamTransportHTTPSSE
@@ -3366,10 +3373,14 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 }
 
 // recordCyberPolicyIfMarked 在 gateway forward 返回后检查 cyber 标记，异步写风控日志/邮件，
-// 并在 forward 返回错误时写一条 tokens=0 用量行。标记由 gateway 服务层在透传 cyber 后设置；
+// 并在 forward 返回错误时按上游报告的真实 token 写一条用量行。标记由 gateway 服务层在透传 cyber 后设置；
 // 当前请求已发给用户，本方法只做事后记录，不影响响应。forwardErrored 为 true 时才写用量行，
 // 避免与正常 RecordUsage(forward 成功路径)重复。每请求至多记录一次。
 func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string) {
+	h.recordCyberPolicyIfMarkedWithUsage(c, apiKey, account, subscription, model, forwardErrored, cyberBlockKey, channelFields, requestPayloadHash, nil, "", time.Time{})
+}
+
+func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithUsage(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, model string, forwardErrored bool, cyberBlockKey string, channelFields service.ChannelUsageFields, requestPayloadHash string, result *service.OpenAIForwardResult, quotaPlatform string, pricingAt time.Time) {
 	mark := service.GetOpsCyberPolicy(c)
 	if mark == nil {
 		return
@@ -3401,7 +3412,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	var accountID int64
 	if account != nil {
 		accountID = account.ID
-		upstreamEndpoint = resolveOpenAIUpstreamEndpoint(c, account, nil)
+		upstreamEndpoint = resolveOpenAIUpstreamEndpoint(c, account, result)
 	}
 	stream := false
 	if v, ok := c.Get(opsStreamKey); ok {
@@ -3433,6 +3444,12 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 	apiKeyPrefix := ""
 	if apiKey != nil {
 		apiKeyPrefix = keyPrefix(apiKey.Key, 8)
+	}
+	var usageResult *service.OpenAIForwardResult
+	if result != nil {
+		resultSnapshot := *result
+		resultSnapshot.ResponseHeaders = result.ResponseHeaders.Clone()
+		usageResult = &resultSnapshot
 	}
 	opsMeta := cyberPolicyOpsErrorMeta{
 		RequestID:       requestID,
@@ -3477,6 +3494,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 				APIKey:             apiKey,
 				Account:            account,
 				Subscription:       subscription,
+				Result:             usageResult,
 				RequestID:          requestID,
 				Model:              model,
 				Stream:             stream,
@@ -3489,6 +3507,8 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 				SessionID:          sessionID,
 				RequestPayloadHash: requestPayloadHash,
 				APIKeyService:      apiKeySvc,
+				QuotaPlatform:      quotaPlatform,
+				PricingAt:          pricingAt,
 				ChannelUsageFields: channelFields,
 			})
 		}

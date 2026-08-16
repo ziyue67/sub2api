@@ -53,10 +53,28 @@ func normalizeDeepSeekUserIsolationMode(mode any) (string, error) {
 	}
 }
 
+func normalizeDeepSeekResponsesWebSocketMode(mode any) (string, error) {
+	value, ok := mode.(string)
+	if !ok {
+		return "", infraerrors.BadRequest("DEEPSEEK_RESPONSES_WEBSOCKET_MODE_INVALID", "DeepSeek Responses WebSocket mode must be a string")
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case DeepSeekResponsesWebSocketModeHTTPBridge:
+		return DeepSeekResponsesWebSocketModeHTTPBridge, nil
+	case DeepSeekResponsesWebSocketModeOff:
+		return DeepSeekResponsesWebSocketModeOff, nil
+	default:
+		return "", infraerrors.BadRequest("DEEPSEEK_RESPONSES_WEBSOCKET_MODE_INVALID", "DeepSeek Responses WebSocket mode must be http_bridge or off")
+	}
+}
+
 func normalizeDeepSeekAccountExtra(platform string, extra map[string]any, defaultMode string) (map[string]any, error) {
 	if platform != PlatformDeepSeek {
 		if _, exists := extra[DeepSeekUserIsolationModeKey]; exists {
 			return nil, infraerrors.BadRequest("DEEPSEEK_USER_ISOLATION_PLATFORM_INVALID", "DeepSeek user isolation mode is only valid for DeepSeek accounts")
+		}
+		if _, exists := extra[DeepSeekResponsesWebSocketModeKey]; exists {
+			return nil, infraerrors.BadRequest("DEEPSEEK_RESPONSES_WEBSOCKET_MODE_PLATFORM_INVALID", "DeepSeek Responses WebSocket mode is only valid for DeepSeek accounts")
 		}
 		return extra, nil
 	}
@@ -68,11 +86,22 @@ func normalizeDeepSeekAccountExtra(platform string, extra map[string]any, defaul
 			return nil, err
 		}
 	}
+	webSocketMode := ""
+	if rawMode, exists := extra[DeepSeekResponsesWebSocketModeKey]; exists {
+		var err error
+		webSocketMode, err = normalizeDeepSeekResponsesWebSocketMode(rawMode)
+		if err != nil {
+			return nil, err
+		}
+	}
 	normalized := make(map[string]any, len(extra)+1)
 	for key, value := range extra {
 		normalized[key] = value
 	}
 	normalized[DeepSeekUserIsolationModeKey] = mode
+	if webSocketMode != "" {
+		normalized[DeepSeekResponsesWebSocketModeKey] = webSocketMode
+	}
 	return normalized, nil
 }
 

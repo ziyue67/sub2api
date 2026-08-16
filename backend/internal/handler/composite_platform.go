@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -8,6 +10,56 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
+
+const responsesWebSocketCompositeResolverContextKey = "responses_websocket_composite_resolver"
+
+var errResponsesWebSocketCompositeTargetUnresolved = errors.New("responses websocket composite target could not be resolved")
+
+// AttachResponsesWebSocketCompositeResolver makes the route resolver available
+// after the WebSocket upgrade. GET requests do not carry the model until the
+// first response.create frame, so the ordinary body middleware cannot resolve
+// an explicit composite route before entering the handler.
+func AttachResponsesWebSocketCompositeResolver(c *gin.Context, resolver *service.CompositeRouteResolver) {
+	if c != nil && resolver != nil {
+		c.Set(responsesWebSocketCompositeResolverContextKey, resolver)
+	}
+}
+
+func resolveResponsesWebSocketTarget(
+	c *gin.Context,
+	apiKey *service.APIKey,
+	ctx context.Context,
+	model string,
+) (service.CompositeRouteDecision, string, error) {
+	if apiKey == nil {
+		return service.CompositeRouteDecision{}, "", errResponsesWebSocketCompositeTargetUnresolved
+	}
+	// Preserve the legacy OpenAI default for tests and internal callers whose
+	// API key context predates hydrated group attachment.
+	if apiKey.Group == nil {
+		return service.CompositeRouteDecision{}, service.PlatformOpenAI, nil
+	}
+	if apiKey.Group.Platform != service.PlatformComposite {
+		return service.CompositeRouteDecision{}, apiKey.Group.Platform, nil
+	}
+	if c == nil || c.Request == nil {
+		return service.CompositeRouteDecision{}, "", errResponsesWebSocketCompositeTargetUnresolved
+	}
+	resolverValue, ok := c.Get(responsesWebSocketCompositeResolverContextKey)
+	resolver, _ := resolverValue.(*service.CompositeRouteResolver)
+	if !ok || resolver == nil {
+		resolver = service.NewCompositeRouteResolver(nil)
+	}
+	decision, err := resolver.Resolve(ctx, apiKey.Group.ID, model, service.CompositeRouteEndpointResponses)
+	if err != nil {
+		return decision, "", err
+	}
+	if !decision.Matched || strings.TrimSpace(decision.TargetPlatform) == "" {
+		return decision, "", errResponsesWebSocketCompositeTargetUnresolved
+	}
+	c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
+	return decision, decision.TargetPlatform, nil
+}
 
 func ensureCompositeTargetPlatform(c *gin.Context, apiKey *service.APIKey, model string) {
 	if c == nil || c.Request == nil || apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {

@@ -300,6 +300,10 @@ const (
 	DeepSeekUserIsolationModeKey               = "deepseek_user_isolation_mode"
 	DeepSeekUserIsolationModeAuthenticatedUser = "authenticated_user"
 	DeepSeekUserIsolationModeOff               = "off"
+
+	DeepSeekResponsesWebSocketModeKey        = "deepseek_responses_websockets_v2_mode"
+	DeepSeekResponsesWebSocketModeOff        = "off"
+	DeepSeekResponsesWebSocketModeHTTPBridge = "http_bridge"
 )
 
 // ResolveDeepSeekUserIsolationMode returns the trusted upstream user identity
@@ -319,6 +323,35 @@ func (a *Account) ResolveDeepSeekUserIsolationMode() string {
 		}
 	}
 	return DeepSeekUserIsolationModeOff
+}
+
+// ResolveDeepSeekResponsesWebSocketMode returns the effective client-facing
+// Responses WebSocket mode for a DeepSeek account. DeepSeek never uses an
+// upstream WebSocket: http_bridge terminates WS at sub2api and creates one
+// stateless HTTP /responses request per turn.
+func (a *Account) ResolveDeepSeekResponsesWebSocketMode(globalBridgeEnabled bool) string {
+	if a == nil || !a.IsDeepSeekAPIKey() || !globalBridgeEnabled {
+		return DeepSeekResponsesWebSocketModeOff
+	}
+	if a.Extra == nil {
+		return DeepSeekResponsesWebSocketModeHTTPBridge
+	}
+	raw, exists := a.Extra[DeepSeekResponsesWebSocketModeKey]
+	if !exists {
+		return DeepSeekResponsesWebSocketModeHTTPBridge
+	}
+	mode, ok := raw.(string)
+	if !ok {
+		return DeepSeekResponsesWebSocketModeOff
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case DeepSeekResponsesWebSocketModeHTTPBridge:
+		return DeepSeekResponsesWebSocketModeHTTPBridge
+	case DeepSeekResponsesWebSocketModeOff:
+		return DeepSeekResponsesWebSocketModeOff
+	default:
+		return DeepSeekResponsesWebSocketModeOff
+	}
 }
 
 func (a *Account) IsGrokOAuth() bool {

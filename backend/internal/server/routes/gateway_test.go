@@ -487,9 +487,6 @@ func TestGatewayRoutesDeepSeekRejectsUnsupportedResponsesSurfaces(t *testing.T) 
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/v1/responses"},
-		{http.MethodGet, "/responses"},
-		{http.MethodGet, "/backend-api/codex/responses"},
 		{http.MethodPost, "/v1/live"},
 		{http.MethodPost, "/v1/alpha/search"},
 		{http.MethodPost, "/alpha/search"},
@@ -504,6 +501,23 @@ func TestGatewayRoutesDeepSeekRejectsUnsupportedResponsesSurfaces(t *testing.T) 
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusNotFound, w.Code, "method=%s path=%s", tc.method, tc.path)
 		require.Contains(t, w.Body.String(), "not supported for this platform", "method=%s path=%s", tc.method, tc.path)
+	}
+}
+
+func TestGatewayRoutesDeepSeekAllowsResponsesWebSocketEntrypoints(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformDeepSeek)
+
+	for _, path := range []string{
+		"/v1/responses",
+		"/responses",
+		"/backend-api/codex/responses",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusUpgradeRequired, w.Code, "path=%s must reach the WebSocket handler", path)
+		require.NotContains(t, w.Body.String(), "not supported for this platform", "path=%s", path)
 	}
 }
 

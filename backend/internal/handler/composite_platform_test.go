@@ -11,6 +11,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type responsesWSCompositeRouteRepoStub struct {
+	service.CompositeModelRouteRepository
+	routes []service.CompositeModelRoute
+}
+
+func (s *responsesWSCompositeRouteRepoStub) ListByGroup(context.Context, int64, bool) ([]service.CompositeModelRoute, error) {
+	return append([]service.CompositeModelRoute(nil), s.routes...), nil
+}
+
+func TestResolveResponsesWebSocketTargetUsesExplicitCompositeRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/backend-api/codex/responses", nil)
+	apiKey := &service.APIKey{Group: &service.Group{ID: 42, Platform: service.PlatformComposite}}
+	resolver := service.NewCompositeRouteResolver(&responsesWSCompositeRouteRepoStub{routes: []service.CompositeModelRoute{{
+		ID:             1,
+		GroupID:        42,
+		PublicModel:    "company-coding-model",
+		MatchType:      service.CompositeRouteMatchExact,
+		TargetPlatform: service.PlatformDeepSeek,
+		UpstreamModel:  "deepseek-v4-pro",
+		Endpoint:       service.CompositeRouteEndpointResponses,
+		Enabled:        true,
+	}}})
+	AttachResponsesWebSocketCompositeResolver(c, resolver)
+
+	decision, platform, err := resolveResponsesWebSocketTarget(c, apiKey, c.Request.Context(), "company-coding-model")
+
+	require.NoError(t, err)
+	require.Equal(t, service.PlatformDeepSeek, platform)
+	require.Equal(t, "deepseek-v4-pro", decision.UpstreamModel)
+	resolved, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context())
+	require.True(t, ok)
+	require.Equal(t, service.PlatformDeepSeek, resolved)
+}
+
 func TestCompositeTargetPlatformAllowedResolvesKnownAllowedModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

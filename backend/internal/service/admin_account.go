@@ -905,16 +905,33 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 			return err
 		}
 	}
-	if _, exists := updates[DeepSeekUserIsolationModeKey]; exists {
+	_, hasDeepSeekUserIsolationUpdate := updates[DeepSeekUserIsolationModeKey]
+	_, hasDeepSeekWebSocketModeUpdate := updates[DeepSeekResponsesWebSocketModeKey]
+	if hasDeepSeekUserIsolationUpdate || hasDeepSeekWebSocketModeUpdate {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
 			return err
 		}
-		normalized, err := normalizeDeepSeekAccountExtra(account.Platform, updates, account.ResolveDeepSeekUserIsolationMode())
-		if err != nil {
-			return err
+		if account.Platform != PlatformDeepSeek {
+			if hasDeepSeekUserIsolationUpdate {
+				return infraerrors.BadRequest("DEEPSEEK_USER_ISOLATION_PLATFORM_INVALID", "DeepSeek user isolation mode is only valid for DeepSeek accounts")
+			}
+			return infraerrors.BadRequest("DEEPSEEK_RESPONSES_WEBSOCKET_MODE_PLATFORM_INVALID", "DeepSeek Responses WebSocket mode is only valid for DeepSeek accounts")
 		}
-		updates = normalized
+		if hasDeepSeekUserIsolationUpdate {
+			normalizedMode, err := normalizeDeepSeekUserIsolationMode(updates[DeepSeekUserIsolationModeKey])
+			if err != nil {
+				return err
+			}
+			updates[DeepSeekUserIsolationModeKey] = normalizedMode
+		}
+		if hasDeepSeekWebSocketModeUpdate {
+			normalizedMode, err := normalizeDeepSeekResponsesWebSocketMode(updates[DeepSeekResponsesWebSocketModeKey])
+			if err != nil {
+				return err
+			}
+			updates[DeepSeekResponsesWebSocketModeKey] = normalizedMode
+		}
 	}
 	if len(updates) == 0 {
 		return nil
@@ -959,10 +976,12 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 	_, hasLongContextBillingUpdate := input.Extra[openAILongContextBillingEnabledKey]
 	_, hasDeepSeekUserIsolationUpdate := input.Extra[DeepSeekUserIsolationModeKey]
+	_, hasDeepSeekWebSocketModeUpdate := input.Extra[DeepSeekResponsesWebSocketModeKey]
+	hasDeepSeekExtraUpdate := hasDeepSeekUserIsolationUpdate || hasDeepSeekWebSocketModeUpdate
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || hasLongContextBillingUpdate || hasDeepSeekUserIsolationUpdate || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || hasLongContextBillingUpdate || hasDeepSeekExtraUpdate || input.ProbeEnabled != nil || input.RateMultiplier != nil {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -997,20 +1016,32 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			break
 		}
 	}
-	if hasDeepSeekUserIsolationUpdate {
+	if hasDeepSeekExtraUpdate {
 		for _, account := range cachedTargets {
 			if account == nil {
 				continue
 			}
 			if account.Platform != PlatformDeepSeek {
-				return nil, infraerrors.BadRequest("DEEPSEEK_USER_ISOLATION_PLATFORM_INVALID", "DeepSeek user isolation mode can only be bulk-updated on DeepSeek accounts")
+				if hasDeepSeekUserIsolationUpdate {
+					return nil, infraerrors.BadRequest("DEEPSEEK_USER_ISOLATION_PLATFORM_INVALID", "DeepSeek user isolation mode can only be bulk-updated on DeepSeek accounts")
+				}
+				return nil, infraerrors.BadRequest("DEEPSEEK_RESPONSES_WEBSOCKET_MODE_PLATFORM_INVALID", "DeepSeek Responses WebSocket mode can only be bulk-updated on DeepSeek accounts")
 			}
 		}
+	}
+	if hasDeepSeekUserIsolationUpdate {
 		normalizedMode, err := normalizeDeepSeekUserIsolationMode(input.Extra[DeepSeekUserIsolationModeKey])
 		if err != nil {
 			return nil, err
 		}
 		input.Extra[DeepSeekUserIsolationModeKey] = normalizedMode
+	}
+	if hasDeepSeekWebSocketModeUpdate {
+		normalizedMode, err := normalizeDeepSeekResponsesWebSocketMode(input.Extra[DeepSeekResponsesWebSocketModeKey])
+		if err != nil {
+			return nil, err
+		}
+		input.Extra[DeepSeekResponsesWebSocketModeKey] = normalizedMode
 	}
 
 	// 影子账号绝不持有凭据:批量更新携带凭据时,目标中不得含影子(外审 G5,与单账号

@@ -117,6 +117,10 @@ type Group struct {
 	// ReasoningEffortMappings rewrites explicit request values before applying the ceiling.
 	ReasoningEffortMappings []ReasoningEffortMapping
 
+	// CodexSupportsWebSockets is a runtime-only capability exposed to user clients.
+	// It is derived from current gateway configuration and schedulable accounts.
+	CodexSupportsWebSockets bool
+
 	// 分组利润控制（五个 token 计费平台可启用）。
 	// 调度准入条件：账号倍率 U 满足 U <= D*(1-margin-buffer)，
 	// D 为请求用户当刻有效下游倍率（用户覆盖 ?? 分组默认，再乘高峰因子）。
