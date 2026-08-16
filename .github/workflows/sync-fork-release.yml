@@ -81,6 +81,12 @@ jobs:
                   break
 
           version = os.environ["VERSION"]
+          fork_notes_path = Path(f".github/release-notes/v{version}.md")
+          if fork_notes_path.is_file():
+              fork_notes = fork_notes_path.read_text(encoding="utf-8").strip()
+              if fork_notes:
+                  body = f"{body}\n\n---\n\n{fork_notes}"
+
           images = "\n".join([
               "## Docker 镜像（ziyue67/sub2api）",
               "",
