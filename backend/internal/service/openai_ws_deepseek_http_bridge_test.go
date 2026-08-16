@@ -525,34 +525,61 @@ func TestForwardDeepSeekResponsesWebSocketTurnFailsClosedOnInterleavedCredential
 	ctx := context.WithValue(context.Background(), ctxkey.UserID, int64(73))
 	account := deepSeekWSTestAccount()
 	secret := account.GetDeepSeekAPIKey()
-	makeDelta := func(itemID, delta string) string {
+	makeDelta := func(eventType, itemID string, contentIndex int, delta string) string {
 		body, err := json.Marshal(map[string]any{
-			"type": "response.output_text.delta", "item_id": itemID, "output_index": 0, "content_index": 0, "delta": delta,
+			"type": eventType, "item_id": itemID, "output_index": 0, "content_index": contentIndex, "summary_index": 0, "delta": delta,
 		})
 		require.NoError(t, err)
 		return "data: " + string(body) + "\n\n"
 	}
-	sse := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_interleaved_secret\"}}\n\n" +
-		makeDelta("msg_a", secret[:1]) +
-		makeDelta("msg_b", "benign interleaving") +
-		makeDelta("msg_a", secret[1:])
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(sse)),
-	}}
-	svc := &OpenAIGatewayService{cfg: deepSeekWSTestConfig(), httpUpstream: upstream}
-	var writes [][]byte
-	result, err := svc.ForwardDeepSeekResponsesWebSocketTurn(ctx, newDeepSeekWSTestGinContext(ctx), account, secret, []byte(`{"model":"deepseek-v4","input":"hello"}`), 1, func(event []byte) error {
-		writes = append(writes, append([]byte(nil), event...))
-		return nil
-	})
+	tests := []struct {
+		name   string
+		first  string
+		middle string
+		last   string
+	}{
+		{
+			name:   "different items",
+			first:  makeDelta("response.output_text.delta", "msg_a", 0, secret[:1]),
+			middle: makeDelta("response.output_text.delta", "msg_b", 0, "benign interleaving"),
+			last:   makeDelta("response.output_text.delta", "msg_a", 0, secret[1:]),
+		},
+		{
+			name:   "same item different content indexes",
+			first:  makeDelta("response.output_text.delta", "msg_shared", 0, secret[:1]),
+			middle: makeDelta("response.output_text.delta", "msg_shared", 1, "benign interleaving"),
+			last:   makeDelta("response.output_text.delta", "msg_shared", 0, secret[1:]),
+		},
+		{
+			name:   "same item and indexes different event families",
+			first:  makeDelta("response.output_text.delta", "msg_shared", 0, secret[:1]),
+			middle: makeDelta("response.reasoning_text.delta", "msg_shared", 0, "benign interleaving"),
+			last:   makeDelta("response.output_text.delta", "msg_shared", 0, secret[1:]),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sse := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_interleaved_secret\"}}\n\n" +
+				tt.first + tt.middle + tt.last
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(sse)),
+			}}
+			svc := &OpenAIGatewayService{cfg: deepSeekWSTestConfig(), httpUpstream: upstream}
+			var writes [][]byte
+			result, err := svc.ForwardDeepSeekResponsesWebSocketTurn(ctx, newDeepSeekWSTestGinContext(ctx), account, secret, []byte(`{"model":"deepseek-v4","input":"hello"}`), 1, func(event []byte) error {
+				writes = append(writes, append([]byte(nil), event...))
+				return nil
+			})
 
-	require.ErrorIs(t, err, errDeepSeekWSSensitiveDelta)
-	require.NotNil(t, result)
-	require.NotContains(t, string(bytes.Join(writes, nil)), secret)
-	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
+			require.ErrorIs(t, err, errDeepSeekWSSensitiveDelta)
+			require.NotNil(t, result)
+			require.NotContains(t, string(bytes.Join(writes, nil)), secret)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(err, &failoverErr))
+		})
+	}
 }
 
 func TestDeepSeekWSSensitiveDeltaGuardDetectsOverlappingPrefix(t *testing.T) {

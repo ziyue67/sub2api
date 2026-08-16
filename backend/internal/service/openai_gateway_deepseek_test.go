@@ -306,6 +306,72 @@ func TestForwardDeepSeekResponsesStreamPreservesRawWireAndCompletesWithoutDone(t
 	require.NotContains(t, recorder.Body.String(), "sessions_resume")
 }
 
+func TestForwardDeepSeekResponsesStreamParsesMultilineDataAtEventBoundary(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-v4-pro","input":"hello","stream":true}`)
+	upstreamSSE := "event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\n" +
+		"data: \"response\":{\"id\":\"resp_multiline\",\"model\":\"deepseek-v4-pro\",\n" +
+		"data: \"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":3}}}\n\n"
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamSSE)),
+	}}
+	svc := &OpenAIGatewayService{cfg: deepSeekForwardTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.Forward(context.Background(), c, deepSeekForwardTestAccount(), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "response.completed", result.UpstreamTerminalEvent)
+	require.Equal(t, "resp_multiline", result.ResponseID)
+	require.Equal(t, "deepseek-v4-pro", result.UpstreamResponseModel)
+	require.Equal(t, 8, result.Usage.InputTokens)
+	require.Equal(t, 3, result.Usage.OutputTokens)
+	require.Equal(t, upstreamSSE, recorder.Body.String(), "multiline SSE framing must remain byte-for-byte opaque")
+}
+
+func TestForwardDeepSeekResponsesStreamRedactsMetadataBeforeObservationAndBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-v4-pro","input":"hello","stream":true}`)
+	account := deepSeekForwardTestAccount()
+	secret := account.GetDeepSeekAPIKey()
+	rawResponseID := "resp-" + secret
+	rawModel := "model-" + secret
+	upstreamSSE := "event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"" + rawResponseID + "\",\"model\":\"" + rawModel + "\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamSSE)),
+	}}
+	svc := &OpenAIGatewayService{cfg: deepSeekForwardTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.Forward(context.Background(), c, account, body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, "resp-"+deepSeekCredentialRedaction, result.ResponseID)
+	require.Equal(t, "model-"+deepSeekCredentialRedaction, result.UpstreamResponseModel)
+	require.NotContains(t, result.ResponseID, secret)
+	require.NotContains(t, result.UpstreamResponseModel, secret)
+	require.NotContains(t, observedUpstreamResponseModel(c), secret)
+	require.NotContains(t, recorder.Body.String(), secret)
+
+	store := svc.getOpenAIWSStateStore()
+	boundAccountID, err := store.GetResponseAccount(context.Background(), 0, result.ResponseID)
+	require.NoError(t, err)
+	require.Equal(t, account.ID, boundAccountID)
+	rawAccountID, err := store.GetResponseAccount(context.Background(), 0, rawResponseID)
+	require.NoError(t, err)
+	require.Zero(t, rawAccountID, "the raw credential-bearing response ID must never reach sticky state")
+}
+
 func TestForwardDeepSeekResponsesStreamRejectsBareDone(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"deepseek-v4-flash","input":"hello","stream":true}`)
@@ -346,6 +412,7 @@ func TestForwardDeepSeekResponsesStreamRejectsTerminalDataBeforeBlankDispatch(t 
 	require.Error(t, err)
 	require.NotNil(t, result)
 	require.Empty(t, result.UpstreamTerminalEvent)
+	require.Equal(t, "resp_half", result.ResponseID)
 	require.Equal(t, 4, result.Usage.InputTokens)
 	require.Equal(t, 2, result.Usage.OutputTokens)
 	require.Equal(t, upstreamSSE, recorder.Body.String())

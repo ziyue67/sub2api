@@ -32,6 +32,7 @@ type deepSeekSSESensitiveFragment struct {
 type deepSeekSSESensitiveEventAnalysis struct {
 	fragments       []deepSeekSSESensitiveFragment
 	endStreamPrefix []string
+	endStreamExact  []string
 	terminal        bool
 }
 
@@ -157,6 +158,9 @@ func (g *deepSeekSSESensitiveEventGuard) finishCurrentEvent(emit func([]byte) er
 	for _, prefix := range analysis.endStreamPrefix {
 		g.endStreams(prefix)
 	}
+	for _, streamKey := range analysis.endStreamExact {
+		g.endStream(streamKey)
+	}
 
 	if hadPending || g.hasPendingPrefix() {
 		if err := g.appendPending(event); err != nil {
@@ -249,6 +253,14 @@ func (g *deepSeekSSESensitiveEventGuard) endStreams(prefix string) {
 		}
 	}
 	if strings.HasPrefix(g.prefixStream, prefix) {
+		g.prefix = ""
+		g.prefixStream = ""
+	}
+}
+
+func (g *deepSeekSSESensitiveEventGuard) endStream(streamKey string) {
+	delete(g.streamPrefixes, streamKey)
+	if g.prefixStream == streamKey {
 		g.prefix = ""
 		g.prefixStream = ""
 	}
@@ -404,14 +416,18 @@ func analyzeDeepSeekChatSSESensitiveEvent(payload string) deepSeekSSESensitiveEv
 }
 
 func deepSeekResponsesSSESensitiveStreamKey(eventType string, payload []byte) string {
-	if itemID := strings.TrimSpace(gjson.GetBytes(payload, "item_id").String()); itemID != "" {
-		return "responses:item:" + itemID
+	itemID := strings.TrimSpace(gjson.GetBytes(payload, "item_id").String())
+	if itemID == "" {
+		itemID = strings.TrimSpace(gjson.GetBytes(payload, "item.id").String())
 	}
-	if itemID := strings.TrimSpace(gjson.GetBytes(payload, "item.id").String()); itemID != "" {
-		return "responses:item:" + itemID
+	identityKind := "item"
+	identity := itemID
+	if identity == "" {
+		identityKind = "call"
+		identity = strings.TrimSpace(gjson.GetBytes(payload, "call_id").String())
 	}
-	if callID := strings.TrimSpace(gjson.GetBytes(payload, "call_id").String()); callID != "" {
-		return "responses:call:" + callID
+	if identity == "" {
+		identityKind = "none"
 	}
 	index := func(path string) string {
 		value := gjson.GetBytes(payload, path)
@@ -420,13 +436,16 @@ func deepSeekResponsesSSESensitiveStreamKey(eventType string, payload []byte) st
 		}
 		return value.Raw
 	}
-	return strings.Join([]string{
-		"responses",
-		strings.TrimSuffix(strings.TrimSuffix(eventType, ".delta"), ".done"),
+	family := strings.TrimSuffix(strings.TrimSuffix(eventType, ".delta"), ".done")
+	return fmt.Sprintf(
+		"responses|family:%q|identity-kind:%q|identity:%q|output:%q|content:%q|summary:%q",
+		family,
+		identityKind,
+		identity,
 		index("output_index"),
 		index("content_index"),
 		index("summary_index"),
-	}, "|")
+	)
 }
 
 func analyzeDeepSeekResponsesSSESensitiveEvent(eventName, payload string) deepSeekSSESensitiveEventAnalysis {
@@ -446,7 +465,7 @@ func analyzeDeepSeekResponsesSSESensitiveEvent(eventName, payload string) deepSe
 		}
 	}
 	if strings.HasSuffix(eventType, ".done") {
-		analysis.endStreamPrefix = append(analysis.endStreamPrefix, streamKey)
+		analysis.endStreamExact = append(analysis.endStreamExact, streamKey)
 	}
 	analysis.terminal = openAIStreamEventTypeIsTerminal(eventType)
 	return analysis

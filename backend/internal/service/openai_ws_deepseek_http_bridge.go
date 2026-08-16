@@ -847,28 +847,7 @@ func deepSeekWSLongestDerivedIDPrefixSuffix(value string) string {
 }
 
 func deepSeekWSSensitiveStreamKey(eventType string, message []byte) string {
-	if itemID := strings.TrimSpace(gjson.GetBytes(message, "item_id").String()); itemID != "" {
-		return "item:" + itemID
-	}
-	if itemID := strings.TrimSpace(gjson.GetBytes(message, "item.id").String()); itemID != "" {
-		return "item:" + itemID
-	}
-	if callID := strings.TrimSpace(gjson.GetBytes(message, "call_id").String()); callID != "" {
-		return "call:" + callID
-	}
-	index := func(path string) string {
-		value := gjson.GetBytes(message, path)
-		if !value.Exists() || value.Int() == 0 {
-			return "0"
-		}
-		return value.Raw
-	}
-	return strings.Join([]string{
-		strings.TrimSuffix(strings.TrimSuffix(eventType, ".delta"), ".done"),
-		index("output_index"),
-		index("content_index"),
-		index("summary_index"),
-	}, "|")
+	return deepSeekResponsesSSESensitiveStreamKey(eventType, message)
 }
 
 func (g *deepSeekWSSensitiveDeltaGuard) advancePrefix(prefix, delta string) (string, error) {

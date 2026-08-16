@@ -84,6 +84,29 @@ func deepSeekSSEGuardDeltaEvent(
 	}
 }
 
+func deepSeekSSEGuardResponsesEvent(
+	t *testing.T,
+	eventType string,
+	itemID string,
+	outputIndex int,
+	contentIndex int,
+	summaryIndex int,
+	delta string,
+) string {
+	t.Helper()
+	payload := map[string]any{
+		"type":          eventType,
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"content_index": contentIndex,
+		"summary_index": summaryIndex,
+	}
+	if strings.HasSuffix(eventType, ".delta") {
+		payload["delta"] = delta
+	}
+	return "event: " + eventType + "\ndata: " + deepSeekSSEGuardJSON(t, payload) + "\n\n"
+}
+
 func deepSeekSSEGuardTerminal(t *testing.T, protocol deepSeekSSESensitiveProtocol) string {
 	t.Helper()
 	switch protocol {
@@ -206,6 +229,98 @@ func TestDeepSeekHTTPSSESensitiveGuardRejectsSplitSecretsAcrossNativeProtocols(t
 			require.NotContains(t, output, deepSeekSSEGuardTestAPIKey[:split])
 		})
 	}
+}
+
+func TestDeepSeekHTTPResponsesSSESensitiveGuardKeepsStreamsDistinct(t *testing.T) {
+	split := len(deepSeekSSEGuardTestAPIKey) / 2
+	first := deepSeekSSEGuardTestAPIKey[:split]
+	second := deepSeekSSEGuardTestAPIKey[split:]
+	tests := []struct {
+		name       string
+		streamItem string
+		middle     string
+	}{
+		{
+			name:       "same item different content index",
+			streamItem: "item_shared",
+			middle: deepSeekSSEGuardResponsesEvent(
+				t, "response.output_text.delta", "item_shared", 0, 1, 0, "benign interleaving",
+			),
+		},
+		{
+			name:       "same item and indexes different event family",
+			streamItem: "item_shared",
+			middle: deepSeekSSEGuardResponsesEvent(
+				t, "response.reasoning_text.delta", "item_shared", 0, 0, 0, "benign interleaving",
+			),
+		},
+		{
+			name:       "done item id is not a prefix match",
+			streamItem: "item_10",
+			middle: deepSeekSSEGuardResponsesEvent(
+				t, "response.output_text.delta", "item_1", 0, 0, 0, "benign interleaving",
+			) + deepSeekSSEGuardResponsesEvent(
+				t, "response.output_text.done", "item_1", 0, 0, 0, "",
+			),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wire := deepSeekSSEGuardResponsesEvent(
+				t, "response.output_text.delta", tt.streamItem, 0, 0, 0, first,
+			) + tt.middle + deepSeekSSEGuardResponsesEvent(
+				t, "response.output_text.delta", tt.streamItem, 0, 0, 0, second,
+			) + deepSeekSSEGuardTerminal(t, deepSeekSSESensitiveProtocolResponses)
+
+			output, err := runDeepSeekSSEGuardProtocol(t, deepSeekSSESensitiveProtocolResponses, wire)
+			require.ErrorIs(t, err, errDeepSeekSSESensitiveData)
+			require.NotContains(t, output, deepSeekSSEGuardTestAPIKey)
+			require.NotContains(t, output, first)
+		})
+	}
+}
+
+func TestDeepSeekResponsesSensitiveStreamKeyIncludesIdentityFamilyAndIndexes(t *testing.T) {
+	base := map[string]any{
+		"item_id":       "item_1",
+		"output_index":  0,
+		"content_index": 0,
+		"summary_index": 0,
+	}
+	key := func(eventType string, overrides map[string]any) string {
+		payload := make(map[string]any, len(base))
+		for name, value := range base {
+			payload[name] = value
+		}
+		for name, value := range overrides {
+			payload[name] = value
+		}
+		return deepSeekResponsesSSESensitiveStreamKey(eventType, []byte(deepSeekSSEGuardJSON(t, payload)))
+	}
+
+	baseline := key("response.output_text.delta", nil)
+	for _, tt := range []struct {
+		name      string
+		eventType string
+		overrides map[string]any
+	}{
+		{name: "family", eventType: "response.reasoning_text.delta"},
+		{name: "item id", eventType: "response.output_text.delta", overrides: map[string]any{"item_id": "item_2"}},
+		{name: "call id fallback", eventType: "response.output_text.delta", overrides: map[string]any{"item_id": "", "call_id": "call_1"}},
+		{name: "output index", eventType: "response.output_text.delta", overrides: map[string]any{"output_index": 1}},
+		{name: "content index", eventType: "response.output_text.delta", overrides: map[string]any{"content_index": 1}},
+		{name: "summary index", eventType: "response.output_text.delta", overrides: map[string]any{"summary_index": 1}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotEqual(t, baseline, key(tt.eventType, tt.overrides))
+		})
+	}
+	require.Equal(
+		t,
+		baseline,
+		key("response.output_text.done", nil),
+		"matching delta and done events must address the same stream",
+	)
 }
 
 func TestDeepSeekHTTPSSESensitiveGuardPreservesSafeStreamingSemantics(t *testing.T) {

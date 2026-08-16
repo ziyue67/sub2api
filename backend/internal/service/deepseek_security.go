@@ -361,14 +361,12 @@ func deepSeekJSONStringEnd(body []byte, start int) int {
 }
 
 func redactDeepSeekPlainText(body []byte, apiKey string) []byte {
-	redacted := bytes.ReplaceAll(body, []byte(apiKey), []byte(deepSeekCredentialRedaction))
-	if encoded, err := json.Marshal(apiKey); err == nil && len(encoded) >= 2 {
-		escaped := encoded[1 : len(encoded)-1]
-		if !bytes.Equal(escaped, []byte(apiKey)) {
-			redacted = bytes.ReplaceAll(redacted, escaped, []byte(deepSeekCredentialRedaction))
-		}
+	value := string(body)
+	redacted := redactDeepSeekHeaderValue(value, apiKey)
+	if redacted == value {
+		return body
 	}
-	return redacted
+	return []byte(redacted)
 }
 
 func redactDeepSeekSSE(body []byte, apiKey string) ([]byte, bool) {

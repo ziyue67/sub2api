@@ -392,6 +392,50 @@ func TestRedactDeepSeekAPIKeyHandlesArbitraryJSONEscapesWithoutBreakingWire(t *t
 	require.Contains(t, gjson.GetBytes(redacted, "message").String(), deepSeekCredentialRedaction)
 }
 
+func TestRedactDeepSeekAPIKeyHandlesArbitraryEscapesInPlainText(t *testing.T) {
+	derivedUserID := deepSeekUserIDPrefix + strings.Repeat("A", deepSeekUserIDEncodedDigestBytes)
+	escapedDerivedUserID := strings.ReplaceAll(derivedUserID, "_", `\u005F`)
+
+	tests := []struct {
+		name   string
+		apiKey string
+		body   string
+		want   string
+	}{
+		{
+			name:   "malformed json with lowercase unicode escape",
+			apiKey: "sk-secret",
+			body:   `{"error":"credential sk-\u0073ecret`,
+			want:   `{"error":"credential ` + deepSeekCredentialRedaction,
+		},
+		{
+			name:   "plain text with uppercase unicode escape",
+			apiKey: "sk-zed",
+			body:   `proxy rejected credential sk-\u007Aed`,
+			want:   `proxy rejected credential ` + deepSeekCredentialRedaction,
+		},
+		{
+			name:   "plain text with escaped derived user id",
+			apiKey: deepSeekSecurityCanaryKey,
+			body:   "proxy echoed identity " + escapedDerivedUserID,
+			want:   "proxy echoed identity " + deepSeekCredentialRedaction,
+		},
+		{
+			name:   "benign escape and short identity placeholder",
+			apiKey: "sk-secret",
+			body:   `proxy said sk-\u0074est and dsu\u005fv1\u005fshort`,
+			want:   `proxy said sk-\u0074est and dsu\u005fv1\u005fshort`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := redactDeepSeekAPIKey(deepSeekSecurityTestAccount(tt.apiKey), []byte(tt.body))
+			require.Equal(t, tt.want, string(got))
+		})
+	}
+}
+
 func TestRedactDeepSeekAPIKeyPreservesSSEFramingWithEscapedJSON(t *testing.T) {
 	account := deepSeekSecurityTestAccount("sk-secret")
 	wire := "event: response.failed\r\n" +

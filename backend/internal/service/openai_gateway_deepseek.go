@@ -205,8 +205,8 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 	var firstTokenMs *int
 	responseID := ""
 	terminalEvent := ""
-	pendingTerminalEvent := ""
 	currentEventType := ""
+	currentEventData := make([]string, 0, 1)
 	clientDisconnected := false
 	clientOutputStarted := false
 	pendingLine := make([]byte, 0, 64*1024)
@@ -226,17 +226,41 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 			clientDisconnect: clientDisconnected,
 		}
 	}
-	processLine := func(rawLine []byte) bool {
+	processEvent := func(commitTerminal bool) bool {
+		data := strings.Join(currentEventData, "\n")
+		currentEventData = currentEventData[:0]
+		eventType := currentEventType
+		currentEventType = ""
+		payload := strings.TrimSpace(data)
+		if payload == "" || payload == "[DONE]" {
+			return false
+		}
+		dataBytes := redactDeepSeekAPIKey(account, []byte(data))
+		if payloadType := strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String()); payloadType != "" {
+			eventType = payloadType
+		}
+		observer.ObserveOpenAI(dataBytes, eventType)
+		s.parseSSEUsageBytes(dataBytes, usage)
+		if responseID == "" {
+			responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
+		}
+		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(strings.TrimSpace(string(dataBytes)), eventType) {
+			ms := int(time.Since(startTime).Milliseconds())
+			firstTokenMs = &ms
+		}
+		if openAIStreamEventTypeIsTerminal(eventType) {
+			if commitTerminal {
+				terminalEvent = eventType
+				return true
+			}
+		}
+		return false
+	}
+	collectLine := func(rawLine []byte) bool {
 		line := bytes.TrimSuffix(rawLine, []byte{'\r'})
 		trimmed := strings.TrimSpace(string(line))
 		if trimmed == "" {
-			atTerminalBoundary := pendingTerminalEvent != ""
-			if atTerminalBoundary {
-				terminalEvent = pendingTerminalEvent
-			}
-			pendingTerminalEvent = ""
-			currentEventType = ""
-			return atTerminalBoundary
+			return true
 		}
 		if strings.HasPrefix(trimmed, "event:") {
 			currentEventType = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
@@ -246,27 +270,7 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 		if !ok {
 			return false
 		}
-		payload := strings.TrimSpace(data)
-		if payload == "" || payload == "[DONE]" {
-			return false
-		}
-		dataBytes := []byte(data)
-		eventType := strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
-		if eventType == "" {
-			eventType = currentEventType
-		}
-		observer.ObserveOpenAI(dataBytes, eventType)
-		s.parseSSEUsageBytes(dataBytes, usage)
-		if responseID == "" {
-			responseID = extractOpenAIResponseIDFromJSONBytes(dataBytes)
-		}
-		if firstTokenMs == nil && openAIStreamDataStartsVisibleOutput(payload, eventType) {
-			ms := int(time.Since(startTime).Milliseconds())
-			firstTokenMs = &ms
-		}
-		if openAIStreamEventTypeIsTerminal(eventType) {
-			pendingTerminalEvent = eventType
-		}
+		currentEventData = append(currentEventData, data)
 		return false
 	}
 	missingTerminal := func(readErr error) (*deepSeekResponsesRelayResult, error) {
@@ -316,14 +320,14 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 				wireLine := pendingLine[:newline+1]
 				line := wireLine[:newline]
 				pendingLine = pendingLine[newline+1:]
-				atTerminalBoundary := processLine(line)
+				atEventBoundary := collectLine(line)
 				if guardErr := sensitiveGuard.PushWireLine(wireLine, func(safeWire []byte) error {
 					writeWire(safeWire)
 					return nil
 				}); guardErr != nil {
 					return result(), guardErr
 				}
-				if atTerminalBoundary {
+				if atEventBoundary && processEvent(true) {
 					return finishTerminal()
 				}
 			}
@@ -333,13 +337,16 @@ func (s *OpenAIGatewayService) handleDeepSeekResponsesStream(
 		}
 		if readErr != nil {
 			if len(pendingLine) > 0 {
-				_ = processLine(pendingLine)
+				_ = collectLine(pendingLine)
 				if guardErr := sensitiveGuard.PushWireLine(pendingLine, func(safeWire []byte) error {
 					writeWire(safeWire)
 					return nil
 				}); guardErr != nil {
 					return result(), guardErr
 				}
+			}
+			if len(currentEventData) > 0 {
+				_ = processEvent(false)
 			}
 			if guardErr := sensitiveGuard.Finish(func(safeWire []byte) error {
 				writeWire(safeWire)
