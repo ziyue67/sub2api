@@ -42,13 +42,12 @@ type openAIRecordUsageBillingRepoStub struct {
 type openAIRecordUsageAccountRepoStub struct {
 	AccountRepository
 	account *Account
-	err     error
 	calls   int
 }
 
 func (s *openAIRecordUsageAccountRepoStub) GetByID(_ context.Context, _ int64) (*Account, error) {
 	s.calls++
-	return s.account, s.err
+	return s.account, nil
 }
 
 func (s *openAIRecordUsageBillingRepoStub) Apply(ctx context.Context, cmd *UsageBillingCommand) (*UsageBillingApplyResult, error) {

@@ -42,19 +42,8 @@ func newUserGroupRateResolver(repo UserGroupRateRepository, cache *gocache.Cache
 }
 
 func (r *userGroupRateResolver) Resolve(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) float64 {
-	multiplier, err := r.ResolveStrict(ctx, userID, groupID, groupDefaultMultiplier)
-	if err != nil {
-		userGroupRateCacheFallbackTotal.Add(1)
-		logger.LegacyPrintf(r.logComponent, "get user group rate failed, fallback to group default: user=%d group=%d err=%v", userID, groupID, err)
-		return groupDefaultMultiplier
-	}
-	return multiplier
-}
-
-// ResolveStrict 返回用户实际倍率；repository 读取失败时不回退，供风险估价避免低估。
-func (r *userGroupRateResolver) ResolveStrict(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) (float64, error) {
 	if r == nil || userID <= 0 || groupID <= 0 {
-		return groupDefaultMultiplier, nil
+		return groupDefaultMultiplier
 	}
 
 	key := fmt.Sprintf("%d:%d", userID, groupID)
@@ -62,12 +51,12 @@ func (r *userGroupRateResolver) ResolveStrict(ctx context.Context, userID, group
 		if cached, ok := r.cache.Get(key); ok {
 			if multiplier, castOK := cached.(float64); castOK {
 				userGroupRateCacheHitTotal.Add(1)
-				return multiplier, nil
+				return multiplier
 			}
 		}
 	}
 	if r.repo == nil {
-		return groupDefaultMultiplier, nil
+		return groupDefaultMultiplier
 	}
 	userGroupRateCacheMissTotal.Add(1)
 
@@ -100,12 +89,15 @@ func (r *userGroupRateResolver) ResolveStrict(ctx context.Context, userID, group
 		userGroupRateCacheSFSharedTotal.Add(1)
 	}
 	if err != nil {
-		return 0, err
+		userGroupRateCacheFallbackTotal.Add(1)
+		logger.LegacyPrintf(r.logComponent, "get user group rate failed, fallback to group default: user=%d group=%d err=%v", userID, groupID, err)
+		return groupDefaultMultiplier
 	}
 
 	multiplier, ok := value.(float64)
 	if !ok {
-		return 0, fmt.Errorf("invalid user group rate cache value: %T", value)
+		userGroupRateCacheFallbackTotal.Add(1)
+		return groupDefaultMultiplier
 	}
-	return multiplier, nil
+	return multiplier
 }

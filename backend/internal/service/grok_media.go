@@ -339,8 +339,7 @@ type GrokVideoPendingBilling struct {
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),
 	// not the latency of that single discovery request alone.
-	CreatedAt  string                     `json:"created_at,omitempty"`
-	RiskPermit *BillingRiskPermitSnapshot `json:"risk_permit,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
 }
 
 // GrokVideoPendingCreatedAtNow formats a create-accept timestamp for pending billing.
@@ -524,16 +523,6 @@ func IsGrokVideoStatusBillable(statusBody []byte) bool {
 func isOfficialGrokVideoStatusDone(statusBody []byte) bool {
 	// Official enum: pending | done | expired | failed.
 	return strings.EqualFold(strings.TrimSpace(gjson.GetBytes(statusBody, "status").String()), "done")
-}
-
-// IsGrokVideoTerminalStatus 仅匹配官方明确失败终态，用于提前释放在途风险租约。
-func IsGrokVideoTerminalStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "expired":
-		return true
-	default:
-		return false
-	}
 }
 
 // ExtractGrokVideoBillingFromStatusBody builds usage units from an official done status.
@@ -756,7 +745,6 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 		ImageOutputSizes:     usage.ImageOutputSizes,
 		VideoCount:           usage.VideoCount,
 		VideoResolution:      usage.VideoResolution,
-		VideoStatus:          usage.VideoStatus,
 		VideoDurationSeconds: usage.VideoDurationSeconds,
 	}, nil
 }
@@ -1165,7 +1153,6 @@ type grokMediaUsageMetadata struct {
 	ImageOutputSizes     []string
 	VideoCount           int
 	VideoResolution      string
-	VideoStatus          string
 	VideoDurationSeconds int
 }
 
@@ -1185,7 +1172,6 @@ func grokMediaUsageFromResponse(endpoint GrokMediaEndpoint, requestInfo GrokMedi
 		meta.VideoResolution = requestInfo.Resolution
 		meta.VideoDurationSeconds = requestInfo.DurationSeconds
 	case GrokMediaEndpointVideoStatus:
-		meta.VideoStatus = strings.ToLower(strings.TrimSpace(gjson.GetBytes(responseBody, "status").String()))
 		// Prefer status-body URL success + upstream duration/resolution when present.
 		if IsGrokVideoStatusBillable(responseBody) {
 			// provisional units; handler merges with pending snapshot before RecordUsage.

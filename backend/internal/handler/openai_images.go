@@ -142,22 +142,6 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
-	riskLease, err := acquireBillingRiskLease(c.Request.Context(), h.billingRiskAdmission, billingRiskAdmissionInputForMapping(service.BillingRiskAdmissionInput{
-		APIKey:       apiKey,
-		Subscription: subscription,
-		Kind:         service.BillingRiskRequestSyncImage,
-		RequestCount: parsed.N,
-		SizeTier:     parsed.SizeTier,
-		PricingAt:    requestStart,
-	}, channelMapping, routingModel))
-	if err != nil {
-		status, code, message := billingRiskErrorDetails(err)
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
-	}
-	if riskLease != nil {
-		defer riskLease.Close(c.Request.Context())
-	}
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 	requestCtx := service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
@@ -401,10 +385,8 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		if result != nil {
 			upstreamModel = result.UpstreamModel
 		}
-		channelUsageFields := clientRequestedUsageFields(c, channelMapping, requestModel, upstreamModel)
 		sessionID := service.ExtractClientSessionID(c)
-		riskPermit := riskLease.Handoff()
-		h.submitBillingRiskUsageRecordTask(c.Request.Context(), riskPermit, result, func(ctx context.Context) {
+		h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,
@@ -419,9 +401,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				APIKeyService:      h.apiKeyService,
 				QuotaPlatform:      quotaPlatform,
 				SessionID:          sessionID,
-				ChannelUsageFields: channelUsageFields,
-				PricingAt:          requestStart,
-				RiskPermit:         riskPermit,
+				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, requestModel, upstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.images"),
