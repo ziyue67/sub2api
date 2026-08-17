@@ -46,7 +46,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import RelayPulseMatrix from '../RelayPulseMatrix.vue'
 import type { MonitorHealth, MonitorMetric } from '@/api/channelMonitorV2'
 
@@ -81,6 +82,45 @@ function metrics(requestCount: number): MonitorMetric {
   }
 }
 
+function installAnimationFrameMock() {
+  let nextFrame = 1
+  const callbacks = new Map<number, FrameRequestCallback>()
+  const request = vi.fn((callback: FrameRequestCallback) => {
+    const frame = nextFrame++
+    callbacks.set(frame, callback)
+    return frame
+  })
+  const cancel = vi.fn((frame: number) => {
+    callbacks.delete(frame)
+  })
+  vi.stubGlobal('requestAnimationFrame', request)
+  vi.stubGlobal('cancelAnimationFrame', cancel)
+
+  return {
+    callbacks,
+    request,
+    cancel,
+    flushNext() {
+      const next = callbacks.entries().next().value as [number, FrameRequestCallback] | undefined
+      if (!next) throw new Error('No animation frame is pending')
+      callbacks.delete(next[0])
+      next[1](0)
+    },
+  }
+}
+
+function dispatchWheel(element: Element, init: WheelEventInit) {
+  element.dispatchEvent(new WheelEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  }))
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('RelayPulseMatrix', () => {
   it('shows privacy-safe hover tooltips and multi-band colors without click modal', async () => {
     const wrapper = mount(RelayPulseMatrix, {
@@ -113,8 +153,12 @@ describe('RelayPulseMatrix', () => {
 
     const cells = wrapper.findAll('.pulse-cell')
     expect(cells).toHaveLength(3)
-    // Hover tooltip content (privacy-safe: no absolute request/error counts)
-    const tip = cells[0].text()
+    // Tooltip content exists once in the teleported overlay, not once per cell.
+    expect(wrapper.findAll('.pulse-tooltip')).toHaveLength(0)
+    expect(document.body.querySelectorAll('.matrix-floating-tooltip')).toHaveLength(1)
+    await cells[0].trigger('mouseenter', { clientX: 100, clientY: 100 })
+    const tip = document.body.querySelector('.matrix-floating-tooltip')?.textContent || ''
+    expect(cells[0].attributes('aria-label')).toContain('成功率')
     expect(tip).toContain('成功率')
     expect(tip).toContain('90.0%')
     expect(tip).toContain('首 Token')
@@ -139,6 +183,115 @@ describe('RelayPulseMatrix', () => {
     // No click-to-open modal
     await cells[0].trigger('click')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('coalesces tooltip moves and cancels pending positioning work', async () => {
+    const frames = installAnimationFrameMock()
+    const wrapper = mount(RelayPulseMatrix, {
+      props: {
+        rows: [{
+          platform: 'openai',
+          group_id: 7,
+          group_name: '默认组',
+          model: 'gpt-5',
+          metrics: metrics(10),
+          health,
+          buckets: [{ bucket_start: '2026-08-01T00:00:00Z', metrics: metrics(10), health }],
+        }],
+        coverage: {
+          requested_start: '2026-08-01T00:00:00Z',
+          requested_end: '2026-08-01T00:03:00Z',
+          coverage_start: '2026-08-01T00:00:00Z',
+          data_through: '2026-08-01T00:03:00Z',
+          computed_at: '2026-08-01T00:03:00Z',
+          aggregation_lag_seconds: 0,
+          coverage_complete: true,
+          bucket_seconds: 60,
+        },
+        healthMode: 'overall',
+      },
+    })
+
+    const cell = wrapper.findAll('.pulse-cell')[0]
+    await cell.trigger('mouseenter', { clientX: 100, clientY: 120 })
+    await cell.trigger('mousemove', { clientX: 140, clientY: 170 })
+    await cell.trigger('mousemove', { clientX: 180, clientY: 220 })
+
+    expect(frames.request).toHaveBeenCalledTimes(1)
+    expect(frames.callbacks.size).toBe(1)
+    frames.flushNext()
+    const tooltip = document.body.querySelector('.matrix-floating-tooltip') as HTMLElement
+    expect(tooltip.style.left).toBe('180px')
+    expect(tooltip.style.top).toBe('208px')
+
+    await cell.trigger('mousemove', { clientX: 200, clientY: 240 })
+    expect(frames.callbacks.size).toBe(1)
+    await cell.trigger('mouseleave')
+    expect(frames.callbacks.size).toBe(0)
+    expect(frames.cancel).toHaveBeenCalledTimes(1)
+
+    await cell.trigger('mouseenter', { clientX: 220, clientY: 260 })
+    expect(frames.callbacks.size).toBe(1)
+    wrapper.unmount()
+    expect(frames.callbacks.size).toBe(0)
+    expect(frames.cancel).toHaveBeenCalledTimes(2)
+  })
+
+  it('coalesces wheel updates and discards stale work on reset or range changes', async () => {
+    const frames = installAnimationFrameMock()
+    const coverage = {
+      requested_start: '2026-08-01T00:00:00Z',
+      requested_end: '2026-08-01T00:05:00Z',
+      coverage_start: '2026-08-01T00:00:00Z',
+      data_through: '2026-08-01T00:05:00Z',
+      computed_at: '2026-08-01T00:05:00Z',
+      aggregation_lag_seconds: 0,
+      coverage_complete: true,
+      bucket_seconds: 60,
+    }
+    const wrapper = mount(RelayPulseMatrix, {
+      props: {
+        rows: [{
+          platform: 'openai',
+          group_id: 7,
+          group_name: '默认组',
+          model: 'gpt-5',
+          metrics: metrics(10),
+          health,
+          buckets: [{ bucket_start: '2026-08-01T00:00:00Z', metrics: metrics(10), health }],
+        }],
+        coverage,
+        healthMode: 'overall',
+      },
+    })
+
+    const matrix = wrapper.get('.matrix-scroll')
+    dispatchWheel(matrix.element, { deltaX: 0, deltaY: -20, clientX: 100 })
+    dispatchWheel(matrix.element, { deltaX: 0, deltaY: -30, clientX: 140 })
+    dispatchWheel(matrix.element, { deltaX: 0, deltaY: -40, clientX: 180 })
+    expect(frames.request).toHaveBeenCalledTimes(1)
+    expect(frames.callbacks.size).toBe(1)
+
+    frames.flushNext()
+    await nextTick()
+    const reset = wrapper.get('button')
+    expect(reset.attributes('disabled')).toBeUndefined()
+
+    dispatchWheel(matrix.element, { deltaX: 0, deltaY: -20, clientX: 200 })
+    expect(frames.callbacks.size).toBe(1)
+    await reset.trigger('click')
+    expect(frames.callbacks.size).toBe(0)
+    expect(reset.attributes('disabled')).toBeDefined()
+
+    dispatchWheel(matrix.element, { deltaX: 0, deltaY: -20, clientX: 220 })
+    expect(frames.callbacks.size).toBe(1)
+    await wrapper.setProps({
+      coverage: { ...coverage, requested_end: '2026-08-01T00:06:00Z' },
+    })
+    expect(frames.callbacks.size).toBe(0)
+    expect(frames.cancel).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
   })
 })
 
@@ -172,5 +325,6 @@ describe('RelayPulseMatrix axis range', () => {
     })
     // 5 minutes @ 60s buckets → 5 cells spanning the selected range
     expect(wrapper.findAll('.pulse-cell')).toHaveLength(5)
+    wrapper.unmount()
   })
 })

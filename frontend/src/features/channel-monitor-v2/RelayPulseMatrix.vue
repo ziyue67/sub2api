@@ -92,32 +92,14 @@
                 ]"
                 tabindex="0"
                 role="img"
-                :title="slot.bucket ? bucketTooltip(slot.bucket) : t('channelMonitorV2.matrix.noTrafficAt', { time: formatBucketRange(slot.start) })"
-                :aria-label="slot.bucket ? bucketTooltip(slot.bucket) : t('channelMonitorV2.matrix.noTrafficAt', { time: formatBucketRange(slot.start) })"
+                :title="slot.ariaLabel"
+                :aria-label="slot.ariaLabel"
                 @mouseenter="showTooltip($event, slot)"
                 @mousemove="moveTooltip($event)"
                 @mouseleave="hideTooltip"
                 @focus="showTooltip($event, slot)"
                 @blur="hideTooltip"
-              >
-                <span class="pulse-tooltip" role="tooltip">
-                  <template v-if="slot.bucket">
-                    <span class="pulse-tooltip-line pulse-tooltip-title">{{ formatBucketRange(slot.start) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.matrix.scoreLine', { score: formatScore(slot.bucket.health) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.successRateValue', { value: successRate(slot.bucket.metrics) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.ttftValue', { value: latencyPrivacy(slot.bucket.metrics.ttft) }) }}</span>
-                    <span v-if="showThroughput" class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.tpsValue', { value: formatTps(slot.bucket.metrics.tpm) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.cacheRateValue', { value: formatPercent(slot.bucket.metrics.cache_rate) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(slot.bucket.metrics.error_rate) }) }}</span>
-                    <span v-if="showThroughput" class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.rpmValue', { value: formatRate(slot.bucket.metrics.rpm) }) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.metrics.durationValue', { value: latencyPrivacy(slot.bucket.metrics.duration) }) }}</span>
-                  </template>
-                  <template v-else>
-                    <span class="pulse-tooltip-line pulse-tooltip-title">{{ formatBucketRange(slot.start) }}</span>
-                    <span class="pulse-tooltip-line">{{ t('channelMonitorV2.matrix.noTraffic') }}</span>
-                  </template>
-                </span>
-              </span>
+              ></span>
             </div>
           </div>
         </div>
@@ -146,10 +128,11 @@
 
     <Teleport to="body">
       <div
-        v-if="floatingTooltip.visible"
+        v-show="floatingTooltip.visible"
+        ref="tooltipRef"
         class="matrix-floating-tooltip"
-        :style="{ left: `${floatingTooltip.x}px`, top: `${floatingTooltip.y}px` }"
         role="tooltip"
+        :aria-hidden="!floatingTooltip.visible"
       >
         <span
           v-for="(line, index) in floatingTooltip.lines"
@@ -166,7 +149,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import type {
   LatencyMetric,
   MonitorCoverage,
@@ -211,18 +194,49 @@ const props = withDefaults(
   { showThroughput: true },
 )
 
-type AlignedSlot = { start: string; bucket?: MonitorMatrixBucket }
+type AlignedSlot = { start: string; bucket?: MonitorMatrixBucket; ariaLabel: string }
 
 const floatingTooltip = reactive({
   visible: false,
-  x: 0,
-  y: 0,
   lines: [] as string[],
 })
 
 const scrollRef = ref<HTMLElement | null>(null)
+const tooltipRef = ref<HTMLElement | null>(null)
 const zoom = ref<ZoomState>(resetZoom())
 const zoomed = computed(() => isZoomed(zoom.value))
+
+type PendingMatrixWheel = {
+  deltaX: number
+  deltaY: number
+  shiftKey: boolean
+  clientX: number
+  ratioElement: HTMLElement | null
+}
+
+type PendingTooltipPosition = { clientX: number; clientY: number }
+
+let matrixWheelFrame: number | null = null
+let pendingMatrixWheel: PendingMatrixWheel | null = null
+let tooltipFrame: number | null = null
+let pendingTooltipPosition: PendingTooltipPosition | null = null
+
+function scheduleFrame(callback: (timestamp: number) => void): number {
+  if (typeof window.requestAnimationFrame === 'function') return window.requestAnimationFrame(callback)
+  return window.setTimeout(() => callback(performance.now()), 16)
+}
+
+function cancelFrame(frame: number | null) {
+  if (frame == null) return
+  if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
+  else window.clearTimeout(frame)
+}
+
+function cancelPendingMatrixWheel() {
+  pendingMatrixWheel = null
+  cancelFrame(matrixWheelFrame)
+  matrixWheelFrame = null
+}
 
 const allBucketStarts = computed(() => {
   // X-axis always spans the UI-selected range [requested_start, requested_end).
@@ -287,6 +301,17 @@ const bucketLabel = computed(() => {
   return t('channelMonitorV2.bucket.days', { count: hours / 24 })
 })
 
+const axisTimeFormatter = computed(() => new Intl.DateTimeFormat(locale.value || undefined, {
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+}))
+const shortTimeFormatter = computed(() => new Intl.DateTimeFormat(locale.value || undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+}))
+
 /** Shared ISO start → column index for the visible window (rebuilt when zoom/coverage changes). */
 const bucketStartIndex = computed(() => {
   const map = new Map<string, number>()
@@ -299,11 +324,18 @@ const alignedRows = computed(() => {
   const starts = bucketStarts.value
   const indexByStart = bucketStartIndex.value
   return props.rows.map((row) => {
-    const slots: AlignedSlot[] = starts.map((start) => ({ start }))
+    const slots: AlignedSlot[] = starts.map((start) => ({
+      start,
+      ariaLabel: t('channelMonitorV2.matrix.noTrafficAt', { time: formatBucketRange(start) }),
+    }))
     for (const bucket of row.buckets || []) {
       const key = new Date(bucket.bucket_start).toISOString()
       const index = indexByStart.get(key)
-      if (index != null) slots[index] = { start: starts[index], bucket }
+      if (index != null) slots[index] = {
+        start: starts[index],
+        bucket,
+        ariaLabel: bucketTooltip(bucket),
+      }
     }
     return { row, slots }
   })
@@ -321,12 +353,35 @@ function onMatrixWheel(event: WheelEvent) {
   // When not zoomed and user scrolls vertically outside pulse, still zoom if over matrix body.
   if (!overMatrix && !isPan) return
   event.preventDefault()
-  const ratioEl = pulse || track
-  const ratio = clientXRatio(event.clientX, ratioEl)
-  zoom.value = applyWheelZoom(zoom.value, event, ratio)
+  const ratioElement = pulse || track
+  if (pendingMatrixWheel) {
+    pendingMatrixWheel.deltaX += event.deltaX
+    pendingMatrixWheel.deltaY += event.deltaY
+    pendingMatrixWheel.shiftKey = event.shiftKey
+    pendingMatrixWheel.clientX = event.clientX
+    pendingMatrixWheel.ratioElement = ratioElement
+  } else {
+    pendingMatrixWheel = {
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      shiftKey: event.shiftKey,
+      clientX: event.clientX,
+      ratioElement,
+    }
+  }
+  if (matrixWheelFrame != null) return
+  matrixWheelFrame = scheduleFrame(() => {
+    matrixWheelFrame = null
+    const pending = pendingMatrixWheel
+    pendingMatrixWheel = null
+    if (!pending) return
+    const ratio = clientXRatio(pending.clientX, pending.ratioElement)
+    zoom.value = applyWheelZoom(zoom.value, pending, ratio)
+  })
 }
 
 function resetMatrixZoom() {
+  cancelPendingMatrixWheel()
   zoom.value = resetZoom()
 }
 
@@ -339,6 +394,7 @@ watch(
     props.coverage.bucket_seconds,
   ],
   () => {
+    cancelPendingMatrixWheel()
     zoom.value = resetZoom()
   },
 )
@@ -405,29 +461,42 @@ function emptyTooltipLines(start: string): string[] {
 function showTooltip(event: MouseEvent | FocusEvent, slot: AlignedSlot) {
   floatingTooltip.lines = slot.bucket ? bucketTooltipLines(slot.bucket) : emptyTooltipLines(slot.start)
   floatingTooltip.visible = true
-  positionTooltip(event)
+  scheduleTooltipPosition(event)
 }
 
 function moveTooltip(event: MouseEvent) {
   if (!floatingTooltip.visible) return
-  positionTooltip(event)
+  scheduleTooltipPosition(event)
 }
 
 function hideTooltip() {
   floatingTooltip.visible = false
+  pendingTooltipPosition = null
+  cancelFrame(tooltipFrame)
+  tooltipFrame = null
 }
 
-function positionTooltip(event: MouseEvent | FocusEvent) {
+function scheduleTooltipPosition(event: MouseEvent | FocusEvent) {
   if ('clientX' in event) {
-    floatingTooltip.x = Math.min(window.innerWidth - 12, Math.max(12, event.clientX))
-    floatingTooltip.y = Math.min(window.innerHeight - 12, Math.max(12, event.clientY)) - 12
-    return
+    pendingTooltipPosition = { clientX: event.clientX, clientY: event.clientY }
+  } else {
+    const target = event.target as HTMLElement | null
+    const rect = target?.getBoundingClientRect()
+    if (!rect) return
+    pendingTooltipPosition = { clientX: rect.left + rect.width / 2, clientY: rect.top }
   }
-  const target = event.target as HTMLElement | null
-  const rect = target?.getBoundingClientRect()
-  if (!rect) return
-  floatingTooltip.x = rect.left + rect.width / 2
-  floatingTooltip.y = rect.top - 10
+  if (tooltipFrame != null) return
+  tooltipFrame = scheduleFrame(() => {
+    tooltipFrame = null
+    const pending = pendingTooltipPosition
+    pendingTooltipPosition = null
+    const tooltip = tooltipRef.value
+    if (!pending || !tooltip) return
+    const x = Math.min(window.innerWidth - 12, Math.max(12, pending.clientX))
+    const y = Math.min(window.innerHeight - 12, Math.max(12, pending.clientY)) - 12
+    tooltip.style.left = `${x}px`
+    tooltip.style.top = `${y}px`
+  })
 }
 
 function latencyPrivacy(metric: LatencyMetric) {
@@ -456,19 +525,21 @@ function formatMs(value: number | null) {
 }
 
 function formatAxisTime(value: string) {
-  return new Intl.DateTimeFormat(locale.value || undefined, {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
+  return axisTimeFormatter.value.format(new Date(value))
 }
 
 function formatBucketRange(value: string) {
   const start = new Date(value)
   const end = new Date(start.getTime() + props.coverage.bucket_seconds * 1000)
-  return `${formatAxisTime(start.toISOString())} - ${new Intl.DateTimeFormat(locale.value || undefined, { hour: '2-digit', minute: '2-digit' }).format(end)}`
+  return `${formatAxisTime(start.toISOString())} - ${shortTimeFormatter.value.format(end)}`
 }
+
+onBeforeUnmount(() => {
+  cancelPendingMatrixWheel()
+  cancelFrame(tooltipFrame)
+  pendingTooltipPosition = null
+  tooltipFrame = null
+})
 </script>
 
 <style scoped>
@@ -557,61 +628,6 @@ function formatBucketRange(value: string) {
   z-index: 5;
 }
 
-/* CSS-only hover tooltip — no click modal, no absolute request counts.
-   Native title is also provided so dense/scrolling layouts can always show the
-   full content even when a browser clips transformed children. */
-.pulse-tooltip {
-  pointer-events: none;
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  z-index: 40;
-  min-width: 11.5rem;
-  max-width: 16rem;
-  transform: translateX(-50%) translateY(4px);
-  border-radius: 0.75rem;
-  border: 1px solid rgb(229 231 235);
-  background: rgb(255 255 255);
-  padding: 0.5rem 0.625rem;
-  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.15);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
-  white-space: nowrap;
-}
-:global(.dark) .pulse-tooltip {
-  border-color: rgb(55 65 81);
-  background: rgb(17 24 39);
-  color: rgb(229 231 235);
-}
-.pulse-tooltip-line {
-  display: block;
-  font-size: 11px;
-  line-height: 1.45;
-  color: rgb(75 85 99);
-}
-:global(.dark) .pulse-tooltip-line {
-  color: rgb(209 213 219);
-}
-.pulse-tooltip-title {
-  margin-bottom: 0.2rem;
-  font-weight: 600;
-  color: rgb(17 24 39);
-}
-:global(.dark) .pulse-tooltip-title {
-  color: rgb(243 244 246);
-}
-.pulse-cell:hover .pulse-tooltip,
-.pulse-cell:focus-visible .pulse-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
-}
-/* Keep semantic/test text in-cell, but render the visible tooltip through body
-   Teleport so it cannot be clipped by the matrix viewport. */
-.pulse-tooltip {
-  display: none;
-}
 .matrix-floating-tooltip {
   pointer-events: none;
   position: fixed;

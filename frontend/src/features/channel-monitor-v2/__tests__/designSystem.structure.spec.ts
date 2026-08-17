@@ -53,7 +53,7 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).toContain('matrix-scroll')
     expect(src).toMatch(/max-h-\[min\(42vh/)
     expect(src).toContain('overflow-auto')
-    expect(src).toContain('pulse-tooltip')
+    expect(src).toContain('matrix-floating-tooltip')
     expect(src).toContain('rounded-3xl')
     expect(src).toContain('ring-1 ring-gray-900/5')
     expect(src).not.toContain('modal-overlay')
