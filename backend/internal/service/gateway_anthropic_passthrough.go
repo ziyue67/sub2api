@@ -311,6 +311,7 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	body []byte,
 	token string,
 ) (*http.Request, []byte, error) {
+	body = stripDeferredToolCacheControl(body)
 	targetURL := claudeAPIURL
 	baseURL := account.GetBaseURL()
 	if baseURL != "" {
