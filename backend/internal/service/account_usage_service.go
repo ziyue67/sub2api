@@ -865,6 +865,7 @@ func (s *AccountUsageService) probeOpenAICodexSnapshot(ctx context.Context, acco
 	} else {
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
+	applyCodexOAuthFingerprintRequestHeaders(nil, account, req.Header, "")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	canonical := resolveCodexOutboundIdentity("")

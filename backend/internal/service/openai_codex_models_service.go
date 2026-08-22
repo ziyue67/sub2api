@@ -320,6 +320,7 @@ func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, acc
 		headerVersion = identity.version
 	}
 	headers.Set("Version", headerVersion)
+	applyCodexOAuthFingerprintRequestHeaders(nil, credAccount, headers, "")
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

@@ -64,9 +64,9 @@ func TestGetCodexFingerprintMode(t *testing.T) {
 	}{
 		{"nil 账号", nil, codexFingerprintOff},
 		{"非 OAuth 账号", &Account{Platform: PlatformOpenAI, Type: "api_key"}, codexFingerprintOff},
-		{"无 extra 默认 session", newTestOAuthAccount(1, nil), codexFingerprintSession},
-		{"空值默认 session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintSession},
-		{"非法值默认 session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintSession},
+		{"无 extra 默认 off", newTestOAuthAccount(1, nil), codexFingerprintOff},
+		{"空值默认 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: ""}), codexFingerprintOff},
+		{"非法值默认 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "invalid"}), codexFingerprintOff},
 		{"显式 off", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "off"}), codexFingerprintOff},
 		{"device", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "device"}), codexFingerprintDevice},
 		{"session", newTestOAuthAccount(1, map[string]any{codexFingerprintModeExtraKey: "session"}), codexFingerprintSession},
@@ -127,11 +127,10 @@ func TestResolveCodexFingerprintIDsFromRequest_ExplicitOff(t *testing.T) {
 	assert.Nil(t, ids, "显式 off 模式应返回 nil")
 }
 
-func TestResolveCodexFingerprintIDsFromRequest_DefaultIsSession(t *testing.T) {
+func TestResolveCodexFingerprintIDsFromRequest_DefaultIsOff(t *testing.T) {
 	account := newTestOAuthAccount(1, nil)
 	ids := resolveCodexFingerprintIDsFromRequest(account, nil)
-	require.NotNil(t, ids)
-	assert.Equal(t, codexFingerprintSession, ids.mode)
+	assert.Nil(t, ids)
 }
 
 // 管理员显式 opt-in 的账号行为不变。
@@ -869,7 +868,7 @@ func TestBuildUpstreamRequestOpenAIPassthrough_AppliesStagedFingerprint(t *testi
 	c.Request.Header.Set("originator", "codex_cli_rs")
 	c.Request.Header.Set("x-codex-turn-metadata", `{"installation_id":"real-install","session_id":"real-session","sandbox":"seatbelt"}`)
 
-	// 复刻 forwardOpenAIPassthrough 的解析+暂存 seam（默认 session 模式）
+	// 复刻 forwardOpenAIPassthrough 的解析+暂存 seam（显式 session 模式）
 	ids := resolveCodexFingerprintIDsFromRequest(account, c.Request.Header)
 	require.NotNil(t, ids)
 	stageCodexFingerprintIDs(c, ids)
@@ -926,7 +925,7 @@ func TestApplyCodexFingerprintClientMetadataRaw_NonObjectBodyUntouched(t *testin
 }
 
 func TestResolveCodexFingerprintIDsWithScope_IsolatesAPIKeyAndPromptCacheKey(t *testing.T) {
-	account := newTestOAuthAccount(9001, nil)
+	account := newTestOAuthAccount(9001, map[string]any{codexFingerprintModeExtraKey: "session"})
 	headers := http.Header{"session-id": []string{"client-session"}}
 
 	first := resolveCodexFingerprintIDsFromRequestWithScope(account, headers, 101, "prompt-a")
@@ -942,8 +941,25 @@ func TestResolveCodexFingerprintIDsWithScope_IsolatesAPIKeyAndPromptCacheKey(t *
 	assert.NotEmpty(t, first.promptCacheKey)
 }
 
+func TestApplyCodexOAuthFingerprintRequestHeaders_ReusesStagedSnapshot(t *testing.T) {
+	account := newTestOAuthAccount(9003, map[string]any{codexFingerprintModeExtraKey: "session"})
+	c := newFingerprintStageTestContext(t)
+	c.Request.Header.Set("session-id", "client-session")
+
+	first := http.Header{}
+	applyCodexOAuthFingerprintRequestHeaders(c, account, first, "prompt-a")
+	ids := stagedCodexFingerprintIDs(c, account)
+	require.NotNil(t, ids)
+	require.Equal(t, ids.sessionID, first.Get("session_id"))
+
+	second := http.Header{}
+	applyCodexOAuthFingerprintRequestHeaders(c, account, second, "prompt-b")
+	require.Equal(t, first.Get("session_id"), second.Get("session_id"))
+	require.Equal(t, first.Get("thread-id"), second.Get("thread-id"))
+}
+
 func TestCodexFingerprintMetadataSanitizationAndResponseRestore(t *testing.T) {
-	account := newTestOAuthAccount(9002, nil)
+	account := newTestOAuthAccount(9002, map[string]any{codexFingerprintModeExtraKey: "session"})
 	ids := resolveCodexFingerprintIDsFromRequestWithScope(account, http.Header{}, 101, "prompt-a")
 	require.NotNil(t, ids)
 

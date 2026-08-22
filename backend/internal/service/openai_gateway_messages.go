@@ -33,6 +33,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	setOpenAICompatMessagesBridgeContext(c, true)
 	beginUpstreamResponseModelObservation(c)
 
 	// 入口分流（国产供应商 Anthropic 协议）：上游为供应商原生 Anthropic 端点时，
@@ -221,6 +222,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 		if codexResult.PromptCacheKey != "" {
 			promptCacheKey = codexResult.PromptCacheKey
+		}
+		if promptCacheKey != "" {
+			// Keep the compatibility cache scope available after the native Codex
+			// transform removes prompt_cache_key from the upstream body.
+			reqBody["prompt_cache_key"] = promptCacheKey
 		}
 		sanitizeCodexRequestClientMetadata(reqBody)
 		var clientHeaders http.Header

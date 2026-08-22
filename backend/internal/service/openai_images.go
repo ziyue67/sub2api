@@ -780,6 +780,9 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 			req.Header.Add(key, value)
 		}
 	}
+	if account.Type == AccountTypeOAuth {
+		stripOpenAILegacyResponsesBeta(req.Header)
+	}
 	customUA := account.GetOpenAIUserAgent()
 	if customUA != "" {
 		req.Header.Set("User-Agent", customUA)

@@ -190,9 +190,37 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
 		}
 
-		values := gjson.GetManyBytes(trimmed, "type", "model", "prompt_cache_key", "previous_response_id")
-		eventType := strings.TrimSpace(values[0].String())
 		normalized := trimmed
+		if account.IsOpenAIOAuth() {
+			// Establish the request-scoped Codex identity before payload normalization.
+			// HTTP and raw passthrough use the same ordering so headers, metadata and
+			// prompt_cache_key share one fingerprint snapshot.
+			captureCodexClientIdentifiersRaw(c, trimmed)
+			sanitized, _, sanitizeErr := sanitizeCodexRequestClientMetadataRaw(normalized)
+			if sanitizeErr != nil {
+				return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", sanitizeErr)
+			}
+			normalized = sanitized
+			// A WebSocket handshake is fixed for the lifetime of the connection.
+			// Keep its first snapshot for later response.create frames so their body
+			// identifiers never drift from the already-sent handshake headers.
+			fpIDs := stagedCodexFingerprintIDs(c, account)
+			if fpIDs == nil {
+				promptCacheKey := strings.TrimSpace(gjson.GetBytes(normalized, "prompt_cache_key").String())
+				fpIDs = resolveCodexFingerprintIDsFromRequestWithScope(account, c.Request.Header, getAPIKeyIDFromContext(c), promptCacheKey)
+				stageCodexFingerprintIDs(c, fpIDs)
+			}
+			if fpIDs != nil {
+				fingerprinted, _, fpErr := applyCodexFingerprintClientMetadataRaw(normalized, fpIDs)
+				if fpErr != nil {
+					return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", fpErr)
+				}
+				normalized = fingerprinted
+			}
+		}
+
+		values := gjson.GetManyBytes(normalized, "type", "model", "prompt_cache_key", "previous_response_id")
+		eventType := strings.TrimSpace(values[0].String())
 		switch eventType {
 		case "":
 			eventType = "response.create"

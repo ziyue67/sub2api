@@ -362,7 +362,7 @@ func TestDetect_EngineFingerprintSignals(t *testing.T) {
 	})
 	t.Run("官方UA+无x-codex-头 → 拒(缺指纹)", func(t *testing.T) {
 		c := newCodexDetectorTestContext(officialUA, "")
-		c.Request.Header.Set("session-id", "u1") // 默认 session 未勾,不满足必须项
+		c.Request.Header.Set("session-id", "u1") // session 未勾,不满足必须项
 		got := det.Detect(c, acct, policy, nil)
 		require.False(t, got.Matched)
 		require.Equal(t, CodexClientRestrictionReasonMissingEngineFingerprint, got.Reason)

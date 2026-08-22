@@ -1136,6 +1136,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	s.guardOpenAICodexTurnStateEcho(c, account, req.Header)
 	if account.Type == AccountTypeOAuth {
 		compatMessagesBridge := isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body)
+		compatMessagesBridgeContext := isOpenAICompatMessagesBridgeContext(c)
 		// 清除客户端透传的 session 头，后续用隔离后的值重新设置，防止跨用户会话碰撞。
 		clientConversationID := strings.TrimSpace(req.Header.Get("conversation_id"))
 		req.Header.Del("conversation_id")
@@ -1161,8 +1162,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		}
 		if promptCacheKey != "" {
 			isolated := isolateOpenAISessionID(apiKeyID, promptCacheKey)
+			if compatMessagesBridge {
+				isolated = generateSessionUUID(isolated)
+			}
 			req.Header.Set("session_id", isolated)
-			if !compatMessagesBridge || clientConversationID != "" {
+			if !compatMessagesBridge || clientConversationID != "" || compatMessagesBridgeContext {
 				req.Header.Set("conversation_id", isolated)
 			}
 		}
@@ -1209,6 +1213,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// x-codex-beta-features：按真实 Codex 的会话级行为补注（在账号级覆写之后，
 	// 保证不被覆盖丢失）。
 	applyOpenAICodexBetaFeatures(c, account, req.Header)
+	if account.Type == AccountTypeOAuth && isOpenAIResponsesCompactPath(c) {
+		stripOpenAILegacyResponsesBeta(req.Header)
+	}
 	setOpenAICodexRoutingHintFromBody(req.Header, account, body)
 	logOpenAIRoutingDiagnosticsFromBody(ctx, account, "http", req.Header, body, "not_applicable")
 

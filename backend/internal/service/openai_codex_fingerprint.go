@@ -58,6 +58,30 @@ func applyStagedCodexFingerprintClientMetadata(c *gin.Context, account *Account,
 	return applyCodexFingerprintClientMetadata(reqBody, stagedCodexFingerprintIDs(c, account))
 }
 
+// applyCodexOAuthFingerprintRequestHeaders covers auxiliary Codex OAuth
+// requests that do not pass through Forward. Main gateway paths stage the
+// request snapshot earlier; helpers create the same scoped snapshot when they
+// are called independently.
+func applyCodexOAuthFingerprintRequestHeaders(c *gin.Context, account *Account, h http.Header, promptCacheKey string) {
+	if account == nil || !account.IsOpenAIOAuth() || h == nil {
+		return
+	}
+	ids := stagedCodexFingerprintIDs(c, account)
+	if ids == nil {
+		var clientHeaders http.Header
+		if c != nil && c.Request != nil {
+			clientHeaders = c.Request.Header
+		}
+		if strings.TrimSpace(promptCacheKey) == "" {
+			ids = resolveCodexFingerprintIDsFromRequest(account, clientHeaders)
+		} else {
+			ids = resolveCodexFingerprintIDsFromRequestWithScope(account, clientHeaders, getAPIKeyIDFromContext(c), promptCacheKey)
+		}
+		stageCodexFingerprintIDs(c, ids)
+	}
+	applyCodexFingerprintHeaders(h, ids)
+}
+
 // codexFingerprintMode 控制 OAuth 账号出站请求的设备指纹收敛强度。
 // 多人共享同一 OAuth 账号时，每个用户的 Codex 客户端会携带各自不同的
 // installation_id / session_id / thread_id，上游据此判定设备数和会话数。
@@ -211,7 +235,7 @@ func (a *Account) GetCodexFingerprintMode() codexFingerprintMode {
 	if _, explicitlySet := a.Extra[codexFingerprintModeExtraKey]; explicitlySet {
 		return codexFingerprintModeFromExtra(a.Extra)
 	}
-	return codexFingerprintSession
+	return codexFingerprintOff
 }
 
 // deriveStableUUIDv4 从种子确定性派生一个 UUIDv4 格式的字符串。
