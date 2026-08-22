@@ -81,8 +81,8 @@ const (
 )
 
 const (
-	codexFingerprintModeExtraKey = "codex_fingerprint_mode"
-	codexFingerprintSeedExtraKey = "codex_fingerprint_seed"
+	codexFingerprintModeExtraKey  = "codex_fingerprint_mode"
+	codexFingerprintSeedExtraKey  = "codex_fingerprint_seed"
 	codexOutboundTimezoneExtraKey = "codex_outbound_timezone"
 )
 
@@ -400,7 +400,9 @@ func resolveCodexFingerprintIDsWithScope(account *Account, apiKeyID int64, promp
 		ids.sessionID = resolveConvergedScopedSessionID(account, apiKeyID, conversationSeed)
 		ids.conversationID = ids.sessionID
 		ids.threadID = deriveStableUUIDv4(fmt.Sprintf("sub2api:codex-thread-id:v2:%d:%d:%s", account.ID, apiKeyID, conversationSeed))
-		if ids.threadID == "" { ids.threadID = ids.sessionID }
+		if ids.threadID == "" {
+			ids.threadID = ids.sessionID
+		}
 	case codexFingerprintFull:
 		ids.sessionID = resolveConvergedScopedSessionID(account, apiKeyID, conversationSeed)
 		ids.conversationID = ids.sessionID
@@ -457,12 +459,14 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 
 	// 所有非 off 模式都收敛 installation_id
 	h.Set("x-codex-installation-id", ids.installationID)
-	if ids.timezone != "" { h.Set("x-codex-timezone", ids.timezone) }
+	if ids.timezone != "" {
+		h.Set("x-codex-timezone", ids.timezone)
+	}
 
 	if ids.mode == codexFingerprintDevice {
-			rewriteCodexTurnMetadataFields(h, map[string]any{
-				"installation_id": ids.installationID,
-				"timezone": ids.timezone,
+		rewriteCodexTurnMetadataFields(h, map[string]any{
+			"installation_id": ids.installationID,
+			"timezone":        ids.timezone,
 		})
 		return
 	}
@@ -483,7 +487,7 @@ func applyCodexFingerprintHeaders(h http.Header, ids *codexFingerprintIDs) {
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
-		"timezone": ids.timezone,
+		"timezone":                ids.timezone,
 	})
 }
 
@@ -547,12 +551,15 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		existing["x-codex-installation-id"] = ids.installationID
 		modified = true
 	}
-	if ids.timezone != "" { existing["timezone"] = ids.timezone; modified = true }
+	if ids.timezone != "" {
+		existing["timezone"] = ids.timezone
+		modified = true
+	}
 
 	if ids.mode == codexFingerprintDevice {
 		rewriteClientMetadataEmbeddedTurnMetadata(existing, map[string]any{
 			"installation_id": ids.installationID,
-			"timezone": ids.timezone,
+			"timezone":        ids.timezone,
 		})
 		return modified
 	}
@@ -571,7 +578,7 @@ func applyCodexFingerprintToClientMetadataMap(existing map[string]any, ids *code
 		"turn_id":                 ids.turnID,
 		"window_id":               ids.windowID,
 		"turn_started_at_unix_ms": ids.turnStartedAtUnixMs,
-		"timezone": ids.timezone,
+		"timezone":                ids.timezone,
 	})
 	return true
 }
@@ -623,11 +630,15 @@ func applyCodexFingerprintPromptCacheKey(reqBody map[string]any, ids *codexFinge
 		return false
 	}
 	if ids.promptCacheKey != "" {
-		if !ids.scoped && !shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey) { return false }
+		if !ids.scoped && !shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey) {
+			return false
+		}
 		reqBody["prompt_cache_key"] = ids.promptCacheKey
 		return promptCacheKey != ids.promptCacheKey
 	}
-	if !shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey) { return false }
+	if !shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey) {
+		return false
+	}
 	if promptCacheKey == ids.sessionID {
 		return false
 	}
@@ -681,8 +692,14 @@ func applyCodexFingerprintClientMetadataRaw(body []byte, ids *codexFingerprintID
 	promptCacheKey := gjson.GetBytes(body, "prompt_cache_key")
 	if promptCacheKey.Exists() && promptCacheKey.Type == gjson.String && strings.TrimSpace(promptCacheKey.String()) != "" {
 		replacement := ""
-		if ids.promptCacheKey != "" && (ids.scoped || shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey.String())) { replacement = ids.promptCacheKey } else if shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey.String()) { replacement = ids.sessionID }
-		if replacement == "" || replacement == promptCacheKey.String() { return next, modified, nil }
+		if ids.promptCacheKey != "" && (ids.scoped || shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey.String())) {
+			replacement = ids.promptCacheKey
+		} else if shouldRewriteCodexFingerprintPromptCacheKey(ids, promptCacheKey.String()) {
+			replacement = ids.sessionID
+		}
+		if replacement == "" || replacement == promptCacheKey.String() {
+			return next, modified, nil
+		}
 		rewritten, err := sjson.SetBytes(next, "prompt_cache_key", replacement)
 		if err != nil {
 			return body, false, fmt.Errorf("splice converged prompt_cache_key: %w", err)
@@ -714,93 +731,215 @@ func rewriteClientMetadataEmbeddedTurnMetadata(clientMetadata map[string]any, fi
 }
 
 func sanitizeCodexClientMetadata(metadata map[string]any) bool {
-	if metadata == nil { return false }
+	if metadata == nil {
+		return false
+	}
 	blocked := map[string]struct{}{"api_key": {}, "api-key": {}, "apikey": {}, "authorization": {}, "authorization_header": {}, "proxy_authorization": {}, "proxy-authorization": {}, "proxy_url": {}, "proxyurl": {}, "base_url": {}, "baseurl": {}, "endpoint": {}, "endpoint_url": {}, "endpointurl": {}, "hostname": {}, "host": {}}
 	changed := false
 	for key, value := range metadata {
-		if _, forbidden := blocked[strings.ToLower(strings.TrimSpace(key))]; forbidden { delete(metadata, key); changed = true; continue }
+		if _, forbidden := blocked[strings.ToLower(strings.TrimSpace(key))]; forbidden {
+			delete(metadata, key)
+			changed = true
+			continue
+		}
 		switch nested := value.(type) {
 		case map[string]any:
 			changed = sanitizeCodexClientMetadata(nested) || changed
 		case []any:
-			for _, item := range nested { if child, ok := item.(map[string]any); ok { changed = sanitizeCodexClientMetadata(child) || changed } }
+			for _, item := range nested {
+				if child, ok := item.(map[string]any); ok {
+					changed = sanitizeCodexClientMetadata(child) || changed
+				}
+			}
 		case string:
-			if !strings.EqualFold(key, "x-codex-turn-metadata") || strings.TrimSpace(nested) == "" { continue }
+			if !strings.EqualFold(key, "x-codex-turn-metadata") || strings.TrimSpace(nested) == "" {
+				continue
+			}
 			var embedded map[string]any
-			if json.Unmarshal([]byte(nested), &embedded) == nil && sanitizeCodexClientMetadata(embedded) { if rebuilt, err := json.Marshal(embedded); err == nil { metadata[key] = string(rebuilt); changed = true } }
+			if json.Unmarshal([]byte(nested), &embedded) == nil && sanitizeCodexClientMetadata(embedded) {
+				if rebuilt, err := json.Marshal(embedded); err == nil {
+					metadata[key] = string(rebuilt)
+					changed = true
+				}
+			}
 		}
 	}
 	return changed
 }
 
 func sanitizeCodexRequestClientMetadata(reqBody map[string]any) bool {
-	if reqBody == nil { return false }
+	if reqBody == nil {
+		return false
+	}
 	metadata, _ := reqBody["client_metadata"].(map[string]any)
 	return sanitizeCodexClientMetadata(metadata)
 }
 
 func sanitizeCodexRequestClientMetadataRaw(body []byte) ([]byte, bool, error) {
-	if len(body) == 0 || !gjson.ParseBytes(body).IsObject() { return body, false, nil }
+	if len(body) == 0 || !gjson.ParseBytes(body).IsObject() {
+		return body, false, nil
+	}
 	raw := gjson.GetBytes(body, "client_metadata")
-	if !raw.IsObject() { return body, false, nil }
+	if !raw.IsObject() {
+		return body, false, nil
+	}
 	metadata := map[string]any{}
-	if err := json.Unmarshal([]byte(raw.Raw), &metadata); err != nil { return body, false, fmt.Errorf("decode client_metadata for sanitization: %w", err) }
-	if !sanitizeCodexClientMetadata(metadata) { return body, false, nil }
-	encoded, err := json.Marshal(metadata); if err != nil { return body, false, err }
-	next, err := sjson.SetRawBytes(body, "client_metadata", encoded); if err != nil { return body, false, err }
+	if err := json.Unmarshal([]byte(raw.Raw), &metadata); err != nil {
+		return body, false, fmt.Errorf("decode client_metadata for sanitization: %w", err)
+	}
+	if !sanitizeCodexClientMetadata(metadata) {
+		return body, false, nil
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return body, false, err
+	}
+	next, err := sjson.SetRawBytes(body, "client_metadata", encoded)
+	if err != nil {
+		return body, false, err
+	}
 	return next, true, nil
 }
 
-type codexClientIdentifiers struct { installationID, sessionID, conversationID, threadID, windowID, promptCacheKey string }
+type codexClientIdentifiers struct{ installationID, sessionID, conversationID, threadID, windowID, promptCacheKey string }
 
 func captureCodexClientIdentifiers(c *gin.Context, reqBody map[string]any) {
-	if c == nil || c.Request == nil { return }
+	if c == nil || c.Request == nil {
+		return
+	}
 	ids := &codexClientIdentifiers{installationID: strings.TrimSpace(c.Request.Header.Get("x-codex-installation-id")), sessionID: extractClientSessionID(c.Request.Header), conversationID: strings.TrimSpace(c.Request.Header.Get("conversation_id")), threadID: strings.TrimSpace(c.Request.Header.Get("thread-id")), windowID: strings.TrimSpace(c.Request.Header.Get("x-codex-window-id"))}
 	if reqBody != nil {
 		ids.promptCacheKey, _ = reqBody["prompt_cache_key"].(string)
 		if metadata, _ := reqBody["client_metadata"].(map[string]any); metadata != nil {
-			if ids.installationID == "" { ids.installationID, _ = metadata["x-codex-installation-id"].(string) }
-			if ids.sessionID == "" { ids.sessionID, _ = metadata["session_id"].(string) }
-			if ids.conversationID == "" { ids.conversationID, _ = metadata["conversation_id"].(string) }
-			if ids.threadID == "" { ids.threadID, _ = metadata["thread_id"].(string) }
-			if ids.windowID == "" { ids.windowID, _ = metadata["x-codex-window-id"].(string) }
+			if ids.installationID == "" {
+				ids.installationID, _ = metadata["x-codex-installation-id"].(string)
+			}
+			if ids.sessionID == "" {
+				ids.sessionID, _ = metadata["session_id"].(string)
+			}
+			if ids.conversationID == "" {
+				ids.conversationID, _ = metadata["conversation_id"].(string)
+			}
+			if ids.threadID == "" {
+				ids.threadID, _ = metadata["thread_id"].(string)
+			}
+			if ids.windowID == "" {
+				ids.windowID, _ = metadata["x-codex-window-id"].(string)
+			}
 		}
 	}
 	c.Set(codexClientIdentifiersContextKey, ids)
 }
 
-func capturedCodexClientPromptCacheKey(c *gin.Context) string { if c == nil { return "" }; value, ok := c.Get(codexClientIdentifiersContextKey); ids, typed := value.(*codexClientIdentifiers); if !ok || !typed || ids == nil { return "" }; return strings.TrimSpace(ids.promptCacheKey) }
+func capturedCodexClientPromptCacheKey(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	value, ok := c.Get(codexClientIdentifiersContextKey)
+	ids, typed := value.(*codexClientIdentifiers)
+	if !ok || !typed || ids == nil {
+		return ""
+	}
+	return strings.TrimSpace(ids.promptCacheKey)
+}
 
 func captureCodexClientIdentifiersRaw(c *gin.Context, body []byte) {
-	if c == nil || c.Request == nil { return }
+	if c == nil || c.Request == nil {
+		return
+	}
 	bodyMap := map[string]any{}
-	if gjson.ParseBytes(body).IsObject() { if key := gjson.GetBytes(body, "prompt_cache_key"); key.Type == gjson.String { bodyMap["prompt_cache_key"] = key.String() }; if raw := gjson.GetBytes(body, "client_metadata"); raw.IsObject() { metadata := map[string]any{}; if json.Unmarshal([]byte(raw.Raw), &metadata) == nil { bodyMap["client_metadata"] = metadata } } }
+	if gjson.ParseBytes(body).IsObject() {
+		if key := gjson.GetBytes(body, "prompt_cache_key"); key.Type == gjson.String {
+			bodyMap["prompt_cache_key"] = key.String()
+		}
+		if raw := gjson.GetBytes(body, "client_metadata"); raw.IsObject() {
+			metadata := map[string]any{}
+			if json.Unmarshal([]byte(raw.Raw), &metadata) == nil {
+				bodyMap["client_metadata"] = metadata
+			}
+		}
+	}
 	captureCodexClientIdentifiers(c, bodyMap)
 }
 
 func restoreCodexClientResponseIdentifiers(c *gin.Context, data []byte) []byte {
-	if c == nil || len(data) == 0 { return data }
-	value, ok := c.Get(codexClientIdentifiersContextKey); original, typed := value.(*codexClientIdentifiers); if !ok || !typed || original == nil { return data }
-	fingerprint, ok := c.Get(codexFingerprintIDsContextKey); ids, typed := fingerprint.(*codexFingerprintIDs); if !ok || !typed || ids == nil { return data }
-	var payload any; if json.Unmarshal(data, &payload) != nil { return data }
-	if !restoreCodexClientIdentifierValues(payload, original, ids) { return data }
-	rebuilt, err := json.Marshal(payload); if err != nil { return data }; return rebuilt
+	if c == nil || len(data) == 0 {
+		return data
+	}
+	value, ok := c.Get(codexClientIdentifiersContextKey)
+	original, typed := value.(*codexClientIdentifiers)
+	if !ok || !typed || original == nil {
+		return data
+	}
+	fingerprint, ok := c.Get(codexFingerprintIDsContextKey)
+	ids, typed := fingerprint.(*codexFingerprintIDs)
+	if !ok || !typed || ids == nil {
+		return data
+	}
+	var payload any
+	if json.Unmarshal(data, &payload) != nil {
+		return data
+	}
+	if !restoreCodexClientIdentifierValues(payload, original, ids) {
+		return data
+	}
+	rebuilt, err := json.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return rebuilt
 }
 
 func restoreCodexClientIdentifierValues(value any, original *codexClientIdentifiers, ids *codexFingerprintIDs) bool {
 	switch typed := value.(type) {
 	case []any:
-		changed := false; for _, item := range typed { changed = restoreCodexClientIdentifierValues(item, original, ids) || changed }; return changed
+		changed := false
+		for _, item := range typed {
+			changed = restoreCodexClientIdentifierValues(item, original, ids) || changed
+		}
+		return changed
 	case map[string]any:
 		changed := false
 		for key, raw := range typed {
-			if nested, ok := raw.(map[string]any); ok { changed = restoreCodexClientIdentifierValues(nested, original, ids) || changed; continue }; if nested, ok := raw.([]any); ok { changed = restoreCodexClientIdentifierValues(nested, original, ids) || changed; continue }
-			stringValue, ok := raw.(string); if !ok { continue }
-			var replacement string; matched := false
-			switch strings.ToLower(key) { case "x-codex-installation-id", "installation_id": matched, replacement = stringValue == ids.installationID, original.installationID; case "session_id", "session-id": matched, replacement = stringValue == ids.sessionID, original.sessionID; case "conversation_id", "conversation-id": matched, replacement = stringValue == ids.conversationID, original.conversationID; case "thread_id", "thread-id": matched, replacement = stringValue == ids.threadID, original.threadID; case "window_id", "x-codex-window-id": matched, replacement = stringValue == ids.windowID, original.windowID; case "prompt_cache_key": matched, replacement = stringValue == ids.promptCacheKey, original.promptCacheKey }
-			if matched { if replacement == "" { delete(typed, key) } else { typed[key] = replacement }; changed = true }
+			if nested, ok := raw.(map[string]any); ok {
+				changed = restoreCodexClientIdentifierValues(nested, original, ids) || changed
+				continue
+			}
+			if nested, ok := raw.([]any); ok {
+				changed = restoreCodexClientIdentifierValues(nested, original, ids) || changed
+				continue
+			}
+			stringValue, ok := raw.(string)
+			if !ok {
+				continue
+			}
+			var replacement string
+			matched := false
+			switch strings.ToLower(key) {
+			case "x-codex-installation-id", "installation_id":
+				matched, replacement = stringValue == ids.installationID, original.installationID
+			case "session_id", "session-id":
+				matched, replacement = stringValue == ids.sessionID, original.sessionID
+			case "conversation_id", "conversation-id":
+				matched, replacement = stringValue == ids.conversationID, original.conversationID
+			case "thread_id", "thread-id":
+				matched, replacement = stringValue == ids.threadID, original.threadID
+			case "window_id", "x-codex-window-id":
+				matched, replacement = stringValue == ids.windowID, original.windowID
+			case "prompt_cache_key":
+				matched, replacement = stringValue == ids.promptCacheKey, original.promptCacheKey
+			}
+			if matched {
+				if replacement == "" {
+					delete(typed, key)
+				} else {
+					typed[key] = replacement
+				}
+				changed = true
+			}
 		}
 		return changed
-	default: return false
+	default:
+		return false
 	}
 }

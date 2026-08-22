@@ -167,8 +167,12 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if !isOpenAIResponsesCompactPath(c) {
 			captureCodexClientIdentifiersRaw(c, body)
 			sanitizedBody, sanitized, sanitizeErr := sanitizeCodexRequestClientMetadataRaw(body)
-			if sanitizeErr != nil { return nil, sanitizeErr }
-			if sanitized { body = sanitizedBody }
+			if sanitizeErr != nil {
+				return nil, sanitizeErr
+			}
+			if sanitized {
+				body = sanitizedBody
+			}
 			var clientHeaders http.Header
 			if c != nil && c.Request != nil {
 				clientHeaders = c.Request.Header
@@ -1582,6 +1586,9 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 					line = "data: " + string(restoredData)
 				}
 			}
+			dataBytes = restoreCodexClientResponseIdentifiers(c, dataBytes)
+			trimmedData = strings.TrimSpace(string(dataBytes))
+			line = "data: " + string(dataBytes)
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
 				(eventType == "error" || eventType == "response.failed") &&
@@ -1875,6 +1882,7 @@ func (s *OpenAIGatewayService) handlePassthroughSSEToJSON(resp *http.Response, c
 			return nil, fmt.Errorf("restore OpenAI passthrough namespace response: %w", restoreErr)
 		}
 		body = restoredBody
+		body = restoreCodexClientResponseIdentifiers(c, body)
 	} else {
 		terminalType, terminalPayload, terminalOK := extractOpenAISSETerminalEvent(bodyText)
 		if terminalOK && terminalType == "response.failed" {
