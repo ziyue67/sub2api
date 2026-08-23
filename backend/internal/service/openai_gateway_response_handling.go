@@ -446,6 +446,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
+			originalDataBytes := append([]byte(nil), dataBytes...)
+			originalLine := line
 			eventTypeRaw := gjson.GetBytes(dataBytes, "type").String()
 			eventType := strings.TrimSpace(eventTypeRaw)
 			observer.ObserveOpenAI(dataBytes, eventTypeRaw)
@@ -566,7 +568,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			}
 			dataBytes = restoreCodexClientResponseIdentifiers(c, dataBytes)
 			data = string(dataBytes)
-			line = "data: " + data
+			if bytes.Equal(dataBytes, originalDataBytes) {
+				line = originalLine
+			} else {
+				line = "data: " + data
+			}
 			if sanitizedData, sanitized := sanitizeOpenAIResponseFailedEventForClient(
 				dataBytes,
 				eventType,
