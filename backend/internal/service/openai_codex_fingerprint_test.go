@@ -979,7 +979,8 @@ func TestCodexFingerprintMetadataSanitizationAndResponseRestore(t *testing.T) {
 	assert.True(t, applyCodexFingerprintClientMetadata(reqBody, ids))
 	stageCodexFingerprintIDs(c, ids)
 
-	metadata := reqBody["client_metadata"].(map[string]any)
+	metadata, ok := reqBody["client_metadata"].(map[string]any)
+	require.True(t, ok)
 	assert.NotContains(t, metadata, "baseUrl")
 	assert.NotContains(t, metadata, "api_key")
 	assert.Equal(t, ids.promptCacheKey, reqBody["prompt_cache_key"])

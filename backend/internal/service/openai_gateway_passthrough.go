@@ -1559,6 +1559,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
 			trimmedData := strings.TrimSpace(data)
+			originalDataBytes := append([]byte(nil), dataBytes...)
+			originalLine := line
 			rawEventType := strings.TrimSpace(gjson.GetBytes(dataBytes, "type").String())
 			observer.ObserveOpenAI(dataBytes, rawEventType)
 			if needModelReplace && strings.Contains(data, mappedModel) {
@@ -1571,12 +1573,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			if normalizedData, normalized := normalizeOpenAIResponsesFunctionCallArguments(dataBytes); normalized {
 				dataBytes = normalizedData
 				trimmedData = strings.TrimSpace(string(normalizedData))
-				line = "data: " + string(normalizedData)
 			}
 			if normalizedData, normalized := normalizeCompletedImageGenerationStatus(dataBytes); normalized {
 				dataBytes = normalizedData
 				trimmedData = strings.TrimSpace(string(normalizedData))
-				line = "data: " + string(normalizedData)
 			}
 			if trimmedData != "[DONE]" {
 				restoredData, restoreErr := restoreOpenAIResponsesNamespacePayload(c, dataBytes)
@@ -1585,13 +1585,15 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 				if !bytes.Equal(restoredData, dataBytes) {
 					dataBytes = restoredData
-					trimmedData = strings.TrimSpace(string(restoredData))
-					line = "data: " + string(restoredData)
 				}
 			}
 			dataBytes = restoreCodexClientResponseIdentifiers(c, dataBytes)
 			trimmedData = strings.TrimSpace(string(dataBytes))
-			line = "data: " + string(dataBytes)
+			if !bytes.Equal(dataBytes, originalDataBytes) {
+				line = "data: " + string(dataBytes)
+			} else {
+				line = originalLine
+			}
 			eventType := strings.TrimSpace(gjson.Get(trimmedData, "type").String())
 			if !capacityFailoverSuppressedLogged && account != nil && account.Platform == PlatformOpenAI &&
 				(eventType == "error" || eventType == "response.failed") &&

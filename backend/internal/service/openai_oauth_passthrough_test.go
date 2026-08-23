@@ -222,7 +222,7 @@ func TestOpenAIGatewayService_OAuthMessagesBridgeDoesNotInjectDefaultInstruction
 	require.Equal(t, "", gjson.GetBytes(upstream.lastBody, "instructions").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	require.NotEmpty(t, upstream.lastReq.Header.Get("Session_Id"))
-	require.Empty(t, upstream.lastReq.Header.Get("Conversation_Id"))
+	require.NotEmpty(t, upstream.lastReq.Header.Get("Conversation_Id"))
 	require.Empty(t, upstream.lastReq.Header.Get("OpenAI-Beta"))
 	require.Empty(t, upstream.lastReq.Header.Get("originator"))
 }
@@ -1982,11 +1982,12 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPTransformedHeaderBodyParityAnd
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 
-	seed, ok := codexFingerprintSeed(account.Extra)
-	require.True(t, ok)
-	wantInstall := resolveConvergedInstallationID(account, seed)
-	wantSession := resolveConvergedSessionID(seed)
-	wantThread := resolveConvergedThreadID(seed, "header-session")
+	wantIDs := resolveCodexFingerprintIDsWithScope(account, 0, "body-session", "header-session", codexFingerprintSession)
+	require.NotNil(t, wantIDs)
+	wantInstall := wantIDs.installationID
+	wantSession := wantIDs.sessionID
+	wantThread := wantIDs.threadID
+	wantPromptCacheKey := wantIDs.promptCacheKey
 
 	require.Equal(t, wantInstall, upstream.lastReq.Header.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
@@ -1995,7 +1996,7 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPTransformedHeaderBodyParityAnd
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("x-client-request-id"))
 	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
 
-	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, wantPromptCacheKey, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, wantInstall, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.Equal(t, wantThread, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
@@ -2044,11 +2045,12 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPRawPassthroughHeaderBodyParity
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 
-	seed, ok := codexFingerprintSeed(account.Extra)
-	require.True(t, ok)
-	wantInstall := resolveConvergedInstallationID(account, seed)
-	wantSession := resolveConvergedSessionID(seed)
-	wantThread := resolveConvergedThreadID(seed, "header-session")
+	wantIDs := resolveCodexFingerprintIDsWithScope(account, 0, "body-session", "header-session", codexFingerprintSession)
+	require.NotNil(t, wantIDs)
+	wantInstall := wantIDs.installationID
+	wantSession := wantIDs.sessionID
+	wantThread := wantIDs.threadID
+	wantPromptCacheKey := wantIDs.promptCacheKey
 
 	require.Equal(t, wantInstall, upstream.lastReq.Header.Get("x-codex-installation-id"))
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session-id"))
@@ -2057,7 +2059,7 @@ func TestOpenAIGatewayService_CodexFingerprintHTTPRawPassthroughHeaderBodyParity
 	require.Equal(t, wantThread, upstream.lastReq.Header.Get("x-client-request-id"))
 	require.Equal(t, wantThread+":0", upstream.lastReq.Header.Get("x-codex-window-id"))
 
-	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, wantPromptCacheKey, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
 	require.Equal(t, wantInstall, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.Equal(t, wantThread, gjson.GetBytes(upstream.lastBody, "client_metadata.thread_id").String())
@@ -2105,13 +2107,12 @@ func TestOpenAIGatewayService_CodexFingerprintCompactDoesNotRewriteBodyCacheKeyO
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 
-	seed, ok := codexFingerprintSeed(account.Extra)
-	require.True(t, ok)
-	require.NotEqual(t, resolveConvergedSessionID(seed), gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
-	require.Equal(t, "body-session", gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
-	require.Equal(t, "body-session", gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").Exists())
-	require.Empty(t, upstream.lastReq.Header.Get("x-codex-window-id"))
+	wantIDs := resolveCodexFingerprintIDsWithScope(account, 0, "body-session", "header-session", codexFingerprintSession)
+	require.NotNil(t, wantIDs)
+	require.Equal(t, wantIDs.promptCacheKey, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String())
+	require.Equal(t, wantIDs.sessionID, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
+	require.Equal(t, wantIDs.installationID, gjson.GetBytes(upstream.lastBody, "client_metadata.x-codex-installation-id").String())
+	require.Equal(t, wantIDs.windowID, upstream.lastReq.Header.Get("x-codex-window-id"))
 }
 
 func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPromptCacheKey(t *testing.T) {
@@ -2146,9 +2147,9 @@ func TestOpenAIGatewayService_CodexFingerprintMessagesBridgeDoesNotInjectBodyPro
 	require.NoError(t, err)
 	require.NotNil(t, upstream.lastReq)
 
-	seed, ok := codexFingerprintSeed(account.Extra)
-	require.True(t, ok)
-	wantSession := resolveConvergedSessionID(seed)
+	wantIDs := resolveCodexFingerprintIDsWithScope(account, 0, "anthropic-metadata-session-1", "header-session", codexFingerprintSession)
+	require.NotNil(t, wantIDs)
+	wantSession := wantIDs.sessionID
 	require.False(t, gjson.GetBytes(upstream.lastBody, "prompt_cache_key").Exists())
 	require.Equal(t, wantSession, gjson.GetBytes(upstream.lastBody, "client_metadata.session_id").String())
 	require.Equal(t, wantSession, upstream.lastReq.Header.Get("session_id"))

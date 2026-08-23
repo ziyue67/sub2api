@@ -491,7 +491,9 @@ func TestForwardAsAnthropic_AutoDerivesPromptCacheKeyWhenMessagesDispatchHasNoSe
 	cacheKey := gjson.GetBytes(upstream.lastBody, "prompt_cache_key").String()
 	require.NotEmpty(t, cacheKey)
 	require.True(t, strings.HasPrefix(cacheKey, "anthropic-digest-"))
-	require.Equal(t, generateSessionUUID(isolateOpenAISessionID(0, cacheKey)), upstream.lastReq.Header.Get("session_id"))
+	// Codex fingerprinting is opt-in; API-key requests keep the compatibility
+	// cache scope in the body without inventing an outbound session header.
+	require.Empty(t, upstream.lastReq.Header.Get("session_id"))
 }
 
 func TestForwardAsAnthropic_DoesNotAutoDerivePromptCacheKeyForNonCodexModel(t *testing.T) {
