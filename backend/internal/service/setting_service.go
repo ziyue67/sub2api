@@ -149,6 +149,7 @@ type SettingService struct {
 	// instance owns its own cache, no shared package-level state.
 	openAIQuotaAutoPauseSettingsCache atomic.Value // *cachedOpenAIQuotaAutoPauseSettings
 	openAIQuotaAutoPauseSettingsSF    singleflight.Group
+	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
 
 	// studioBridgeDefaultGroupReader 用于验证 studio bridge 兜底分组是否存在且活跃。
 	studioBridgeDefaultGroupReader   StudioBridgeGroupReader

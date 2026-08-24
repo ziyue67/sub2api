@@ -1,497 +1,707 @@
 package service
 
-import "sort"
-
-const (
-	// 工具定义在多轮历史里最多再嵌套一层 tools，留出余量后截断，避免畸形请求体
-	// 造成无界递归。
-	openAIResponsesToolSchemaMaxDepth = 4
-	// JSON Schema 里 type 只能是字符串或字符串数组；显式 null 无论哪个方言都非法，
-	// 补成 object 与 upstream 对该工具的实际期望一致。
-	openAIResponsesToolSchemaFallbackType = `"object"`
-	// 显式 null 在 JSON 里只有这一种字面量形态。
-	openAIResponsesToolSchemaNullLiteral = "null"
-	// 仅用于跳过不关心的 JSON 值的结构深度上限。超过上限按无变更处理，避免把
-	// 恶意深嵌套 body 递归到栈溢出。
-	openAIResponsesToolSchemaJSONMaxDepth = 128
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
-// openAIResponsesToolSchemaNullType 记录一处待修正的 null，用原始 body 上的
-// 绝对字节偏移表示，便于最后一次性拼接。
-type openAIResponsesToolSchemaNullType struct {
-	offset int
-	length int
+const (
+	// Keep this aligned with the gateway's default maximum request-body size. A
+	// caller with a larger custom limit must not make this compatibility pass an
+	// unbounded parser or patch accumulator.
+	openAIResponsesToolSchemaMaxBodySize = 256 << 20
+	openAIResponsesToolSchemaMaxDepth    = 128
+	openAIResponsesToolSchemaMaxEdits    = 1 << 20
+	openAIResponsesObjectUnionMaxSize    = 1 << 20
+	openAIResponsesObjectUnionMaxDepth   = 32
+
+	openAIResponsesToolSchemaFallbackType = `"object"`
+)
+
+var errOpenAIResponsesToolSchemaLimit = errors.New("OpenAI Responses tool schema safety limit exceeded")
+
+// shouldRepairOpenAIResponsesNullToolSchemaType reports whether the upstream
+// path requires a concrete object type at a function tool's parameter root.
+// This defect is shared by the OpenAI, Anthropic, and CN-compatible paths.
+func shouldRepairOpenAIResponsesNullToolSchemaType(platform string) bool {
+	return platform == PlatformOpenAI || platform == PlatformAnthropic || IsCNProvider(platform)
 }
 
-// sanitizeOpenAIResponsesToolParameterTypes 修正请求体中显式为 null 的
-// tools[].parameters.type。
-//
-// Codex Desktop 内置的 automation_update 工具会带 parameters.type = null，
-// OpenAI 直接回 400 invalid_function_parameters，而网关把该状态归一成可重试的
-// 502 upstream_error；该工具定义又会沉进多轮历史，导致之后每一轮继续失败并在
-// 账号池里反复重放同一份坏 Schema。
-//
-// 只修正显式 null：缺失 type 的 Schema 本身合法（等价于不约束），补写会收窄
-// 客户端语义，因此保持原样。
-//
-// 这里不使用逐项 gjson/sjson 路径查询。对一个有数千个 tools 的 body，路径查询会
-// 为每个 tool 创建临时 Result/路径对象，即使最终只拼接一次也会线性增加分配次数。
-// 轻量扫描器只记录原始 body 中的 null 偏移，最后一次性拼出新 body。
+// shouldSanitizeOpenAIResponsesToolSchemaPatterns is intentionally narrower:
+// regex lookaround rejection is an OpenAI-specific schema constraint.
+func shouldSanitizeOpenAIResponsesToolSchemaPatterns(platform string) bool {
+	return platform == PlatformOpenAI
+}
+
+func sanitizeOpenAIResponsesToolSchemasForPlatform(body []byte, platform string) ([]byte, bool, error) {
+	normalized := body
+	changed := false
+	if shouldRepairOpenAIResponsesNullToolSchemaType(platform) {
+		next, repaired, err := sanitizeOpenAIResponsesToolParameterTypes(normalized)
+		if err != nil {
+			return body, false, fmt.Errorf("sanitize OpenAI Responses tool parameters: %w", err)
+		}
+		if repaired {
+			normalized = next
+			changed = true
+		}
+	}
+	if shouldSanitizeOpenAIResponsesToolSchemaPatterns(platform) {
+		next, sanitized, err := sanitizeOpenAIResponsesToolSchemaPatterns(normalized)
+		if err != nil {
+			return body, false, fmt.Errorf("sanitize OpenAI Responses tool schema patterns: %w", err)
+		}
+		if sanitized {
+			normalized = next
+			changed = true
+		}
+	}
+	return normalized, changed, nil
+}
+
+// sanitizeOpenAIResponsesToolSchemaPatterns removes only schema constraints
+// containing regex lookaround, which OpenAI rejects. It deliberately does not
+// descend into instance-valued keywords such as default, examples, const, or
+// enum.
+func sanitizeOpenAIResponsesToolSchemaPatterns(body []byte) ([]byte, bool, error) {
+	if len(body) == 0 || !openAIResponsesBodyMayContainRegexLookaround(body) {
+		return body, false, nil
+	}
+	return sanitizeOpenAIResponsesToolSchemas(body, openAIResponsesToolSchemaOptions{removeLookaroundPatterns: true})
+}
+
+// sanitizeOpenAIResponsesToolParameterTypes replaces an explicitly null type
+// on a tool's parameter root with object. It also repairs the known Codex
+// missing root type when it is unambiguously implied by an object-only
+// oneOf/anyOf. Other missing types and nested property schemas are left
+// unchanged.
 func sanitizeOpenAIResponsesToolParameterTypes(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
+	return sanitizeOpenAIResponsesToolSchemas(body, openAIResponsesToolSchemaOptions{
+		replaceNullParameterTypes:       true,
+		injectObjectUnionRootObjectType: true,
+	})
+}
 
-	hits := make([]openAIResponsesToolSchemaNullType, 0, 2)
-	root := skipOpenAIResponsesToolSchemaWhitespace(body, 0)
-	if root < len(body) && body[root] == '{' {
-		collectOpenAIResponsesRootToolSchemaNullTypes(body, root, &hits)
-	}
-	if len(hits) == 0 {
+func openAIResponsesBodyMayContainRegexLookaround(body []byte) bool {
+	// An opening parenthesis may be literal or encoded as JSON's canonical
+	// Unicode escape. Other lookaround characters may themselves be escaped, so
+	// the full decoded pattern is checked only after scoped parsing.
+	return bytes.Contains(body, []byte("(")) || bytes.Contains(body, []byte(`\u0028`))
+}
+
+func hasRegexLookaround(pattern string) bool {
+	return strings.Contains(pattern, "(?=") || strings.Contains(pattern, "(?!") ||
+		strings.Contains(pattern, "(?<=") || strings.Contains(pattern, "(?<!")
+}
+
+type openAIResponsesToolSchemaOptions struct {
+	removeLookaroundPatterns        bool
+	replaceNullParameterTypes       bool
+	injectObjectUnionRootObjectType bool
+}
+
+type openAIResponsesToolSchemaContext uint8
+
+const (
+	openAIResponsesToolSchemaSkip openAIResponsesToolSchemaContext = iota
+	openAIResponsesToolSchemaDocument
+	openAIResponsesToolSchemaTools
+	openAIResponsesToolSchemaTool
+	openAIResponsesToolSchemaInput
+	openAIResponsesToolSchemaInputItem
+	openAIResponsesToolSchemaToolCarrier
+	openAIResponsesToolSchemaTypeProbe
+	openAIResponsesToolSchemaFunction
+	openAIResponsesToolSchema
+	openAIResponsesToolSchemaArray
+	openAIResponsesToolSchemaMap
+	openAIResponsesToolSchemaOrArray
+)
+
+type openAIResponsesToolSchemaEdit struct {
+	start       int
+	end         int
+	replacement string
+}
+
+type openAIResponsesToolSchemaParser struct {
+	body      []byte
+	pos       int
+	options   openAIResponsesToolSchemaOptions
+	edits     []openAIResponsesToolSchemaEdit
+	probeType string
+}
+
+func sanitizeOpenAIResponsesToolSchemas(
+	body []byte, options openAIResponsesToolSchemaOptions,
+) ([]byte, bool, error) {
+	if len(body) > openAIResponsesToolSchemaMaxBodySize {
 		return body, false, nil
 	}
+	if !utf8.Valid(body) {
+		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: invalid UTF-8")
+	}
+	p := openAIResponsesToolSchemaParser{body: body, options: options}
+	if err := p.parseValue(openAIResponsesToolSchemaDocument, false, 0); err != nil {
+		if errors.Is(err, errOpenAIResponsesToolSchemaLimit) {
+			return body, false, nil
+		}
+		return nil, false, err
+	}
+	p.skipWhitespace()
+	if p.pos != len(body) {
+		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: trailing data at byte %d", p.pos)
+	}
+	if !json.Valid(body) {
+		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: invalid JSON")
+	}
+	if len(p.edits) == 0 {
+		return body, false, nil
+	}
+	return applyOpenAIResponsesToolSchemaEdits(body, p.edits)
+}
 
-	// tools 与 input 在 body 里的先后顺序由客户端决定，收集顺序不保证单调。
-	sort.Slice(hits, func(i, j int) bool { return hits[i].offset < hits[j].offset })
+func (p *openAIResponsesToolSchemaParser) parseValue(
+	context openAIResponsesToolSchemaContext, schemaRoot bool, depth int,
+) error {
+	if depth > openAIResponsesToolSchemaMaxDepth {
+		return errOpenAIResponsesToolSchemaLimit
+	}
+	p.skipWhitespace()
+	if p.pos >= len(p.body) {
+		return p.syntaxError("expected value")
+	}
+	if p.body[p.pos] == '{' {
+		switch context {
+		case openAIResponsesToolSchemaInput:
+			context = openAIResponsesToolSchemaInputItem
+		case openAIResponsesToolSchemaOrArray, openAIResponsesToolSchemaArray:
+			context = openAIResponsesToolSchema
+		}
+	}
+	if context == openAIResponsesToolSchemaInputItem && p.body[p.pos] == '{' {
+		probe := openAIResponsesToolSchemaParser{body: p.body, pos: p.pos}
+		if err := probe.parseValue(openAIResponsesToolSchemaTypeProbe, false, depth); err != nil {
+			return err
+		}
+		switch probe.probeType {
+		case "function", "custom", "tool_search", "namespace":
+			context = openAIResponsesToolSchemaTool
+		case "additional_tools":
+			context = openAIResponsesToolSchemaToolCarrier
+		default:
+			context = openAIResponsesToolSchemaSkip
+		}
+	}
+	switch p.body[p.pos] {
+	case '{':
+		return p.parseObject(context, schemaRoot, depth+1)
+	case '[':
+		return p.parseArray(context, depth+1)
+	case '"':
+		_, _, err := p.parseString()
+		return err
+	case 't':
+		return p.parseKeyword("true")
+	case 'f':
+		return p.parseKeyword("false")
+	case 'n':
+		return p.parseKeyword("null")
+	default:
+		return p.parseNumber()
+	}
+}
 
-	sanitized := make([]byte, 0, len(body)+len(hits)*len(openAIResponsesToolSchemaFallbackType))
-	cursor := 0
-	for _, hit := range hits {
-		// 收集阶段已逐个校验过区间，这里再挡一次重叠，保证拼接严格单调向前。
-		if hit.offset < cursor {
+func (p *openAIResponsesToolSchemaParser) parseObject(
+	context openAIResponsesToolSchemaContext, schemaRoot bool, depth int,
+) error {
+	p.pos++
+	p.skipWhitespace()
+	if p.consume('}') {
+		return nil
+	}
+	previousComma := -1
+	deleteRunStart := -1
+	deleteRunPreviousComma := -1
+	rootTypeCount := 0
+	nullRootTypeStart := -1
+	nullRootTypeEnd := -1
+	parameterCount := 0
+	parameterValueStart := -1
+	parameterValueEnd := -1
+	for {
+		p.skipWhitespace()
+		memberStart := p.pos
+		keyStart, keyEnd, err := p.parseString()
+		if err != nil {
+			return err
+		}
+		key := p.body[keyStart:keyEnd]
+		p.skipWhitespace()
+		if !p.consume(':') {
+			return p.syntaxError("expected colon")
+		}
+		p.skipWhitespace()
+		valueStart := p.pos
+
+		childContext, childSchemaRoot := openAIResponsesToolSchemaChildContext(context, key)
+		if err := p.parseValue(childContext, childSchemaRoot, depth); err != nil {
+			return err
+		}
+		valueEnd := p.pos
+		p.skipWhitespace()
+
+		deleteMember := false
+		if context == openAIResponsesToolSchemaTypeProbe && openAIResponsesJSONStringEquals(key, "type") {
+			if value, ok := decodeOpenAIResponsesJSONStringValue(p.body[valueStart:valueEnd]); ok {
+				p.probeType = strings.TrimSpace(value)
+			}
+		}
+		if (context == openAIResponsesToolSchemaTool || context == openAIResponsesToolSchemaFunction) &&
+			openAIResponsesJSONStringEquals(key, "parameters") {
+			parameterCount++
+			parameterValueStart = valueStart
+			parameterValueEnd = valueEnd
+		}
+		if context == openAIResponsesToolSchema && openAIResponsesJSONStringEquals(key, "pattern") && p.options.removeLookaroundPatterns {
+			if pattern, ok := decodeOpenAIResponsesJSONStringValue(p.body[valueStart:valueEnd]); ok && hasRegexLookaround(pattern) {
+				deleteMember = true
+			}
+		}
+		if context == openAIResponsesToolSchema && schemaRoot && openAIResponsesJSONStringEquals(key, "type") {
+			// Duplicate JSON keys have parser-dependent effective values. Repair a
+			// root type only when it is unique rather than choosing a winner and
+			// potentially changing the client's effective schema.
+			rootTypeCount++
+			if bytes.Equal(p.body[valueStart:valueEnd], []byte("null")) {
+				nullRootTypeStart = valueStart
+				nullRootTypeEnd = valueEnd
+			}
+		}
+
+		if p.pos >= len(p.body) {
+			return p.syntaxError("unterminated object")
+		}
+		if deleteMember && deleteRunStart < 0 {
+			deleteRunStart = memberStart
+			deleteRunPreviousComma = previousComma
+		}
+		if !deleteMember && deleteRunStart >= 0 {
+			// Remove through the delimiter after the deleted run, but retain the
+			// whitespace that originally preceded the next member.
+			if err := p.addEdit(deleteRunStart, previousComma+1, ""); err != nil {
+				return err
+			}
+			deleteRunStart = -1
+			deleteRunPreviousComma = -1
+		}
+		if p.body[p.pos] == ',' {
+			comma := p.pos
+			p.pos++
+			previousComma = comma
 			continue
 		}
-		sanitized = append(sanitized, body[cursor:hit.offset]...)
-		sanitized = append(sanitized, openAIResponsesToolSchemaFallbackType...)
-		cursor = hit.offset + hit.length
-	}
-	sanitized = append(sanitized, body[cursor:]...)
-	return sanitized, true, nil
-}
-
-// collectOpenAIResponsesRootToolSchemaNullTypes 只检查根级 tools 和 input 数组中
-// 每个历史条目的 tools，与 Responses 请求可出现的工具定义位置保持一致。
-func collectOpenAIResponsesRootToolSchemaNullTypes(
-	body []byte, objectStart int, hits *[]openAIResponsesToolSchemaNullType,
-) {
-	for i := objectStart + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) || body[i] == '}' {
-			return
+		if p.body[p.pos] != '}' {
+			return p.syntaxError("expected comma or closing brace")
 		}
-		keyStart := i
-		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
-		if keyEnd < 0 {
-			return
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
-		if i >= len(body) || body[i] != ':' {
-			return
-		}
-		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
-		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
-		if valueEnd < 0 {
-			return
-		}
-		if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "tools") && valueStart < len(body) && body[valueStart] == '[' {
-			collectOpenAIResponsesToolsArrayNullTypes(body, valueStart, 0, hits)
-		} else if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "input") && valueStart < len(body) && body[valueStart] == '[' {
-			collectOpenAIResponsesInputArrayToolSchemaNullTypes(body, valueStart, hits)
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		if body[i] != ',' {
-			return
-		}
-		i++
-	}
-}
-
-func collectOpenAIResponsesInputArrayToolSchemaNullTypes(
-	body []byte, arrayStart int, hits *[]openAIResponsesToolSchemaNullType,
-) {
-	for i := arrayStart + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) || body[i] == ']' {
-			return
-		}
-		valueStart := i
-		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
-		if valueEnd < 0 {
-			return
-		}
-		if body[valueStart] == '{' {
-			collectOpenAIResponsesInputItemToolSchemaNullTypes(body, valueStart, hits)
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
-		if i >= len(body) || body[i] == ']' {
-			return
-		}
-		if body[i] != ',' {
-			return
-		}
-		i++
-	}
-}
-
-func collectOpenAIResponsesInputItemToolSchemaNullTypes(
-	body []byte, objectStart int, hits *[]openAIResponsesToolSchemaNullType,
-) {
-	for i := objectStart + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		keyStart := i
-		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
-		if keyEnd < 0 {
-			return
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
-		if i >= len(body) || body[i] != ':' {
-			return
-		}
-		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
-		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
-		if valueEnd < 0 {
-			return
-		}
-		if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "tools") && valueStart < len(body) && body[valueStart] == '[' {
-			collectOpenAIResponsesToolsArrayNullTypes(body, valueStart, 0, hits)
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		if body[i] != ',' {
-			return
-		}
-		i++
-	}
-}
-
-// collectOpenAIResponsesToolsArrayNullTypes 收集一个 tools 数组里所有需要修正的
-// parameters.type 位置。不按 tool type 过滤：null 的 schema type 在 function、
-// custom 以及任何 hosted 工具上都同样非法。
-func collectOpenAIResponsesToolsArrayNullTypes(
-	body []byte, arrayStart, depth int, hits *[]openAIResponsesToolSchemaNullType,
-) {
-	if depth > openAIResponsesToolSchemaMaxDepth {
-		return
-	}
-	for i := arrayStart + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) || body[i] == ']' {
-			return
-		}
-		valueStart := i
-		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
-		if valueEnd < 0 {
-			return
-		}
-		if body[valueStart] == '{' {
-			collectOpenAIResponsesToolObjectSchemaNullTypes(body, valueStart, depth, hits)
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
-		if i >= len(body) || body[i] == ']' {
-			return
-		}
-		if body[i] != ',' {
-			return
-		}
-		i++
-	}
-}
-
-func collectOpenAIResponsesToolObjectSchemaNullTypes(
-	body []byte, objectStart, depth int, hits *[]openAIResponsesToolSchemaNullType,
-) {
-	for i := objectStart + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		keyStart := i
-		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
-		if keyEnd < 0 {
-			return
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
-		if i >= len(body) || body[i] != ':' {
-			return
-		}
-		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
-		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
-		if valueEnd < 0 {
-			return
-		}
-		if valueStart < len(body) && body[valueStart] == '{' {
-			switch {
-			case openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "parameters"):
-				collectOpenAIResponsesParameterTypeNull(body, valueStart, hits)
-			case openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "function"):
-				collectOpenAIResponsesFunctionParameterTypeNull(body, valueStart, hits)
+		if deleteRunStart >= 0 {
+			start := deleteRunStart
+			if deleteRunPreviousComma >= 0 {
+				start = deleteRunPreviousComma
 			}
-		} else if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "tools") && valueStart < len(body) && body[valueStart] == '[' {
-			collectOpenAIResponsesToolsArrayNullTypes(body, valueStart, depth+1, hits)
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		if body[i] != ',' {
-			return
-		}
-		i++
-	}
-}
-
-func collectOpenAIResponsesFunctionParameterTypeNull(
-	body []byte, objectStart int, hits *[]openAIResponsesToolSchemaNullType,
-) {
-	for i := objectStart + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		keyStart := i
-		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
-		if keyEnd < 0 {
-			return
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
-		if i >= len(body) || body[i] != ':' {
-			return
-		}
-		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
-		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
-		if valueEnd < 0 {
-			return
-		}
-		if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "parameters") && valueStart < len(body) && body[valueStart] == '{' {
-			collectOpenAIResponsesParameterTypeNull(body, valueStart, hits)
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		if body[i] != ',' {
-			return
-		}
-		i++
-	}
-}
-
-func collectOpenAIResponsesParameterTypeNull(
-	body []byte, objectStart int, hits *[]openAIResponsesToolSchemaNullType,
-) {
-	for i := objectStart + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		keyStart := i
-		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
-		if keyEnd < 0 {
-			return
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
-		if i >= len(body) || body[i] != ':' {
-			return
-		}
-		valueStart := skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
-		valueEnd := scanOpenAIResponsesToolSchemaValue(body, valueStart, 0)
-		if valueEnd < 0 {
-			return
-		}
-		if openAIResponsesToolSchemaKeyEquals(body, keyStart, keyEnd, "type") && valueEnd-valueStart == len(openAIResponsesToolSchemaNullLiteral) && string(body[valueStart:valueEnd]) == openAIResponsesToolSchemaNullLiteral {
-			*hits = append(*hits, openAIResponsesToolSchemaNullType{offset: valueStart, length: len(openAIResponsesToolSchemaNullLiteral)})
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, valueEnd)
-		if i >= len(body) || body[i] == '}' {
-			return
-		}
-		if body[i] != ',' {
-			return
-		}
-		i++
-	}
-}
-
-func skipOpenAIResponsesToolSchemaWhitespace(body []byte, i int) int {
-	for i < len(body) {
-		switch body[i] {
-		case ' ', '\n', '\r', '\t':
-			i++
-		default:
-			return i
-		}
-	}
-	return i
-}
-
-func scanOpenAIResponsesToolSchemaString(body []byte, start int) int {
-	if start >= len(body) || body[start] != '"' {
-		return -1
-	}
-	for i := start + 1; i < len(body); i++ {
-		switch body[i] {
-		case '\\':
-			i++
-			if i >= len(body) {
-				return -1
-			}
-		case '"':
-			return i + 1
-		}
-	}
-	return -1
-}
-
-func scanOpenAIResponsesToolSchemaValue(body []byte, start, depth int) int {
-	if start >= len(body) || depth > openAIResponsesToolSchemaJSONMaxDepth {
-		return -1
-	}
-	switch body[start] {
-	case '"':
-		return scanOpenAIResponsesToolSchemaString(body, start)
-	case '{':
-		return scanOpenAIResponsesToolSchemaObject(body, start, depth+1)
-	case '[':
-		return scanOpenAIResponsesToolSchemaArray(body, start, depth+1)
-	default:
-		i := start
-		for i < len(body) {
-			switch body[i] {
-			case ' ', '\n', '\r', '\t', ',', ']', '}':
-				return i
-			default:
-				i++
+			if err := p.addEdit(start, p.pos, ""); err != nil {
+				return err
 			}
 		}
-		return i
+		if p.options.replaceNullParameterTypes && rootTypeCount == 1 && nullRootTypeStart >= 0 {
+			if err := p.addEdit(nullRootTypeStart, nullRootTypeEnd, openAIResponsesToolSchemaFallbackType); err != nil {
+				return err
+			}
+		}
+		if p.options.injectObjectUnionRootObjectType &&
+			(context == openAIResponsesToolSchemaTool || context == openAIResponsesToolSchemaFunction) &&
+			parameterCount == 1 && parameterValueStart >= 0 {
+			if edit, ok := openAIMissingRootObjectUnionTypeEdit(
+				p.body[parameterValueStart:parameterValueEnd], parameterValueStart,
+			); ok {
+				if err := p.addEdit(edit.start, edit.end, edit.replacement); err != nil {
+					return err
+				}
+			}
+		}
+		p.pos++
+		return nil
 	}
 }
 
-func scanOpenAIResponsesToolSchemaObject(body []byte, start, depth int) int {
-	for i := start + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) {
-			return -1
-		}
-		if body[i] == '}' {
-			return i + 1
-		}
-		keyEnd := scanOpenAIResponsesToolSchemaString(body, i)
-		if keyEnd < 0 {
-			return -1
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, keyEnd)
-		if i >= len(body) || body[i] != ':' {
-			return -1
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i+1)
-		i = scanOpenAIResponsesToolSchemaValue(body, i, depth)
-		if i < 0 {
-			return -1
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) {
-			return -1
-		}
-		if body[i] == '}' {
-			return i + 1
-		}
-		if body[i] != ',' {
-			return -1
-		}
-		i++
+var (
+	openAIResponsesJSONOneOfKey     = []byte(`"oneOf"`)
+	openAIResponsesJSONAnyOfKey     = []byte(`"anyOf"`)
+	openAIResponsesJSONEscapeNeedle = []byte{'\\'}
+)
+
+func openAIMissingRootObjectUnionTypeEdit(raw []byte, absoluteStart int) (openAIResponsesToolSchemaEdit, bool) {
+	if len(raw) > openAIResponsesObjectUnionMaxSize {
+		return openAIResponsesToolSchemaEdit{}, false
 	}
+	if !bytes.Contains(raw, openAIResponsesJSONOneOfKey) && !bytes.Contains(raw, openAIResponsesJSONAnyOfKey) &&
+		!bytes.Contains(raw, openAIResponsesJSONEscapeNeedle) {
+		return openAIResponsesToolSchemaEdit{}, false
+	}
+	var schema map[string]json.RawMessage
+	if len(raw) < 2 || raw[0] != '{' || json.Unmarshal(raw, &schema) != nil {
+		return openAIResponsesToolSchemaEdit{}, false
+	}
+	if _, hasType := schema["type"]; hasType || !openAIResponsesSchemaHasObjectOnlyUnion(schema, 0) {
+		return openAIResponsesToolSchemaEdit{}, false
+	}
+	return openAIResponsesToolSchemaEdit{
+		start:       absoluteStart + 1,
+		end:         absoluteStart + 1,
+		replacement: `"type":"object",`,
+	}, true
 }
 
-func scanOpenAIResponsesToolSchemaArray(body []byte, start, depth int) int {
-	for i := start + 1; ; {
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) {
-			return -1
-		}
-		if body[i] == ']' {
-			return i + 1
-		}
-		i = scanOpenAIResponsesToolSchemaValue(body, i, depth)
-		if i < 0 {
-			return -1
-		}
-		i = skipOpenAIResponsesToolSchemaWhitespace(body, i)
-		if i >= len(body) {
-			return -1
-		}
-		if body[i] == ']' {
-			return i + 1
-		}
-		if body[i] != ',' {
-			return -1
-		}
-		i++
-	}
-}
-
-// openAIResponsesToolSchemaKeyEquals 在不分配字符串的前提下比较 JSON 对象键。
-// 工具协议键均为 ASCII；同时兼容这些 ASCII 字符的 \u00XX 写法。
-func openAIResponsesToolSchemaKeyEquals(body []byte, start, end int, want string) bool {
-	if start < 0 || end <= start+1 || end > len(body) || body[start] != '"' || body[end-1] != '"' {
+func openAIResponsesSchemaHasObjectOnlyUnion(schema map[string]json.RawMessage, depth int) bool {
+	if depth > openAIResponsesObjectUnionMaxDepth {
 		return false
 	}
-	i := start + 1
-	for j := 0; j < len(want); j++ {
-		if i >= end-1 {
-			return false
-		}
-		if body[i] != '\\' {
-			if body[i] != want[j] {
-				return false
-			}
-			i++
+	found := false
+	for _, keyword := range []string{"oneOf", "anyOf"} {
+		raw, ok := schema[keyword]
+		if !ok {
 			continue
 		}
-		i++
-		if i >= end-1 || body[i] != 'u' || i+4 >= end-1 {
+		found = true
+		var branches []json.RawMessage
+		if json.Unmarshal(raw, &branches) != nil || len(branches) == 0 {
 			return false
 		}
-		value, ok := decodeOpenAIResponsesToolSchemaHex4(body[i+1 : i+5])
-		if !ok || value != want[j] {
-			return false
+		for _, branch := range branches {
+			if !openAIResponsesSchemaIsObjectOnly(branch, depth+1) {
+				return false
+			}
 		}
-		i += 5
 	}
-	return i == end-1
+	return found
 }
 
-func decodeOpenAIResponsesToolSchemaHex4(raw []byte) (byte, bool) {
-	if len(raw) != 4 || raw[0] != '0' || raw[1] != '0' {
-		return 0, false
+func openAIResponsesSchemaIsObjectOnly(raw json.RawMessage, depth int) bool {
+	if depth > openAIResponsesObjectUnionMaxDepth {
+		return false
 	}
-	decode := func(ch byte) (byte, bool) {
+	var schema map[string]json.RawMessage
+	if json.Unmarshal(raw, &schema) != nil {
+		return false
+	}
+	if rawType, ok := schema["type"]; ok {
+		var schemaType string
+		return json.Unmarshal(rawType, &schemaType) == nil && schemaType == "object"
+	}
+	return openAIResponsesSchemaHasObjectOnlyUnion(schema, depth+1)
+}
+
+func (p *openAIResponsesToolSchemaParser) parseArray(
+	context openAIResponsesToolSchemaContext, depth int,
+) error {
+	p.pos++
+	p.skipWhitespace()
+	if p.consume(']') {
+		return nil
+	}
+	childContext := openAIResponsesToolSchemaSkip
+	switch context {
+	case openAIResponsesToolSchemaTools:
+		childContext = openAIResponsesToolSchemaTool
+	case openAIResponsesToolSchemaInput:
+		childContext = openAIResponsesToolSchemaInputItem
+	case openAIResponsesToolSchemaArray, openAIResponsesToolSchemaOrArray:
+		childContext = openAIResponsesToolSchema
+	}
+	for {
+		if err := p.parseValue(childContext, false, depth); err != nil {
+			return err
+		}
+		p.skipWhitespace()
+		if p.consume(',') {
+			continue
+		}
+		if !p.consume(']') {
+			return p.syntaxError("expected comma or closing bracket")
+		}
+		return nil
+	}
+}
+
+func openAIResponsesToolSchemaChildContext(
+	context openAIResponsesToolSchemaContext, key []byte,
+) (openAIResponsesToolSchemaContext, bool) {
+	switch context {
+	case openAIResponsesToolSchemaDocument:
 		switch {
-		case ch >= '0' && ch <= '9':
-			return ch - '0', true
-		case ch >= 'a' && ch <= 'f':
-			return ch - 'a' + 10, true
-		case ch >= 'A' && ch <= 'F':
-			return ch - 'A' + 10, true
+		case openAIResponsesJSONStringEquals(key, "tools"):
+			return openAIResponsesToolSchemaTools, false
+		case openAIResponsesJSONStringEquals(key, "input"):
+			return openAIResponsesToolSchemaInput, false
+		}
+	case openAIResponsesToolSchemaTool:
+		switch {
+		case openAIResponsesJSONStringEquals(key, "parameters"):
+			return openAIResponsesToolSchema, true
+		case openAIResponsesJSONStringEquals(key, "function"):
+			return openAIResponsesToolSchemaFunction, false
+		case openAIResponsesJSONStringEquals(key, "tools"):
+			return openAIResponsesToolSchemaTools, false
+		}
+	case openAIResponsesToolSchemaToolCarrier:
+		if openAIResponsesJSONStringEquals(key, "tools") {
+			return openAIResponsesToolSchemaTools, false
+		}
+	case openAIResponsesToolSchemaFunction:
+		switch {
+		case openAIResponsesJSONStringEquals(key, "parameters"):
+			return openAIResponsesToolSchema, true
+		case openAIResponsesJSONStringEquals(key, "tools"):
+			return openAIResponsesToolSchemaTools, false
+		}
+	case openAIResponsesToolSchema:
+		switch {
+		case openAIResponsesJSONStringMatchesAny(key,
+			"additionalProperties", "additionalItems", "contains", "not", "if", "then", "else",
+			"propertyNames", "unevaluatedProperties", "unevaluatedItems"):
+			return openAIResponsesToolSchema, false
+		case openAIResponsesJSONStringEquals(key, "items"):
+			return openAIResponsesToolSchemaOrArray, false
+		case openAIResponsesJSONStringMatchesAny(key, "anyOf", "oneOf", "allOf", "prefixItems"):
+			return openAIResponsesToolSchemaArray, false
+		case openAIResponsesJSONStringMatchesAny(key,
+			"properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies"):
+			return openAIResponsesToolSchemaMap, false
+		}
+	case openAIResponsesToolSchemaMap:
+		return openAIResponsesToolSchema, false
+	}
+	return openAIResponsesToolSchemaSkip, false
+}
+
+func (p *openAIResponsesToolSchemaParser) parseString() (int, int, error) {
+	if p.pos >= len(p.body) || p.body[p.pos] != '"' {
+		return 0, 0, p.syntaxError("expected string")
+	}
+	start := p.pos
+	p.pos++
+	for p.pos < len(p.body) {
+		switch p.body[p.pos] {
+		case '"':
+			p.pos++
+			return start, p.pos, nil
+		case '\\':
+			p.pos++
+			if p.pos >= len(p.body) {
+				return 0, 0, p.syntaxError("unterminated string escape")
+			}
+			switch p.body[p.pos] {
+			case 'u':
+				if p.pos+4 >= len(p.body) {
+					return 0, 0, p.syntaxError("short unicode escape")
+				}
+				for _, digit := range p.body[p.pos+1 : p.pos+5] {
+					if !isOpenAIResponsesJSONHexDigit(digit) {
+						return 0, 0, p.syntaxError("invalid unicode escape")
+					}
+				}
+				p.pos += 5
+				continue
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+				p.pos++
+			default:
+				return 0, 0, p.syntaxError("invalid string escape")
+			}
 		default:
-			return 0, false
+			if p.body[p.pos] < 0x20 {
+				return 0, 0, p.syntaxError("control character in string")
+			}
+			p.pos++
 		}
 	}
-	hi, ok := decode(raw[2])
-	if !ok {
-		return 0, false
+	return 0, 0, p.syntaxError("unterminated string")
+}
+
+func isOpenAIResponsesJSONHexDigit(value byte) bool {
+	return value >= '0' && value <= '9' || value >= 'a' && value <= 'f' || value >= 'A' && value <= 'F'
+}
+
+func (p *openAIResponsesToolSchemaParser) parseKeyword(keyword string) error {
+	if len(p.body)-p.pos < len(keyword) || string(p.body[p.pos:p.pos+len(keyword)]) != keyword {
+		return p.syntaxError("invalid literal")
 	}
-	lo, ok := decode(raw[3])
-	if !ok {
-		return 0, false
+	p.pos += len(keyword)
+	return nil
+}
+
+func (p *openAIResponsesToolSchemaParser) parseNumber() error {
+	start := p.pos
+	if p.consume('-') && p.pos >= len(p.body) {
+		return p.syntaxError("invalid number")
 	}
-	return hi<<4 | lo, true
+	if p.consume('0') {
+		if p.pos < len(p.body) && p.body[p.pos] >= '0' && p.body[p.pos] <= '9' {
+			return p.syntaxError("invalid leading zero")
+		}
+	} else {
+		if p.pos >= len(p.body) || p.body[p.pos] < '1' || p.body[p.pos] > '9' {
+			return p.syntaxError("invalid number")
+		}
+		for p.pos < len(p.body) && p.body[p.pos] >= '0' && p.body[p.pos] <= '9' {
+			p.pos++
+		}
+	}
+	if p.consume('.') {
+		fractionStart := p.pos
+		for p.pos < len(p.body) && p.body[p.pos] >= '0' && p.body[p.pos] <= '9' {
+			p.pos++
+		}
+		if p.pos == fractionStart {
+			return p.syntaxError("invalid fraction")
+		}
+	}
+	if p.pos < len(p.body) && (p.body[p.pos] == 'e' || p.body[p.pos] == 'E') {
+		p.pos++
+		if p.pos < len(p.body) && (p.body[p.pos] == '+' || p.body[p.pos] == '-') {
+			p.pos++
+		}
+		exponentStart := p.pos
+		for p.pos < len(p.body) && p.body[p.pos] >= '0' && p.body[p.pos] <= '9' {
+			p.pos++
+		}
+		if p.pos == exponentStart {
+			return p.syntaxError("invalid exponent")
+		}
+	}
+	if p.pos == start {
+		return p.syntaxError("invalid value")
+	}
+	return nil
+}
+
+func (p *openAIResponsesToolSchemaParser) addEdit(start, end int, replacement string) error {
+	if start < 0 || end < start || end > len(p.body) {
+		return p.syntaxError("invalid patch span")
+	}
+	if len(p.edits) >= openAIResponsesToolSchemaMaxEdits {
+		return errOpenAIResponsesToolSchemaLimit
+	}
+	p.edits = append(p.edits, openAIResponsesToolSchemaEdit{start: start, end: end, replacement: replacement})
+	return nil
+}
+
+func (p *openAIResponsesToolSchemaParser) skipWhitespace() {
+	for p.pos < len(p.body) {
+		switch p.body[p.pos] {
+		case ' ', '\t', '\n', '\r':
+			p.pos++
+		default:
+			return
+		}
+	}
+}
+
+func (p *openAIResponsesToolSchemaParser) consume(want byte) bool {
+	if p.pos < len(p.body) && p.body[p.pos] == want {
+		p.pos++
+		return true
+	}
+	return false
+}
+
+func (p *openAIResponsesToolSchemaParser) syntaxError(message string) error {
+	return fmt.Errorf("sanitize OpenAI Responses tool schemas: %s at byte %d", message, p.pos)
+}
+
+func decodeOpenAIResponsesJSONString(raw []byte) (string, error) {
+	decoded, err := strconv.Unquote(string(raw))
+	if err != nil {
+		return "", err
+	}
+	return decoded, nil
+}
+
+func openAIResponsesJSONStringEquals(raw []byte, want string) bool {
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return false
+	}
+	if !bytes.Contains(raw, []byte{'\\'}) {
+		return bytes.Equal(raw[1:len(raw)-1], []byte(want))
+	}
+	decoded, err := decodeOpenAIResponsesJSONString(raw)
+	return err == nil && decoded == want
+}
+
+func openAIResponsesJSONStringMatchesAny(raw []byte, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if openAIResponsesJSONStringEquals(raw, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeOpenAIResponsesJSONStringValue(raw []byte) (string, bool) {
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return "", false
+	}
+	decoded, err := decodeOpenAIResponsesJSONString(raw)
+	return decoded, err == nil
+}
+
+func applyOpenAIResponsesToolSchemaEdits(
+	body []byte, edits []openAIResponsesToolSchemaEdit,
+) ([]byte, bool, error) {
+	sort.Slice(edits, func(i, j int) bool {
+		if edits[i].start != edits[j].start {
+			return edits[i].start < edits[j].start
+		}
+		return edits[i].end < edits[j].end
+	})
+
+	merged := edits[:0]
+	for _, edit := range edits {
+		if len(merged) == 0 || edit.start >= merged[len(merged)-1].end {
+			merged = append(merged, edit)
+			continue
+		}
+		previous := &merged[len(merged)-1]
+		if previous.replacement != "" || edit.replacement != "" {
+			return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: overlapping patches")
+		}
+		if edit.end > previous.end {
+			previous.end = edit.end
+		}
+	}
+
+	delta := 0
+	for _, edit := range merged {
+		delta += len(edit.replacement) - (edit.end - edit.start)
+	}
+	sanitized := make([]byte, 0, len(body)+delta)
+	cursor := 0
+	for _, edit := range merged {
+		sanitized = append(sanitized, body[cursor:edit.start]...)
+		sanitized = append(sanitized, edit.replacement...)
+		cursor = edit.end
+	}
+	sanitized = append(sanitized, body[cursor:]...)
+	if !json.Valid(sanitized) {
+		return nil, false, fmt.Errorf("sanitize OpenAI Responses tool schemas: patch produced invalid JSON")
+	}
+	return sanitized, true, nil
 }

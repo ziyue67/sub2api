@@ -35,6 +35,11 @@ type EmailBroadcastService struct {
 	running map[int64]struct{}
 }
 
+const (
+	emailBroadcastTimeout      = 6 * time.Hour
+	emailBroadcastSendAttempts = 3
+)
+
 // EmailBroadcastSendInput 发送一次广播邮件所需的参数集合 (供 handler 调用)。
 type EmailBroadcastSendInput struct {
 	Subject          string
@@ -65,7 +70,7 @@ func NewEmailBroadcastService(
 		emailService:         emailService,
 		settingRepo:          settingRepo,
 		htmlSanitizer:        policy,
-		sendIntervalPerEmail: 200 * time.Millisecond,
+		sendIntervalPerEmail: time.Second,
 		running:              make(map[int64]struct{}),
 	}
 }
@@ -196,7 +201,7 @@ func (s *EmailBroadcastService) runBroadcast(id int64) {
 	}
 	defer s.unmarkRunning(id)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), emailBroadcastTimeout)
 	defer cancel()
 
 	defer func() {
@@ -270,13 +275,7 @@ func (s *EmailBroadcastService) runBroadcast(id int64) {
 
 	success, failed := 0, 0
 	for idx, addr := range emails {
-		if err := s.emailService.SendEmailWithConfigAndContentType(
-			smtpConfig,
-			addr,
-			broadcast.Subject,
-			htmlBody,
-			"text/html; charset=UTF-8",
-		); err != nil {
+		if err := s.sendBroadcastEmail(ctx, smtpConfig, addr, broadcast.Subject, htmlBody); err != nil {
 			failed++
 			logger.L().Warn("email_broadcast.send_failed",
 				zap.Int64("broadcast_id", id),
@@ -316,6 +315,36 @@ done:
 		zap.Int("success", success),
 		zap.Int("failed", failed),
 		zap.String("status", finalStatus))
+}
+
+// sendBroadcastEmail retries transient SMTP and transport failures. Each retry
+// opens a fresh SMTP session because a failed DATA transaction leaves the prior
+// session state undefined on a number of providers.
+func (s *EmailBroadcastService) sendBroadcastEmail(ctx context.Context, smtpConfig *SMTPConfig, to, subject, htmlBody string) error {
+	var lastErr error
+	for attempt := 1; attempt <= emailBroadcastSendAttempts; attempt++ {
+		lastErr = s.emailService.SendEmailWithConfigAndContentType(
+			smtpConfig,
+			to,
+			subject,
+			htmlBody,
+			"text/html; charset=UTF-8",
+		)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == emailBroadcastSendAttempts {
+			break
+		}
+
+		backoff := time.Duration(attempt) * time.Second
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	return lastErr
 }
 
 // resolveRecipientEmails 把 broadcast 描述的"全部用户 / 指定 IDs"展开为收件人邮箱列表。
