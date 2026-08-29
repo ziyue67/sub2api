@@ -714,9 +714,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		}
 		if credentialAccount.IsOpenAIAPIProtocolConfigured() {
 			protocol := credentialAccount.GetAPIProtocol()
-			if protocol == APIProtocolChatCompletions {
+			switch protocol {
+			case APIProtocolChatCompletions:
 				baseURL = credentialAccount.GetOpenAIProtocolBaseURL(APIProtocolChatCompletions)
-			} else if protocol == APIProtocolAdaptive {
+			case APIProtocolAdaptive:
 				if responsesBaseURL := credentialAccount.GetOpenAIProtocolBaseURL(APIProtocolResponses); responsesBaseURL != "" {
 					baseURL = responsesBaseURL
 				} else {
