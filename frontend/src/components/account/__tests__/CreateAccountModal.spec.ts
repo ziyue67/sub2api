@@ -257,6 +257,45 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createAccountMock.mock.calls[0]?.[0]?.upstream_billing_probe_enabled).toBe(true)
   })
 
+  it('keeps the OpenAI API Key protocol override unset by default', async () => {
+    await submitApiKeyAccount('openai')
+
+    const credentials = createAccountMock.mock.calls[0]?.[0]?.credentials
+    expect(credentials).not.toHaveProperty('api_protocol')
+    expect(credentials).not.toHaveProperty('api_base_urls')
+    expect(credentials?.base_url).toBe('https://api.openai.com')
+  })
+
+  it('submits optional OpenAI adaptive protocol endpoints', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('[data-testid="openai-api-protocol-adaptive"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('OpenAI adaptive')
+    await wrapper
+      .get('[data-testid="openai-adaptive-base-url-chat_completions"]')
+      .setValue('https://relay.example.com/v1/chat/completions')
+    await wrapper
+      .get('[data-testid="openai-adaptive-base-url-anthropic"]')
+      .setValue('https://relay.example.com/v1/messages')
+    await wrapper
+      .get('[data-testid="openai-adaptive-base-url-responses"]')
+      .setValue('https://relay.example.com/v1/responses')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-openai')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).toMatchObject({
+      api_protocol: 'adaptive',
+      base_url: 'https://relay.example.com/v1/chat/completions',
+      api_base_urls: {
+        chat_completions: 'https://relay.example.com/v1/chat/completions',
+        anthropic: 'https://relay.example.com/v1/messages',
+        responses: 'https://relay.example.com/v1/responses'
+      }
+    })
+  })
+
   it('waits for the initial upstream billing probe before refreshing the account list', async () => {
     let resolveProbe: (() => void) | undefined
     probeUpstreamBillingMock.mockImplementationOnce(

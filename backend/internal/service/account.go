@@ -1336,7 +1336,7 @@ func (a *Account) GetOpenAIBaseURL() string {
 	if !a.IsOpenAI() && !a.IsCNProvider() {
 		return ""
 	}
-	if a.IsCNProvider() && a.IsAdaptiveAPIProtocol() {
+	if a.IsAdaptiveAPIProtocol() {
 		if baseURLs, ok := a.Credentials["api_base_urls"].(map[string]any); ok {
 			if baseURL, ok := baseURLs[APIProtocolChatCompletions].(string); ok && strings.TrimSpace(baseURL) != "" {
 				return strings.TrimSpace(baseURL)
@@ -1385,25 +1385,27 @@ func (a *Account) IsCodingPlan() bool {
 	return a.GetAccountMode() == AccountModeCoding
 }
 
-// GetAPIProtocol 返回国产供应商账号的上游 API 协议。存储于
+// GetAPIProtocol 返回 OpenAI 协议族 APIKey 账号的上游 API 协议。存储于
 // credentials["api_protocol"]；缺失或与平台不匹配时回退 chat_completions
-// （与既有行为完全一致）。responses 协议仅 deepseek 支持（官方原生 /responses
-// 端点，适配 Codex）；kimi/zhipu 无此端点。
+// （与既有行为完全一致）。OpenAI 原生账号只接受 chat_completions/adaptive；
+// 国产供应商额外接受 Anthropic，以及 DeepSeek 的 Responses。
 func (a *Account) GetAPIProtocol() string {
-	if a == nil || !a.IsCNProvider() {
+	if a == nil || (!a.IsCNProvider() && !a.IsOpenAIApiKey()) {
 		return APIProtocolChatCompletions
 	}
 	switch strings.TrimSpace(a.GetCredential("api_protocol")) {
 	case APIProtocolAdaptive:
 		return APIProtocolAdaptive
+	case APIProtocolChatCompletions:
+		return APIProtocolChatCompletions
 	case APIProtocolAnthropic:
-		return APIProtocolAnthropic
+		if a.IsCNProvider() {
+			return APIProtocolAnthropic
+		}
 	case APIProtocolResponses:
 		if a.Platform == PlatformDeepseek {
 			return APIProtocolResponses
 		}
-	case APIProtocolChatCompletions:
-		return APIProtocolChatCompletions
 	}
 	return APIProtocolChatCompletions
 }
@@ -1411,6 +1413,51 @@ func (a *Account) GetAPIProtocol() string {
 // IsAdaptiveAPIProtocol 报告账号是否按入站协议动态选择供应商原生端点。
 func (a *Account) IsAdaptiveAPIProtocol() bool {
 	return a.GetAPIProtocol() == APIProtocolAdaptive
+}
+
+// IsOpenAIAPIProtocolConfigured reports whether an OpenAI API Key explicitly
+// opted into the protocol override. An empty value preserves legacy behavior.
+func (a *Account) IsOpenAIAPIProtocolConfigured() bool {
+	if a == nil || !a.IsOpenAIApiKey() {
+		return false
+	}
+	protocol := strings.TrimSpace(a.GetCredential("api_protocol"))
+	return protocol == APIProtocolChatCompletions || protocol == APIProtocolAdaptive
+}
+
+func (a *Account) configuredOpenAIProtocolBaseURL(protocol string) string {
+	if a == nil || a.Credentials == nil {
+		return ""
+	}
+	baseURLs, ok := a.Credentials["api_base_urls"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	baseURL, ok := baseURLs[protocol].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(baseURL)
+}
+
+// GetOpenAIProtocolBaseURL returns a configured OpenAI API Key protocol
+// endpoint. Chat Completions falls back to the legacy base_url/default, while
+// optional Anthropic and Responses endpoints return empty when not configured.
+func (a *Account) GetOpenAIProtocolBaseURL(protocol string) string {
+	if !a.IsOpenAIAPIProtocolConfigured() {
+		return ""
+	}
+	if protocol == APIProtocolChatCompletions {
+		return a.GetOpenAIBaseURL()
+	}
+	if !a.IsAdaptiveAPIProtocol() {
+		return ""
+	}
+	return a.configuredOpenAIProtocolBaseURL(protocol)
+}
+
+func (a *Account) HasOpenAIProtocolEndpoint(protocol string) bool {
+	return strings.TrimSpace(a.GetOpenAIProtocolBaseURL(protocol)) != ""
 }
 
 // GetCNProtocolBaseURL 返回国产供应商指定协议的上游 base URL。
@@ -1478,7 +1525,16 @@ func (a *Account) IsAnthropicProtocol() bool {
 // （上游路径为 {base}/v1/messages）。优先取凭证 base_url，缺失时按
 // 供应商 × 接入模式返回默认端点。非 Anthropic 协议账号返回空串。
 func (a *Account) GetAnthropicProtocolBaseURL() string {
-	if a == nil || (!a.IsAnthropicProtocol() && !a.IsAdaptiveAPIProtocol()) {
+	if a == nil {
+		return ""
+	}
+	if a.IsOpenAIApiKey() {
+		if !a.IsAdaptiveAPIProtocol() {
+			return ""
+		}
+		return a.GetOpenAIProtocolBaseURL(APIProtocolAnthropic)
+	}
+	if !a.IsCNProvider() || (!a.IsAnthropicProtocol() && !a.IsAdaptiveAPIProtocol()) {
 		return ""
 	}
 	if a.IsAdaptiveAPIProtocol() {

@@ -709,6 +709,26 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		if baseURL == "" {
 			baseURL = "https://api.openai.com"
 		}
+		if credentialAccount.IsOpenAIAPIProtocolConfigured() {
+			protocol := credentialAccount.GetAPIProtocol()
+			if protocol == APIProtocolChatCompletions {
+				baseURL = credentialAccount.GetOpenAIProtocolBaseURL(APIProtocolChatCompletions)
+			} else if protocol == APIProtocolAdaptive {
+				if responsesBaseURL := credentialAccount.GetOpenAIProtocolBaseURL(APIProtocolResponses); responsesBaseURL != "" {
+					baseURL = responsesBaseURL
+				} else {
+					baseURL = credentialAccount.GetOpenAIProtocolBaseURL(APIProtocolChatCompletions)
+					if baseURL == "" {
+						baseURL = "https://api.openai.com"
+					}
+					normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+					if err != nil {
+						return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+					}
+					return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
+				}
+			}
+		}
 		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))

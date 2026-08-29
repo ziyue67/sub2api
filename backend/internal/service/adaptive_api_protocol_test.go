@@ -184,6 +184,122 @@ func TestAdaptiveProtocolRoutesDeepSeekResponsesToNativeResponses(t *testing.T) 
 	require.False(t, gjson.GetBytes(upstream.lastBody, "instructions").Exists())
 }
 
+func TestOpenAIAPIKeyProtocolOverrideIsOptional(t *testing.T) {
+	t.Parallel()
+
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":  "sk-openai",
+			"base_url": "https://legacy.example.com",
+		},
+	}
+
+	require.Equal(t, APIProtocolChatCompletions, account.GetAPIProtocol())
+	require.False(t, account.IsOpenAIAPIProtocolConfigured())
+	require.Equal(t, "https://legacy.example.com", account.GetOpenAIBaseURL())
+}
+
+func TestOpenAIFixedChatProtocolRoutesAllChatIngressToCustomEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"custom-model","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	account := &Account{
+		ID:       702,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":      "sk-openai",
+			"api_protocol": APIProtocolChatCompletions,
+			"base_url":     "http://chat.example/v1/chat/completions",
+		},
+	}
+
+	_, err := svc.ForwardAsChatCompletions(context.Background(), adaptiveProtocolTestContext("/v1/chat/completions", body), account, body, "", "")
+	require.Error(t, err)
+	require.Equal(t, "http://chat.example/v1/chat/completions", upstream.lastReq.URL.String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "messages").IsArray())
+}
+
+func TestOpenAIAdaptiveProtocolFallsBackToChatWhenResponsesEndpointMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"custom-model","input":"hello","stream":false}`)
+	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+	account := &Account{
+		ID:       703,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":      "sk-openai",
+			"api_protocol": APIProtocolAdaptive,
+			"base_url":     "http://chat.example/v1",
+			"api_base_urls": map[string]any{
+				APIProtocolChatCompletions: "http://chat.example/v1",
+			},
+		},
+	}
+
+	_, err := svc.Forward(context.Background(), adaptiveProtocolTestContext("/v1/responses", body), account, body)
+	require.Error(t, err)
+	require.Equal(t, "http://chat.example/v1/chat/completions", upstream.lastReq.URL.String())
+	require.True(t, gjson.GetBytes(upstream.lastBody, "messages").IsArray())
+	require.False(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
+}
+
+func TestOpenAIAdaptiveProtocolRoutesNativeOptionalEndpoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Run("responses exact endpoint", func(t *testing.T) {
+		body := []byte(`{"model":"custom-model","input":"hello","stream":false}`)
+		upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+		svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+		account := &Account{
+			ID:       704,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":      "sk-openai",
+				"api_protocol": APIProtocolAdaptive,
+				"base_url":     "http://chat.example/v1",
+				"api_base_urls": map[string]any{
+					APIProtocolChatCompletions: "http://chat.example/v1",
+					APIProtocolResponses:       "http://responses.example/v1/responses",
+				},
+			},
+		}
+
+		_, err := svc.Forward(context.Background(), adaptiveProtocolTestContext("/v1/responses", body), account, body)
+		require.Error(t, err)
+		require.Equal(t, "http://responses.example/v1/responses", upstream.lastReq.URL.String())
+	})
+
+	t.Run("anthropic exact endpoint", func(t *testing.T) {
+		body := []byte(`{"model":"custom-model","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"stream":false}`)
+		upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+		svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+		account := &Account{
+			ID:       705,
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Credentials: map[string]any{
+				"api_key":      "sk-openai",
+				"api_protocol": APIProtocolAdaptive,
+				"base_url":     "http://chat.example/v1",
+				"api_base_urls": map[string]any{
+					APIProtocolChatCompletions: "http://chat.example/v1",
+					APIProtocolAnthropic:       "http://anthropic.example/v1/messages",
+				},
+			},
+		}
+
+		_, err := svc.ForwardAsAnthropic(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), account, body, "", "")
+		require.Error(t, err)
+		require.Equal(t, "http://anthropic.example/v1/messages", upstream.lastReq.URL.String())
+	})
+}
+
 func TestFixedCNChatProtocolOverridesStaleResponsesMode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range cnProtocolIngressCases() {

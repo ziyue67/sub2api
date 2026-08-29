@@ -591,6 +591,11 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		}
 	case AccountTypeAPIKey:
 		baseURL := account.GetOpenAIBaseURL()
+		if account.IsAdaptiveAPIProtocol() && account.IsOpenAIAPIProtocolConfigured() {
+			if protocolURL := account.GetOpenAIProtocolBaseURL(APIProtocolResponses); protocolURL != "" {
+				baseURL = protocolURL
+			}
+		}
 		if baseURL != "" {
 			validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 			if err != nil {

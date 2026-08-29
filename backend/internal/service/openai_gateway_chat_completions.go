@@ -104,6 +104,12 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if !isResponsesShape {
 			return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 		}
+		// A configured Responses endpoint is preferred for Responses-shaped
+		// requests even when they arrive through the Chat Completions URL.
+		if account.Platform == PlatformDeepseek ||
+			(account.IsOpenAIAPIProtocolConfigured() && account.HasOpenAIProtocolEndpoint(APIProtocolResponses)) {
+			return s.Forward(ctx, c, account, body)
+		}
 		if account.Platform != PlatformDeepseek {
 			var responsesReq apicompat.ResponsesRequest
 			if err := json.Unmarshal(body, &responsesReq); err != nil {

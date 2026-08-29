@@ -661,6 +661,16 @@ export default {
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
         apiKeyHint: '您的 OpenAI API Key',
+        apiProtocol: {
+          title: 'API 协议（可选）',
+          chatCompletions: 'Chat Completions',
+          chatCompletionsDesc: '使用 OpenAI 兼容的 Chat Completions 端点，其他格式请求将转换。',
+          adaptive: '自适应',
+          adaptiveDesc: '优先使用已配置的原生端点，没有对应端点时转换到 Chat Completions。',
+          endpoints: '协议端点',
+          endpointsHint: 'Chat Completions 必填；Anthropic 与 Responses 可选。URL 可填写 API Base 或完整端点路径。',
+          chatCompletionsRequired: '自适应模式必须填写 Chat Completions 端点。'
+        },
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:
           '开启后，该 OpenAI 账号将自动透传请求与响应，仅替换认证并保留计费/并发/审计及必要安全过滤；如遇兼容性问题可随时关闭回滚。',

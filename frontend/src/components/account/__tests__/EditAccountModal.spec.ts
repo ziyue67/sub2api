@@ -355,6 +355,49 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('keeps the OpenAI API Key protocol override unset for legacy accounts', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const credentials = updateAccountMock.mock.calls[0]?.[1]?.credentials
+    expect(credentials).not.toHaveProperty('api_protocol')
+    expect(credentials).not.toHaveProperty('api_base_urls')
+  })
+
+  it('preserves optional OpenAI adaptive protocol endpoints on submit', async () => {
+    const account = buildAccount()
+    account.credentials = {
+      api_key: 'sk-openai',
+      api_protocol: 'adaptive',
+      base_url: 'https://relay.example.com/v1/chat/completions',
+      api_base_urls: {
+        chat_completions: 'https://relay.example.com/v1/chat/completions',
+        anthropic: 'https://relay.example.com/v1/messages',
+        responses: 'https://relay.example.com/v1/responses'
+      }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    expect(wrapper.get('[data-testid="edit-openai-adaptive-base-url-chat_completions"]').element).toBeTruthy()
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      api_protocol: 'adaptive',
+      base_url: 'https://relay.example.com/v1/chat/completions',
+      api_base_urls: {
+        chat_completions: 'https://relay.example.com/v1/chat/completions',
+        anthropic: 'https://relay.example.com/v1/messages',
+        responses: 'https://relay.example.com/v1/responses'
+      }
+    })
+  })
+
   it('preserves adaptive GLM endpoints on submit', async () => {
     const account = buildAccount()
     account.platform = 'zhipu'

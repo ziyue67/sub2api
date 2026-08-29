@@ -394,6 +394,45 @@
         </div>
       </div>
 
+      <!-- Optional API protocol override for OpenAI API Key accounts -->
+      <div v-if="isOpenAIAPIKeyAccount" class="mt-4">
+        <label class="input-label">{{ t('admin.accounts.openai.apiProtocol.title') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button
+            v-for="opt in openAIProtocolOptions"
+            :key="opt.value"
+            type="button"
+            :data-testid="`openai-api-protocol-${opt.value}`"
+            @click="selectOpenAIAPIProtocol(opt.value)"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              openAIApiProtocol === opt.value
+                ? 'border-teal-500 bg-teal-50 dark:bg-teal-900/20'
+                : 'border-gray-200 hover:border-gray-400 dark:border-dark-600 dark:hover:border-gray-600'
+            ]"
+          >
+            <div
+              :class="[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                openAIApiProtocol === opt.value
+                  ? 'bg-teal-500 text-white'
+                  : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
+              ]"
+            >
+              <Icon :name="opt.value === 'adaptive' ? 'swap' : 'chat'" size="sm" />
+            </div>
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                {{ t(`admin.accounts.openai.apiProtocol.${opt.labelKey}`) }}
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t(`admin.accounts.openai.apiProtocol.${opt.labelKey}Desc`) }}
+              </span>
+            </div>
+          </button>
+        </div>
+      </div>
+
       <!-- Account Type Selection (Grok) -->
       <div v-if="form.platform === 'grok'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
@@ -1250,7 +1289,12 @@
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
-        <div v-if="!isCNPlatform || apiProtocol !== 'adaptive'">
+        <div
+          v-if="
+            !(isCNPlatform && apiProtocol === 'adaptive') &&
+            !(isOpenAIAPIKeyAccount && openAIApiProtocol === 'adaptive')
+          "
+        >
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
             v-model="apiKeyBaseUrl"
@@ -1274,7 +1318,24 @@
             @select="onCnPresetSelect"
           />
         </div>
-        <div v-else>
+        <div v-else-if="isOpenAIAPIKeyAccount && openAIApiProtocol === 'adaptive'">
+          <label class="input-label">{{ t('admin.accounts.openai.apiProtocol.endpoints') }}</label>
+          <div class="mt-2 space-y-3">
+            <div v-for="item in openAIAdaptiveProtocolOptions" :key="item.value">
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                {{ t(`admin.accounts.openai.apiProtocol.${item.labelKey}`) }}
+              </label>
+              <input
+                v-model="openAIAdaptiveBaseUrls[item.value]"
+                type="text"
+                class="input"
+                :data-testid="`openai-adaptive-base-url-${item.value}`"
+              />
+            </div>
+          </div>
+          <p class="input-hint">{{ t('admin.accounts.openai.apiProtocol.endpointsHint') }}</p>
+        </div>
+        <div v-else-if="isCNPlatform && apiProtocol === 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.cnProviders.apiProtocol.endpoints') }}</label>
           <div class="mt-2 space-y-3">
             <div v-for="item in cnAdaptiveProtocolOptions" :key="item.value">
@@ -3767,11 +3828,14 @@ import {
   applyInterceptWarmup,
   defaultCNAdaptiveBaseUrls,
   defaultCNBaseUrl,
+  defaultOpenAIAdaptiveBaseUrls,
   isHeaderOverrideCapable,
   validateHeaderOverrideRows,
   type CnAccountMode,
   type CnApiProtocol,
   type CnNativeApiProtocol,
+  type OpenAIApiProtocol,
+  type OpenAINativeApiProtocol,
   type HeaderOverrideRow
 } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
@@ -3949,6 +4013,51 @@ const apiKeyBaseUrl = ref('https://api.anthropic.com')
 const apiKeyValue = ref('')
 const upstreamBillingAutoProbeEnabled = ref(true)
 
+// OpenAI API Key protocol override. Empty means legacy Responses behavior.
+const openAIApiProtocol = ref<OpenAIApiProtocol>('')
+const openAIAdaptiveBaseUrls = ref<Record<OpenAINativeApiProtocol, string>>(
+  defaultOpenAIAdaptiveBaseUrls()
+)
+const isOpenAIAPIKeyAccount = computed(
+  () => form.platform === 'openai' && form.type === 'apikey'
+)
+const openAIProtocolOptions: Array<{ value: 'adaptive' | 'chat_completions'; labelKey: string }> = [
+  { value: 'chat_completions', labelKey: 'chatCompletions' },
+  { value: 'adaptive', labelKey: 'adaptive' }
+]
+const openAIAdaptiveProtocolOptions: Array<{
+  value: OpenAINativeApiProtocol
+  labelKey: string
+}> = [
+  { value: 'chat_completions', labelKey: 'chatCompletions' },
+  { value: 'anthropic', labelKey: 'anthropic' },
+  { value: 'responses', labelKey: 'responses' }
+]
+
+function selectOpenAIAPIProtocol(protocol: 'adaptive' | 'chat_completions') {
+  if (openAIApiProtocol.value === protocol) {
+    openAIApiProtocol.value = ''
+    return
+  }
+  if (protocol === 'adaptive' && !openAIAdaptiveBaseUrls.value.chat_completions.trim()) {
+    openAIAdaptiveBaseUrls.value.chat_completions = apiKeyBaseUrl.value.trim() || 'https://api.openai.com'
+  }
+  openAIApiProtocol.value = protocol
+}
+
+watch(openAIApiProtocol, (protocol) => {
+  if (protocol === 'adaptive') {
+    if (!openAIAdaptiveBaseUrls.value.chat_completions.trim()) {
+      openAIAdaptiveBaseUrls.value.chat_completions = apiKeyBaseUrl.value.trim() || 'https://api.openai.com'
+    }
+    apiKeyBaseUrl.value = openAIAdaptiveBaseUrls.value.chat_completions
+    return
+  }
+  if (protocol === 'chat_completions' && openAIAdaptiveBaseUrls.value.chat_completions.trim()) {
+    apiKeyBaseUrl.value = openAIAdaptiveBaseUrls.value.chat_completions
+  }
+})
+
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）账号类型、API 协议与端点 ──
 const accountMode = ref<CnAccountMode>('payg')
 // API 协议决定转发端点与格式：cc=现有转换链，anthropic=原生直通（Claude Code），
@@ -4071,7 +4180,9 @@ const syncPreviewCredentials = computed(() => {
   if (!apiKeyValue.value) return undefined
   const baseUrl = isCNPlatform.value && apiProtocol.value === 'adaptive'
     ? adaptiveBaseUrls.value.chat_completions.trim() || apiKeyBaseUrl.value.trim()
-    : apiKeyBaseUrl.value.trim()
+    : isOpenAIAPIKeyAccount.value && openAIApiProtocol.value === 'adaptive'
+      ? openAIAdaptiveBaseUrls.value.chat_completions.trim() || apiKeyBaseUrl.value.trim()
+      : apiKeyBaseUrl.value.trim()
   return {
     platform: form.platform,
     type: form.type,
@@ -4564,6 +4675,8 @@ watch(
 watch(
   () => form.platform,
   (newPlatform) => {
+    openAIApiProtocol.value = ''
+    openAIAdaptiveBaseUrls.value = defaultOpenAIAdaptiveBaseUrls()
     // Reset base URL based on platform
     if (newPlatform === 'kimi' || newPlatform === 'zhipu' || newPlatform === 'deepseek') {
       apiKeyBaseUrl.value = defaultCNBaseUrl(newPlatform, accountMode.value, apiProtocol.value)
@@ -5020,6 +5133,8 @@ const resetForm = () => {
   accountMode.value = 'payg'
   apiProtocol.value = 'adaptive'
   adaptiveBaseUrls.value = { chat_completions: '', anthropic: '', responses: '' }
+  openAIApiProtocol.value = ''
+  openAIAdaptiveBaseUrls.value = defaultOpenAIAdaptiveBaseUrls()
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
   upstreamBillingAutoProbeEnabled.value = true
@@ -5462,6 +5577,14 @@ const handleSubmit = async () => {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
     return
   }
+  if (
+    isOpenAIAPIKeyAccount.value &&
+    openAIApiProtocol.value === 'adaptive' &&
+    !openAIAdaptiveBaseUrls.value.chat_completions.trim()
+  ) {
+    appStore.showError(t('admin.accounts.openai.apiProtocol.chatCompletionsRequired'))
+    return
+  }
 
   // Determine default base URL based on platform
   const defaultBaseUrl =
@@ -5502,6 +5625,26 @@ const handleSubmit = async () => {
     ).trim()
     if (apiProtocol.value !== 'adaptive' && resolvedCNBase) {
       credentials.base_url = resolvedCNBase
+    }
+  }
+
+  // OpenAI API Key protocol override is opt-in; omit the fields to preserve
+  // the legacy Responses API path when no protocol is selected.
+  if (isOpenAIAPIKeyAccount.value && openAIApiProtocol.value) {
+    credentials.api_protocol = openAIApiProtocol.value
+    if (openAIApiProtocol.value === 'adaptive') {
+      const protocolBaseUrls: Partial<Record<OpenAINativeApiProtocol, string>> = {
+        chat_completions: openAIAdaptiveBaseUrls.value.chat_completions.trim()
+      }
+      for (const item of openAIAdaptiveProtocolOptions) {
+        if (item.value === 'chat_completions') continue
+        const value = openAIAdaptiveBaseUrls.value[item.value].trim()
+        if (value) protocolBaseUrls[item.value] = value
+      }
+      credentials.api_base_urls = protocolBaseUrls
+      credentials.base_url = protocolBaseUrls.chat_completions
+    } else {
+      delete credentials.api_base_urls
     }
   }
 

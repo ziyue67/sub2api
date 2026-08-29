@@ -260,6 +260,19 @@ export type CnAccountMode = 'payg' | 'coding'
 export type CnApiProtocol = 'adaptive' | 'chat_completions' | 'anthropic' | 'responses'
 export type CnNativeApiProtocol = Exclude<CnApiProtocol, 'adaptive'>
 
+// OpenAI API Key protocol selection is an optional compatibility override.
+// An empty value deliberately preserves the legacy Responses API behavior.
+export type OpenAIApiProtocol = '' | 'adaptive' | 'chat_completions'
+export type OpenAINativeApiProtocol = 'chat_completions' | 'anthropic' | 'responses'
+
+export function defaultOpenAIAdaptiveBaseUrls(): Record<OpenAINativeApiProtocol, string> {
+  return {
+    chat_completions: 'https://api.openai.com',
+    anthropic: '',
+    responses: ''
+  }
+}
+
 export interface CnBaseUrlPreset {
   mode: CnAccountMode
   protocol: CnApiProtocol

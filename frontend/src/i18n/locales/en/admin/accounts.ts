@@ -576,6 +576,16 @@ export default {
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
         apiKeyHint: 'Your OpenAI API Key',
+        apiProtocol: {
+          title: 'API Protocol (Optional)',
+          chatCompletions: 'Chat Completions',
+          chatCompletionsDesc: 'Use an OpenAI-compatible Chat Completions endpoint; other request formats are converted.',
+          adaptive: 'Adaptive',
+          adaptiveDesc: 'Prefer configured native endpoints and convert to Chat Completions when one is unavailable.',
+          endpoints: 'Protocol endpoints',
+          endpointsHint: 'Chat Completions is required; Anthropic and Responses are optional. Enter an API Base or full endpoint URL.',
+          chatCompletionsRequired: 'Chat Completions endpoint is required in Adaptive mode.'
+        },
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:
           'When enabled, this OpenAI account uses automatic passthrough: the gateway forwards request/response as-is and only swaps auth, while keeping billing/concurrency/audit and necessary safety filtering.',
