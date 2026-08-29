@@ -717,9 +717,19 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			switch protocol {
 			case APIProtocolChatCompletions:
 				baseURL = credentialAccount.GetOpenAIProtocolBaseURL(APIProtocolChatCompletions)
+				normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+				if err != nil {
+					return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+				}
+				return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
 			case APIProtocolAdaptive:
 				if responsesBaseURL := credentialAccount.GetOpenAIProtocolBaseURL(APIProtocolResponses); responsesBaseURL != "" {
 					baseURL = responsesBaseURL
+					normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+					if err != nil {
+						return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+					}
+					apiURL = buildOpenAIResponsesURLForPlatform(credentialAccount.Platform, normalizedBaseURL)
 				} else {
 					baseURL = credentialAccount.GetOpenAIProtocolBaseURL(APIProtocolChatCompletions)
 					if baseURL == "" {
@@ -733,14 +743,16 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 				}
 			}
 		}
-		normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
-		if err != nil {
-			return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+		if apiURL == "" {
+			normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
+			if err != nil {
+				return s.sendErrorAndEnd(c, fmt.Sprintf("Invalid base URL: %s", err.Error()))
+			}
+			if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
+				return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
+			}
+			apiURL = buildOpenAIResponsesURLForPlatform(credentialAccount.Platform, normalizedBaseURL)
 		}
-		if !openai_compat.ShouldUseResponsesAPI(account.Extra) {
-			return s.testOpenAIChatCompletionsConnection(c, account, testModelID, prompt, normalizedBaseURL, authToken)
-		}
-		apiURL = buildOpenAIResponsesURLForPlatform(credentialAccount.Platform, normalizedBaseURL)
 	} else {
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
