@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <div class="space-y-6 pb-12">
+    <div class="monitor-v2-page min-w-0 space-y-6 pb-12">
       <!-- Ops-style elevated shell: title toolbar + filters (mirrors OpsDashboardHeader) -->
       <section
         class="card sticky top-0 z-20 !rounded-3xl !border-0 p-0 shadow-sm ring-1 ring-gray-900/5 backdrop-blur-sm dark:!bg-dark-800 dark:ring-dark-700 supports-[backdrop-filter]:bg-white/95 dark:supports-[backdrop-filter]:bg-dark-800/95"
@@ -90,7 +90,7 @@
         </div>
 
         <!-- Single compact toolbar row: range · filters · view controls -->
-        <div class="monitor-toolbar flex flex-nowrap items-center gap-1.5 overflow-x-auto px-4 py-3 sm:gap-2 sm:px-5">
+        <div class="monitor-toolbar flex flex-wrap items-center gap-1.5 overflow-visible px-4 py-3 sm:gap-2 sm:px-5">
           <div
             class="tabs inline-flex shrink-0"
             role="group"
@@ -287,8 +287,9 @@
           </nav>
         </div>
         <div class="min-h-0 max-h-[min(52vh,520px)] overflow-auto p-4 sm:p-5">
-          <div v-if="activeTab === 'models'" class="table-container border-0">
-            <table class="table monitor-table min-w-[720px]">
+          <template v-if="activeTab === 'models'">
+            <div class="table-container hidden border-0 sm:block">
+              <table class="table monitor-table min-w-[720px]">
               <thead>
                 <tr>
                   <th>{{ t('channelMonitorV2.table.platformModel') }}</th>
@@ -330,8 +331,55 @@
                   <td v-if="showThroughput">{{ formatRate(row.metrics.rpm) }}</td>
                 </tr>
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+            <div class="monitor-mobile-list space-y-2 sm:hidden">
+              <button
+                v-for="row in modelRows"
+                :key="`mobile:${row.platform}:${row.model}`"
+                type="button"
+                class="monitor-mobile-card w-full text-left"
+                @click="drillModel(row)"
+              >
+                <span class="flex min-w-0 items-start justify-between gap-3">
+                  <span class="flex min-w-0 items-start gap-2">
+                    <span :class="statusDot(row.health)" aria-hidden="true"></span>
+                    <span class="min-w-0">
+                      <span class="block truncate text-[11px] text-gray-500 dark:text-dark-400">{{ row.platform }}</span>
+                      <strong class="block truncate text-sm font-semibold text-gray-900 dark:text-white">
+                        {{ row.model === '__other__' ? t('channelMonitorV2.otherModels') : row.model }}
+                      </strong>
+                    </span>
+                  </span>
+                  <Icon name="chevronRight" size="sm" class="mt-0.5 shrink-0 text-gray-400" aria-hidden="true" />
+                </span>
+                <span class="monitor-mobile-metrics mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.successRate') }}</small>
+                    <strong>{{ formatPercent(1 - row.metrics.error_rate) }}</strong>
+                    <em>{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</em>
+                  </span>
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.ttftP50') }}</small>
+                    <strong>{{ formatMs(row.metrics.ttft.p50_ms) }}</strong>
+                    <em>{{ latencyDetail(row.metrics.ttft) }}</em>
+                  </span>
+                  <span v-if="showThroughput">
+                    <small>{{ t('channelMonitorV2.metrics.tps') }}</small>
+                    <strong :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</strong>
+                  </span>
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.cacheRate') }}</small>
+                    <strong>{{ formatPercent(row.metrics.cache_rate) }}</strong>
+                  </span>
+                  <span v-if="showThroughput">
+                    <small>{{ t('channelMonitorV2.metrics.rpm') }}</small>
+                    <strong>{{ formatRate(row.metrics.rpm) }}</strong>
+                  </span>
+                </span>
+              </button>
+            </div>
+          </template>
 
           <div v-else-if="activeTab === 'errors'" class="space-y-3">
             <div
@@ -342,7 +390,7 @@
             >
               <button
                 type="button"
-                class="grid w-full grid-cols-[minmax(100px,200px)_1fr_auto_auto] items-center gap-3 text-left"
+                class="grid w-full grid-cols-[minmax(0,1fr)_minmax(3.5rem,1fr)_auto_auto] items-center gap-3 text-left"
                 @click="toggleError(row.category)"
               >
                 <span class="flex min-w-0 items-center gap-1.5 truncate text-gray-700 dark:text-gray-200">
@@ -384,8 +432,9 @@
             </div>
           </div>
 
-          <div v-else class="table-container border-0">
-            <table class="table monitor-table min-w-[640px]">
+          <template v-else>
+            <div class="table-container hidden border-0 sm:block">
+              <table class="table monitor-table min-w-[640px]">
               <thead>
                 <tr>
                   <th class="w-16">{{ t('channelMonitorV2.table.rank') }}</th>
@@ -431,8 +480,56 @@
                   <td v-if="showThroughput">{{ formatRate(row.metrics.rpm) }}</td>
                 </tr>
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
+            <div class="monitor-mobile-list space-y-2 sm:hidden">
+              <article
+                v-for="row in userRows"
+                :key="`mobile:${row.user_id || row.display_label}`"
+                class="monitor-mobile-card"
+                :class="row.is_self ? 'monitor-mobile-card-self' : ''"
+              >
+                <div class="flex min-w-0 items-start justify-between gap-3">
+                  <div class="flex min-w-0 items-start gap-2">
+                    <MonitorRankBadge :rank="row.rank" />
+                    <div class="min-w-0">
+                      <strong
+                        class="block truncate text-sm font-semibold"
+                        :class="row.is_self ? 'text-primary-700 dark:text-primary-300' : 'text-gray-900 dark:text-white'"
+                      >
+                        {{ row.display_label }}
+                      </strong>
+                      <span v-if="row.is_self" class="badge badge-primary mt-1 !px-1.5 !py-0 text-[10px]">{{ t('channelMonitorV2.currentUser') }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="monitor-mobile-metrics mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.successRate') }}</small>
+                    <strong>{{ formatPercent(1 - row.metrics.error_rate) }}</strong>
+                    <em>{{ t('channelMonitorV2.metrics.errorRateValue', { value: formatPercent(row.metrics.error_rate) }) }}</em>
+                  </span>
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.ttftP50') }}</small>
+                    <strong>{{ formatMs(row.metrics.ttft.p50_ms) }}</strong>
+                    <em>{{ latencyDetail(row.metrics.ttft) }}</em>
+                  </span>
+                  <span v-if="showThroughput">
+                    <small>{{ t('channelMonitorV2.metrics.tps') }}</small>
+                    <strong :title="exactTps(row.metrics.tpm)">{{ formatTps(row.metrics.tpm) }}</strong>
+                  </span>
+                  <span>
+                    <small>{{ t('channelMonitorV2.metrics.cacheRate') }}</small>
+                    <strong>{{ formatPercent(row.metrics.cache_rate) }}</strong>
+                  </span>
+                  <span v-if="showThroughput">
+                    <small>{{ t('channelMonitorV2.metrics.rpm') }}</small>
+                    <strong>{{ formatRate(row.metrics.rpm) }}</strong>
+                  </span>
+                </div>
+              </article>
+            </div>
+          </template>
 
           <div v-if="tabLoading" class="empty-state py-10 text-sm text-gray-400">{{ t('common.loading') }}</div>
           <div v-else-if="activeRowsEmpty" class="empty-state py-10">
@@ -937,6 +1034,108 @@ onBeforeUnmount(() => {
 .health-unknown  { background: #9ca3af; }
 .matrix-select {
   min-width: 10rem;
+}
+.monitor-mobile-list {
+  min-width: 0;
+}
+.monitor-mobile-card {
+  display: block;
+  min-width: 0;
+  border: 1px solid rgb(229 231 235);
+  border-radius: 0.875rem;
+  background: rgb(249 250 251 / 0.72);
+  padding: 0.75rem;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.monitor-mobile-card:hover,
+.monitor-mobile-card:focus-visible {
+  border-color: rgb(147 197 253);
+  background: rgb(239 246 255 / 0.72);
+  outline: none;
+}
+.monitor-mobile-card-self {
+  border-color: rgb(165 180 252 / 0.8);
+  background: rgb(238 242 255 / 0.7);
+}
+.monitor-mobile-metrics > span {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+.monitor-mobile-metrics small {
+  overflow: hidden;
+  color: rgb(107 114 128);
+  font-size: 0.625rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.monitor-mobile-metrics strong {
+  overflow: hidden;
+  color: rgb(17 24 39);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.monitor-mobile-metrics em {
+  overflow: hidden;
+  color: rgb(156 163 175);
+  font-size: 0.625rem;
+  font-style: normal;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:global(.dark) .monitor-mobile-card {
+  border-color: rgb(55 65 81);
+  background: rgb(17 24 39 / 0.42);
+}
+:global(.dark) .monitor-mobile-card:hover,
+:global(.dark) .monitor-mobile-card:focus-visible {
+  border-color: rgb(96 165 250 / 0.7);
+  background: rgb(30 41 59 / 0.72);
+}
+:global(.dark) .monitor-mobile-card-self {
+  border-color: rgb(129 140 248 / 0.65);
+  background: rgb(49 46 129 / 0.28);
+}
+:global(.dark) .monitor-mobile-metrics small { color: rgb(156 163 175); }
+:global(.dark) .monitor-mobile-metrics strong { color: rgb(243 244 246); }
+:global(.dark) .monitor-mobile-metrics em { color: rgb(107 114 128); }
+
+@media (max-width: 640px) {
+  .monitor-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+  .monitor-toolbar > .tabs:first-child {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .monitor-toolbar > .tabs:first-child .tab {
+    flex: 1 1 0;
+  }
+  .monitor-toolbar > .filter-menu {
+    width: 100%;
+    min-width: 0;
+  }
+  .monitor-toolbar > .filter-menu :deep(.select-trigger) {
+    width: 100%;
+  }
+  .monitor-toolbar > .btn,
+  .monitor-toolbar > .monitor-toolbar-select,
+  .monitor-toolbar > .tabs:not(:first-child) {
+    width: 100%;
+  }
+  .monitor-toolbar > .monitor-toolbar-select {
+    min-width: 0;
+  }
+  .monitor-toolbar > span {
+    display: none;
+  }
 }
 details > summary::-webkit-details-marker {
   display: none;

@@ -13,7 +13,10 @@ import (
 // ModelPlazaHandler 处理「模型广场」查询。
 //
 // 广场路由挂 OptionalJWT 中间件：匿名可访问（除非 require_auth 开启），带 token 则
-// 识别用户以显示其公开分组专属倍率。模型广场始终仅展示非专属分组。
+// 识别用户。可见性规则（橱窗语义，与「可用渠道」的可绑定语义不同）：
+//   - 匿名：仅非专属分组（订阅型照常展示）；
+//   - 登录：非专属分组 + user_allowed_groups 授权的专属分组（不检查订阅有效性）；
+//     若该用户开启了公开分组限制，则公开分组同样需要落在授权集合内。
 type ModelPlazaHandler struct {
 	plazaService   *service.ModelPlazaService
 	apiKeyService  *service.APIKeyService
@@ -125,8 +128,17 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 		return
 	}
 
+	// allowedGroups == nil 表示匿名；登录用户恒为非 nil（可能为空集合）。
+	var allowedGroups map[int64]struct{}
+	var restrictPublicGroups bool
 	var userRates map[int64]float64
 	if authed {
+		allowedGroups, restrictPublicGroups, err = h.apiKeyService.GetUserGroupVisibility(c.Request.Context(), subject.UserID)
+		if err != nil {
+			// 可见性数据拿不到时不能静默降级成匿名视图（会错漏专属分组），直接报错。
+			response.ErrorFrom(c, err)
+			return
+		}
 		userRates, err = h.apiKeyService.GetUserGroupRates(c.Request.Context(), subject.UserID)
 		if err != nil {
 			// 专属倍率仅是展示增强，失败降级为分组默认倍率。
@@ -135,7 +147,7 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 		}
 	}
 
-	visible := filterPlazaVisibleGroups(groups)
+	visible := filterPlazaVisibleGroups(groups, allowedGroups, restrictPublicGroups)
 
 	out := make([]modelPlazaGroup, 0, len(visible))
 	for i := range visible {
@@ -147,13 +159,24 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 	})
 }
 
-// filterPlazaVisibleGroups excludes all exclusive groups. They are private
-// routing resources, not catalogue entries, regardless of the viewer's grants.
-func filterPlazaVisibleGroups(groups []service.PlazaGroup) []service.PlazaGroup {
+// filterPlazaVisibleGroups 按登录态裁剪分组可见性。
+// allowedGroups == nil 表示匿名（仅非专属）；非 nil 表示登录（非专属 + 授权专属）。
+// restrictPublicGroups 为 true 时，公开分组也必须落在 allowedGroups 内，否则用户会
+// 在广场看到自己实际绑定不了的分组。
+func filterPlazaVisibleGroups(
+	groups []service.PlazaGroup,
+	allowedGroups map[int64]struct{},
+	restrictPublicGroups bool,
+) []service.PlazaGroup {
 	visible := make([]service.PlazaGroup, 0, len(groups))
 	for _, g := range groups {
-		if g.IsExclusive {
-			continue
+		if g.IsExclusive || (restrictPublicGroups && allowedGroups != nil) {
+			if allowedGroups == nil {
+				continue
+			}
+			if _, ok := allowedGroups[g.ID]; !ok {
+				continue
+			}
 		}
 		visible = append(visible, g)
 	}

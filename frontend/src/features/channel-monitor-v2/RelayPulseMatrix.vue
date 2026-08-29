@@ -666,9 +666,22 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
-  .matrix-row {
+  .matrix-row:not(.matrix-row--with-tps) {
     grid-template-columns: minmax(88px, 1fr) minmax(48px, 0.45fr) minmax(54px, 0.5fr) minmax(96px, 2.6fr);
     gap: 0.35rem;
+  }
+  /* Keep all summary values on one compact row when throughput is enabled.
+     The previous four-column override left TPS/cache in implicit columns,
+     which made the mobile matrix grow vertically and clip the pulse track. */
+  .matrix-row--with-tps {
+    grid-template-columns:
+      minmax(76px, 1.05fr)
+      minmax(42px, 0.55fr)
+      minmax(46px, 0.58fr)
+      minmax(44px, 0.55fr)
+      minmax(44px, 0.55fr)
+      minmax(96px, 2fr);
+    gap: 0.3rem;
   }
   .matrix-row > :nth-child(2) {
     left: 0;

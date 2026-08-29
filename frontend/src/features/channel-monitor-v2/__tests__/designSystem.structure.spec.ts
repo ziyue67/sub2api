@@ -23,8 +23,13 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).toContain('class="tab')
     expect(src).toContain('tab-active')
     expect(src).toContain('badge badge-warning')
-    // Compact single-row toolbar
+    // Compact toolbar that reflows into a two-column mobile grid
     expect(src).toContain('monitor-toolbar')
+    expect(src).toContain('overflow-visible')
+    expect(src).toContain('monitor-mobile-card')
+    expect(src).toContain('monitor-mobile-metrics')
+    expect(src).toContain('hidden border-0 sm:block')
+    expect(src).toContain('space-y-2 sm:hidden')
     expect(src).toContain('clearFilters')
     expect(src).toContain('healthModeOptions')
     expect(src).toContain("'cache'")
@@ -38,6 +43,7 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).not.toMatch(/min-w-\[980px\]/)
     // Dense tables scroll internally
     expect(src).toMatch(/max-h-\[min\(52vh/)
+    expect(src).toContain('grid-cols-[minmax(0,1fr)_minmax(3.5rem,1fr)_auto_auto]')
     expect(src).toContain('overflow-auto')
     // Trend view toggle (pulse matrix / line chart) + default platform/group dimension
     expect(src).toContain("trendView")
@@ -54,6 +60,8 @@ describe('channel-monitor-v2 design system structure', () => {
     expect(src).toMatch(/max-h-\[min\(42vh/)
     expect(src).toContain('overflow-auto')
     expect(src).toContain('matrix-floating-tooltip')
+    expect(src).toContain('.matrix-row:not(.matrix-row--with-tps)')
+    expect(src).toContain('.matrix-row--with-tps')
     expect(src).toContain('rounded-3xl')
     expect(src).toContain('ring-1 ring-gray-900/5')
     expect(src).not.toContain('modal-overlay')
