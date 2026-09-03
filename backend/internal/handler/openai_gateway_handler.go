@@ -764,6 +764,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		if slotResult == openAISlotAcquireLaneUnavailable {
+			// A stale lane is an egress lifecycle miss, not a profit veto.
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
 		if slotResult == openAISlotAcquireProfitVetoed {
 			// 利润终检否决：排除该账号重新选号，全池耗尽由下一轮选号报错；
 			// 否决次数达上限则直接终止，避免排队抢槽后才终检的延迟放大。
@@ -866,6 +871,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					// Lane affinity is cleared only for an explicitly classified
+					// connection-layer failure.  Provider 4xx/5xx responses retain
+					// the lane and therefore do not churn IPs.
+					h.gatewayService.ClearLaneStickyOnTransportFailure(c.Request.Context(), apiKey.GroupID, forwardModel, sessionHash, failoverErr, failoverErr.StatusCode)
 					if failoverClientGone(c) {
 						reqLog.Info("openai.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
@@ -1387,6 +1396,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, reqStream, &streamStarted, reqLog)
+		if slotResult == openAISlotAcquireLaneUnavailable {
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
 		if slotResult == openAISlotAcquireProfitVetoed {
 			// 利润终检否决：排除该账号重新选号，全池耗尽由下一轮选号报错；
 			// 否决次数达上限则直接终止，避免排队抢槽后才终检的延迟放大。
@@ -1486,6 +1499,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			} else {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
+					h.gatewayService.ClearLaneStickyOnTransportFailure(c.Request.Context(), apiKey.GroupID, currentRoutingModel, sessionHash, failoverErr, failoverErr.StatusCode)
 					if failoverClientGone(c) {
 						reqLog.Info("openai_messages.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
@@ -2071,6 +2085,10 @@ const (
 	// 未写任何响应；调用方应经 recordOpenAIProfitVeto 把该账号加入本请求排除集
 	// 后重新选号，全池耗尽由下一轮选号返回标准 no available accounts。
 	openAISlotAcquireProfitVetoed
+	// openAISlotAcquireLaneUnavailable：请求绑定的 proxy lane 在终检刷新时
+	// 已删除、暂停或失去有效 proxy 关系。槽位已释放；调用方只排除本次
+	// 账号并重选，不得把该生命周期事件计入利润否决预算。
+	openAISlotAcquireLaneUnavailable
 )
 
 // openAIWSTurnPricing 持有 WebSocket 连接内「当前 turn」的计费定价时刻。
@@ -2113,6 +2131,13 @@ func recordOpenAIProfitVeto(failedAccountIDs map[int64]struct{}, accountID int64
 	failedAccountIDs[accountID] = struct{}{}
 	*vetoCount++
 	return *vetoCount < maxProfitVetoAttempts
+}
+
+func openAISlotAcquireResultForVeto(reason string) openAISlotAcquireResult {
+	if service.IsProxyLaneUnavailableReason(reason) {
+		return openAISlotAcquireLaneUnavailable
+	}
+	return openAISlotAcquireProfitVetoed
 }
 
 // handleOpenAIProfitVetoExhausted 在利润否决预算耗尽时写出错误响应。
@@ -2178,7 +2203,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 				selection.ReleaseFunc()
 			}
 			reqLog.Debug("openai.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-			return nil, openAISlotAcquireProfitVetoed
+			return nil, openAISlotAcquireResultForVeto(reason)
 		}
 		account = latest
 		selection.Account = latest
@@ -2197,10 +2222,12 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		return nil, openAISlotAcquireFailed
 	}
 
-	fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
+	fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountOrLaneSlot(
 		ctx,
 		account.ID,
+		selection.WaitPlan.LaneID,
 		selection.WaitPlan.MaxConcurrency,
+		h.openAIWSAccountAggregateMaxConcurrencyArgs(account, selection)...,
 	)
 	if err != nil {
 		reqLog.Warn("openai.account_slot_quick_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
@@ -2217,7 +2244,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 				fastReleaseFunc()
 			}
 			reqLog.Debug("openai.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-			return nil, openAISlotAcquireProfitVetoed
+			return nil, openAISlotAcquireResultForVeto(reason)
 		}
 		account = latest
 		selection.Account = latest
@@ -2227,7 +2254,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		return wrapReleaseOnDone(ctx, fastReleaseFunc), openAISlotAcquireOK
 	}
 
-	canWait, waitErr := h.concurrencyHelper.IncrementAccountWaitCount(ctx, account.ID, selection.WaitPlan.MaxWaiting)
+	canWait, waitErr := h.concurrencyHelper.IncrementAccountOrLaneWaitCount(ctx, account.ID, selection.WaitPlan.LaneID, selection.WaitPlan.MaxWaiting)
 	if waitErr != nil {
 		reqLog.Warn("openai.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(waitErr))
 	} else if !canWait {
@@ -2242,23 +2269,29 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 	accountWaitCounted := waitErr == nil && canWait
 	releaseWait := func() {
 		if accountWaitCounted {
-			h.concurrencyHelper.DecrementAccountWaitCount(ctx, account.ID)
+			h.concurrencyHelper.DecrementAccountOrLaneWaitCount(ctx, account.ID, selection.WaitPlan.LaneID)
 			accountWaitCounted = false
 		}
 	}
 	defer releaseWait()
 
-	accountReleaseFunc, err := h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+	accountReleaseFunc, err := h.concurrencyHelper.AcquireAccountOrLaneSlotWithWaitTimeout(
 		c,
 		account.ID,
+		selection.WaitPlan.LaneID,
 		selection.WaitPlan.MaxConcurrency,
 		selection.WaitPlan.Timeout,
 		reqStream,
 		streamStarted,
+		h.openAIWSAccountAggregateMaxConcurrencyArgs(account, selection)...,
 	)
 	if err != nil {
 		reqLog.Warn("openai.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-		status, errType, message := concurrencyErrorResponse(err, "account")
+		slotType := "account"
+		if selection.WaitPlan.LaneID > 0 {
+			slotType = "lane"
+		}
+		status, errType, message := concurrencyErrorResponse(err, slotType)
 		writeError(status, errType, message)
 		return nil, openAISlotAcquireFailed
 	}
@@ -2273,7 +2306,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 			accountReleaseFunc()
 		}
 		reqLog.Debug("openai.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
-		return nil, openAISlotAcquireProfitVetoed
+		return nil, openAISlotAcquireResultForVeto(reason)
 	}
 	account = latest
 	selection.Account = latest
@@ -2569,6 +2602,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		if ctx.Err() != nil {
 			return false
 		}
+		h.gatewayService.ClearLaneStickyOnTransportFailure(ctx, apiKey.GroupID, wsForwardModel, sessionHash, failoverErr, failoverErr.StatusCode)
 		if failoverErr.ShouldReportAccountScheduleFailure() {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, wsForwardModel, false, nil), false, nil, failoverErr)
 		}
@@ -2661,10 +2695,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		}
 
 		account := selection.Account
-		accountMaxConcurrency := account.Concurrency
-		if selection.WaitPlan != nil && selection.WaitPlan.MaxConcurrency > 0 {
-			accountMaxConcurrency = selection.WaitPlan.MaxConcurrency
-		}
+		// WaitPlan.MaxConcurrency is authoritative even when it is zero: zero
+		// means the legacy account bucket is unlimited.  Do not let a request
+		// local lane projection replace that value during a rolling cache
+		// upgrade.
+		accountMaxConcurrency := h.openAIWSAccountMaxConcurrencyForSelection(account, selection)
 		// 终检、准入后绑定与后续 turn 级复核都使用选号结果携带的门（composite
 		// 等跨分组调度的门只存在于调度栈局部 ctx）；准入成功后并入连接 ctx。
 		admissionCtx := service.ContextWithSelectionProfitGate(ctx, selection)
@@ -2677,6 +2712,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					accountReleaseFunc()
 				}
 				reqLog.Debug("openai.websocket_account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
+				if service.IsProxyLaneUnavailableReason(reason) {
+					failedAccountIDs[account.ID] = struct{}{}
+					continue
+				}
 				if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
 					reqLog.Warn("openai.websocket_profit_veto_attempts_exhausted", zap.Int("profit_veto_count", profitVetoCount))
 					closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
@@ -2686,16 +2725,22 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 			account = latest
 			selection.Account = latest
+			// Profit-control hydration can refresh the selected lane (including its
+			// concurrency cap). Recompute the limit after the final account object
+			// is installed so later turns use the same admission namespace/cap.
+			accountMaxConcurrency = h.openAIWSAccountMaxConcurrencyForSelection(account, selection)
 		}
 		if !selection.Acquired {
 			if selection.WaitPlan == nil {
 				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account is busy, please retry later")
 				return
 			}
-			fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(
+			fastReleaseFunc, fastAcquired, err := h.concurrencyHelper.TryAcquireAccountOrLaneSlot(
 				ctx,
 				account.ID,
+				selection.WaitPlan.LaneID,
 				selection.WaitPlan.MaxConcurrency,
+				h.openAIWSAccountAggregateMaxConcurrencyArgs(account, selection)...,
 			)
 			if err != nil {
 				reqLog.Warn("openai.websocket_account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
@@ -2714,6 +2759,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					fastReleaseFunc()
 				}
 				reqLog.Debug("openai.websocket_account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
+				if service.IsProxyLaneUnavailableReason(reason) {
+					failedAccountIDs[account.ID] = struct{}{}
+					continue
+				}
 				if !recordOpenAIProfitVeto(failedAccountIDs, account.ID, &profitVetoCount) {
 					reqLog.Warn("openai.websocket_profit_veto_attempts_exhausted", zap.Int("profit_veto_count", profitVetoCount))
 					closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "no available account")
@@ -2723,6 +2772,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			}
 			account = latest
 			selection.Account = latest
+			// The terminal hydration above may have changed the selected lane's
+			// cap. Re-read it after replacing the request-local account; a legacy
+			// WaitPlan with MaxConcurrency==0 intentionally remains unlimited.
+			accountMaxConcurrency = h.openAIWSAccountMaxConcurrencyForSelection(account, selection)
 			accountReleaseFunc = fastReleaseFunc
 		}
 		// 准入完成：门并入连接 ctx，turn 级复核与 failover 重选共用。
@@ -2849,13 +2902,29 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 当前账号，越线即要求客户端重连重选（连接绑定单一上游账号，
 				// 无法中途换号）。本 turn 的准入与计费共用同一 pricingAt。
 				turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(ctx, apiKey.GroupID)
-				if _, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account); vetoed {
+				// Refresh the request-local account on every turn.  The initial
+				// selection may have been hydrated minutes earlier; lane status,
+				// proxy relation, and concurrency cap can all change while the WS
+				// remains idle.  ProfitControlVetoLatest also performs the lane
+				// freshness check when no profit gate is installed and returns a
+				// fail-closed veto for a deleted/paused/reassigned lane.
+				latest, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account)
+				if vetoed {
 					reqLog.Info("openai.websocket_turn_profit_vetoed",
 						zap.Int("turn", turn),
 						zap.Int64("account_id", account.ID),
 						zap.String("reason", reason))
 					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer eligible for this connection, please reconnect", nil)
 				}
+				if latest == nil {
+					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "account is no longer available, please reconnect", nil)
+				}
+				account = latest
+				selection.Account = latest
+				// A lane-capable admission namespace must use the refreshed lane
+				// limit, not the cap captured during handshake.  For an old cache,
+				// the helper deliberately preserves the aggregate account limit.
+				accountMaxConcurrency = h.openAIWSAccountMaxConcurrencyForSelection(account, selection)
 				turnPricing.freeze(turnAt)
 				if turn == 1 {
 					return nil
@@ -2870,7 +2939,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if !userAcquired {
 					return service.NewOpenAIWSClientCloseError(coderws.StatusTryAgainLater, "too many concurrent requests, please retry later", nil)
 				}
-				accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
+				laneID := h.openAIWSLaneIDForHandler(account)
+				accountReleaseFunc, accountAcquired, err := h.concurrencyHelper.TryAcquireAccountOrLaneSlot(ctx, account.ID, laneID, accountMaxConcurrency,
+					h.openAIWSAccountAggregateMaxConcurrencyArgs(account, selection)...)
 				if err != nil {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
@@ -3042,7 +3113,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						return
 					}
 					if currentAccountRelease == nil {
-						accountRelease, acquired, acquireErr := h.concurrencyHelper.TryAcquireAccountSlot(ctx, account.ID, accountMaxConcurrency)
+						laneID := h.openAIWSLaneIDForHandler(account)
+						accountRelease, acquired, acquireErr := h.concurrencyHelper.TryAcquireAccountOrLaneSlot(ctx, account.ID, laneID, accountMaxConcurrency,
+							h.openAIWSAccountAggregateMaxConcurrencyArgs(account, selection)...)
 						if acquireErr != nil || !acquired {
 							reqLog.Warn("openai.websocket_same_account_retry_slot_unavailable",
 								zap.Int64("account_id", account.ID),

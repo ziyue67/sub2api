@@ -453,6 +453,34 @@ var allowedHeaders = map[string]bool{
 // cache implementation (e.g. redis.Nil), mirroring ErrRefreshTokenNotFound.
 var ErrStickySessionNotFound = errors.New("sticky session not found")
 
+// ErrLaneStickySessionNotFound is returned by an optional lane-aware sticky
+// cache when no account/egress binding exists for a session.  It aliases the
+// legacy sticky miss sentinel so callers that only understand the original
+// cache contract can safely treat a lane miss as an ordinary miss.
+var ErrLaneStickySessionNotFound = ErrStickySessionNotFound
+
+// LaneStickyBinding identifies the account and independently schedulable
+// egress lane selected for one conversation.  The binding is deliberately
+// small: proxy credentials and mutable lane settings stay in the account
+// snapshot/database and are never serialized to Redis.
+type LaneStickyBinding struct {
+	AccountID int64 `json:"account_id"`
+	LaneID    int64 `json:"lane_id"`
+}
+
+// LaneStickyCache is an optional extension to GatewayCache.  It is kept
+// separate from GatewayCache so rolling upgrades and existing test adapters
+// that implement only the legacy account sticky methods remain source and
+// binary compatible.  Implementations must scope a binding by group, model,
+// and session hash; model is included because one account can expose different
+// lane policies for different upstream models.
+type LaneStickyCache interface {
+	GetSessionLane(ctx context.Context, groupID int64, model, sessionHash string) (LaneStickyBinding, error)
+	SetSessionLane(ctx context.Context, groupID int64, model, sessionHash string, binding LaneStickyBinding, ttl time.Duration) error
+	RefreshSessionLaneTTL(ctx context.Context, groupID int64, model, sessionHash string, ttl time.Duration) error
+	DeleteSessionLane(ctx context.Context, groupID int64, model, sessionHash string) error
+}
+
 // ErrReasoningContentNotFound is returned by GatewayCache.GetReasoningContent
 // when no cached reasoning content exists for the reasoning item ID.
 var ErrReasoningContentNotFound = errors.New("reasoning content not found")
@@ -569,10 +597,20 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 }
 
 type AccountWaitPlan struct {
-	AccountID      int64
+	AccountID int64
+	// LaneID is non-zero when the selected account has lane scheduling enabled.
+	// Waiters must use this lane namespace rather than falling back to the
+	// aggregate account slot.
+	LaneID         int64
 	MaxConcurrency int
-	Timeout        time.Duration
-	MaxWaiting     int
+	// AggregateMaxConcurrency is the account-wide ceiling.  When LaneID is
+	// non-zero, MaxConcurrency is the selected lane ceiling while this field
+	// remains the parent account limit (for example total=20, lane1=10,
+	// lane2=10).  Both reservations must be held before forwarding.
+	AggregateMaxConcurrency    int
+	AggregateMaxConcurrencySet bool
+	Timeout                    time.Duration
+	MaxWaiting                 int
 }
 
 type AccountSelectionResult struct {
@@ -580,10 +618,78 @@ type AccountSelectionResult struct {
 	Acquired    bool
 	ReleaseFunc func()
 	WaitPlan    *AccountWaitPlan // nil means no wait allowed
+	// AdmissionMaxConcurrency is the maxConcurrency value used by the
+	// reservation represented by this selection.  It is deliberately kept
+	// separate from Account.Concurrency: projecting a selected proxy lane onto
+	// an account changes that field for transport/pool sizing, while a legacy
+	// cache reservation still belongs to the aggregate account bucket.
+	//
+	// AdmissionMaxConcurrencySet distinguishes an explicit zero (unlimited)
+	// from an older selection producer that did not populate this metadata.
+	AdmissionMaxConcurrency    int
+	AdmissionMaxConcurrencySet bool
 	// profitGate 携带本次选号真实生效的利润门（无门为 nil）。门安装在调度栈的
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。
 	profitGate *openAIProfitControlGate
+}
+
+// selectionAdmissionMaxConcurrency snapshots the limit that owns a
+// selection before account hydration/lane projection can mutate
+// Account.Concurrency.  An explicit value is accepted as a variadic argument
+// so callers that already performed an acquire can preserve an intentional
+// zero (unlimited) without adding a second result type to the scheduler API.
+func selectionAdmissionMaxConcurrency(account *Account, waitPlan *AccountWaitPlan, explicit ...int) (int, bool) {
+	if len(explicit) > 0 {
+		return explicit[0], true
+	}
+	if waitPlan != nil {
+		if waitPlan.LaneID > 0 && waitPlan.AggregateMaxConcurrencySet {
+			return waitPlan.AggregateMaxConcurrency, true
+		}
+		return waitPlan.MaxConcurrency, true
+	}
+	if account == nil {
+		return 0, false
+	}
+	return account.Concurrency, true
+}
+
+func admissionMaxConcurrencyFromAcquireResult(result *AcquireResult) (int, bool) {
+	if result == nil || !result.MaxConcurrencySet {
+		return 0, false
+	}
+	return result.MaxConcurrency, true
+}
+
+func aggregateAdmissionMaxConcurrencyFromAcquireResult(result *AcquireResult) (int, bool) {
+	if result == nil || !result.AggregateMaxConcurrencySet {
+		return 0, false
+	}
+	return result.AggregateMaxConcurrency, true
+}
+
+func acquireResultAdmissionMaxConcurrency(result *AcquireResult) (int, bool) {
+	if max, ok := aggregateAdmissionMaxConcurrencyFromAcquireResult(result); ok {
+		return max, true
+	}
+	return admissionMaxConcurrencyFromAcquireResult(result)
+}
+
+// admissionMaxConcurrencyArgs converts reservation metadata to the optional
+// argument accepted by selection-result constructors.  A nil/legacy
+// AcquireResult must stay omitted: zero is a valid explicit value meaning
+// "unlimited", so passing result.MaxConcurrency unconditionally would turn an
+// old hand-written result into a false unlimited reservation and lose the
+// account's persisted cap after lane projection.
+func admissionMaxConcurrencyArgs(result *AcquireResult) []int {
+	if max, ok := aggregateAdmissionMaxConcurrencyFromAcquireResult(result); ok {
+		return []int{max}
+	}
+	if max, ok := admissionMaxConcurrencyFromAcquireResult(result); ok {
+		return []int{max}
+	}
+	return nil
 }
 
 // ProfitGateActive 报告本次选号是否处于利润门之下。
@@ -1306,6 +1412,7 @@ func (s *GatewayService) getOAuthToken(ctx context.Context, account *Account) (s
 // Grok upstream and returns the raw JSON body. Used by /v1/web_search.
 // Gin-free: UA is always the pinned Grok CLI identity (resolveGrokUpstreamUserAgent ignores inbound).
 func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account *Account, body []byte) ([]byte, error) {
+	ctx = WithSelectedAccountProxyLane(ctx, account)
 	if s == nil || s.httpUpstream == nil {
 		return nil, errors.New("http upstream not configured")
 	}
@@ -1344,10 +1451,7 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 	upstreamReq.Header.Set("User-Agent", defaultGrokUpstreamUserAgent())
 	applyGrokCLIHeaders(upstreamReq.Header)
 	account.ApplyHeaderOverrides(upstreamReq.Header)
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURL(account)
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, Reason: GatewayFailureReason("grok_search_transport")}

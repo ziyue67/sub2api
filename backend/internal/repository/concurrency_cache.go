@@ -29,7 +29,11 @@ const (
 	// 格式: concurrency:user:{userID}
 	userSlotKeyPrefix = "concurrency:user:"
 	// 格式: concurrency:api_key:{apiKeyID}
-	apiKeySlotKeyPrefix      = "concurrency:api_key:"
+	apiKeySlotKeyPrefix = "concurrency:api_key:"
+	// Lane-scoped request slots.  A lane is intentionally independent from
+	// its parent account slot so several egresses can run in parallel.
+	// 格式: concurrency:lane:{laneID}
+	laneSlotKeyPrefix        = "concurrency:lane:"
 	liveAccountSlotKeyPrefix = "concurrency:live:account:"
 	liveUserSlotKeyPrefix    = "concurrency:live:user:"
 	liveAPIKeySlotKeyPrefix  = "concurrency:live:api_key:"
@@ -42,6 +46,8 @@ const (
 	waitQueueKeyPrefix = "concurrency:wait:"
 	// 账号级等待队列计数器格式: wait:account:{accountID}
 	accountWaitKeyPrefix = "wait:account:"
+	// 线路级等待队列计数器格式: wait:lane:{laneID}
+	laneWaitKeyPrefix = "wait:lane:"
 
 	// 默认槽位过期时间（分钟），可通过配置覆盖
 	defaultSlotTTLMinutes = 15
@@ -126,6 +132,61 @@ var (
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
 		redis.call('ZREMRANGEBYSCORE', liveKey, '-inf', now - 60)
 		return redis.call('ZCARD', key) + redis.call('ZCARD', liveKey)
+	`)
+
+	// acquireLaneScript is the lane counterpart of acquireScript.  It touches
+	// exactly one Redis key so the operation also works on Redis Cluster without
+	// requiring a hash-tagged pair of regular/live keys.  Lane live leases are
+	// not part of this optional request-slot contract; any future live lane
+	// lease can use its own key/script without changing the six-method API.
+	// KEYS[1] = lane slot sorted set
+	// ARGV[1] = maxConcurrency, ARGV[2] = TTL (seconds), ARGV[3] = requestID
+	// Returns {acquired, redisNow} like acquireScript.
+	acquireLaneScript = redis.NewScript(`
+		redis.replicate_commands()
+		local key = KEYS[1]
+		local maxConcurrency = tonumber(ARGV[1])
+		local ttl = tonumber(ARGV[2])
+		local requestID = ARGV[3]
+		local now = tonumber(redis.call('TIME')[1])
+		local expireBefore = now - ttl
+
+		redis.call('ZREMRANGEBYSCORE', key, '-inf', expireBefore)
+		-- Keep lane semantics identical to the legacy account namespace:
+		-- zero/negative means unlimited.  The service layer already treats a
+		-- non-positive limit as an acquired no-op, but handling it here too is
+		-- important for callers that use the Redis capability directly and for
+		-- rolling upgrades where the Lua path may be reached without the service
+		-- guard.
+		if maxConcurrency <= 0 then
+			return {1, now}
+		end
+
+		-- Repeated acquisition of the same request refreshes its lease instead
+		-- of consuming another slot (safe for retry paths).
+		if redis.call('ZSCORE', key, requestID) ~= false then
+			redis.call('ZADD', key, now, requestID)
+			redis.call('EXPIRE', key, ttl)
+			return {1, now}
+		end
+
+		if redis.call('ZCARD', key) < maxConcurrency then
+			redis.call('ZADD', key, now, requestID)
+			redis.call('EXPIRE', key, ttl)
+			return {1, now}
+		end
+		return {0, now}
+	`)
+
+	// getLaneCountScript removes expired regular lane members and returns the
+	// remaining count.  It deliberately uses one key for Redis Cluster safety.
+	getLaneCountScript = redis.NewScript(`
+		redis.replicate_commands()
+		local key = KEYS[1]
+		local ttl = tonumber(ARGV[1])
+		local now = tonumber(redis.call('TIME')[1])
+		redis.call('ZREMRANGEBYSCORE', key, '-inf', now - ttl)
+		return redis.call('ZCARD', key)
 	`)
 
 	acquireLiveLeaseScript = redis.NewScript(`
@@ -377,6 +438,9 @@ func NewConcurrencyCache(rdb *redis.Client, slotTTLMinutes int, waitQueueTTLSeco
 	}
 }
 
+var _ service.LaneConcurrencyCache = (*concurrencyCache)(nil)
+var _ service.LaneConcurrencyBatchCache = (*concurrencyCache)(nil)
+
 // Helper functions for key generation
 func accountSlotKey(accountID int64) string {
 	return fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
@@ -388,6 +452,10 @@ func userSlotKey(userID int64) string {
 
 func apiKeySlotKey(apiKeyID int64) string {
 	return fmt.Sprintf("%s%d", apiKeySlotKeyPrefix, apiKeyID)
+}
+
+func laneSlotKey(laneID int64) string {
+	return fmt.Sprintf("%s%d", laneSlotKeyPrefix, laneID)
 }
 
 func liveAccountSlotKey(accountID int64) string {
@@ -412,6 +480,10 @@ func waitQueueKey(userID int64) string {
 
 func accountWaitKey(accountID int64) string {
 	return fmt.Sprintf("%s%d", accountWaitKeyPrefix, accountID)
+}
+
+func laneWaitKey(laneID int64) string {
+	return fmt.Sprintf("%s%d", laneWaitKeyPrefix, laneID)
 }
 
 // redisUnixSeconds 统一使用 Redis 服务器时间，避免多实例本地时钟漂移导致索引提前/延后过期。
@@ -701,6 +773,112 @@ func (c *concurrencyCache) GetAccountConcurrencyBatch(ctx context.Context, accou
 		result[cmd.accountID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
 	}
 	return result, nil
+}
+
+// Lane slot operations
+
+// AcquireLaneSlot atomically reserves a request slot in one egress lane. It
+// intentionally uses its own Redis key; the service layer may pair this
+// independent lane reservation with the parent account key for an aggregate
+// ceiling across all lanes.
+func (c *concurrencyCache) AcquireLaneSlot(ctx context.Context, laneID int64, maxConcurrency int, requestID string) (bool, error) {
+	if c == nil || c.rdb == nil {
+		return false, errors.New("lane concurrency cache is unavailable")
+	}
+	if laneID <= 0 || requestID == "" {
+		return false, nil
+	}
+	result, _, err := runScriptInt64Pair(ctx, c.rdb, acquireLaneScript, []string{laneSlotKey(laneID)}, maxConcurrency, c.slotTTLSeconds, requestID)
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+func (c *concurrencyCache) ReleaseLaneSlot(ctx context.Context, laneID int64, requestID string) error {
+	if c == nil || c.rdb == nil || laneID <= 0 || requestID == "" {
+		return nil
+	}
+	return c.rdb.ZRem(ctx, laneSlotKey(laneID), requestID).Err()
+}
+
+func (c *concurrencyCache) GetLaneConcurrency(ctx context.Context, laneID int64) (int, error) {
+	if c == nil || c.rdb == nil || laneID <= 0 {
+		return 0, nil
+	}
+	return getLaneCountScript.Run(ctx, c.rdb, []string{laneSlotKey(laneID)}, c.slotTTLSeconds).Int()
+}
+
+// GetLaneConcurrencyBatch performs a single Redis pipeline round trip for a
+// set of lanes.  Missing keys naturally report zero.  Duplicate IDs are
+// collapsed in the returned map, matching GetAccountConcurrencyBatch.
+func (c *concurrencyCache) GetLaneConcurrencyBatch(ctx context.Context, laneIDs []int64) (map[int64]int, error) {
+	result := make(map[int64]int, len(laneIDs))
+	if len(laneIDs) == 0 {
+		return result, nil
+	}
+	for _, laneID := range laneIDs {
+		if laneID > 0 {
+			result[laneID] = 0
+		}
+	}
+	if c == nil || c.rdb == nil {
+		return result, nil
+	}
+
+	now, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis TIME: %w", err)
+	}
+	cutoff := strconv.FormatInt(now.Unix()-int64(c.slotTTLSeconds), 10)
+	pipe := c.rdb.Pipeline()
+	type laneCmd struct {
+		id   int64
+		card *redis.IntCmd
+	}
+	cmds := make([]laneCmd, 0, len(result))
+	for laneID := range result {
+		key := laneSlotKey(laneID)
+		pipe.ZRemRangeByScore(ctx, key, "-inf", cutoff)
+		cmds = append(cmds, laneCmd{id: laneID, card: pipe.ZCard(ctx, key)})
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("pipeline exec: %w", err)
+	}
+	for _, cmd := range cmds {
+		result[cmd.id] = int(cmd.card.Val())
+	}
+	return result, nil
+}
+
+func (c *concurrencyCache) IncrementLaneWaitCount(ctx context.Context, laneID int64, maxWait int) (bool, error) {
+	if c == nil || c.rdb == nil || laneID <= 0 {
+		return true, nil
+	}
+	result, _, err := runScriptInt64Pair(ctx, c.rdb, incrementWaitScript, []string{laneWaitKey(laneID)}, maxWait, c.waitQueueTTLSeconds)
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+func (c *concurrencyCache) DecrementLaneWaitCount(ctx context.Context, laneID int64) error {
+	if c == nil || c.rdb == nil || laneID <= 0 {
+		return nil
+	}
+	_, err := decrementWaitScript.Run(ctx, c.rdb, []string{laneWaitKey(laneID)}).Result()
+	return err
+}
+
+func (c *concurrencyCache) GetLaneWaitingCount(ctx context.Context, laneID int64) (int, error) {
+	if c == nil || c.rdb == nil || laneID <= 0 {
+		return 0, nil
+	}
+	val, err := c.rdb.Get(ctx, laneWaitKey(laneID)).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	return val, err
 }
 
 // User slot operations

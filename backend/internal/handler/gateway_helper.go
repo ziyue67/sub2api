@@ -217,6 +217,45 @@ func (h *ConcurrencyHelper) DecrementAccountWaitCount(ctx context.Context, accou
 	h.concurrencyService.DecrementAccountWaitCount(ctx, accountID)
 }
 
+// IncrementLaneWaitCount increments the wait count for one account egress
+// lane. Lane-enabled accounts must not share the aggregate account queue: a
+// saturated IP/transport should only back-pressure requests assigned to that
+// lane. The service keeps this capability optional so old cache adapters remain
+// compatible during a rolling upgrade.
+func (h *ConcurrencyHelper) IncrementLaneWaitCount(ctx context.Context, laneID int64, maxWait int) (bool, error) {
+	if h == nil || h.concurrencyService == nil {
+		return true, nil
+	}
+	return h.concurrencyService.IncrementLaneWaitCount(ctx, laneID, maxWait)
+}
+
+// DecrementLaneWaitCount releases one entry from a lane wait queue.
+func (h *ConcurrencyHelper) DecrementLaneWaitCount(ctx context.Context, laneID int64) {
+	if h == nil || h.concurrencyService == nil {
+		return
+	}
+	h.concurrencyService.DecrementLaneWaitCount(ctx, laneID)
+}
+
+// IncrementAccountOrLaneWaitCount dispatches a wait-queue reservation based on
+// the selection plan. A zero lane ID is the legacy account namespace.
+func (h *ConcurrencyHelper) IncrementAccountOrLaneWaitCount(ctx context.Context, accountID, laneID int64, maxWait int) (bool, error) {
+	if laneID > 0 {
+		return h.IncrementLaneWaitCount(ctx, laneID, maxWait)
+	}
+	return h.IncrementAccountWaitCount(ctx, accountID, maxWait)
+}
+
+// DecrementAccountOrLaneWaitCount mirrors IncrementAccountOrLaneWaitCount and
+// is safe to call after a failed/partial wait reservation.
+func (h *ConcurrencyHelper) DecrementAccountOrLaneWaitCount(ctx context.Context, accountID, laneID int64) {
+	if laneID > 0 {
+		h.DecrementLaneWaitCount(ctx, laneID)
+		return
+	}
+	h.DecrementAccountWaitCount(ctx, accountID)
+}
+
 // TryAcquireUserSlot 尝试立即获取用户并发槽位。
 // 返回值: (releaseFunc, acquired, error)
 func (h *ConcurrencyHelper) TryAcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (func(), bool, error) {
@@ -258,6 +297,151 @@ func (h *ConcurrencyHelper) TryAcquireAccountSlot(ctx context.Context, accountID
 		return nil, false, nil
 	}
 	return result.ReleaseFunc, true, nil
+}
+
+// TryAcquireLaneSlot attempts an immediate slot acquisition in a specific
+// egress lane. It is intentionally separate from TryAcquireAccountSlot so
+// legacy callers keep their account-level semantics.
+func (h *ConcurrencyHelper) TryAcquireLaneSlot(ctx context.Context, laneID int64, maxConcurrency int) (func(), bool, error) {
+	if h == nil || h.concurrencyService == nil {
+		return func() {}, true, nil
+	}
+	result, err := h.concurrencyService.AcquireLaneSlot(ctx, laneID, maxConcurrency)
+	if err != nil {
+		return nil, false, err
+	}
+	if result == nil || !result.Acquired {
+		return nil, false, nil
+	}
+	return result.ReleaseFunc, true, nil
+}
+
+// TryAcquireAccountOrLaneSlot is the immediate counterpart of the wait-plan
+// dispatcher. It is used by handlers that perform a second fast-path attempt
+// after the scheduler returned a non-acquired WaitPlan.
+func (h *ConcurrencyHelper) TryAcquireAccountOrLaneSlot(ctx context.Context, accountID, laneID int64, maxConcurrency int, aggregateMaxConcurrency ...int) (func(), bool, error) {
+	if laneID > 0 {
+		if len(aggregateMaxConcurrency) > 0 && h != nil && h.concurrencyService != nil {
+			result, err := h.concurrencyService.AcquireAccountAndLaneSlot(ctx, accountID, aggregateMaxConcurrency[0], laneID, maxConcurrency)
+			if err != nil {
+				return nil, false, err
+			}
+			if result == nil || !result.Acquired {
+				return nil, false, nil
+			}
+			return result.ReleaseFunc, true, nil
+		}
+		return h.TryAcquireLaneSlot(ctx, laneID, maxConcurrency)
+	}
+	return h.TryAcquireAccountSlot(ctx, accountID, maxConcurrency)
+}
+
+// openAIWSLaneIDForAccount returns a lane ID only when the running cache
+// supports the optional lane-scoped concurrency namespace.  Older cache
+// adapters intentionally fail open in AcquireLaneSlot; passing a lane ID to
+// them would therefore bypass the legacy account slot on WebSocket turns.
+// Keep the capability check at this boundary so every WS re-acquire path uses
+// the same admission namespace during a rolling upgrade.
+func openAIWSLaneIDForAccount(account *service.Account, concurrency *service.ConcurrencyService) int64 {
+	if account == nil || account.SelectedProxyLane == nil || concurrency == nil || !concurrency.LaneConcurrencySupported() {
+		return 0
+	}
+	if account.SelectedProxyLane.ID <= 0 {
+		return 0
+	}
+	return account.SelectedProxyLane.ID
+}
+
+// openAIWSLaneIDForHandler safely obtains the capability-aware lane ID from a
+// gateway handler.  A partially constructed handler is common in focused unit
+// tests and must retain the legacy account namespace rather than panic.
+func (h *OpenAIGatewayHandler) openAIWSLaneIDForHandler(account *service.Account) int64 {
+	if h == nil || h.concurrencyHelper == nil {
+		return 0
+	}
+	return openAIWSLaneIDForAccount(account, h.concurrencyHelper.concurrencyService)
+}
+
+// openAIWSAccountMaxConcurrencyForSelection returns the concurrency limit for
+// the admission namespace that owns the current WebSocket connection.
+//
+// A WaitPlan is authoritative when one exists, including MaxConcurrency == 0:
+// zero means "unlimited" and is a valid limit, not an indication that the
+// plan is incomplete.  During a rolling upgrade an account with proxy lanes
+// still uses the legacy account Redis bucket (LaneID == 0); in that case the
+// lane projection on Account may contain the lane's own cap, so consulting
+// account.Concurrency would accidentally tighten an unlimited/aggregate
+// account to that lane cap.  Lane-capable plans may refresh their lane cap
+// after a terminal account hydration; use the current selected lane when it
+// still owns the plan so subsequent turns do not keep a stale limit.
+func (h *OpenAIGatewayHandler) openAIWSAccountMaxConcurrencyForSelection(
+	account *service.Account,
+	selection *service.AccountSelectionResult,
+) int {
+	if selection != nil && selection.WaitPlan != nil {
+		plan := selection.WaitPlan
+		if plan.LaneID > 0 && account != nil && account.SelectedProxyLane != nil &&
+			account.SelectedProxyLane.ID == plan.LaneID && h != nil && h.concurrencyHelper != nil &&
+			h.concurrencyHelper.concurrencyService != nil && h.concurrencyHelper.concurrencyService.LaneConcurrencySupported() {
+			return account.SelectedProxyLane.Concurrency
+		}
+		// A lane wait plan carries MaxConcurrency for the selected lane.  Do not
+		// fall through to AdmissionMaxConcurrency here: for composite admission
+		// that metadata intentionally stores the parent aggregate (for example
+		// total=20 while this lane is capped at 10).  Losing the lane cap on a
+		// stale/missing request-local projection would let one egress exceed its
+		// own limit during a WebSocket retry.
+		if plan.LaneID > 0 {
+			return plan.MaxConcurrency
+		}
+		if selection.AdmissionMaxConcurrencySet {
+			return selection.AdmissionMaxConcurrency
+		}
+		// Preserve zero (unlimited) and every other value exactly as supplied by
+		// the scheduler.  A legacy account-level plan deliberately has LaneID=0.
+		return plan.MaxConcurrency
+	}
+	if selection != nil && selection.AdmissionMaxConcurrencySet {
+		// Acquired lane selections have no WaitPlan, but their admission
+		// metadata is a snapshot from the first turn.  A long-lived WS turn can
+		// refresh the same lane's concurrency cap; when the running cache owns
+		// the lane namespace, the current selected lane is authoritative and must
+		// supersede that stale snapshot.  Legacy account-namespace selections
+		// intentionally keep the explicit aggregate metadata (including zero).
+		if account != nil && account.SelectedProxyLane != nil && h != nil && h.concurrencyHelper != nil &&
+			h.concurrencyHelper.concurrencyService != nil && h.concurrencyHelper.concurrencyService.LaneConcurrencySupported() {
+			return account.SelectedProxyLane.Concurrency
+		}
+		return selection.AdmissionMaxConcurrency
+	}
+	if account == nil {
+		return 0
+	}
+	return account.Concurrency
+}
+
+// openAIWSAccountAggregateMaxConcurrencyArgs preserves the distinction
+// between an explicit aggregate value (including zero = unlimited) and an
+// older selection that carried no aggregate metadata. Callers pass the
+// returned slice to the variadic composite-acquire helper; an empty slice
+// intentionally keeps the legacy lane-only path for such old selections.
+func (h *OpenAIGatewayHandler) openAIWSAccountAggregateMaxConcurrencyArgs(
+	account *service.Account,
+	selection *service.AccountSelectionResult,
+) []int {
+	if selection == nil {
+		return nil
+	}
+	if plan := selection.WaitPlan; plan != nil {
+		if plan.LaneID <= 0 || !plan.AggregateMaxConcurrencySet {
+			return nil
+		}
+		return []int{plan.AggregateMaxConcurrency}
+	}
+	if !selection.AdmissionMaxConcurrencySet || h == nil || h.openAIWSLaneIDForHandler(account) <= 0 {
+		return nil
+	}
+	return []int{selection.AdmissionMaxConcurrency}
 }
 
 // AcquireUserSlotWithWait acquires a user concurrency slot, waiting if necessary.
@@ -362,6 +546,9 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 		if slotType == "user" {
 			return h.concurrencyService.AcquireUserSlot(ctx, id, maxConcurrency)
 		}
+		if slotType == "lane" {
+			return h.concurrencyService.AcquireLaneSlot(ctx, id, maxConcurrency)
+		}
 		return h.concurrencyService.AcquireAccountSlot(ctx, id, maxConcurrency)
 	}
 
@@ -445,6 +632,110 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 // AcquireAccountSlotWithWaitTimeout acquires an account slot with a custom timeout (keeps SSE ping).
 func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeout(c *gin.Context, accountID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
 	return h.waitForSlotWithPingTimeout(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true)
+}
+
+// AcquireLaneSlotWithWaitTimeout waits for a slot in one egress lane while
+// preserving the same heartbeat/cancellation/backoff behavior as the legacy
+// account helper. A lane wait is paired with the aggregate account slot when
+// the caller supplies the account-wide limit; without it, the lane namespace
+// remains independently addressable for rolling-upgrade compatibility.
+func (h *ConcurrencyHelper) AcquireLaneSlotWithWaitTimeout(c *gin.Context, laneID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
+	return h.waitForSlotWithPingTimeout(c, "lane", laneID, maxConcurrency, timeout, isStream, streamStarted, true)
+}
+
+// AcquireAccountOrLaneSlotWithWaitTimeout is the common handler entry point
+// for AccountWaitPlan. It keeps the old account behavior when LaneID is zero
+// and routes lane-enabled plans to the independent lane namespace.
+func (h *ConcurrencyHelper) AcquireAccountOrLaneSlotWithWaitTimeout(c *gin.Context, accountID, laneID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, aggregateMaxConcurrency ...int) (func(), error) {
+	if laneID > 0 {
+		if len(aggregateMaxConcurrency) > 0 {
+			return h.acquireAccountAndLaneSlotWithWaitTimeout(c, accountID, laneID, aggregateMaxConcurrency[0], maxConcurrency, timeout, isStream, streamStarted)
+		}
+		return h.AcquireLaneSlotWithWaitTimeout(c, laneID, maxConcurrency, timeout, isStream, streamStarted)
+	}
+	return h.AcquireAccountSlotWithWaitTimeout(c, accountID, maxConcurrency, timeout, isStream, streamStarted)
+}
+
+// acquireAccountAndLaneSlotWithWaitTimeout waits until both the account-wide
+// aggregate slot and the selected lane slot are available.  It deliberately
+// releases the first reservation when the second is full, so a request never
+// holds total capacity while waiting for an egress-specific capacity unit.
+func (h *ConcurrencyHelper) acquireAccountAndLaneSlotWithWaitTimeout(c *gin.Context, accountID, laneID int64, aggregateMaxConcurrency, laneMaxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
+	if h == nil || h.concurrencyService == nil {
+		return func() {}, nil
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+	defer cancel()
+	acquire := func() (*service.AcquireResult, error) {
+		return h.concurrencyService.AcquireAccountAndLaneSlot(ctx, accountID, aggregateMaxConcurrency, laneID, laneMaxConcurrency)
+	}
+
+	result, err := acquire()
+	if err != nil {
+		return nil, err
+	}
+	if result != nil && result.Acquired {
+		return result.ReleaseFunc, nil
+	}
+
+	needPing := isStream && h.pingFormat != ""
+	var flusher http.Flusher
+	if needPing {
+		var ok bool
+		flusher, ok = c.Writer.(http.Flusher)
+		if !ok {
+			return nil, fmt.Errorf("streaming not supported")
+		}
+	}
+	var pingCh <-chan time.Time
+	if needPing {
+		pingTicker := time.NewTicker(h.pingInterval)
+		defer pingTicker.Stop()
+		pingCh = pingTicker.C
+	}
+	backoff := initialBackoff
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			if parentErr := c.Request.Context().Err(); parentErr != nil {
+				return nil, parentErr
+			}
+			return nil, &ConcurrencyError{SlotType: "account", IsTimeout: true}
+		case <-pingCh:
+			if !*streamStarted {
+				c.Header("Content-Type", "text/event-stream")
+				c.Header("Cache-Control", "no-cache")
+				c.Header("Connection", "keep-alive")
+				c.Header("X-Accel-Buffering", "no")
+				*streamStarted = true
+			}
+			written, writeErr := fmt.Fprint(c.Writer, string(h.pingFormat))
+			if writeErr != nil {
+				return nil, writeErr
+			}
+			recordGatewayStreamHeartbeat(c, written)
+			flusher.Flush()
+		case <-timer.C:
+			result, err = acquire()
+			if err != nil {
+				return nil, err
+			}
+			if result != nil && result.Acquired {
+				return result.ReleaseFunc, nil
+			}
+			backoff = nextBackoff(backoff)
+			timer.Reset(backoff)
+		}
+	}
+}
+
+func waitPlanAggregateMaxArgs(plan *service.AccountWaitPlan) []int {
+	if plan == nil || plan.LaneID <= 0 || !plan.AggregateMaxConcurrencySet {
+		return nil
+	}
+	return []int{plan.AggregateMaxConcurrency}
 }
 
 // nextBackoff 计算下一次退避时间

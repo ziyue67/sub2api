@@ -68,10 +68,15 @@ var openAIAdvancedSchedulerSettingCache atomic.Value // *cachedOpenAIAdvancedSch
 var openAIAdvancedSchedulerSettingSF singleflight.Group
 
 type OpenAIAccountScheduleRequest struct {
-	GroupID                 *int64
-	Platform                string
-	SessionHash             string
-	StickyAccountID         int64
+	GroupID         *int64
+	Platform        string
+	SessionHash     string
+	StickyAccountID int64
+	// StickyLaneAccountID/StickyLaneID refine the legacy account sticky
+	// binding when the optional lane cache is available.  They are request
+	// hints only; the account snapshot remains authoritative for lane status.
+	StickyLaneAccountID     int64
+	StickyLaneID            int64
 	GuardianParentAccountID int64
 	StickyPreviousAccountID int64
 	StickyWeighted          bool
@@ -376,6 +381,7 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	ctx context.Context,
 	req OpenAIAccountScheduleRequest,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	ctx = WithAccountProxyLaneSession(ctx, req.SessionHash)
 	if s != nil && s.service != nil && s.service.openAIGroupRequiresPrivacySet(ctx, req.GroupID) {
 		req.RequirePrivacySet = true
 	}
@@ -423,6 +429,9 @@ func (s *defaultOpenAIAccountScheduler) Select(
 			decision.SelectedAccountType = selection.Account.Type
 			if req.SessionHash != "" {
 				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, selection.Account.ID)
+				if selection.Account.SelectedProxyLane != nil {
+					s.service.bindOpenAILaneStickyDuringSelection(ctx, req.GroupID, req.RequestedModel, req.SessionHash, selection.Account, selection.Account.SelectedProxyLane, s.service.openAIWSSessionStickyTTL())
+				}
 			}
 			return selection, decision, nil
 		}
@@ -495,6 +504,22 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	}
 
 	accountID := req.StickyAccountID
+	// Lane sticky is an optional refinement of the legacy account binding.  A
+	// guardian/explicit account request remains authoritative; ordinary session
+	// requests prefer the persisted account+lane pair when available.
+	var laneBinding LaneStickyBinding
+	laneBindingFound := false
+	if req.GuardianParentAccountID <= 0 && req.StickyAccountID <= 0 {
+		if binding, laneErr := s.service.getStickySessionLane(ctx, req.GroupID, req.RequestedModel, sessionHash); laneErr == nil && binding.AccountID > 0 && binding.LaneID > 0 {
+			laneBinding = binding
+			laneBindingFound = true
+			accountID = binding.AccountID
+		}
+	}
+	if req.StickyLaneID > 0 && req.StickyLaneAccountID > 0 && req.StickyLaneAccountID == accountID {
+		laneBinding = LaneStickyBinding{AccountID: req.StickyLaneAccountID, LaneID: req.StickyLaneID}
+		laneBindingFound = true
+	}
 	clearBinding := func() {
 		if !req.PreserveStickyBinding {
 			_ = s.service.deleteStickySessionAccountID(ctx, req.GroupID, sessionHash)
@@ -506,6 +531,14 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		if err != nil || accountID <= 0 {
 			return nil, false, nil
 		}
+	}
+	// A lane binding is only an affinity refinement.  If the account-only
+	// binding was supplied by an older caller, opportunistically load the lane
+	// hint here as well; explicit StickyLane fields remain authoritative when
+	// present.  This keeps direct scheduler users compatible with the new cache.
+	if !laneBindingFound && req.StickyLaneID > 0 && req.StickyLaneAccountID == accountID {
+		laneBinding = LaneStickyBinding{AccountID: accountID, LaneID: req.StickyLaneID}
+		laneBindingFound = true
 	}
 	if accountID <= 0 {
 		return nil, false, nil
@@ -537,6 +570,15 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
+	laneBindingApplied := false
+	if laneBindingFound {
+		// The account snapshot is authoritative for lane ownership/status.  Do
+		// not delete a stale lane key here: it may become valid again after a
+		// transient lane pause, and only transport failures are allowed to clear
+		// lane affinity.  Falling back to the normal deterministic lane keeps the
+		// request safe while the stale hint expires naturally.
+		laneBindingApplied = applyStickyLaneBinding(account, laneBinding, time.Now())
+	}
 	// Free-tier soft gate: sticky session must not pin an over-quota free OAuth account.
 	// Admin QueryQuota / import probes do not use this path.
 	if account != nil && len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
@@ -564,15 +606,27 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		)
 		return nil, true, nil
 	}
-	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+	result, acquireErr := s.service.tryAcquireAccountSlot(ctx, accountID, account.Concurrency, account)
 	if acquireErr == nil && result != nil && result.Acquired {
 		if !req.PreserveStickyBinding {
 			_ = s.service.refreshStickySessionTTL(ctx, req.GroupID, sessionHash, s.service.openAIWSSessionStickyTTL())
+			if result.Lane != nil {
+				// Preserve an existing lane hint during temporary capacity
+				// spill-over; otherwise persist the lane that was actually chosen.
+				if laneBindingApplied {
+					_ = s.service.refreshStickySessionLaneTTL(ctx, req.GroupID, req.RequestedModel, sessionHash, s.service.openAIWSSessionStickyTTL())
+				} else {
+					s.service.bindSelectedLaneSticky(ctx, req.GroupID, req.RequestedModel, sessionHash, account, result.Lane, s.service.openAIWSSessionStickyTTL())
+				}
+			}
 		}
+		admissionMax, admissionMaxSet := acquireResultAdmissionMaxConcurrency(result)
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account:     account,
-			Acquired:    true,
-			ReleaseFunc: result.ReleaseFunc,
+			Account:                    account,
+			Acquired:                   true,
+			ReleaseFunc:                result.ReleaseFunc,
+			AdmissionMaxConcurrency:    admissionMax,
+			AdmissionMaxConcurrencySet: admissionMaxSet,
 		}), false, nil
 	}
 
@@ -589,14 +643,23 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			)
 			return nil, true, nil
 		}
+		waitPlan, waitable := s.openAIWaitPlanForAccount(
+			ctx,
+			account,
+			cfg.StickySessionWaitTimeout,
+			cfg.StickySessionMaxWaiting,
+		)
+		if !waitable {
+			// Every configured lane is paused/disabled/cooling down.  Do not
+			// silently bypass that state through the aggregate account bucket.
+			return nil, false, nil
+		}
+		admissionMax, admissionMaxSet := selectionAdmissionMaxConcurrency(account, waitPlan)
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
+			Account:                    account,
+			WaitPlan:                   waitPlan,
+			AdmissionMaxConcurrency:    admissionMax,
+			AdmissionMaxConcurrencySet: admissionMaxSet,
 		}), false, nil
 	}
 	return nil, false, nil
@@ -1175,12 +1238,28 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		if candidate.account == nil {
 			continue
 		}
-		if candidate.loadKnown && candidate.account.Concurrency > 0 &&
-			candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency {
+		// Account-level load data alone is not authoritative for lane-enabled
+		// accounts: requests occupy both the parent aggregate bucket and a
+		// concurrency:lane:{id} bucket. Applying the old full check here can
+		// discard an account whose sibling egress still has lane capacity; the
+		// composite lane-aware acquisition below is the source of truth.
+		if s.isOpenAIAccountLoadKnownFull(candidate) {
 			continue
 		}
+		if req.StickyLaneID > 0 && req.StickyLaneAccountID == candidate.account.ID {
+			_ = applyStickyLaneBinding(candidate.account, LaneStickyBinding{
+				AccountID: req.StickyLaneAccountID,
+				LaneID:    req.StickyLaneID,
+			}, time.Now())
+		}
 
-		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlot(ctx, candidate.account.ID, candidate.account.Concurrency, budget)
+		// Keep the value used for the first reservation.  A selected lane is
+		// projected onto the request account during the recheck below, which
+		// intentionally changes Account.Concurrency for transport sizing; that
+		// projected value must never be mistaken for the aggregate account limit
+		// when an old cache requires a corrective account-slot acquire.
+		candidateAdmissionMax := candidate.account.Concurrency
+		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlot(ctx, candidate.account, budget)
 		if !attempted {
 			break
 		}
@@ -1210,13 +1289,45 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			release(result)
 			continue
 		}
-
-		if fresh.Concurrency != candidate.account.Concurrency {
+		freshAggregateMax := fresh.Concurrency
+		fresh = PreserveSelectedProxyLane(candidate.account, fresh)
+		// A scheduler recheck may return a fresh Account pointer. Reconcile the
+		// lane by ID against its current persisted definition before forwarding;
+		// never resurrect a lane that was deleted/paused while the probe was in
+		// flight.  If only its concurrency changed, release the old reservation
+		// and acquire again using the fresh limit.
+		laneValid, laneLimitChanged := reconcileOpenAISelectedLane(fresh, result)
+		if !laneValid {
 			release(result)
-			result, attempted, acquireErr = s.tryAcquireOpenAIAccountSlot(ctx, fresh.ID, fresh.Concurrency, budget)
-			if !attempted {
-				continue
-			}
+			continue
+		}
+
+		// tryAcquireAccountSlot now reserves the account aggregate and the lane
+		// together.  Its corrective reacquire therefore always takes the fresh
+		// account-wide ceiling; the lane ceiling is read from fresh's selected
+		// lane inside acquireAccountProxyLaneSlot.
+		reacquireMax := freshAggregateMax
+		actualAdmissionMax, actualAdmissionMaxSet := aggregateAdmissionMaxConcurrencyFromAcquireResult(result)
+		if !actualAdmissionMaxSet {
+			actualAdmissionMax, actualAdmissionMaxSet = admissionMaxConcurrencyFromAcquireResult(result)
+		}
+		if !actualAdmissionMaxSet {
+			// Results produced by older/third-party schedulers may not carry the
+			// metadata field.  The snapshot taken immediately before the first
+			// acquire is the best available aggregate value.
+			actualAdmissionMax = candidateAdmissionMax
+			actualAdmissionMaxSet = true
+		}
+		admissionMaxChanged := actualAdmissionMaxSet && actualAdmissionMax != reacquireMax
+		// A lane limit change is already represented by the desired lane max.  We
+		// retain the explicit flag as a defensive fallback for hand-written
+		// AcquireResults that omit max metadata.
+		if laneLimitChanged || admissionMaxChanged {
+			release(result)
+			// This is a recheck of an already-counted candidate.  Do not let the
+			// probe budget suppress the corrective acquire, otherwise a stale
+			// account/lane limit would leave the request with no reservation.
+			result, acquireErr = s.service.tryAcquireAccountSlot(ctx, fresh.ID, reacquireMax, fresh)
 			if acquireErr != nil {
 				return nil, compactBlocked, acquireErr
 			}
@@ -1226,27 +1337,220 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		}
 		if req.SessionHash != "" && !req.PreserveStickyBinding {
 			_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, fresh.ID)
+			if result.Lane != nil {
+				s.service.bindOpenAILaneStickyDuringSelection(ctx, req.GroupID, req.RequestedModel, req.SessionHash, fresh, result.Lane, s.service.openAIWSSessionStickyTTL())
+			}
 		}
+		admissionMax, admissionMaxSet := acquireResultAdmissionMaxConcurrency(result)
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account:     fresh,
-			Acquired:    true,
-			ReleaseFunc: result.ReleaseFunc,
+			Account:                    fresh,
+			Acquired:                   true,
+			ReleaseFunc:                result.ReleaseFunc,
+			AdmissionMaxConcurrency:    admissionMax,
+			AdmissionMaxConcurrencySet: admissionMaxSet,
 		}), compactBlocked, nil
 	}
 	return nil, compactBlocked, nil
 }
 
+// isOpenAIAccountLoadKnownFull reports whether the load snapshot proves that
+// a candidate's admission bucket is full.  For accounts with independently
+// scheduled proxy lanes, the legacy account load snapshot describes a bucket
+// that is no longer used when the configured cache supports lane slots; such
+// candidates must reach lane acquisition instead of being filtered out by the
+// old account.Concurrency limit.  When lane support is absent (for example
+// during a rolling upgrade), acquisition falls back to the legacy account
+// bucket and the old full check remains valid.
+func (s *defaultOpenAIAccountScheduler) isOpenAIAccountLoadKnownFull(candidate openAIAccountCandidateScore) bool {
+	account := candidate.account
+	if account == nil || !candidate.loadKnown || candidate.loadInfo == nil || account.Concurrency <= 0 {
+		return false
+	}
+	if account.HasProxyLanes() {
+		// A nil concurrency service is fail-open: no admission bucket exists,
+		// therefore a stale load snapshot must not hide the candidate.  When a
+		// service is present, only an old cache without lane support falls back
+		// to the legacy account bucket and may use this full check.
+		if s == nil || s.service == nil || s.service.concurrencyService == nil ||
+			laneConcurrencySupported(s.service.concurrencyService) {
+			return false
+		}
+	}
+	return candidate.loadInfo.CurrentConcurrency >= account.Concurrency
+}
+
 func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAIAccountSlot(
 	ctx context.Context,
-	accountID int64,
-	maxConcurrency int,
+	account *Account,
 	budget *openAISelectionProbeBudget,
 ) (*AcquireResult, bool, error) {
-	if s.service.concurrencyService != nil && maxConcurrency > 0 && !budget.recordAcquire(accountID) {
+	if account == nil || account.ID <= 0 {
+		return nil, true, ErrAccountNotFound
+	}
+	accountID := account.ID
+	maxConcurrency := account.Concurrency
+	if s.service.concurrencyService != nil && maxConcurrency > 0 && budget != nil && !budget.recordAcquire(accountID) {
 		return nil, false, nil
 	}
-	result, err := s.service.tryAcquireAccountSlot(ctx, accountID, maxConcurrency)
+	// Pass the complete account so lane-enabled accounts acquire from their
+	// lane namespace.  The helper retains the legacy account slot when no lane
+	// rows (or no lane-capable cache) are present.
+	result, err := s.service.tryAcquireAccountSlot(ctx, accountID, maxConcurrency, account)
 	return result, true, err
+}
+
+// openAIWaitLane returns a deterministic lane for a wait plan, but only when
+// the configured cache actually supports the lane namespace.  This guard is
+// essential during rolling upgrades: an old cache must continue using the
+// legacy account slot rather than handing handlers a lane ID whose acquire
+// operation would be a no-op.
+func (s *defaultOpenAIAccountScheduler) openAIWaitLane(ctx context.Context, account *Account) *AccountProxyLane {
+	if s == nil || s.service == nil || account == nil || !account.HasProxyLanes() ||
+		s.service.concurrencyService == nil || !laneConcurrencySupported(s.service.concurrencyService) {
+		return nil
+	}
+	if lane := account.SelectedProxyLaneOrNil(); lane != nil {
+		if current := findSchedulableOpenAILane(account, lane.ID); current != nil {
+			return current
+		}
+	}
+	return selectAccountProxyLaneForWait(account, AccountProxyLaneSessionFromContext(ctx))
+}
+
+// openAIWaitPlanForAccount builds a wait plan with the same lane capability
+// semantics as immediate acquisition.  A nil plan with laneRequired=false
+// means the account has configured lanes but none is currently schedulable;
+// callers must skip that account instead of falling back to the legacy
+// account bucket (which would bypass a paused/error lane).
+func (s *defaultOpenAIAccountScheduler) openAIWaitPlanForAccount(
+	ctx context.Context,
+	account *Account,
+	timeout time.Duration,
+	maxWaiting int,
+) (*AccountWaitPlan, bool) {
+	if account == nil {
+		return nil, false
+	}
+	plan := &AccountWaitPlan{
+		AccountID:                  account.ID,
+		MaxConcurrency:             account.Concurrency,
+		AggregateMaxConcurrency:    account.Concurrency,
+		AggregateMaxConcurrencySet: true,
+		Timeout:                    timeout,
+		MaxWaiting:                 maxWaiting,
+	}
+	if !account.HasProxyLanes() || s == nil || s.service == nil ||
+		s.service.concurrencyService == nil || !laneConcurrencySupported(s.service.concurrencyService) {
+		return plan, true
+	}
+	lane := s.openAIWaitLane(ctx, account)
+	if lane == nil {
+		return nil, false
+	}
+	account.ApplySelectedProxyLane(lane)
+	plan.LaneID = lane.ID
+	plan.MaxConcurrency = lane.Concurrency
+	return plan, true
+}
+
+// reconcileOpenAISelectedLane validates the lane that owns an already
+// acquired slot against a freshly loaded account.  The bool pair is
+// (lane-valid, lane-limit-changed).  A deleted/paused lane is rejected rather
+// than silently falling back to the account's legacy proxy; a changed limit
+// asks the caller to release and re-acquire against the fresh definition.
+func reconcileOpenAISelectedLane(account *Account, result *AcquireResult) (bool, bool) {
+	if account == nil {
+		return false, false
+	}
+	if result == nil || result.Lane == nil {
+		return true, false
+	}
+	if !account.HasProxyLanes() {
+		return false, false
+	}
+	selected := result.Lane
+	// The lane returned by Redis is a persisted identity, not an arbitrary
+	// routing hint.  Require a positive owner and keep it scoped to the account
+	// that owns the already-acquired slot; otherwise a malformed/cross-account
+	// result could be projected onto the refreshed account below.
+	if selected.ID <= 0 || selected.AccountID <= 0 || account.ID <= 0 || selected.AccountID != account.ID {
+		return false, false
+	}
+	now := time.Now()
+	for i := range account.ProxyLanes {
+		lane := &account.ProxyLanes[i]
+		if lane.ID != selected.ID || lane.AccountID != account.ID {
+			continue
+		}
+		if !lane.IsSchedulableAt(now) {
+			return false, false
+		}
+		// A lane slot is tied to the exact transport and proxy relation that was
+		// admitted.  Do not let a DB refresh silently switch proxy/direct egress
+		// while the request is in flight.
+		if normalizeAccountProxyLaneTransport(lane.Transport) != normalizeAccountProxyLaneTransport(selected.Transport) {
+			return false, false
+		}
+		switch normalizeAccountProxyLaneTransport(lane.Transport) {
+		case AccountProxyLaneTransportDirect:
+			if lane.ProxyID != nil || lane.Proxy != nil || selected.ProxyID != nil || selected.Proxy != nil {
+				return false, false
+			}
+		case AccountProxyLaneTransportProxy:
+			if lane.ProxyID == nil || *lane.ProxyID <= 0 || selected.ProxyID == nil || *selected.ProxyID != *lane.ProxyID {
+				return false, false
+			}
+			// Repository-backed rechecks hydrate proxy credentials.  Treat a
+			// missing, mismatched, disabled, or expired object as unavailable
+			// instead of allowing the forwarding layer to fall back to legacy
+			// Account.Proxy or direct transport.
+			if lane.Proxy == nil || lane.Proxy.ID != *lane.ProxyID || !lane.Proxy.IsActive() || lane.Proxy.IsExpired(now) {
+				return false, false
+			}
+			if selected.Proxy != nil && selected.Proxy.ID != lane.Proxy.ID {
+				return false, false
+			}
+		default:
+			return false, false
+		}
+		limitChanged := lane.Concurrency != selected.Concurrency
+		account.ApplySelectedProxyLane(lane)
+		return true, limitChanged
+	}
+	return false, false
+}
+
+// resultLaneForOpenAIWait prefers the lane returned by an immediate probe
+// (which is the lane that was actually found full) and otherwise computes the
+// same deterministic preference used by acquisition.  It is shared with the
+// previous_response_id fast path, which lives outside the scheduler type.
+func resultLaneForOpenAIWait(account *Account, result *AcquireResult, sessionKey string) *AccountProxyLane {
+	if account == nil || !account.HasProxyLanes() {
+		return nil
+	}
+	if result != nil && result.Lane != nil {
+		if current := findSchedulableOpenAILane(account, result.Lane.ID); current != nil {
+			return current
+		}
+	}
+	return selectAccountProxyLaneForWait(account, sessionKey)
+}
+
+// findSchedulableOpenAILane resolves a lane ID against the current account
+// snapshot.  It intentionally returns a copy so callers can project it onto a
+// request-local Account without mutating the scheduler's shared metadata.
+func findSchedulableOpenAILane(account *Account, laneID int64) *AccountProxyLane {
+	if account == nil || laneID <= 0 {
+		return nil
+	}
+	now := time.Now()
+	for i := range account.ProxyLanes {
+		lane := account.ProxyLanes[i]
+		if lane.ID == laneID && lane.IsSchedulableAt(now) {
+			return &lane
+		}
+	}
+	return nil
 }
 
 func (s *defaultOpenAIAccountScheduler) consumeOpenAISelectionDBRecheck(budget *openAISelectionProbeBudget) bool {
@@ -1310,30 +1614,43 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 			continue
 		}
-		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency, account)
 		if acquireErr != nil {
 			return nil, acquireErr
 		}
 		if result != nil && result.Acquired {
 			if req.SessionHash != "" && !req.PreserveStickyBinding {
 				_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, account.ID)
+				if result.Lane != nil {
+					s.service.bindOpenAILaneStickyDuringSelection(ctx, req.GroupID, req.RequestedModel, req.SessionHash, account, result.Lane, s.service.openAIWSSessionStickyTTL())
+				}
 			}
+			admissionMax, admissionMaxSet := acquireResultAdmissionMaxConcurrency(result)
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account:     account,
-				Acquired:    true,
-				ReleaseFunc: result.ReleaseFunc,
+				Account:                    account,
+				Acquired:                   true,
+				ReleaseFunc:                result.ReleaseFunc,
+				AdmissionMaxConcurrency:    admissionMax,
+				AdmissionMaxConcurrencySet: admissionMaxSet,
 			}), nil
 		}
 		if s.service.concurrencyService != nil {
 			cfg := s.service.schedulingConfig()
+			waitPlan, waitable := s.openAIWaitPlanForAccount(
+				ctx,
+				account,
+				cfg.StickySessionWaitTimeout,
+				cfg.StickySessionMaxWaiting,
+			)
+			if !waitable {
+				continue
+			}
+			admissionMax, admissionMaxSet := selectionAdmissionMaxConcurrency(account, waitPlan)
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account: account,
-				WaitPlan: &AccountWaitPlan{
-					AccountID:      account.ID,
-					MaxConcurrency: account.Concurrency,
-					Timeout:        cfg.StickySessionWaitTimeout,
-					MaxWaiting:     cfg.StickySessionMaxWaiting,
-				},
+				Account:                    account,
+				WaitPlan:                   waitPlan,
+				AdmissionMaxConcurrency:    admissionMax,
+				AdmissionMaxConcurrencySet: admissionMaxSet,
 			}), nil
 		}
 	}
@@ -1480,6 +1797,12 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if s.service.concurrencyService != nil {
 		if batchLoad, loadErr := s.service.concurrencyService.GetAccountsLoadBatch(ctx, loadReq); loadErr == nil {
 			loadMap = batchLoad
+			// Lane-enabled accounts do not consume the legacy account bucket.
+			// Replace those stale account-level counters with the aggregate of
+			// their currently schedulable lane buckets before building the top-K
+			// candidate order.  Immediate lane acquisition remains authoritative;
+			// this only prevents a full/idle legacy snapshot from skewing ranking.
+			s.service.refreshOpenAILaneLoadMap(ctx, filtered, loadMap)
 		}
 	}
 
@@ -1592,6 +1915,7 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	if s.service.concurrencyService != nil && !budget.acquireExhausted() {
 		loadReq := buildOpenAIAccountLoadRequest(filtered)
 		if freshLoadMap, loadErr := s.service.concurrencyService.GetAccountsLoadBatchFresh(ctx, loadReq); loadErr == nil {
+			s.service.refreshOpenAILaneLoadMap(ctx, filtered, freshLoadMap)
 			freshPlan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, freshLoadMap)
 			if openAICostOverflowExpanded(req, freshPlan) {
 				budget.enableLimit()
@@ -1691,8 +2015,7 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 				continue
 			}
 			if budget != nil && budget.limited {
-				knownFull := candidate.loadKnown && candidate.account.Concurrency > 0 &&
-					candidate.loadInfo.CurrentConcurrency >= candidate.account.Concurrency
+				knownFull := s.isOpenAIAccountLoadKnownFull(candidate)
 				if budget.wasAttempted(candidate.account.ID) != wantAttempted || knownFull != wantKnownFull {
 					continue
 				}
@@ -1701,6 +2024,11 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 			if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 				continue
 			}
+			// The immediate probe may have selected a preferred lane on the
+			// candidate before reporting it full. Preserve that preference while
+			// refreshing the account so the eventual wait plan does not jump to a
+			// different egress.
+			fresh = PreserveSelectedProxyLane(candidate.account, fresh)
 			if !s.consumeOpenAISelectionDBRecheck(budget) {
 				return nil, candidateCount, topK, loadSkew, noAvailableOpenAISelectionError(req.RequestedModel, compactBlocked, filterStats.summary("selection_order_exhausted"))
 			}
@@ -1708,18 +2036,28 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 			if fresh == nil || !s.isAccountTransportCompatible(fresh, req.RequiredTransport) || !s.isAccountRequestCompatible(ctx, fresh, req) {
 				continue
 			}
+			fresh = PreserveSelectedProxyLane(candidate.account, fresh)
 			if req.RequireCompact && openAICompactSupportTier(fresh) == 0 {
 				compactBlocked = true
 				continue
 			}
+			waitPlan, waitable := s.openAIWaitPlanForAccount(
+				ctx,
+				fresh,
+				cfg.FallbackWaitTimeout,
+				cfg.FallbackMaxWaiting,
+			)
+			if !waitable {
+				// Lane-enabled accounts with no healthy egress must not fall back
+				// to account-level admission. Continue looking for another account.
+				continue
+			}
+			admissionMax, admissionMaxSet := selectionAdmissionMaxConcurrency(fresh, waitPlan)
 			return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-				Account: fresh,
-				WaitPlan: &AccountWaitPlan{
-					AccountID:      fresh.ID,
-					MaxConcurrency: fresh.Concurrency,
-					Timeout:        cfg.FallbackWaitTimeout,
-					MaxWaiting:     cfg.FallbackMaxWaiting,
-				},
+				Account:                    fresh,
+				WaitPlan:                   waitPlan,
+				AdmissionMaxConcurrency:    admissionMax,
+				AdmissionMaxConcurrencySet: admissionMaxSet,
 			}), candidateCount, topK, loadSkew, nil
 		}
 	}
@@ -2160,6 +2498,9 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
 	selection, decision, err := s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	if err == nil && selection != nil {
+		selection, err = s.finalizeOpenAISelectionResult(ctx, selection)
+	}
 	if err == nil || openAIProxyStreamQuarantineBypassed(ctx) {
 		return selection, decision, err
 	}
@@ -2175,7 +2516,11 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 		return selection, decision, err
 	}
 	s.logOpenAIProxyStreamQuarantineFailOpen(requestedModel, blocked)
-	return s.selectAccountWithSchedulerOnce(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	selection, decision, err = s.selectAccountWithSchedulerOnce(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	if err == nil && selection != nil {
+		selection, err = s.finalizeOpenAISelectionResult(ctx, selection)
+	}
+	return selection, decision, err
 }
 
 type openAIGroupPrivacyRequirementContextKey struct{}
@@ -2340,9 +2685,18 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	}
 
 	var stickyAccountID int64
+	var stickyLaneID int64
+	var stickyLaneAccountID int64
 	if sessionHash != "" && s.cache != nil {
+		if binding, laneErr := s.getStickySessionLane(ctx, groupID, requestedModel, sessionHash); laneErr == nil && binding.AccountID > 0 && binding.LaneID > 0 {
+			stickyLaneAccountID = binding.AccountID
+			stickyLaneID = binding.LaneID
+			stickyAccountID = binding.AccountID
+		}
 		if accountID, err := s.getStickySessionAccountID(ctx, groupID, sessionHash); err == nil && accountID > 0 {
-			stickyAccountID = accountID
+			if stickyAccountID <= 0 {
+				stickyAccountID = accountID
+			}
 		}
 	}
 	stickyWeighted := s.isOpenAIAdvancedSchedulerStickyWeightedEnabled(ctx)
@@ -2357,6 +2711,8 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		Platform:                platform,
 		SessionHash:             sessionHash,
 		StickyAccountID:         stickyAccountID,
+		StickyLaneAccountID:     stickyLaneAccountID,
+		StickyLaneID:            stickyLaneID,
 		GuardianParentAccountID: guardianParentAccountID,
 		StickyPreviousAccountID: stickyPreviousAccountID,
 		StickyWeighted:          stickyWeighted,

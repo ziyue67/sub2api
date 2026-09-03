@@ -892,7 +892,7 @@ func truncateForLog(b []byte, maxBytes int) string {
 func (s *GatewayService) buildCustomRelayURL(baseURL, path string, account *Account) string {
 	u := strings.TrimRight(baseURL, "/") + path + "?beta=true"
 	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL := account.Proxy.URL()
+		proxyURL := AccountProxyURL(account)
 		if proxyURL != "" {
 			u += "&proxy=" + url.QueryEscape(proxyURL)
 		}

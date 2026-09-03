@@ -104,7 +104,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
+		proxyURL = AccountProxyURL(account)
 	}
 
 	upstreamStart := time.Now()
@@ -1392,7 +1392,7 @@ func (s *OpenAIGatewayService) describeGrokComposerImage(
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
+		proxyURL = AccountProxyURL(account)
 	}
 
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)

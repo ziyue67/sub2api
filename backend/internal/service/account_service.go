@@ -126,6 +126,28 @@ type AccountRepository interface {
 	ListShadowsByParent(ctx context.Context, parentID int64) ([]*Account, error)
 }
 
+// AccountProxyLaneRepository is optional so existing test doubles and
+// deployments that have not applied the account-proxy-lanes migration remain
+// source-compatible.
+// The concrete account repository implements it once the lane table exists.
+type AccountProxyLaneRepository interface {
+	ListProxyLanes(ctx context.Context, accountID int64) ([]AccountProxyLane, error)
+	CreateProxyLane(ctx context.Context, lane *AccountProxyLane) error
+	UpdateProxyLane(ctx context.Context, lane *AccountProxyLane) error
+	DeleteProxyLane(ctx context.Context, accountID, laneID int64) error
+}
+
+// AccountProxyLaneAdminService is the narrow optional capability exposed by
+// the admin service for managing an account's independently schedulable
+// egress lanes.  It intentionally stays outside AdminService so existing
+// test doubles and integrations do not need to grow four unrelated methods.
+type AccountProxyLaneAdminService interface {
+	ListAccountProxyLanes(ctx context.Context, accountID int64) ([]AccountProxyLane, error)
+	CreateAccountProxyLane(ctx context.Context, accountID int64, lane *AccountProxyLane) (*AccountProxyLane, error)
+	UpdateAccountProxyLane(ctx context.Context, accountID, laneID int64, lane *AccountProxyLane) (*AccountProxyLane, error)
+	DeleteAccountProxyLane(ctx context.Context, accountID, laneID int64) error
+}
+
 type AccountDuplicateRepository interface {
 	// CreateWithAccountGroups atomically persists an account, its exact group priorities,
 	// and the scheduler outbox event for the new routing snapshot.

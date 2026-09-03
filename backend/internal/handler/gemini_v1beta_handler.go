@@ -431,7 +431,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				return
 			}
 			accountWaitCounted := false
-			canWait, err := geminiConcurrency.IncrementAccountWaitCount(c.Request.Context(), account.ID, selection.WaitPlan.MaxWaiting)
+			canWait, err := geminiConcurrency.IncrementAccountOrLaneWaitCount(c.Request.Context(), account.ID, selection.WaitPlan.LaneID, selection.WaitPlan.MaxWaiting)
 			if err != nil {
 				reqLog.Warn("gemini.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(err))
 			} else if !canWait {
@@ -447,17 +447,19 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			}
 			defer func() {
 				if accountWaitCounted {
-					geminiConcurrency.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+					geminiConcurrency.DecrementAccountOrLaneWaitCount(c.Request.Context(), account.ID, selection.WaitPlan.LaneID)
 				}
 			}()
 
-			accountReleaseFunc, err = geminiConcurrency.AcquireAccountSlotWithWaitTimeout(
+			accountReleaseFunc, err = geminiConcurrency.AcquireAccountOrLaneSlotWithWaitTimeout(
 				c,
 				account.ID,
+				selection.WaitPlan.LaneID,
 				selection.WaitPlan.MaxConcurrency,
 				selection.WaitPlan.Timeout,
 				stream,
 				&streamStarted,
+				waitPlanAggregateMaxArgs(selection.WaitPlan)...,
 			)
 			if err != nil {
 				reqLog.Warn("gemini.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
@@ -465,7 +467,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				return
 			}
 			if accountWaitCounted {
-				geminiConcurrency.DecrementAccountWaitCount(c.Request.Context(), account.ID)
+				geminiConcurrency.DecrementAccountOrLaneWaitCount(c.Request.Context(), account.ID, selection.WaitPlan.LaneID)
 				accountWaitCounted = false
 			}
 		}
@@ -477,6 +479,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				accountReleaseFunc()
 			}
 			reqLog.Debug("gemini.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
+			if service.IsProxyLaneUnavailableReason(reason) {
+				fs.RecordLaneUnavailable(account.ID)
+				continue
+			}
 			if fs.RecordProfitVeto(account.ID) == FailoverExhausted {
 				reqLog.Warn("gemini.profit_veto_attempts_exhausted", zap.Int("profit_veto_count", fs.ProfitVetoCount()))
 				markOpsRoutingCapacityLimited(c)

@@ -316,6 +316,10 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 	if err != nil {
 		return nil, err
 	}
+	laneByAccount, err := r.loadProxyLanesBatch(ctx, accountIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	outByID := make(map[int64]*service.Account, len(entAccounts))
 	for _, entAcc := range entAccounts {
@@ -337,6 +341,9 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		}
 		if ags, ok := accountGroupsByAccount[entAcc.ID]; ok {
 			out.AccountGroups = ags
+		}
+		if lanes, ok := laneByAccount[entAcc.ID]; ok {
+			out.ProxyLanes = lanes
 		}
 		outByID[entAcc.ID] = out
 	}
@@ -3141,6 +3148,10 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 	if err != nil {
 		return nil, err
 	}
+	laneByAccount, err := r.loadProxyLanesBatch(ctx, accountIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	outAccounts := make([]service.Account, 0, len(accounts))
 	for _, acc := range accounts {
@@ -3168,6 +3179,9 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 		}
 		if ags, ok := accountGroupsByAccount[acc.ID]; ok {
 			out.AccountGroups = ags
+		}
+		if lanes, ok := laneByAccount[acc.ID]; ok {
+			out.ProxyLanes = lanes
 		}
 		outAccounts = append(outAccounts, *out)
 	}

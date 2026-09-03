@@ -761,7 +761,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		},
 		ProxyURL: func() string {
 			if account.ProxyID != nil && account.Proxy != nil {
-				return account.Proxy.URL()
+				return AccountProxyURL(account)
 			}
 			return ""
 		}(),

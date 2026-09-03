@@ -261,6 +261,18 @@ func TestAcquireUserSlot_IndependentFromAccount(t *testing.T) {
 	require.NotNil(t, result.ReleaseFunc)
 }
 
+func TestAcquireUserSlot_FailedResultPreservesLimitMetadata(t *testing.T) {
+	cache := &stubConcurrencyCacheForTest{acquireResult: false}
+	svc := NewConcurrencyService(cache)
+
+	result, err := svc.AcquireUserSlot(context.Background(), 100, 7)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Acquired)
+	require.True(t, result.MaxConcurrencySet)
+	require.Equal(t, 7, result.MaxConcurrency)
+}
+
 func TestAcquireUserSlot_UnlimitedConcurrency(t *testing.T) {
 	svc := NewConcurrencyService(&stubConcurrencyCacheForTest{})
 

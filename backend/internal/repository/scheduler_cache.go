@@ -863,7 +863,7 @@ func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any,
 }
 
 func buildSchedulerMetadataAccount(account service.Account) service.Account {
-	return service.Account{
+	metadata := service.Account{
 		ID:                      account.ID,
 		Name:                    account.Name,
 		Platform:                account.Platform,
@@ -892,6 +892,17 @@ func buildSchedulerMetadataAccount(account service.Account) service.Account {
 		Credentials:             filterSchedulerCredentials(account.Credentials),
 		Extra:                   filterSchedulerExtra(account.Extra),
 	}
+	// Lane definitions are routing metadata (proxy IDs only; proxy credentials
+	// are never serialized here).  Keep them in the compact scheduler payload
+	// so a cache hit has the same egress choices as a DB fallback.
+	if len(account.ProxyLanes) > 0 {
+		metadata.ProxyLanes = make([]service.AccountProxyLane, len(account.ProxyLanes))
+		copy(metadata.ProxyLanes, account.ProxyLanes)
+		for i := range metadata.ProxyLanes {
+			metadata.ProxyLanes[i].Proxy = nil
+		}
+	}
+	return metadata
 }
 
 func filterSchedulerAccountGroups(accountGroups []service.AccountGroup) []service.AccountGroup {

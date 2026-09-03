@@ -61,10 +61,17 @@ type Account struct {
 	ParentAccountID *int64 // non-nil → 影子账号（不持凭据，透传母账号凭据）
 	QuotaDimension  string // 用量维度："" / "global" / "spark"
 
-	Proxy         *Proxy
-	AccountGroups []AccountGroup
-	GroupIDs      []int64
-	Groups        []*Group
+	Proxy *Proxy
+	// ProxyLanes contains the optional independently schedulable egresses for
+	// this account.  It is populated lazily by the repository/scheduler so
+	// legacy accounts (which only have proxy_id) keep their existing hot path.
+	ProxyLanes []AccountProxyLane
+	// SelectedProxyLane is request-scoped runtime state.  It is never persisted
+	// and is used by forwarding code to keep one request/session on one egress.
+	SelectedProxyLane *AccountProxyLane `json:"-"`
+	AccountGroups     []AccountGroup
+	GroupIDs          []int64
+	Groups            []*Group
 
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
@@ -168,6 +175,27 @@ func (a *Account) BillingRateMultiplier() float64 {
 func (a *Account) EffectiveLoadFactor() int {
 	if a == nil {
 		return 1
+	}
+	// When lane scheduling is enabled, the account's effective capacity is the
+	// sum of its independently capped lanes.  The Redis lane counters remain
+	// authoritative for admission; this aggregate is only used by the
+	// load-aware candidate prefilter so one low-capacity legacy field cannot
+	// hide otherwise available egress capacity.
+	if len(a.ProxyLanes) > 0 {
+		total := 0
+		for _, lane := range a.ProxyLanes {
+			if lane.Concurrency > 0 && lane.IsSchedulableAt(time.Now()) {
+				total += lane.Concurrency
+			}
+		}
+		if total > 0 {
+			return total
+		}
+		// All configured lanes may be unlimited (concurrency=0).  Preserve the
+		// historical non-zero load factor so callers do not divide by zero.
+		if len(a.ProxyLanes) > 0 {
+			return 1
+		}
 	}
 	if a.LoadFactor != nil && *a.LoadFactor > 0 {
 		return *a.LoadFactor

@@ -180,6 +180,12 @@ func TestOpenAIProfitControlVetoReason(t *testing.T) {
 	})
 }
 
+func TestIsProxyLaneUnavailableReason(t *testing.T) {
+	require.True(t, IsProxyLaneUnavailableReason("proxy_lane_unavailable"))
+	require.False(t, IsProxyLaneUnavailableReason("profit_threshold"))
+	require.False(t, IsProxyLaneUnavailableReason(""))
+}
+
 func TestProfitControlSchedulerFiltersCandidates(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	defer resetOpenAIAdvancedSchedulerSettingCacheForTest()

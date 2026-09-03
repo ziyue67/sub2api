@@ -24,6 +24,11 @@ const openAITransportErrorTempUnschedDuration = 10 * time.Minute
 // ultimately exhausted.
 var openAITransportFailoverBody = []byte(`{"error":{"type":"upstream_error","message":"Upstream request failed"}}`)
 
+// OpenAITransportFailureReason marks a failover error whose root cause is a
+// connection-layer failure.  Lane sticky invalidation uses this explicit
+// reason instead of treating every 502/503 as an IP/proxy failure.
+const OpenAITransportFailureReason GatewayFailureReason = "openai_transport_failure"
+
 // upstreamTransportErrorClass describes how to react to a transport-level upstream
 // failure — i.e. the HTTP round-trip never completed (proxy / DNS / TCP / TLS
 // error, no HTTP status code received).
@@ -143,6 +148,7 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 	return &UpstreamFailoverError{
 		StatusCode:   http.StatusBadGateway,
 		ResponseBody: openAITransportFailoverBody,
+		Reason:       OpenAITransportFailureReason,
 	}
 }
 

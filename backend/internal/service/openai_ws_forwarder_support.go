@@ -472,36 +472,107 @@ func (s *OpenAIGatewayService) selectAccountByPreviousResponseIDForCapability(
 	if s == nil {
 		return nil, nil
 	}
+	// Direct callers of the previous_response_id helper (outside the central
+	// scheduler) do not always carry a session hash.  Use the response ID as a
+	// stable fallback so continuation requests still prefer one lane/IP.
+	if strings.TrimSpace(AccountProxyLaneSessionFromContext(ctx)) == "" {
+		ctx = WithAccountProxyLaneSession(ctx, strings.TrimSpace(previousResponseID))
+	}
 	accountID, account, responseID, store := s.resolveAccountByPreviousResponseIDForCapability(ctx, groupID, previousResponseID, requestedModel, excludedIDs, requiredCapability, requireCompact)
 	if accountID <= 0 || account == nil || store == nil {
 		return nil, nil
 	}
 
-	result, acquireErr := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
-	if acquireErr == nil && result.Acquired {
+	// Pass the resolved account into admission so a previous_response_id
+	// continuation uses the same lane-aware path as normal scheduling.  The
+	// helper projects the selected lane onto the request-local account and
+	// returns it on AcquireResult; omitting the account here would silently put
+	// this special path back on the legacy aggregate account slot.
+	result, acquireErr := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency, account)
+	if acquireErr == nil && result != nil && result.Acquired {
+		// previous_response_id is an independent scheduler entry point.  Do not
+		// let its request-local lane bypass the normal hydration boundary when a
+		// compact scheduler payload contains only ProxyID.
+		repo := s.accountRepo
+		if repo == nil && s.schedulerSnapshot != nil {
+			repo = s.schedulerSnapshot.accountRepo
+		}
+		validated, validateErr := ensureSelectedAccountProxyLaneHydratedAuthoritative(ctx, account, account, repo)
+		if validateErr != nil {
+			if result.ReleaseFunc != nil {
+				result.ReleaseFunc()
+			}
+			// A stale previous-response binding should fall back to ordinary
+			// scheduling, not forward through a legacy/direct proxy.
+			return nil, nil
+		}
+		account = validated
 		logOpenAIWSBindResponseAccountWarn(
 			derefGroupID(groupID),
 			accountID,
 			responseID,
 			store.BindResponseAccount(ctx, derefGroupID(groupID), responseID, accountID, s.openAIWSResponseStickyTTL()),
 		)
+		admissionMax, admissionMaxSet := acquireResultAdmissionMaxConcurrency(result)
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account:     account,
-			Acquired:    true,
-			ReleaseFunc: result.ReleaseFunc,
+			Account:                    account,
+			Acquired:                   true,
+			ReleaseFunc:                result.ReleaseFunc,
+			AdmissionMaxConcurrency:    admissionMax,
+			AdmissionMaxConcurrencySet: admissionMaxSet,
 		}), nil
 	}
 
 	cfg := s.schedulingConfig()
 	if s.concurrencyService != nil {
+		waitPlan := &AccountWaitPlan{
+			AccountID:                  accountID,
+			MaxConcurrency:             account.Concurrency,
+			AggregateMaxConcurrency:    account.Concurrency,
+			AggregateMaxConcurrencySet: true,
+			Timeout:                    cfg.StickySessionWaitTimeout,
+			MaxWaiting:                 cfg.StickySessionMaxWaiting,
+		}
+		// During a rolling upgrade, only emit a lane WaitPlan when the cache
+		// implements the lane namespace.  Otherwise the handler must retain the
+		// legacy account slot; a lane ID against an old cache would be a no-op
+		// acquire and bypass the account limit.
+		if account.HasProxyLanes() && laneConcurrencySupported(s.concurrencyService) {
+			lane := resultLaneForOpenAIWait(account, result, AccountProxyLaneSessionFromContext(ctx))
+			if lane == nil {
+				// All configured lanes are paused/disabled/cooling down.  Do not
+				// wait on the aggregate account bucket and bypass lane state.
+				return nil, nil
+			}
+			account.ApplySelectedProxyLane(lane)
+			waitPlan.LaneID = lane.ID
+			waitPlan.MaxConcurrency = lane.Concurrency
+		}
+		repo := s.accountRepo
+		if repo == nil && s.schedulerSnapshot != nil {
+			repo = s.schedulerSnapshot.accountRepo
+		}
+		validated, validateErr := ensureSelectedAccountProxyLaneHydratedAuthoritative(ctx, account, account, repo)
+		if validateErr != nil {
+			return nil, nil
+		}
+		account = validated
+		if account.HasProxyLanes() && account.SelectedProxyLane == nil {
+			return nil, nil
+		}
+		if account.SelectedProxyLane != nil && waitPlan.LaneID > 0 {
+			waitPlan.MaxConcurrency = account.SelectedProxyLane.Concurrency
+		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
-			Account: account,
-			WaitPlan: &AccountWaitPlan{
-				AccountID:      accountID,
-				MaxConcurrency: account.Concurrency,
-				Timeout:        cfg.StickySessionWaitTimeout,
-				MaxWaiting:     cfg.StickySessionMaxWaiting,
-			},
+			Account:  account,
+			WaitPlan: waitPlan,
+			AdmissionMaxConcurrency: func() int {
+				if waitPlan.AggregateMaxConcurrencySet {
+					return waitPlan.AggregateMaxConcurrency
+				}
+				return waitPlan.MaxConcurrency
+			}(),
+			AdmissionMaxConcurrencySet: waitPlan != nil,
 		}), nil
 	}
 	return nil, nil

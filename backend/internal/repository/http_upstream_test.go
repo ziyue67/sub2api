@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -49,6 +50,36 @@ func TestHTTPUpstreamDoCanDisableRedirectsPerRequest(t *testing.T) {
 	require.Equal(t, http.StatusFound, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
 	require.Zero(t, redirectedCalls.Load())
+}
+
+func TestBuildCacheKeySeparatesProxyLanes(t *testing.T) {
+	legacy := buildCacheKey(config.ConnectionPoolIsolationAccountProxy, "direct", 42, upstreamProtocolModeDefault)
+	laneA := buildCacheKey(config.ConnectionPoolIsolationAccountProxy, "direct", 42, upstreamProtocolModeDefault, 101)
+	laneB := buildCacheKey(config.ConnectionPoolIsolationAccountProxy, "direct", 42, upstreamProtocolModeDefault, 102)
+	require.NotEqual(t, legacy, laneA)
+	require.NotEqual(t, laneA, laneB)
+	require.Contains(t, laneA, "|lane:101")
+	require.NotContains(t, legacy, "|lane:")
+}
+
+func TestHTTPUpstreamLaneContextCreatesIndependentClientsEvenForSameProxy(t *testing.T) {
+	upstream := NewHTTPUpstream(nil)
+	svc, ok := upstream.(*httpUpstreamService)
+	require.True(t, ok)
+	proxyURL := "http://proxy.example:8080"
+	base := context.Background()
+	reqA, err := http.NewRequestWithContext(service.WithAccountProxyLaneID(base, 101), http.MethodGet, "https://upstream.example", nil)
+	require.NoError(t, err)
+	reqB, err := http.NewRequestWithContext(service.WithAccountProxyLaneID(base, 102), http.MethodGet, "https://upstream.example", nil)
+	require.NoError(t, err)
+	// getClientEntryAndLane is intentionally exercised directly to avoid any
+	// network dependency while proving the cache key separation.
+	entryA, err := svc.acquireClientWithProfileAndLane(proxyURL, 42, 3, service.HTTPUpstreamProfileDefault, service.AccountProxyLaneIDFromContext(reqA.Context()))
+	require.NoError(t, err)
+	entryB, err := svc.acquireClientWithProfileAndLane(proxyURL, 42, 5, service.HTTPUpstreamProfileDefault, service.AccountProxyLaneIDFromContext(reqB.Context()))
+	require.NoError(t, err)
+	require.NotSame(t, entryA, entryB)
+	require.Len(t, svc.clients, 2)
 }
 
 func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredHTTPProxy(t *testing.T) {

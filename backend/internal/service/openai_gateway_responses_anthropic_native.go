@@ -112,7 +112,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 
 	proxyURL := ""
 	if account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
+		proxyURL = AccountProxyURL(account)
 	}
 
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)

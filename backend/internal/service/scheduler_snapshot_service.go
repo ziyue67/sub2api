@@ -275,6 +275,9 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 	if accountID <= 0 {
 		return nil, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -292,6 +295,42 @@ func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int
 
 	if err := s.guardFallback(ctx); err != nil {
 		return nil, err
+	}
+	// A snapshot service may intentionally be constructed with only a cache
+	// (for example during a rolling upgrade or in a read-only test harness).
+	// Do not dereference a nil repository when the cache misses; callers need a
+	// typed miss so they can apply their normal fail-open/fail-closed policy.
+	if s.accountRepo == nil {
+		return nil, ErrSchedulerCacheNotReady
+	}
+	fallbackCtx, cancel := s.withFallbackTimeout(ctx)
+	defer cancel()
+	return s.accountRepo.GetByID(fallbackCtx, accountID)
+}
+
+// getAccountAuthoritative bypasses the Redis scheduler snapshot and reads the
+// account directly from the repository.  It is deliberately private: normal
+// scheduling should continue to use GetAccount's cache-first path.  Terminal
+// forwarding checks use this escape hatch only when a request carries a
+// concrete proxy-lane affinity but the cache payload is older than the
+// account selected by the scheduler.  Lane rows are independent of the
+// account's updated_at column, so relying on an old cache in that race could
+// resurrect a deleted/paused lane or silently switch to the legacy proxy.
+func (s *SchedulerSnapshotService) getAccountAuthoritative(ctx context.Context, accountID int64) (*Account, error) {
+	if s == nil || accountID <= 0 {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.guardFallback(ctx); err != nil {
+		return nil, err
+	}
+	if s.accountRepo == nil {
+		return nil, ErrSchedulerCacheNotReady
 	}
 	fallbackCtx, cancel := s.withFallbackTimeout(ctx)
 	defer cancel()

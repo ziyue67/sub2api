@@ -207,7 +207,8 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	}
 
 	// 获取或创建对应的客户端，并标记请求占用
-	entry, err := s.acquireClientWithProfile(proxyURL, accountID, accountConcurrency, profile)
+	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
+	entry, err := s.acquireClientWithProfileAndLane(proxyURL, accountID, accountConcurrency, profile, laneID)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +237,13 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	})
 
 	return resp, nil
+}
+
+func reqContext(req *http.Request) context.Context {
+	if req == nil {
+		return context.Background()
+	}
+	return req.Context()
 }
 
 // DoWithTLS 执行带 TLS 指纹伪装的 HTTP 请求
@@ -271,7 +279,8 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		return nil, err
 	}
 
-	entry, err := s.acquireClientWithTLS(proxyURL, accountID, accountConcurrency, profile, upstreamProfile)
+	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
+	entry, err := s.acquireClientWithTLSAndLane(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID)
 	if err != nil {
 		slog.Debug("tls_fingerprint_acquire_client_failed", "account_id", accountID, "error", err)
 		return nil, err
@@ -481,14 +490,21 @@ func isSupportedGrokCLIVersion(version string) bool {
 		semver.Compare(canonical, minimum) >= 0
 }
 
-// acquireClientWithTLS 获取或创建带 TLS 指纹的客户端
-func (s *httpUpstreamService) acquireClientWithTLS(proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, upstreamProfile service.HTTPUpstreamProfile) (*upstreamClientEntry, error) {
-	return s.getClientEntryWithTLS(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, true, true)
+func (s *httpUpstreamService) acquireClientWithTLSAndLane(proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, upstreamProfile service.HTTPUpstreamProfile, laneID int64) (*upstreamClientEntry, error) {
+	return s.getClientEntryWithTLSAndLane(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID, true, true)
 }
 
 // getClientEntryWithTLS 获取或创建带 TLS 指纹的客户端条目
 // TLS 指纹客户端使用独立的缓存键，与普通客户端隔离
 func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, upstreamProfile service.HTTPUpstreamProfile, markInFlight bool, enforceLimit bool) (*upstreamClientEntry, error) {
+	return s.getClientEntryWithTLSAndLane(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, 0, markInFlight, enforceLimit)
+}
+
+// getClientEntryWithTLSAndLane is the lane-aware implementation.  laneID is
+// part of the cache key whenever non-zero, even when two lanes happen to use
+// the same proxy URL, so their connection pools and in-flight eviction state
+// remain independent.
+func (s *httpUpstreamService) getClientEntryWithTLSAndLane(proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, upstreamProfile service.HTTPUpstreamProfile, laneID int64, markInFlight bool, enforceLimit bool) (*upstreamClientEntry, error) {
 	isolation := s.getIsolationMode()
 	proxyKey, parsedProxy, err := normalizeProxyURL(proxyURL)
 	if err != nil {
@@ -497,7 +513,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	settings := s.resolvePoolSettings(isolation, accountConcurrency)
 	settings = s.applyProfilePoolSettings(settings, upstreamProfile)
 	// TLS 指纹客户端使用独立的缓存键，加 "tls:" 前缀
-	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault)
+	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault, laneID)
 	poolKey := buildPoolKey(settings, upstreamProtocolModeDefault) + ":tls"
 
 	now := time.Now()
@@ -619,7 +635,11 @@ func (s *httpUpstreamService) acquireClient(proxyURL string, accountID int64, ac
 
 // acquireClientWithProfile 获取或创建客户端，并按请求 profile 选择协议策略。
 func (s *httpUpstreamService) acquireClientWithProfile(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile) (*upstreamClientEntry, error) {
-	return s.getClientEntry(proxyURL, accountID, accountConcurrency, profile, true, true)
+	return s.acquireClientWithProfileAndLane(proxyURL, accountID, accountConcurrency, profile, 0)
+}
+
+func (s *httpUpstreamService) acquireClientWithProfileAndLane(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, laneID int64) (*upstreamClientEntry, error) {
+	return s.getClientEntryWithLane(proxyURL, accountID, accountConcurrency, profile, laneID, true, true)
 }
 
 // getOrCreateClient 获取或创建客户端
@@ -645,6 +665,12 @@ func (s *httpUpstreamService) getOrCreateClient(proxyURL string, accountID int64
 // markInFlight=true 时会标记进行中请求，用于请求路径防止被淘汰
 // enforceLimit=true 时会限制客户端数量，超限且无法淘汰时返回错误
 func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, markInFlight bool, enforceLimit bool) (*upstreamClientEntry, error) {
+	return s.getClientEntryWithLane(proxyURL, accountID, accountConcurrency, profile, 0, markInFlight, enforceLimit)
+}
+
+// getClientEntryWithLane is the lane-aware client cache path.  The legacy
+// helper above remains unchanged for tests and non-routed callers.
+func (s *httpUpstreamService) getClientEntryWithLane(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, laneID int64, markInFlight bool, enforceLimit bool) (*upstreamClientEntry, error) {
 	// 获取隔离模式
 	isolation := s.getIsolationMode()
 	// 标准化代理 URL 并解析
@@ -657,7 +683,7 @@ func (s *httpUpstreamService) getClientEntry(proxyURL string, accountID int64, a
 	settings := s.resolvePoolSettings(isolation, accountConcurrency)
 	settings = s.applyProfilePoolSettings(settings, profile)
 	// 构建缓存键（根据隔离策略不同）
-	cacheKey := buildCacheKey(isolation, proxyKey, accountID, protocolMode)
+	cacheKey := buildCacheKey(isolation, proxyKey, accountID, protocolMode, laneID)
 	// 构建连接池配置键（用于检测配置变更）
 	poolKey := buildPoolKey(settings, protocolMode)
 
@@ -949,7 +975,7 @@ func buildPoolKey(settings poolSettings, protocolMode string) string {
 //   - proxy 模式: "proxy:{proxyKey}"
 //   - account 模式: "account:{accountID}"
 //   - account_proxy 模式: "account:{accountID}|proxy:{proxyKey}"
-func buildCacheKey(isolation, proxyKey string, accountID int64, protocolMode string) string {
+func buildCacheKey(isolation, proxyKey string, accountID int64, protocolMode string, laneIDs ...int64) string {
 	var base string
 	switch isolation {
 	case config.ConnectionPoolIsolationAccount:
@@ -958,6 +984,12 @@ func buildCacheKey(isolation, proxyKey string, accountID int64, protocolMode str
 		base = fmt.Sprintf("account:%d|proxy:%s", accountID, proxyKey)
 	default:
 		base = fmt.Sprintf("proxy:%s", proxyKey)
+	}
+	// A lane is a logical egress boundary, not merely a proxy alias.  Include
+	// it when supplied so separate lanes retain independent connection pools;
+	// variadic form keeps the existing test/helpers source-compatible.
+	if len(laneIDs) > 0 && laneIDs[0] > 0 {
+		base += fmt.Sprintf("|lane:%d", laneIDs[0])
 	}
 	if protocolMode != "" && protocolMode != upstreamProtocolModeDefault {
 		base += "|proto:" + protocolMode

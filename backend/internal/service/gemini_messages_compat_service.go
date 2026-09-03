@@ -104,6 +104,11 @@ func (s *GeminiMessagesCompatService) SelectAccountForModel(ctx context.Context,
 }
 
 func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	// Keep the session identity available to every lane-aware helper.  Gemini's
+	// sticky-account path is separate from the generic/OpenAI schedulers, so this
+	// context annotation is the only way to preserve deterministic lane affinity
+	// across hydration/failover boundaries.
+	ctx = WithAccountProxyLaneSession(ctx, sessionHash)
 	// 1. 确定目标平台和调度模式
 	// Determine target platform and scheduling mode
 	platform, useMixedScheduling, hasForcePlatform, err := s.resolvePlatformAndSchedulingMode(ctx, groupID)
@@ -114,9 +119,19 @@ func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx co
 	cacheKey := "gemini:" + sessionHash
 
 	// 2. 尝试粘性会话命中
-	// Try sticky session hit
+	// Try sticky session hit.  A scheduler snapshot may contain only lane
+	// metadata (ProxyID without credentials), so the hit must pass through the
+	// same lane projection/hydration gate as a newly selected account.  Returning
+	// the raw sticky object here would make AccountProxyURL resolve to an empty
+	// string and silently send the request over the direct/legacy egress.
 	if account := s.tryStickySessionHit(ctx, groupID, sessionHash, cacheKey, requestedModel, excludedIDs, platform, useMixedScheduling); account != nil {
-		return account, nil
+		projected, projectErr := s.projectGeminiLaneSelection(ctx, account, sessionHash)
+		if projectErr == nil {
+			return projected, nil
+		}
+		// Treat a stale lane binding or an unavailable authoritative hydration as
+		// a sticky miss.  The normal account query below can choose another
+		// account/lane; it must never forward this unverified object.
 	}
 
 	// 3. 查询可调度账户（强制平台模式：优先按分组查找，找不到再查全部）
@@ -144,13 +159,21 @@ func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx co
 		return nil, errors.New("no available Gemini accounts")
 	}
 
-	// 5. 设置粘性会话绑定
-	// Set sticky session binding
-	if sessionHash != "" {
-		_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, selected.ID, geminiStickySessionTTL)
+	// Hydrate credentials and project the selected egress before publishing a
+	// sticky account binding.  This keeps a compact/stale lane snapshot from
+	// poisoning the next request with an unverified direct fallback.
+	projected, err := s.projectGeminiLaneSelection(ctx, selected, sessionHash)
+	if err != nil {
+		return nil, err
 	}
 
-	return s.hydrateSelectedAccount(ctx, selected)
+	// 5. 设置粘性会话绑定
+	// Set sticky session binding
+	if sessionHash != "" && s.cache != nil {
+		_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, projected.ID, geminiStickySessionTTL)
+	}
+
+	return projected, nil
 }
 
 // resolvePlatformAndSchedulingMode 解析目标平台和调度模式。
@@ -197,7 +220,10 @@ func (s *GeminiMessagesCompatService) tryStickySessionHit(
 	platform string,
 	useMixedScheduling bool,
 ) *Account {
-	if sessionHash == "" {
+	// The compatibility selector is also used by lightweight/admin paths where
+	// no sticky cache is wired (and by tests during a rolling upgrade).  A
+	// non-empty session must not turn that optional dependency into a panic.
+	if s == nil || s.cache == nil || strings.TrimSpace(sessionHash) == "" {
 		return nil
 	}
 
@@ -430,17 +456,82 @@ func (s *GeminiMessagesCompatService) getSchedulableAccount(ctx context.Context,
 }
 
 func (s *GeminiMessagesCompatService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
-	if account == nil || s.schedulerSnapshot == nil {
-		return account, nil
+	if account == nil {
+		return nil, nil
 	}
-	hydrated, err := s.schedulerSnapshot.GetAccount(ctx, account.ID)
+	hydrated := account
+	if s.schedulerSnapshot != nil {
+		var err error
+		hydrated, err = s.schedulerSnapshot.GetAccount(ctx, account.ID)
+		if err != nil {
+			return nil, err
+		}
+		if hydrated == nil {
+			return nil, fmt.Errorf("selected gemini account %d not found during hydration", account.ID)
+		}
+	}
+
+	// A scheduler payload may contain only lane metadata (ProxyID/limits).  Do
+	// not let that compact shape reach a forwarder: choose a deterministic lane
+	// where needed.  The caller performs the single authoritative reconciliation
+	// immediately before forwarding, so this helper must not issue a duplicate
+	// repository lookup.
+	if account.HasProxyLanes() && account.SelectedProxyLane == nil {
+		if lane := selectAccountProxyLaneForWait(account, AccountProxyLaneSessionFromContext(ctx)); lane == nil {
+			return nil, ErrNoSchedulableAccountProxyLane
+		}
+	}
+	if hydrated.HasProxyLanes() && hydrated.SelectedProxyLane == nil {
+		if lane := selectAccountProxyLaneForWait(hydrated, AccountProxyLaneSessionFromContext(ctx)); lane == nil {
+			return nil, ErrNoSchedulableAccountProxyLane
+		}
+	}
+	return hydrated, nil
+}
+
+// projectGeminiLaneSelection makes a Gemini-compatible account safe to hand to
+// a forwarding client.  Account lists and scheduler cache buckets intentionally
+// carry lane IDs but may omit the referenced Proxy object; the request-local
+// lane must therefore be selected first, then validated against a full account
+// snapshot, with an authoritative repository retry when the snapshot is
+// compact or stale.  A configured lane that cannot be validated fails closed —
+// it must never inherit Account.Proxy or turn into an accidental direct request.
+func (s *GeminiMessagesCompatService) projectGeminiLaneSelection(ctx context.Context, account *Account, sessionHash string) (*Account, error) {
+	if account == nil {
+		return nil, nil
+	}
+	// Preserve an already selected lane (for example a sticky/failover hint),
+	// otherwise choose the deterministic healthy lane for this session.  The
+	// helper below also handles a snapshot that newly reveals lane rows for an
+	// account which looked legacy in the initial list.
+	if account.HasProxyLanes() && account.SelectedProxyLane == nil {
+		if lane := selectAccountProxyLaneForWait(account, sessionHash); lane == nil {
+			return nil, ErrNoSchedulableAccountProxyLane
+		}
+	}
+	hydrated, err := s.hydrateSelectedAccount(ctx, account)
 	if err != nil {
 		return nil, err
 	}
 	if hydrated == nil {
-		return nil, fmt.Errorf("selected gemini account %d not found during hydration", account.ID)
+		return nil, ErrNoSchedulableAccountProxyLane
 	}
-	return hydrated, nil
+	if !account.HasProxyLanes() && account.SelectedProxyLane == nil && !hydrated.HasProxyLanes() && hydrated.SelectedProxyLane == nil {
+		return hydrated, nil
+	}
+
+	// In tests/rolling deployments the service's accountRepo may be nil while
+	// the scheduler snapshot still owns the authoritative repository.  Reuse
+	// that repository for the compact-cache retry instead of degrading to a
+	// legacy proxy.
+	var repo AccountRepository
+	if s != nil {
+		repo = s.accountRepo
+		if repo == nil && s.schedulerSnapshot != nil {
+			repo = s.schedulerSnapshot.accountRepo
+		}
+	}
+	return ensureSelectedAccountProxyLaneHydratedAuthoritative(ctx, account, hydrated, repo)
 }
 
 func (s *GeminiMessagesCompatService) listSchedulableAccountsOnce(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, error) {
@@ -577,10 +668,14 @@ func (s *GeminiMessagesCompatService) SelectAccountForAIStudioEndpoints(ctx cont
 	if selected == nil {
 		return nil, errors.New("no available Gemini accounts")
 	}
-	return s.hydrateSelectedAccount(ctx, selected)
+	// Model-list requests use a separate account-selection path from normal
+	// generateContent traffic.  It still has to carry the selected account's
+	// lane so a configured proxy lane is not lost before ForwardAIStudioGET.
+	return s.projectGeminiLaneSelection(ctx, selected, "")
 }
 
 func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*ForwardResult, error) {
+	ctx = WithSelectedAccountProxyLane(ctx, account)
 	beginUpstreamResponseModelObservation(c)
 	beginGeminiImageOutputObservation(c)
 	startTime := time.Now()
@@ -609,10 +704,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	geminiReq = ensureGeminiFunctionCallThoughtSignatures(geminiReq)
 	originalClaudeBody := body
 
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURL(account)
 
 	var requestIDHeader string
 	var buildReq func(ctx context.Context) (*http.Request, string, error)
@@ -1126,6 +1218,7 @@ func isGeminiSignatureRelatedError(respBody []byte) bool {
 }
 
 func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte) (*ForwardResult, error) {
+	ctx = WithSelectedAccountProxyLane(ctx, account)
 	beginUpstreamResponseModelObservation(c)
 	beginGeminiImageOutputObservation(c)
 	startTime := time.Now()
@@ -1161,10 +1254,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		mappedModel = account.GetMappedModel(originalModel)
 	}
 
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURL(account)
 
 	useUpstreamStream := stream
 	upstreamAction := action
@@ -2773,6 +2863,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 //
 // This is used to support Gemini SDKs that call models listing endpoints before generation.
 func (s *GeminiMessagesCompatService) ForwardAIStudioGET(ctx context.Context, account *Account, path string) (*UpstreamHTTPResult, error) {
+	ctx = WithSelectedAccountProxyLane(ctx, account)
 	if account == nil {
 		return nil, errors.New("account is nil")
 	}
@@ -2793,7 +2884,7 @@ func (s *GeminiMessagesCompatService) ForwardAIStudioGET(ctx context.Context, ac
 
 	var proxyURL string
 	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
+		proxyURL = AccountProxyURL(account)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)

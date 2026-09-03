@@ -55,6 +55,34 @@ type ConcurrencyCache interface {
 	CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error
 }
 
+// LaneConcurrencyCache is the optional cache contract used by accounts that
+// expose more than one independently schedulable egress lane.  It is kept
+// separate from ConcurrencyCache deliberately: existing cache test doubles and
+// older deployments can continue to implement the account/user contract while
+// the scheduler feature-detects lane support with a type assertion.
+//
+// Lane slots use a lane-scoped Redis namespace (concurrency:lane:{laneID}).
+// The service pairs that independent reservation with the parent account slot
+// whenever an aggregate account limit is configured. The wait counter follows
+// the lane namespace (wait:lane:{laneID}).
+type LaneConcurrencyCache interface {
+	AcquireLaneSlot(ctx context.Context, laneID int64, maxConcurrency int, requestID string) (bool, error)
+	ReleaseLaneSlot(ctx context.Context, laneID int64, requestID string) error
+	GetLaneConcurrency(ctx context.Context, laneID int64) (int, error)
+	IncrementLaneWaitCount(ctx context.Context, laneID int64, maxWait int) (bool, error)
+	DecrementLaneWaitCount(ctx context.Context, laneID int64) error
+	GetLaneWaitingCount(ctx context.Context, laneID int64) (int, error)
+}
+
+// LaneConcurrencyBatchCache is an optional extension for admin/metrics paths
+// that need to read several lane counters in one Redis pipeline.  Keeping it
+// separate preserves the six-method LaneConcurrencyCache contract for small
+// test doubles and third-party cache implementations.
+type LaneConcurrencyBatchCache interface {
+	LaneConcurrencyCache
+	GetLaneConcurrencyBatch(ctx context.Context, laneIDs []int64) (map[int64]int, error)
+}
+
 type APIKeyConcurrencyCache interface {
 	TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
@@ -237,6 +265,15 @@ type ConcurrencyService struct {
 	accountLoadGroup    singleflight.Group
 }
 
+// LaneConcurrencySupported reports whether the configured concurrency cache
+// implements the optional lane-scoped namespace.  Handlers use this capability
+// probe when they need to choose between a lane slot and the legacy account
+// slot during rolling upgrades.  Keep the nil handling in the service so
+// callers do not need to reach into its private cache field.
+func (s *ConcurrencyService) LaneConcurrencySupported() bool {
+	return laneConcurrencySupported(s)
+}
+
 type cachedAccountLoadBatch struct {
 	loadMap   map[int64]*AccountLoadInfo
 	expiresAt time.Time
@@ -310,6 +347,24 @@ func (s *ConcurrencyService) SetAccountLoadBatchCacheTTL(ttl time.Duration) {
 type AcquireResult struct {
 	Acquired    bool
 	ReleaseFunc func() // Must be called when done (typically via defer)
+	// MaxConcurrency is the exact limit supplied to the cache for this
+	// reservation.  Keep it on the result because an Account may be projected
+	// onto a proxy lane immediately after admission, changing Account.Concurrency
+	// before the selection reaches a handler.
+	//
+	// MaxConcurrencySet distinguishes an explicit zero (unlimited) from a
+	// hand-written/legacy AcquireResult produced by a test or third-party caller.
+	MaxConcurrency    int
+	MaxConcurrencySet bool
+	// AggregateMaxConcurrency is populated when a lane request also reserves
+	// the parent account bucket.  It lets callers retain both values after the
+	// selected lane is projected onto Account.Concurrency.
+	AggregateMaxConcurrency    int
+	AggregateMaxConcurrencySet bool
+	// Lane identifies the egress whose slot was acquired (or, on a failed
+	// immediate acquire, the lane selected for the subsequent wait plan).
+	// It is nil for legacy account-level slots.
+	Lane *AccountProxyLane
 }
 
 type AccountWithConcurrency struct {
@@ -340,11 +395,16 @@ type UserLoadInfo struct {
 // If the account is at max concurrency, it waits until a slot is available or timeout.
 // Returns a release function that MUST be called when the request completes.
 func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
-	// If maxConcurrency is 0 or negative, no limit
-	if maxConcurrency <= 0 {
+	// A non-nil service with a nil cache is common in lightweight/admin
+	// processes and during rolling startup. Treat it as the no-service path;
+	// otherwise a positive account limit would dereference s.cache and panic.
+	// If maxConcurrency is 0 or negative, no limit.
+	if s == nil || s.cache == nil || maxConcurrency <= 0 {
 		return &AcquireResult{
-			Acquired:    true,
-			ReleaseFunc: func() {}, // no-op
+			Acquired:          true,
+			ReleaseFunc:       func() {}, // no-op
+			MaxConcurrency:    maxConcurrency,
+			MaxConcurrencySet: true,
 		}, nil
 	}
 
@@ -358,7 +418,9 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 
 	if acquired {
 		return &AcquireResult{
-			Acquired: true,
+			Acquired:          true,
+			MaxConcurrency:    maxConcurrency,
+			MaxConcurrencySet: true,
 			ReleaseFunc: func() {
 				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -370,20 +432,257 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 	}
 
 	return &AcquireResult{
-		Acquired:    false,
-		ReleaseFunc: nil,
+		Acquired:          false,
+		ReleaseFunc:       nil,
+		MaxConcurrency:    maxConcurrency,
+		MaxConcurrencySet: true,
 	}, nil
+}
+
+// AcquireLaneSlot attempts to reserve one slot in a lane-specific bucket.
+// Unlike AcquireAccountSlot this method is optional-capability aware: caches
+// that predate lane scheduling fail open so rolling upgrades do not take down
+// legacy traffic.  A concrete lane-capable cache (the Redis implementation)
+// still enforces the configured limit atomically.
+func (s *ConcurrencyService) AcquireLaneSlot(ctx context.Context, laneID int64, maxConcurrency int) (*AcquireResult, error) {
+	if maxConcurrency <= 0 {
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}, MaxConcurrency: maxConcurrency, MaxConcurrencySet: true}, nil
+	}
+	if s == nil || s.cache == nil || laneID <= 0 {
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}, MaxConcurrency: maxConcurrency, MaxConcurrencySet: true}, nil
+	}
+	cache, ok := s.cache.(LaneConcurrencyCache)
+	if !ok {
+		// Optional interface: an old cache has no lane namespace.  Let the
+		// caller fall back to its legacy account-level path rather than
+		// returning an outage during a rolling deployment.
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}, MaxConcurrency: maxConcurrency, MaxConcurrencySet: true}, nil
+	}
+
+	requestID := generateRequestID()
+	acquired, err := cache.AcquireLaneSlot(ctx, laneID, maxConcurrency, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return &AcquireResult{Acquired: false, MaxConcurrency: maxConcurrency, MaxConcurrencySet: true}, nil
+	}
+
+	return &AcquireResult{
+		Acquired:          true,
+		MaxConcurrency:    maxConcurrency,
+		MaxConcurrencySet: true,
+		ReleaseFunc: func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := cache.ReleaseLaneSlot(bgCtx, laneID, requestID); err != nil {
+				logger.LegacyPrintf("service.concurrency", "Warning: failed to release lane slot for %d (req=%s): %v", laneID, requestID, err)
+			}
+		},
+	}, nil
+}
+
+// AcquireAccountAndLaneSlot reserves both admission domains for one request:
+// the parent account aggregate and the selected egress lane.  This is the
+// concrete implementation of "total=20, IP1=10, IP2=10": no more than 20
+// requests may use the account in total, and no more than 10 may use either
+// lane.  The returned release function is a single lease for both slots.
+//
+// Older cache adapters do not expose lane namespaces.  In that case the
+// account reservation remains authoritative and the lane portion is skipped,
+// preserving rolling-upgrade compatibility without bypassing the aggregate
+// limit.
+func (s *ConcurrencyService) AcquireAccountAndLaneSlot(
+	ctx context.Context,
+	accountID int64,
+	aggregateMaxConcurrency int,
+	laneID int64,
+	laneMaxConcurrency int,
+) (*AcquireResult, error) {
+	if laneID <= 0 || !s.LaneConcurrencySupported() {
+		return s.AcquireAccountSlot(ctx, accountID, aggregateMaxConcurrency)
+	}
+
+	accountResult, err := s.AcquireAccountSlot(ctx, accountID, aggregateMaxConcurrency)
+	if err != nil || accountResult == nil || !accountResult.Acquired {
+		if accountResult == nil {
+			return &AcquireResult{Acquired: false, MaxConcurrency: aggregateMaxConcurrency, MaxConcurrencySet: true}, err
+		}
+		accountResult.Lane = &AccountProxyLane{ID: laneID, Concurrency: laneMaxConcurrency}
+		accountResult.AggregateMaxConcurrency = aggregateMaxConcurrency
+		accountResult.AggregateMaxConcurrencySet = true
+		accountResult.MaxConcurrency = laneMaxConcurrency
+		return accountResult, err
+	}
+
+	laneResult, err := s.AcquireLaneSlot(ctx, laneID, laneMaxConcurrency)
+	if err != nil {
+		if accountResult.ReleaseFunc != nil {
+			accountResult.ReleaseFunc()
+		}
+		return nil, err
+	}
+	if laneResult == nil || !laneResult.Acquired {
+		if accountResult.ReleaseFunc != nil {
+			accountResult.ReleaseFunc()
+		}
+		return &AcquireResult{
+			Acquired:                   false,
+			MaxConcurrency:             laneMaxConcurrency,
+			MaxConcurrencySet:          true,
+			AggregateMaxConcurrency:    aggregateMaxConcurrency,
+			AggregateMaxConcurrencySet: true,
+			Lane:                       &AccountProxyLane{ID: laneID, Concurrency: laneMaxConcurrency},
+		}, nil
+	}
+
+	accountRelease := accountResult.ReleaseFunc
+	laneRelease := laneResult.ReleaseFunc
+	return &AcquireResult{
+		Acquired:                   true,
+		MaxConcurrency:             laneMaxConcurrency,
+		MaxConcurrencySet:          true,
+		AggregateMaxConcurrency:    aggregateMaxConcurrency,
+		AggregateMaxConcurrencySet: true,
+		Lane:                       &AccountProxyLane{ID: laneID, Concurrency: laneMaxConcurrency},
+		ReleaseFunc: func() {
+			if laneRelease != nil {
+				laneRelease()
+			}
+			if accountRelease != nil {
+				accountRelease()
+			}
+		},
+	}, nil
+}
+
+// GetLaneConcurrency returns the currently occupied slots for one lane.  The
+// lane contract is optional, so an old cache reports zero instead of breaking
+// account selection while services are being rolled forward.
+func (s *ConcurrencyService) GetLaneConcurrency(ctx context.Context, laneID int64) (int, error) {
+	if s == nil || s.cache == nil || laneID <= 0 {
+		return 0, nil
+	}
+	cache, ok := s.cache.(LaneConcurrencyCache)
+	if !ok {
+		return 0, nil
+	}
+	return cache.GetLaneConcurrency(ctx, laneID)
+}
+
+// GetLaneConcurrencyBatch reads lane counters when the optional cache exposes
+// the batch extension.  A cache that only implements the core lane contract is
+// still supported via a bounded per-lane fallback; this keeps callers simple
+// while avoiding a hard dependency on the extension during rolling upgrades.
+func (s *ConcurrencyService) GetLaneConcurrencyBatch(ctx context.Context, laneIDs []int64) (map[int64]int, error) {
+	result := make(map[int64]int, len(laneIDs))
+	for _, laneID := range laneIDs {
+		if laneID > 0 {
+			result[laneID] = 0
+		}
+	}
+	if len(result) == 0 || s == nil || s.cache == nil {
+		return result, nil
+	}
+	if batch, ok := s.cache.(LaneConcurrencyBatchCache); ok {
+		baseCtx := context.Background()
+		if ctx != nil {
+			baseCtx = context.WithoutCancel(ctx)
+		}
+		redisCtx, cancel := context.WithTimeout(baseCtx, apiKeyConcurrencyFetchTimeout)
+		defer cancel()
+		counts, err := batch.GetLaneConcurrencyBatch(redisCtx, laneIDs)
+		if err != nil {
+			return result, err
+		}
+		for laneID := range result {
+			result[laneID] = counts[laneID]
+		}
+		return result, nil
+	}
+	cache, ok := s.cache.(LaneConcurrencyCache)
+	if !ok {
+		return result, nil
+	}
+	for laneID := range result {
+		count, err := cache.GetLaneConcurrency(ctx, laneID)
+		if err != nil {
+			return result, err
+		}
+		result[laneID] = count
+	}
+	return result, nil
+}
+
+// IncrementLaneWaitCount attempts to reserve one place in a lane's wait
+// queue.  Wait queues are deliberately fail-open, matching account/user
+// queues: a Redis outage must not turn a transient observability issue into a
+// gateway-wide outage.
+func (s *ConcurrencyService) IncrementLaneWaitCount(ctx context.Context, laneID int64, maxWait int) (bool, error) {
+	if s == nil || s.cache == nil || laneID <= 0 {
+		return true, nil
+	}
+	cache, ok := s.cache.(LaneConcurrencyCache)
+	if !ok {
+		return true, nil
+	}
+	allowed, err := cache.IncrementLaneWaitCount(ctx, laneID, maxWait)
+	if err != nil {
+		logger.LegacyPrintf("service.concurrency", "Warning: increment wait count failed for lane %d: %v", laneID, err)
+		return true, nil
+	}
+	return allowed, nil
+}
+
+// DecrementLaneWaitCount releases one lane wait-queue entry.  It uses a
+// detached context so cancellation of the HTTP request cannot leak queue
+// depth indefinitely.
+func (s *ConcurrencyService) DecrementLaneWaitCount(ctx context.Context, laneID int64) {
+	if s == nil || s.cache == nil || laneID <= 0 {
+		return
+	}
+	cache, ok := s.cache.(LaneConcurrencyCache)
+	if !ok {
+		return
+	}
+	baseCtx := context.Background()
+	if ctx != nil {
+		baseCtx = context.WithoutCancel(ctx)
+	}
+	bgCtx, cancel := context.WithTimeout(baseCtx, 5*time.Second)
+	defer cancel()
+	if err := cache.DecrementLaneWaitCount(bgCtx, laneID); err != nil {
+		logger.LegacyPrintf("service.concurrency", "Warning: decrement wait count failed for lane %d: %v", laneID, err)
+	}
+}
+
+// GetLaneWaitingCount returns the current lane wait queue depth.  It is a
+// best-effort read and returns zero when the optional capability is absent.
+func (s *ConcurrencyService) GetLaneWaitingCount(ctx context.Context, laneID int64) (int, error) {
+	if s == nil || s.cache == nil || laneID <= 0 {
+		return 0, nil
+	}
+	cache, ok := s.cache.(LaneConcurrencyCache)
+	if !ok {
+		return 0, nil
+	}
+	return cache.GetLaneWaitingCount(ctx, laneID)
 }
 
 // AcquireUserSlot attempts to acquire a concurrency slot for a user.
 // If the user is at max concurrency, it waits until a slot is available or timeout.
 // Returns a release function that MUST be called when the request completes.
 func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int) (*AcquireResult, error) {
-	// If maxConcurrency is 0 or negative, no limit
-	if maxConcurrency <= 0 {
+	// A service can be constructed before its cache is wired (for example in a
+	// health/admin process). Fail open with a no-op lease instead of
+	// dereferencing a nil cache for a positive limit.
+	// If maxConcurrency is 0 or negative, no limit.
+	if s == nil || s.cache == nil || maxConcurrency <= 0 {
 		return &AcquireResult{
-			Acquired:    true,
-			ReleaseFunc: func() {}, // no-op
+			Acquired:          true,
+			ReleaseFunc:       func() {}, // no-op
+			MaxConcurrency:    maxConcurrency,
+			MaxConcurrencySet: true,
 		}, nil
 	}
 
@@ -397,7 +696,9 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 
 	if acquired {
 		return &AcquireResult{
-			Acquired: true,
+			Acquired:          true,
+			MaxConcurrency:    maxConcurrency,
+			MaxConcurrencySet: true,
 			ReleaseFunc: func() {
 				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -409,8 +710,10 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 	}
 
 	return &AcquireResult{
-		Acquired:    false,
-		ReleaseFunc: nil,
+		Acquired:          false,
+		ReleaseFunc:       nil,
+		MaxConcurrency:    maxConcurrency,
+		MaxConcurrencySet: true,
 	}, nil
 }
 

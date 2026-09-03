@@ -33,6 +33,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	body []byte,
 	parsed *ParsedRequest,
 ) (*ForwardResult, error) {
+	ctx = WithSelectedAccountProxyLane(ctx, account)
 	startTime := time.Now()
 
 	// 1. Parse Chat Completions request
@@ -112,10 +113,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	}
 
 	// 9. Get proxy URL
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
+	proxyURL := AccountProxyURL(account)
 
 	// 10. Build upstream request
 	upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)

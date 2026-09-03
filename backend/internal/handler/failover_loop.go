@@ -159,6 +159,12 @@ func NewFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
 // 表示本次请求的利润否决次数已达上限，调用方应按「无可用账号」终止，
 // 不得继续 continue。
 func (s *FailoverState) RecordProfitVeto(accountID int64) FailoverAction {
+	if s == nil {
+		return FailoverExhausted
+	}
+	if s.FailedAccountIDs == nil {
+		s.FailedAccountIDs = make(map[int64]struct{})
+	}
 	s.FailedAccountIDs[accountID] = struct{}{}
 	if s.profitVetoedAccountIDs == nil {
 		s.profitVetoedAccountIDs = make(map[int64]struct{})
@@ -169,6 +175,23 @@ func (s *FailoverState) RecordProfitVeto(accountID int64) FailoverAction {
 		return FailoverExhausted
 	}
 	return FailoverContinue
+}
+
+// RecordLaneUnavailable excludes an account after the request-scoped proxy
+// lane disappeared or became unschedulable.  This is an egress lifecycle
+// rejection, not a profit-control veto: it must not consume the per-request
+// profit-veto budget or be added to profitVetoedAccountIDs.  The account is
+// still excluded for the current selection pass so a stale lane cannot be
+// retried immediately; a later scheduler pass may choose a healthy sibling
+// lane/account.
+func (s *FailoverState) RecordLaneUnavailable(accountID int64) {
+	if s == nil {
+		return
+	}
+	if s.FailedAccountIDs == nil {
+		s.FailedAccountIDs = make(map[int64]struct{})
+	}
+	s.FailedAccountIDs[accountID] = struct{}{}
 }
 
 // ProfitVetoCount 返回本次请求累计的利润否决次数（供日志使用）。

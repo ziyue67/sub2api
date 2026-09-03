@@ -59,6 +59,7 @@ func (s *AntigravityGatewayService) ForwardAsChatCompletions(
 	body []byte,
 	_ *ParsedRequest,
 ) (*ForwardResult, error) {
+	ctx = WithSelectedAccountProxyLane(ctx, account)
 	if err := s.validateAntigravityCompatAccount(c, account); err != nil {
 		return nil, err
 	}
@@ -106,6 +107,7 @@ func (s *AntigravityGatewayService) ForwardAsResponses(
 	body []byte,
 	_ *ParsedRequest,
 ) (*ForwardResult, error) {
+	ctx = WithSelectedAccountProxyLane(ctx, account)
 	if err := s.validateAntigravityCompatAccount(c, account); err != nil {
 		return nil, err
 	}
@@ -322,7 +324,7 @@ func antigravityCompatProxyURL(account *Account) string {
 	if account.ProxyID == nil || account.Proxy == nil {
 		return ""
 	}
-	return account.Proxy.URL()
+	return AccountProxyURL(account)
 }
 
 func (s *AntigravityGatewayService) handleAntigravityCompatTransportError(c *gin.Context, err error) error {

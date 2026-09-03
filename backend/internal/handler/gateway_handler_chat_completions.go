@@ -213,19 +213,57 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts")
 				return
 			}
-			accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountSlotWithWaitTimeout(
+			// Reserve one entry in the same account/lane wait namespace used by
+			// the subsequent slot acquisition.  This mirrors the main gateway
+			// handler and prevents a burst of lane waiters from bypassing
+			// MaxWaiting while a lane is saturated.
+			accountWaitCounted := false
+			canWait, waitErr := h.concurrencyHelper.IncrementAccountOrLaneWaitCount(
+				c.Request.Context(), account.ID, selection.WaitPlan.LaneID, selection.WaitPlan.MaxWaiting,
+			)
+			if waitErr != nil {
+				reqLog.Warn("gateway.cc.account_wait_counter_increment_failed", zap.Int64("account_id", account.ID), zap.Error(waitErr))
+			} else if !canWait {
+				reqLog.Info("gateway.cc.account_wait_queue_full",
+					zap.Int64("account_id", account.ID),
+					zap.Int("max_waiting", selection.WaitPlan.MaxWaiting),
+				)
+				h.chatCompletionsErrorResponse(c, http.StatusTooManyRequests, "rate_limit_error", "Too many pending requests, please retry later")
+				return
+			} else {
+				accountWaitCounted = true
+			}
+			releaseWait := func() {
+				if !accountWaitCounted {
+					return
+				}
+				h.concurrencyHelper.DecrementAccountOrLaneWaitCount(
+					c.Request.Context(), account.ID, selection.WaitPlan.LaneID,
+				)
+				accountWaitCounted = false
+			}
+			accountReleaseFunc, err = h.concurrencyHelper.AcquireAccountOrLaneSlotWithWaitTimeout(
 				c,
 				account.ID,
+				selection.WaitPlan.LaneID,
 				selection.WaitPlan.MaxConcurrency,
 				selection.WaitPlan.Timeout,
 				reqStream,
 				&streamStarted,
+				waitPlanAggregateMaxArgs(selection.WaitPlan)...,
 			)
 			if err != nil {
 				reqLog.Warn("gateway.cc.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
-				h.handleConcurrencyError(c, err, "account", streamStarted)
+				releaseWait()
+				slotType := "account"
+				if selection.WaitPlan.LaneID > 0 {
+					slotType = "lane"
+				}
+				h.handleConcurrencyError(c, err, slotType, streamStarted)
 				return
 			}
+			// Slot acquired: leave the wait queue before the profit gate/forward.
+			releaseWait()
 		}
 		// 终检与准入后绑定使用选号结果携带的门（见 responses 同名注释）。
 		admissionCtx := service.ContextWithSelectionProfitGate(c.Request.Context(), selection)
@@ -235,6 +273,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				accountReleaseFunc()
 			}
 			reqLog.Debug("gateway.cc.account_slot_profit_vetoed", zap.Int64("account_id", account.ID), zap.String("reason", reason))
+			if service.IsProxyLaneUnavailableReason(reason) {
+				fs.RecordLaneUnavailable(account.ID)
+				continue
+			}
 			if fs.RecordProfitVeto(account.ID) == FailoverExhausted {
 				reqLog.Warn("gateway.cc.profit_veto_attempts_exhausted", zap.Int("profit_veto_count", fs.ProfitVetoCount()))
 				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", profitVetoExhaustedMessage)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -300,9 +301,13 @@ type gatewayProfitSnapshotCache struct {
 	SchedulerCache
 	account *Account
 	err     error
+	calls   *int
 }
 
 func (c *gatewayProfitSnapshotCache) GetAccount(context.Context, int64) (*Account, error) {
+	if c.calls != nil {
+		(*c.calls)++
+	}
 	return c.account, c.err
 }
 
@@ -310,9 +315,13 @@ type gatewayProfitAccountRepo struct {
 	AccountRepository
 	account *Account
 	err     error
+	calls   *int
 }
 
 func (r gatewayProfitAccountRepo) GetByID(context.Context, int64) (*Account, error) {
+	if r.calls != nil {
+		(*r.calls)++
+	}
 	return r.account, r.err
 }
 
@@ -386,6 +395,267 @@ func TestGatewayProfitControlTerminalRefreshFailureFallsBackToSelectedObject(t *
 	require.Same(t, &selected, latest)
 	require.False(t, vetoed)
 	require.Empty(t, reason)
+}
+
+func TestGatewayProfitControlTerminalRefreshRejectsStaleProxyLane(t *testing.T) {
+	proxyID := int64(320)
+	selectedLane := AccountProxyLane{
+		ID: 321, AccountID: 151, ProxyID: &proxyID,
+		Transport: AccountProxyLaneTransportProxy,
+		Status:    AccountProxyLaneStatusActive, Schedulable: true, Weight: 1, Concurrency: 2,
+		Proxy: &Proxy{ID: proxyID, Protocol: "http", Host: "old-lane.example", Port: 8080, Status: StatusActive},
+	}
+	selected := &Account{
+		ID:          151,
+		Concurrency: 2, ProxyLanes: []AccountProxyLane{selectedLane},
+		SelectedProxyLane: &selectedLane,
+	}
+	// The fresh scheduler snapshot no longer contains the selected lane.  This
+	// is the race we must fail closed: returning the refreshed account as a
+	// normal success would make AccountProxyURL fall back to its legacy proxy.
+	refreshed := &Account{ID: selected.ID, Concurrency: 4, ProxyID: ptrInt64(999), Proxy: &Proxy{ID: 999, Protocol: "http", Host: "legacy.example", Port: 8081, Status: StatusActive}}
+	snapshot := NewSchedulerSnapshotService(
+		&gatewayProfitSnapshotCache{account: refreshed},
+		nil,
+		gatewayProfitAccountRepo{account: refreshed},
+		nil,
+		nil,
+	)
+
+	latest, vetoed, reason := profitControlVetoLatest(context.Background(), selected, snapshot)
+	require.True(t, vetoed)
+	require.Equal(t, openAIProfitFilterReasonLaneUnavailable, reason)
+	require.NotNil(t, latest)
+	require.Nil(t, latest.SelectedProxyLane)
+	require.Nil(t, latest.ProxyID)
+	require.Nil(t, latest.Proxy)
+	require.Empty(t, AccountProxyURL(latest), "stale lane must never degrade to direct/legacy proxy")
+}
+
+func TestGatewayProfitControlTerminalRefreshUpdatesLaneCapWithoutProfitGate(t *testing.T) {
+	proxyID := int64(330)
+	oldLane := AccountProxyLane{
+		ID: 331, AccountID: 152, ProxyID: &proxyID,
+		Transport: AccountProxyLaneTransportProxy,
+		Status:    AccountProxyLaneStatusActive, Schedulable: true, Weight: 1, Concurrency: 2,
+		Proxy: &Proxy{ID: proxyID, Protocol: "http", Host: "edge.example", Port: 8080, Status: StatusActive},
+	}
+	selected := &Account{ID: 152, Concurrency: 2, ProxyLanes: []AccountProxyLane{oldLane}, SelectedProxyLane: &oldLane}
+	newLane := oldLane
+	newLane.Concurrency = 7
+	refreshed := &Account{ID: selected.ID, Concurrency: 7, ProxyLanes: []AccountProxyLane{newLane}}
+	snapshot := NewSchedulerSnapshotService(
+		&gatewayProfitSnapshotCache{account: refreshed},
+		nil,
+		gatewayProfitAccountRepo{account: refreshed},
+		nil,
+		nil,
+	)
+
+	latest, vetoed, reason := profitControlVetoLatest(context.Background(), selected, snapshot)
+	require.False(t, vetoed)
+	require.Empty(t, reason)
+	require.Same(t, refreshed, latest)
+	require.NotNil(t, latest.SelectedProxyLane)
+	require.Equal(t, 7, latest.SelectedProxyLane.Concurrency,
+		"lane cap must be refreshed even when no profit gate is installed")
+}
+
+func TestGatewayProfitControlTerminalRefreshHydratesCompactLaneFromRepository(t *testing.T) {
+	proxyID := int64(335)
+	proxy := &Proxy{ID: proxyID, Protocol: "http", Host: "authoritative.example", Port: 8080, Status: StatusActive}
+	lane := AccountProxyLane{
+		ID: 336, AccountID: 1521, ProxyID: &proxyID,
+		Transport: AccountProxyLaneTransportProxy,
+		Status:    AccountProxyLaneStatusActive, Schedulable: true, Weight: 1, Concurrency: 2,
+		Proxy: proxy,
+	}
+	selected := &Account{ID: 1521, Concurrency: 2, ProxyLanes: []AccountProxyLane{lane}, SelectedProxyLane: &lane}
+	// The scheduler payload deliberately carries only lane metadata.  The
+	// terminal check must not interpret this compact shape as direct traffic;
+	// it has to complete the exact lane/proxy relation from the repository.
+	compactLane := lane
+	compactLane.Proxy = nil
+	compact := &Account{ID: selected.ID, Concurrency: 2, ProxyLanes: []AccountProxyLane{compactLane}}
+	database := &Account{ID: selected.ID, Concurrency: 2, ProxyLanes: []AccountProxyLane{lane}}
+	snapshot := NewSchedulerSnapshotService(
+		&gatewayProfitSnapshotCache{account: compact},
+		nil,
+		gatewayProfitAccountRepo{account: database},
+		nil,
+		nil,
+	)
+
+	latest, vetoed, reason := profitControlVetoLatest(context.Background(), selected, snapshot)
+	require.False(t, vetoed)
+	require.Empty(t, reason)
+	require.NotNil(t, latest.SelectedProxyLane)
+	require.Same(t, proxy, latest.SelectedProxyLane.Proxy)
+	require.Equal(t, proxy.URL(), AccountProxyURL(latest))
+}
+
+func TestGatewayProfitControlTerminalRefreshDoesNotRejectUnprojectedLaneAccount(t *testing.T) {
+	proxyID := int64(340)
+	lane := AccountProxyLane{
+		ID: 341, AccountID: 153, ProxyID: &proxyID,
+		Transport: AccountProxyLaneTransportProxy,
+		Status:    AccountProxyLaneStatusActive, Schedulable: true, Weight: 1, Concurrency: 2,
+		Proxy: &Proxy{ID: proxyID, Protocol: "http", Host: "edge.example", Port: 8080, Status: StatusActive},
+	}
+	selected := &Account{ID: 153, Concurrency: 2, ProxyLanes: []AccountProxyLane{lane}}
+	refreshed := &Account{ID: selected.ID, Concurrency: 2, ProxyLanes: []AccountProxyLane{lane}}
+	snapshot := NewSchedulerSnapshotService(
+		&gatewayProfitSnapshotCache{account: refreshed},
+		nil,
+		gatewayProfitAccountRepo{},
+		nil,
+		nil,
+	)
+
+	latest, vetoed, reason := profitControlVetoLatest(context.Background(), selected, snapshot)
+	require.False(t, vetoed, "没有 request-scoped lane affinity 时不应伪造 stale-lane veto")
+	require.Empty(t, reason)
+	require.Same(t, refreshed, latest)
+}
+
+func TestGatewayProfitControlTerminalRefreshBypassesOlderCacheForLaneLifecycle(t *testing.T) {
+	proxyID := int64(350)
+	lane := AccountProxyLane{
+		ID: 351, AccountID: 154, ProxyID: &proxyID,
+		Transport: AccountProxyLaneTransportProxy,
+		Status:    AccountProxyLaneStatusActive, Schedulable: true, Weight: 1, Concurrency: 3,
+		Proxy: &Proxy{ID: proxyID, Protocol: "http", Host: "current.example", Port: 8080, Status: StatusActive},
+	}
+	now := time.Now().UTC()
+	selected := &Account{
+		ID: 154, UpdatedAt: now,
+		Concurrency: 3, ProxyLanes: []AccountProxyLane{lane}, SelectedProxyLane: &lane,
+	}
+	// Redis contains an older account payload from before the lane was created.
+	// The account row timestamp is intentionally older as well: lane writes have
+	// their own updated_at and do not have to bump accounts.updated_at.
+	oldSnapshot := &Account{ID: selected.ID, UpdatedAt: now.Add(-time.Minute)}
+	database := *selected
+	database.UpdatedAt = now.Add(-time.Minute)
+	snapshot := NewSchedulerSnapshotService(
+		&gatewayProfitSnapshotCache{account: oldSnapshot},
+		nil,
+		gatewayProfitAccountRepo{account: &database},
+		nil,
+		nil,
+	)
+
+	latest, vetoed, reason := profitControlVetoLatest(context.Background(), selected, snapshot)
+	require.False(t, vetoed)
+	require.Empty(t, reason)
+	require.NotNil(t, latest.SelectedProxyLane)
+	require.Equal(t, lane.ID, latest.SelectedProxyLane.ID,
+		"older cache must not bypass authoritative lane validation")
+}
+
+func TestGatewayProfitControlTerminalRefreshOlderCacheRejectsDeletedLane(t *testing.T) {
+	proxyID := int64(360)
+	lane := AccountProxyLane{
+		ID: 361, AccountID: 155, ProxyID: &proxyID,
+		Transport: AccountProxyLaneTransportProxy,
+		Status:    AccountProxyLaneStatusActive, Schedulable: true, Weight: 1, Concurrency: 3,
+		Proxy: &Proxy{ID: proxyID, Protocol: "http", Host: "old.example", Port: 8080, Status: StatusActive},
+	}
+	now := time.Now().UTC()
+	selected := &Account{
+		ID: 155, UpdatedAt: now,
+		Concurrency: 3, ProxyLanes: []AccountProxyLane{lane}, SelectedProxyLane: &lane,
+	}
+	oldSnapshot := &Account{ID: selected.ID, UpdatedAt: now.Add(-time.Minute)}
+	// The authoritative DB row no longer contains the selected lane.
+	database := &Account{ID: selected.ID, UpdatedAt: now.Add(-time.Minute), ProxyID: ptrInt64(999), Proxy: &Proxy{ID: 999, Protocol: "http", Host: "legacy.example", Port: 8081, Status: StatusActive}}
+	snapshot := NewSchedulerSnapshotService(
+		&gatewayProfitSnapshotCache{account: oldSnapshot},
+		nil,
+		gatewayProfitAccountRepo{account: database},
+		nil,
+		nil,
+	)
+
+	latest, vetoed, reason := profitControlVetoLatest(context.Background(), selected, snapshot)
+	require.True(t, vetoed)
+	require.Equal(t, openAIProfitFilterReasonLaneUnavailable, reason)
+	require.NotNil(t, latest)
+	require.Nil(t, latest.SelectedProxyLane)
+	require.Nil(t, latest.ProxyID)
+	require.Nil(t, latest.Proxy)
+}
+
+func TestGatewayProfitControlTerminalRefreshOlderCacheFailsClosedWhenAuthoritativeReadFails(t *testing.T) {
+	proxyID := int64(370)
+	lane := AccountProxyLane{
+		ID: 371, AccountID: 156, ProxyID: &proxyID,
+		Transport: AccountProxyLaneTransportProxy,
+		Status:    AccountProxyLaneStatusActive, Schedulable: true, Weight: 1, Concurrency: 3,
+		Proxy: &Proxy{ID: proxyID, Protocol: "http", Host: "old.example", Port: 8080, Status: StatusActive},
+	}
+	now := time.Now().UTC()
+	selected := &Account{
+		ID: 156, UpdatedAt: now,
+		Concurrency: 3, ProxyLanes: []AccountProxyLane{lane}, SelectedProxyLane: &lane,
+	}
+	snapshot := NewSchedulerSnapshotService(
+		&gatewayProfitSnapshotCache{account: &Account{ID: selected.ID, UpdatedAt: now.Add(-time.Minute)}},
+		nil,
+		gatewayProfitAccountRepo{err: errors.New("database unavailable")},
+		nil,
+		nil,
+	)
+
+	latest, vetoed, reason := profitControlVetoLatest(context.Background(), selected, snapshot)
+	require.True(t, vetoed)
+	require.Equal(t, openAIProfitFilterReasonLaneUnavailable, reason)
+	require.Same(t, selected, latest)
+}
+
+func TestGatewayProfitControlTerminalRefreshAuthoritativeLaneIgnoresMatchingStaleCache(t *testing.T) {
+	proxyID := int64(380)
+	now := time.Now().UTC()
+	lane := AccountProxyLane{
+		ID: 381, AccountID: 157, ProxyID: &proxyID,
+		Transport: AccountProxyLaneTransportProxy,
+		Status:    AccountProxyLaneStatusActive, Schedulable: true, Weight: 1, Concurrency: 3,
+		CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+		Proxy: &Proxy{ID: proxyID, Protocol: "http", Host: "old.example", Port: 8080, Status: StatusActive},
+	}
+	selected := &Account{
+		ID: 157, UpdatedAt: now,
+		Concurrency: 3, ProxyLanes: []AccountProxyLane{lane}, SelectedProxyLane: &lane,
+	}
+
+	// Redis and the request-local selection deliberately contain the same
+	// timestamps and an otherwise valid lane.  A cache-only terminal check
+	// would accept this payload forever when account.updated_at did not move
+	// with a lane edit.  The authoritative row has since paused the lane.
+	cached := *selected
+	cachedLane := lane
+	cached.ProxyLanes = []AccountProxyLane{cachedLane}
+	databaseLane := lane
+	databaseLane.Status = AccountProxyLaneStatusPaused
+	database := &Account{ID: selected.ID, UpdatedAt: now, ProxyLanes: []AccountProxyLane{databaseLane}}
+	cacheCalls, repoCalls := 0, 0
+	snapshot := NewSchedulerSnapshotService(
+		&gatewayProfitSnapshotCache{account: &cached, calls: &cacheCalls},
+		nil,
+		gatewayProfitAccountRepo{account: database, calls: &repoCalls},
+		nil,
+		nil,
+	)
+
+	latest, vetoed, reason := profitControlVetoLatest(context.Background(), selected, snapshot)
+	require.True(t, vetoed)
+	require.Equal(t, openAIProfitFilterReasonLaneUnavailable, reason)
+	require.Equal(t, 0, cacheCalls, "concrete lane terminal checks must bypass a potentially stale cache")
+	require.Equal(t, 1, repoCalls, "authoritative lane validation should use one repository read")
+	require.NotNil(t, latest)
+	require.Nil(t, latest.SelectedProxyLane)
+	require.Nil(t, latest.ProxyID)
+	require.Nil(t, latest.Proxy)
 }
 
 // 选号结果携带门：门安装在调度栈局部 ctx 上，handler 必须经

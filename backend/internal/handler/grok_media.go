@@ -110,6 +110,27 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		return
 	}
 
+	// A directly-bound API key may use an OpenAI image group as its primary
+	// route and a Grok group as a media-only fallback.  The regular gateway
+	// failover loop already knows how to mutate the effective key/group; media
+	// requests must select that route before billing and account scheduling so
+	// the platform gate, quota platform, and video ownership binding all agree.
+	mediaRouteAttempts := make(map[int64]struct{}, len(apiKey.GroupRoutes)+1)
+	if apiKey.GroupID != nil {
+		mediaRouteAttempts[*apiKey.GroupID] = struct{}{}
+	}
+	mediaRouteSwitched := false
+	if apiKey.Group != nil && apiKey.Group.Platform != service.PlatformGrok && apiKey.Group.Platform != service.PlatformComposite {
+		switched, switchErr := switchToGrokMediaGroupRoute(c, h.apiKeyService, apiKey, mediaRouteAttempts)
+		if switchErr != nil {
+			reqLog := requestLogger(c, "handler.openai_gateway.grok_media", zap.Int64("api_key_id", apiKey.ID))
+			reqLog.Warn("grok_media.group_route_switch_failed", zap.Error(switchErr))
+			h.errorResponse(c, http.StatusBadGateway, "api_error", "Failed to select Grok media route")
+			return
+		}
+		mediaRouteSwitched = switched && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformGrok
+	}
+
 	reqLog = reqLog.With(zap.String("model", requestModel))
 	setOpsRequestContext(c, requestModel, false)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
@@ -140,6 +161,16 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	if mediaRouteSwitched {
+		var subscriptionErr error
+		subscription, subscriptionErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
+		if subscriptionErr != nil {
+			reqLog.Warn("grok_media.group_route_subscription_load_failed", zap.Error(subscriptionErr))
+			h.errorResponse(c, http.StatusBadGateway, "api_error", "Failed to load Grok media route subscription")
+			return
+		}
+		c.Set(string(middleware2.ContextKeySubscription), subscription)
+	}
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 
 	userReleaseFunc, acquired := h.acquireResponsesUserSlot(c, subject.UserID, subject.Concurrency, false, &streamStarted, reqLog)
@@ -226,6 +257,25 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				zap.Error(err),
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
+			if len(failedAccountIDs) == 0 {
+				switched, switchErr := switchToGrokMediaGroupRoute(c, h.apiKeyService, apiKey, mediaRouteAttempts)
+				if switchErr != nil {
+					reqLog.Warn("grok_media.group_route_switch_failed", zap.Error(switchErr))
+				} else if switched && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformGrok {
+					subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
+					if switchErr == nil {
+						switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+					}
+					if switchErr != nil {
+						reqLog.Warn("grok_media.group_route_subscription_load_failed", zap.Error(switchErr))
+						h.errorResponse(c, http.StatusBadGateway, "api_error", "Failed to load Grok media route subscription")
+						return
+					}
+					failedAccountIDs = make(map[int64]struct{})
+					lastFailoverErr = nil
+					continue
+				}
+			}
 			if endpoint.IsGenerationRequest() && errors.Is(err, service.ErrNoAvailableAccounts) &&
 				(len(failedAccountIDs) == 0 || (mediaEligibilityRejected && lastFailoverErr == nil)) {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
@@ -302,6 +352,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		setOpsSelectedAccount(c, account.ID, account.Platform)
 
 		accountReleaseFunc, slotResult := h.acquireResponsesAccountSlot(c, apiKey.GroupID, sessionHash, selection, false, &streamStarted, reqLog)
+		if slotResult == openAISlotAcquireLaneUnavailable {
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
 		if slotResult == openAISlotAcquireProfitVetoed {
 			// 媒体路径已显式豁免利润门（suppress 标记），此分支仅防御性兜底，
 			// 同样受否决上限约束。

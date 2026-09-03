@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -15,6 +16,11 @@ import (
 )
 
 const stickySessionPrefix = "sticky_session:"
+
+// laneStickySessionPrefix intentionally uses a separate namespace from the
+// legacy account-only key.  This lets the lane feature roll out gradually and
+// keeps old readers/writers completely unaffected.
+const laneStickySessionPrefix = "sub2api:sticky:lane:"
 const openAIResponsesSessionWindowPrefix = "openai_responses_session_window:"
 const liveCallPrefix = "live:call:"
 
@@ -69,6 +75,125 @@ func (c *gatewayCache) DeleteSessionAccountID(ctx context.Context, groupID int64
 	key := buildSessionKey(groupID, sessionHash)
 	return c.rdb.Del(ctx, key).Err()
 }
+
+// buildLaneStickySessionKey scopes a lane binding by group, model, and
+// session.  Model/session are escaped only for the Redis delimiter; ordinary
+// model names and hashes remain human-readable for operational inspection.
+func buildLaneStickySessionKey(groupID int64, model, sessionHash string) string {
+	return fmt.Sprintf("%s%d:%s:%s", laneStickySessionPrefix, groupID,
+		escapeLaneStickyKeyPart(model), escapeLaneStickyKeyPart(sessionHash))
+}
+
+func escapeLaneStickyKeyPart(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	// Keep the key delimiter unambiguous while avoiding URL escaping (which
+	// would make common model IDs needlessly difficult to grep in Redis).
+	value = strings.ReplaceAll(value, "%", "%25")
+	value = strings.ReplaceAll(value, ":", "%3A")
+	return value
+}
+
+func validateLaneStickyBindingKey(model, sessionHash string) error {
+	if strings.TrimSpace(sessionHash) == "" {
+		return errors.New("lane sticky session hash is required")
+	}
+	if strings.TrimSpace(model) == "" {
+		return errors.New("lane sticky model is required")
+	}
+	return nil
+}
+
+func validateLaneStickyBinding(binding service.LaneStickyBinding) error {
+	if binding.AccountID <= 0 {
+		return errors.New("lane sticky account id must be positive")
+	}
+	if binding.LaneID <= 0 {
+		return errors.New("lane sticky lane id must be positive")
+	}
+	return nil
+}
+
+// GetSessionLane retrieves the optional account+lane binding.  A missing key
+// is reported through the service-level sentinel rather than redis.Nil so
+// scheduler code remains independent of the Redis client.
+func (c *gatewayCache) GetSessionLane(ctx context.Context, groupID int64, model, sessionHash string) (service.LaneStickyBinding, error) {
+	if c == nil || c.rdb == nil {
+		return service.LaneStickyBinding{}, errors.New("gateway cache unavailable")
+	}
+	if err := validateLaneStickyBindingKey(model, sessionHash); err != nil {
+		return service.LaneStickyBinding{}, err
+	}
+	raw, err := c.rdb.Get(ctx, buildLaneStickySessionKey(groupID, model, sessionHash)).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return service.LaneStickyBinding{}, service.ErrLaneStickySessionNotFound
+		}
+		return service.LaneStickyBinding{}, err
+	}
+	var binding service.LaneStickyBinding
+	if err := json.Unmarshal(raw, &binding); err != nil {
+		return service.LaneStickyBinding{}, fmt.Errorf("decode lane sticky binding: %w", err)
+	}
+	if err := validateLaneStickyBinding(binding); err != nil {
+		return service.LaneStickyBinding{}, fmt.Errorf("invalid lane sticky binding: %w", err)
+	}
+	return binding, nil
+}
+
+// SetSessionLane stores an account+lane binding using one compact JSON value.
+// Credentials and mutable proxy settings are intentionally not part of the
+// payload; they are rehydrated from the account snapshot before forwarding.
+func (c *gatewayCache) SetSessionLane(ctx context.Context, groupID int64, model, sessionHash string, binding service.LaneStickyBinding, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("gateway cache unavailable")
+	}
+	if err := validateLaneStickyBindingKey(model, sessionHash); err != nil {
+		return err
+	}
+	if err := validateLaneStickyBinding(binding); err != nil {
+		return err
+	}
+	if ttl <= 0 {
+		return errors.New("lane sticky ttl must be positive")
+	}
+	payload, err := json.Marshal(binding)
+	if err != nil {
+		return fmt.Errorf("encode lane sticky binding: %w", err)
+	}
+	return c.rdb.Set(ctx, buildLaneStickySessionKey(groupID, model, sessionHash), payload, ttl).Err()
+}
+
+// RefreshSessionLaneTTL refreshes an existing lane binding. Redis Expire is
+// intentionally used without Set so a stale/missing binding is not recreated.
+func (c *gatewayCache) RefreshSessionLaneTTL(ctx context.Context, groupID int64, model, sessionHash string, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("gateway cache unavailable")
+	}
+	if err := validateLaneStickyBindingKey(model, sessionHash); err != nil {
+		return err
+	}
+	if ttl <= 0 {
+		return errors.New("lane sticky ttl must be positive")
+	}
+	return c.rdb.Expire(ctx, buildLaneStickySessionKey(groupID, model, sessionHash), ttl).Err()
+}
+
+// DeleteSessionLane removes only the lane-aware key; the legacy account-only
+// sticky key remains untouched for compatibility and for non-lane callers.
+func (c *gatewayCache) DeleteSessionLane(ctx context.Context, groupID int64, model, sessionHash string) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("gateway cache unavailable")
+	}
+	if err := validateLaneStickyBindingKey(model, sessionHash); err != nil {
+		return err
+	}
+	return c.rdb.Del(ctx, buildLaneStickySessionKey(groupID, model, sessionHash)).Err()
+}
+
+var _ service.LaneStickyCache = (*gatewayCache)(nil)
 
 var claimOpenAIResponsesSessionWindowScript = redis.NewScript(`
 local previous = redis.call('GET', KEYS[1])

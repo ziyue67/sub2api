@@ -98,7 +98,7 @@ func RegisterGatewayRoutes(
 		// Video status/content lookups below already allow Composite groups; keep
 		// task creation aligned so composite keys that route to Grok accounts can
 		// submit video generation jobs.
-		if platform := getGroupPlatform(c); platform == service.PlatformGrok || platform == service.PlatformComposite {
+		if grokMediaRouteAllowed(c) {
 			h.OpenAIGateway.GrokVideoGeneration(c)
 			return
 		}
@@ -114,7 +114,7 @@ func RegisterGatewayRoutes(
 		// Video status requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler and let scheduler/account selection enforce capacity.
-		if getGroupPlatform(c) == service.PlatformGrok || getGroupPlatform(c) == service.PlatformComposite {
+		if grokMediaRouteAllowed(c) {
 			h.OpenAIGateway.GrokVideoStatus(c)
 			return
 		}
@@ -130,7 +130,7 @@ func RegisterGatewayRoutes(
 		// Video content requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler just like video status lookups.
-		if getGroupPlatform(c) == service.PlatformGrok || getGroupPlatform(c) == service.PlatformComposite {
+		if grokMediaRouteAllowed(c) {
 			h.OpenAIGateway.GrokVideoContent(c)
 			return
 		}
@@ -143,7 +143,7 @@ func RegisterGatewayRoutes(
 		})
 	}
 	videoEditHandler := func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformGrok {
+		if grokMediaRouteAllowed(c) {
 			h.OpenAIGateway.GrokVideoEdit(c)
 			return
 		}
@@ -151,7 +151,7 @@ func RegisterGatewayRoutes(
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
 	}
 	videoExtensionHandler := func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformGrok {
+		if grokMediaRouteAllowed(c) {
 			h.OpenAIGateway.GrokVideoExtension(c)
 			return
 		}
@@ -524,6 +524,19 @@ func getGroupPlatform(c *gin.Context) string {
 		}
 	}
 	return apiKey.Group.Platform
+}
+
+// grokMediaRouteAllowed keeps the platform gate strict for ordinary keys while
+// allowing a directly-bound image key with configured group routes to reach
+// the media handler. The handler then selects the Grok route before billing and
+// account scheduling. Keys without routes retain the historical 404 gate.
+func grokMediaRouteAllowed(c *gin.Context) bool {
+	platform := getGroupPlatform(c)
+	if platform == service.PlatformGrok || platform == service.PlatformComposite {
+		return true
+	}
+	apiKey, ok := middleware.GetAPIKeyFromContext(c)
+	return ok && apiKey != nil && len(apiKey.GroupRoutes) > 0
 }
 
 func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver) gin.HandlerFunc {

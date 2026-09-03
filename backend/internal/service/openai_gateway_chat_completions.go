@@ -71,6 +71,11 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	defaultMappedModel string,
 	compatPromptCacheTenantIsolated bool,
 ) (*OpenAIForwardResult, error) {
+	// Carry the scheduler-selected egress through every compatibility branch,
+	// including recursive identity-recovery retries.  The inner helper is the
+	// single execution path, so lane context cannot be lost when the public
+	// wrapper is bypassed.
+	ctx = WithSelectedAccountProxyLane(ctx, account)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
@@ -355,7 +360,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	// 7. Send request
 	proxyURL := ""
 	if account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
+		proxyURL = AccountProxyURL(account)
 	}
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	if err != nil {

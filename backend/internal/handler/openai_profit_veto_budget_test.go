@@ -3,8 +3,23 @@ package handler
 import (
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOpenAISlotAcquireLaneUnavailableIsNotProfitVeto(t *testing.T) {
+	require.Equal(t, openAISlotAcquireLaneUnavailable,
+		openAISlotAcquireResultForVeto("proxy_lane_unavailable"))
+	require.Equal(t, openAISlotAcquireProfitVetoed,
+		openAISlotAcquireResultForVeto("profit_threshold"))
+	require.True(t, service.IsProxyLaneUnavailableReason("proxy_lane_unavailable"))
+	require.False(t, service.IsProxyLaneUnavailableReason("profit_threshold"))
+
+	state := NewFailoverState(3, false)
+	state.RecordLaneUnavailable(42)
+	require.Contains(t, state.FailedAccountIDs, int64(42))
+	require.Zero(t, state.ProfitVetoCount(), "lane lifecycle rejection must not consume profit-veto budget")
+}
 
 // TestRecordOpenAIProfitVetoBounded 钉死 OpenAI 侧选号循环的利润否决预算：
 // 账号被加入排除集，且第 maxProfitVetoAttempts 次否决返回 false 要求终止。
