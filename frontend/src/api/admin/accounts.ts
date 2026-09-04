@@ -330,7 +330,11 @@ export async function batchTestAccounts(
     for (const block of buffer.split('\n\n').slice(0, -1)) {
       const line = block.split('\n').find(item => item.startsWith('data: '))
       if (!line) continue
-      onEvent(JSON.parse(line.slice(6)) as BatchTestAccountEvent)
+      try {
+        onEvent(JSON.parse(line.slice(6)) as BatchTestAccountEvent)
+      } catch {
+        continue
+      }
     }
     buffer = buffer.includes('\n\n') ? buffer.slice(buffer.lastIndexOf('\n\n') + 2) : buffer
     if (done) break

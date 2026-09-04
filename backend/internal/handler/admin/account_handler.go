@@ -1196,25 +1196,39 @@ func (h *AccountHandler) BatchTest(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Status(http.StatusOK)
 
+	ctx := c.Request.Context()
 	var writeMu sync.Mutex
-	writeEvent := func(event batchTestAccountEvent) {
+	writeEvent := func(event batchTestAccountEvent) bool {
+		if ctx.Err() != nil {
+			return false
+		}
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		if ctx.Err() != nil {
+			return false
+		}
 		payload, _ := json.Marshal(event)
 		_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", payload)
 		c.Writer.Flush()
+		return true
 	}
 	writeEvent(batchTestAccountEvent{Type: "batch_start", Total: len(accountIDs), ModelID: modelID})
 
-	var wg sync.WaitGroup
+	const maxConcurrency = 5
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrency)
 	completed := 0
 	var completedMu sync.Mutex
 	for _, accountID := range accountIDs {
+		if gctx.Err() != nil {
+			break
+		}
 		accountID := accountID
 		account := accountsByID[accountID]
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		g.Go(func() error {
+			if gctx.Err() != nil {
+				return nil
+			}
 			name, platform := "", ""
 			if account != nil {
 				name, platform = account.Name, account.Platform
@@ -1223,12 +1237,12 @@ func (h *AccountHandler) BatchTest(c *gin.Context) {
 
 			result := &service.AccountTestResult{Status: "failed", ErrorMessage: "account not found"}
 			if account != nil {
-				if tested, testErr := h.accountTestService.RunTestBackgroundDetailed(c.Request.Context(), accountID, modelID); testErr != nil {
+				if tested, testErr := h.accountTestService.RunTestBackgroundDetailed(gctx, accountID, modelID); testErr != nil {
 					result.ErrorMessage = testErr.Error()
 				} else {
 					result = tested
 					if result.Status == "success" && h.rateLimitService != nil {
-						if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(c.Request.Context(), accountID); recoverErr != nil {
+						if _, recoverErr := h.rateLimitService.RecoverAccountAfterSuccessfulTest(gctx, accountID); recoverErr != nil {
 							log.Printf("[WARN] Failed to recover account %d after batch test: %v", accountID, recoverErr)
 						}
 					}
@@ -1245,10 +1259,13 @@ func (h *AccountHandler) BatchTest(c *gin.Context) {
 				Status:        result.Status, FirstByteLatencyMs: result.FirstByteLatencyMs, LatencyMs: result.LatencyMs,
 				Error: result.ErrorMessage, Completed: current, Total: len(accountIDs),
 			})
-		}()
+			return nil
+		})
 	}
-	wg.Wait()
-	writeEvent(batchTestAccountEvent{Type: "batch_complete", Completed: len(accountIDs), Total: len(accountIDs)})
+	_ = g.Wait()
+	if ctx.Err() == nil {
+		writeEvent(batchTestAccountEvent{Type: "batch_complete", Completed: len(accountIDs), Total: len(accountIDs)})
+	}
 }
 
 // RecoverState handles unified recovery of recoverable account runtime state.

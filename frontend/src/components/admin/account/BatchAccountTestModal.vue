@@ -196,7 +196,8 @@ const handleEvent = (event: BatchTestAccountEvent) => {
 const startTest = async () => {
   if (!selectedModel.value) return
   const ids = rows.value.filter(row => row.supportedModels?.includes(selectedModel.value)).map(row => row.id)
-  rows.value.forEach(row => { if (!ids.includes(row.id)) row.status = 'skipped' })
+  const selectedIDSet = new Set(ids)
+  rows.value.forEach(row => { if (!selectedIDSet.has(row.id)) row.status = 'skipped' })
   completedCount.value = 0
   running.value = true
   try {
