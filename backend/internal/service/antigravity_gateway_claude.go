@@ -147,6 +147,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 			logBody, maxBytes := s.getLogConfig()
 			upstreamDetail := s.getUpstreamErrorDetail(respBody)
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				ProxyID:            opsUpstreamProxyID(account),
+				ProxyName:          opsUpstreamProxyName(account),
 				Platform:           account.Platform,
 				AccountID:          account.ID,
 				AccountName:        account.Name,
@@ -204,6 +206,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				})
 				if retryErr != nil {
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						ProxyID:            opsUpstreamProxyID(account),
+						ProxyName:          opsUpstreamProxyName(account),
 						Platform:           account.Platform,
 						AccountID:          account.ID,
 						AccountName:        account.Name,
@@ -243,6 +247,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					retryUpstreamDetail = truncateString(string(retryBody), maxBytes)
 				}
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(account),
+					ProxyName:          opsUpstreamProxyName(account),
 					Platform:           account.Platform,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
@@ -279,6 +285,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 			errMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 			if isThinkingBudgetConstraintError(errMsg) && s.settingService.IsBudgetRectifierEnabled(ctx) {
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(account),
+					ProxyName:          opsUpstreamProxyName(account),
 					Platform:           account.Platform,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
@@ -360,6 +368,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					logger.LegacyPrintf("service.antigravity_gateway", "%s status=400 prompt_too_long=true upstream_message=%q request_id=%s body=%s", prefix, upstreamMsg, resp.Header.Get("x-request-id"), truncateForLog(respBody, maxBytes))
 				}
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(account),
+					ProxyName:          opsUpstreamProxyName(account),
 					Platform:           account.Platform,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
@@ -386,6 +396,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					upstreamDetail := s.getUpstreamErrorDetail(respBody)
 					log.Printf("%s status=400 google_config_error failover=true upstream_message=%q account=%d", prefix, upstreamMsg, account.ID)
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						ProxyID:            opsUpstreamProxyID(account),
+						ProxyName:          opsUpstreamProxyName(account),
 						Platform:           account.Platform,
 						AccountID:          account.ID,
 						AccountName:        account.Name,
@@ -404,6 +416,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 				upstreamDetail := s.getUpstreamErrorDetail(respBody)
 				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(account),
+					ProxyName:          opsUpstreamProxyName(account),
 					Platform:           account.Platform,
 					AccountID:          account.ID,
 					AccountName:        account.Name,
