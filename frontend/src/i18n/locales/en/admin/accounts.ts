@@ -497,6 +497,7 @@ export default {
         refreshToken: 'Refresh Token',
         probeUpstreamBilling: 'Probe Upstream Rate',
         testConnection: 'Batch Test Connection',
+        batchTestModels: 'Batch Test Models',
         resetStatusSuccess: 'Successfully reset {count} account(s) status',
         refreshTokenSuccess: 'Successfully refreshed {count} account(s) token',
         partialSuccess: 'Partially completed: {success} succeeded, {failed} failed'
