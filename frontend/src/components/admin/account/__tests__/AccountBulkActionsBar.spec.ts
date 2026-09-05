@@ -47,4 +47,20 @@ describe('AccountBulkActionsBar', () => {
     await button!.trigger('click')
     expect(wrapper.emitted('probe-upstream-billing')).toHaveLength(1)
   })
+
+  it('keeps batch model testing visible for selected accounts', async () => {
+    const wrapper = mount(AccountBulkActionsBar, {
+      props: {
+        selectedIds: [1, 2],
+        totalResults: 45,
+        selectingAll: false,
+        allResultsSelected: false
+      }
+    })
+
+    const button = wrapper.get('[data-testid="batch-account-test"]')
+    expect(button.text()).toContain('admin.accounts.bulkActions.batchTestModels')
+    await button.trigger('click')
+    expect(wrapper.emitted('test-connection')).toHaveLength(1)
+  })
 })
