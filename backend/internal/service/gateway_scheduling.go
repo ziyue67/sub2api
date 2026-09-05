@@ -606,7 +606,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					"rpm_ok", rpmOK,
 				)
 
-				if !clearSticky && platformOK && profitOK && modelSupported && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
+				// A sticky binding must satisfy the same channel-pricing restriction
+				// as load-aware candidates. Otherwise a session pinned to a
+				// disallowed account bypasses RestrictModels and returns the wrong
+				// upstream model.
+				if !clearSticky && platformOK && profitOK && modelSupported && channelOK && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
 					laneReady := s.prepareGatewayLaneHint(ctx, groupID, requestedModel, sessionHash, account, stickyLaneBinding)
 					if !laneReady {
 						slog.Debug("sticky.layer1_5_no_routing_lane_unavailable", "account_id", accountID)
