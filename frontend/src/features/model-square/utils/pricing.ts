@@ -38,3 +38,18 @@ export function fullPriceItems(pricing: UserSupportedModelPricing | null) {
     { label: '图片输出', value: pricing?.image_output_price },
   ]
 }
+
+export function getPerMillionTokensPrice(value: number | null | undefined): number | null {
+  if (value == null) return null
+  return value * PER_MILLION_TOKENS
+}
+
+export function formatMultiplier(multiplier: number | null | undefined): string {
+  if (multiplier == null) return ''
+  if (multiplier === 1) return '原价'
+  if (multiplier < 1) {
+    const discount = (multiplier * 10).toFixed(1).replace(/\.0$/, '')
+    return `${discount} 折`
+  }
+  return `${multiplier}x`
+}

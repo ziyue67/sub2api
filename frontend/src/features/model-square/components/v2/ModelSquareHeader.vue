@@ -9,6 +9,20 @@
         模型广场
       </h1>
       <p class='mt-2 text-base text-gray-500 dark:text-dark-400 leading-relaxed'>汇聚所有可用模型、渠道与分组定价，一键对比并快速选择最优接入方案。</p>
+      <div class="mt-4 flex flex-wrap items-center gap-6 text-xs text-gray-500 dark:text-dark-400 font-medium">
+        <div class="flex items-center gap-2">
+          <span class="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>全部可用模型：<strong class="font-bold text-gray-800 dark:text-gray-200 font-mono">{{ totalModels }}</strong> 款</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <Icon name="cube" size="xs" class="text-indigo-500" />
+          <span>聚合渠道：<strong class="font-bold text-gray-800 dark:text-gray-200 font-mono">{{ totalChannels }}</strong> 个</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <Icon name="sparkles" size="xs" class="text-amber-500" />
+          <span>支持按 1M Token 及按次计费透传</span>
+        </div>
+      </div>
     </div>
     <div class='flex items-center gap-3'>
       <div class='relative group flex-1 lg:flex-none'>
@@ -55,6 +69,8 @@ interface Props {
   search: string
   loading: boolean
   isDark: boolean
+  totalModels?: number
+  totalChannels?: number
 }
 
 const props = defineProps<Props>()

@@ -7,44 +7,115 @@
       :class='isDark ? "dark bg-[#0a0c10]" : "bg-slate-50"'
     >
       <div class='mx-auto w-full max-w-[1600px] px-4 py-10 sm:px-6 lg:px-8'>
+        <!-- 顶栏介绍与统计 -->
         <ModelSquareHeader
           :search='search'
           :loading='loading'
           :is-dark='isDark'
+          :total-models='modelGroups.length'
+          :total-channels='totalChannelsCount'
           @update:search='setSearch'
           @refresh='loadModels'
           @toggle-dark='isDark = !isDark'
         />
 
-        <ModelSquarePlatformFilter
-          :model-value='platform'
-          :platforms='platforms'
-          @update:model-value='setPlatform'
-        />
+        <!-- 移动端筛选抽屉按钮 -->
+        <div class="mb-4 lg:hidden flex justify-end">
+          <button
+            type="button"
+            class="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white/90 px-4 py-2 text-xs font-bold text-gray-700 shadow-sm dark:border-dark-700 dark:bg-dark-900 dark:text-gray-200"
+            @click="mobileFilterOpen = !mobileFilterOpen"
+          >
+            <Icon name="filter" size="xs" class="text-indigo-500" />
+            <span>{{ mobileFilterOpen ? '收起筛选' : '展开条件筛选' }}</span>
+          </button>
+        </div>
 
-        <ModelSquareHint />
-
-        <ModelSquareLoading v-if='loading' />
-        <ModelSquareEmpty v-else-if='filteredModels.length === 0' />
-
-        <div v-else class='model-square-scroll-region' tabindex='0'>
-          <div class='model-square-scroll-content grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-8 items-start'>
-            <ModelSquareModelIndex
-              v-model='activeModelKey'
-              :models='filteredModels'
-              :search='debouncedSearch'
+        <!-- 主区域布局：左侧筛选 + 右侧工具栏与列表/卡片 -->
+        <div class="grid grid-cols-1 lg:grid-cols-[280px_1fr] xl:grid-cols-[300px_1fr] gap-6 items-start">
+          <!-- 左侧边栏筛选：桌面端粘顶，移动端可折叠 -->
+          <div :class="mobileFilterOpen ? 'block' : 'hidden lg:block'" class="lg:sticky lg:top-6 z-20">
+            <ModelSquareSidebarFilter
+              :platforms="platforms"
+              :platform-counts="platformCounts"
+              :selected-platforms="selectedPlatforms"
+              :selected-capabilities="selectedCapabilities"
+              :price-range="priceRange"
+              :context-range="contextRange"
+              :billing-type="billingType"
+              @toggle-platform="togglePlatform"
+              @set-platforms="selectedPlatforms = $event"
+              @toggle-capability="toggleCapability"
+              @set-capabilities="selectedCapabilities = $event"
+              @update:price-range="priceRange = $event"
+              @update:context-range="contextRange = $event"
+              @update:billing-type="billingType = $event"
+              @reset="resetFilters"
             />
-            <div class='space-y-8'>
-              <ModelSquareModelCard
-                v-for='model in filteredModels'
-                :key='model.key'
-                :model='model'
-                :user-group-rates='userGroupRates'
+          </div>
+
+          <!-- 右侧内容区 -->
+          <div class="min-w-0 space-y-4">
+            <!-- 顶部搜索工具栏与视图模式切换 -->
+            <ModelSquareToolbar
+              :search="search"
+              :loading="loading"
+              :total-count="modelGroups.length"
+              :filtered-count="filteredModels.length"
+              :sort-option="sortOption"
+              :view-mode="viewMode"
+              :selected-platforms="selectedPlatforms"
+              :selected-capabilities="selectedCapabilities"
+              :price-range="priceRange"
+              :context-range="contextRange"
+              :billing-type="billingType"
+              @update:search="setSearch"
+              @update:sort-option="sortOption = $event"
+              @update:view-mode="viewMode = $event"
+              @remove-platform="togglePlatform"
+              @remove-capability="toggleCapability"
+              @reset-price-range="priceRange = 'all'"
+              @reset-all="resetFilters"
+              @refresh="loadModels"
+            />
+
+            <ModelSquareHint />
+
+            <!-- 加载与空状态 -->
+            <ModelSquareLoading v-if="loading" />
+            <ModelSquareEmpty v-else-if="filteredModels.length === 0" />
+
+            <!-- 卡片网格视图 (OpenModel Style) -->
+            <div
+              v-else-if="viewMode === 'grid'"
+              class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
+            >
+              <ModelSquareGridCard
+                v-for="model in filteredModels"
+                :key="model.key"
+                :model="model"
+                :user-group-rates="userGroupRates"
+                @view-details="selectedModel = $event"
               />
             </div>
+
+            <!-- 紧凑表格对比视图 (OpenModel Style) -->
+            <ModelSquareTable
+              v-else-if="viewMode === 'table'"
+              :models="filteredModels"
+              :user-group-rates="userGroupRates"
+              @view-details="selectedModel = $event"
+            />
           </div>
         </div>
       </div>
+
+      <!-- 模型定价与代码详情弹窗 -->
+      <ModelSquareDetailModal
+        :model="selectedModel"
+        :user-group-rates="userGroupRates"
+        @close="selectedModel = null"
+      />
 
       <button
         v-show='showBackToTop'
@@ -61,7 +132,7 @@
 </template>
 
 <script setup lang='ts'>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useModelSquare } from '@/features/model-square/composables/useModelSquare'
@@ -72,18 +143,52 @@ import ModelSquareEmpty from '@/features/model-square/components/ModelSquareEmpt
 import ModelSquareHeader from '@/features/model-square/components/v2/ModelSquareHeader.vue'
 import ModelSquareHint from '@/features/model-square/components/ModelSquareHint.vue'
 import ModelSquareLoading from '@/features/model-square/components/ModelSquareLoading.vue'
-import ModelSquarePlatformFilter from '@/features/model-square/components/ModelSquarePlatformFilter.vue'
-import ModelSquareModelCard from '@/features/model-square/components/v2/ModelSquareModelCard.vue'
-import ModelSquareModelIndex from '@/features/model-square/components/v2/ModelSquareModelIndex.vue'
+import ModelSquareSidebarFilter from '@/features/model-square/components/ModelSquareSidebarFilter.vue'
+import ModelSquareToolbar from '@/features/model-square/components/ModelSquareToolbar.vue'
+import ModelSquareGridCard from '@/features/model-square/components/ModelSquareGridCard.vue'
+import ModelSquareTable from '@/features/model-square/components/ModelSquareTable.vue'
+import ModelSquareDetailModal from '@/features/model-square/components/ModelSquareDetailModal.vue'
+import type { ModelSquareModel } from '@/features/model-square/types'
 
 const { loading, userGroupRates, platforms, modelGroups, loadModels } = useModelSquare()
 const { search, debouncedSearch, setSearch } = useModelSquareSearch()
-const { platform, setPlatform, filteredModels } = useModelSquareFilters({
+const {
+  selectedPlatforms,
+  selectedCapabilities,
+  priceRange,
+  contextRange,
+  billingType,
+  sortOption,
+  viewMode,
+  filteredModels,
+  togglePlatform,
+  toggleCapability,
+  resetFilters,
+} = useModelSquareFilters({
   modelGroups,
   search: debouncedSearch,
 })
 
-const activeModelKey = ref<string | null>(null)
+const selectedModel = ref<ModelSquareModel | null>(null)
+const mobileFilterOpen = ref(false)
+
+const platformCounts = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const model of modelGroups.value) {
+    counts[model.platform] = (counts[model.platform] || 0) + 1
+  }
+  return counts
+})
+
+const totalChannelsCount = computed(() => {
+  const channels = new Set<string>()
+  for (const m of modelGroups.value) {
+    for (const c of m.channels) {
+      channels.add(c.key)
+    }
+  }
+  return channels.size
+})
 
 // 局部暗色：只影响本页容器，不污染 html 根元素
 const isDark = ref(true)

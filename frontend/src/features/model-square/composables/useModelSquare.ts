@@ -4,6 +4,8 @@ import userGroupsAPI from '@/api/groups'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { ModelSquareChannel, ModelSquareModel } from '../types'
+import { inferCapabilities, inferContextWindow } from '../utils/capabilities'
+import { isRequestBilling } from '../utils/pricing'
 
 function groupChannels(entries: ModelSquareEntry[]): ModelSquareChannel[] {
   const channelsByKey = new Map<string, ModelSquareChannel>()
@@ -56,6 +58,54 @@ export function useModelSquare() {
     }
     return Array.from(modelsByKey.values())
       .map((model) => ({ ...model, channels: groupChannels(model.entries) }))
+      .map((model) => {
+        // Calculate pricing stats across channels and groups
+        const allInputPrices: number[] = []
+        const allOutputPrices: number[] = []
+        const allCacheWritePrices: number[] = []
+        const allCacheReadPrices: number[] = []
+        const multipliers: number[] = []
+        let isReq = false
+        let hasIntervals = false
+        let accounts = 0
+
+        for (const entry of model.entries) {
+          accounts += entry.account_count || 0
+          const effectiveMultiplier = userGroupRates.value[entry.group.id] ?? entry.group.rate_multiplier
+          if (effectiveMultiplier != null) {
+            multipliers.push(effectiveMultiplier)
+          }
+          if (entry.pricing) {
+            if (isRequestBilling(entry.pricing)) isReq = true
+            if (entry.pricing.intervals && entry.pricing.intervals.length > 0) hasIntervals = true
+            if (entry.pricing.input_price != null) allInputPrices.push(entry.pricing.input_price * (effectiveMultiplier ?? 1))
+            if (entry.pricing.output_price != null) allOutputPrices.push(entry.pricing.output_price * (effectiveMultiplier ?? 1))
+            if (entry.pricing.cache_write_price != null) allCacheWritePrices.push(entry.pricing.cache_write_price * (effectiveMultiplier ?? 1))
+            if (entry.pricing.cache_read_price != null) allCacheReadPrices.push(entry.pricing.cache_read_price * (effectiveMultiplier ?? 1))
+          }
+        }
+
+        const firstPricing = model.channels.find((c) => c.pricing != null)?.pricing
+        const { tokens: contextTokens, label: contextWindow } = inferContextWindow(model.name)
+        const capabilities = inferCapabilities(model.name, firstPricing)
+
+        return {
+          ...model,
+          contextTokens,
+          contextWindow,
+          capabilities,
+          minInputPrice: allInputPrices.length > 0 ? Math.min(...allInputPrices) : null,
+          maxInputPrice: allInputPrices.length > 0 ? Math.max(...allInputPrices) : null,
+          minOutputPrice: allOutputPrices.length > 0 ? Math.min(...allOutputPrices) : null,
+          maxOutputPrice: allOutputPrices.length > 0 ? Math.max(...allOutputPrices) : null,
+          minCacheWritePrice: allCacheWritePrices.length > 0 ? Math.min(...allCacheWritePrices) : null,
+          minCacheReadPrice: allCacheReadPrices.length > 0 ? Math.min(...allCacheReadPrices) : null,
+          isRequestBilling: isReq,
+          hasIntervals,
+          bestMultiplier: multipliers.length > 0 ? Math.min(...multipliers) : null,
+          totalAccounts: accounts,
+        }
+      })
       .sort((a, b) => a.platform.localeCompare(b.platform) || a.name.localeCompare(b.name))
   })
 
