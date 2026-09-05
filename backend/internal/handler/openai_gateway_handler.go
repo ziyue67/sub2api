@@ -2376,8 +2376,8 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		if selection.WaitPlan.LaneID > 0 {
 			slotType = "lane"
 		}
-		status, errType, message := concurrencyErrorResponse(err, slotType)
-		writeError(status, errType, message)
+		status, errType, code, message := concurrencyErrorResponse(err, slotType)
+		writeError(status, errType, code, message)
 		return nil, openAISlotAcquireFailed
 	}
 
