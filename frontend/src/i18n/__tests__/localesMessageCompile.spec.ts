@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { baseCompile } from '@intlify/message-compiler'
-
 import en from '../locales/en'
 import zh from '../locales/zh'
 
@@ -37,5 +36,27 @@ describe('locale messages compile', () => {
     const errors: string[] = []
     collectCompileErrors(messages, locale, errors)
     expect(errors).toEqual([])
+  })
+
+  it.each([
+    ['zh', zh],
+    ['en', en]
+  ] as const)('%s keeps literal at-signs escaped in settings examples', (locale, messages) => {
+    const examples = [
+      messages.admin.settings.registration.emailSuffixWhitelistHint,
+      messages.admin.settings.registration.emailSuffixWhitelistPlaceholder,
+      messages.admin.settings.smtp.usernamePlaceholder,
+      messages.admin.settings.smtp.fromEmailPlaceholder,
+      messages.admin.settings.testEmail.recipientEmailPlaceholder,
+      messages.admin.proxies.batchInputPlaceholder,
+      messages.admin.proxies.batchInputHint,
+      messages.admin.accounts.emailPasswordPlaceholder
+    ]
+
+    for (const message of examples) {
+      if (typeof message === 'string') {
+        expect(message, `${locale} message should contain escaped @`).toContain("{'@'}")
+      }
+    }
   })
 })

@@ -1716,7 +1716,7 @@ func (s *OpenAIGatewayService) filterGrokFreeQuotaAccountsForOpenAI(ctx context.
 	if s == nil {
 		return accounts
 	}
-	return filterGrokFreeQuotaAccountsCore(ctx, s.cfg, s.usageLogRepo, &openaiGrokFreeQuotaGateCache, accounts)
+	return filterGrokFreeQuotaAccountsCore(ctx, s.cfg, s.usageLogRepo, openaiGrokFreeQuotaGateCache, accounts)
 }
 
 func (s *OpenAIGatewayService) filterOpenAIAccountsBySchedulingThreshold(ctx context.Context, accounts []Account) []Account {
