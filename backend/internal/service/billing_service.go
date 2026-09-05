@@ -400,30 +400,6 @@ func (s *BillingService) initFallbackPricing() {
 		SupportsCacheBreakdown: false,
 	}
 
-	// Gemini 3.7 Flash (Google AI pricing: $0.75 input / $3.75 output /
-	// $0.075 cached input per MTok, promotional through 2026-12-31; official
-	// rates double to $1.50/$7.50/$0.15 from 2027-01-01). Antigravity's
-	// -high/-low/-medium/-tiered aliases are matched below so unavailable
-	// remote pricing never records token-bearing requests at $0.
-	s.fallbackPrices["gemini-3.7-flash"] = &ModelPricing{
-		InputPricePerToken:     0.75e-6,
-		OutputPricePerToken:    3.75e-6,
-		CacheReadPricePerToken: 0.075e-6,
-		SupportsCacheBreakdown: false,
-	}
-
-	// Gemini 3.8 Flash (Google AI pricing: $0.75 input / $3.75 output /
-	// $0.075 cached input per MTok, promotional through 2026-12-31; official
-	// rates double to $1.50/$7.50/$0.15 from 2027-01-01). Antigravity's
-	// -high/-low/-medium/-tiered aliases are matched below so unavailable
-	// remote pricing never records token-bearing requests at $0.
-	s.fallbackPrices["gemini-3.8-flash"] = &ModelPricing{
-		InputPricePerToken:     0.75e-6,
-		OutputPricePerToken:    3.75e-6,
-		CacheReadPricePerToken: 0.075e-6,
-		SupportsCacheBreakdown: false,
-	}
-
 	// OpenAI GPT-5.4（业务指定价格）
 	s.fallbackPrices["gpt-5.4"] = &ModelPricing{
 		InputPricePerToken:             2.5e-6,  // $2.5 per MTok
@@ -453,20 +429,6 @@ func (s *BillingService) initFallbackPricing() {
 		CacheCreationPricePerToken: 30e-6,
 		CacheReadPricePerToken:     30e-6,
 		SupportsCacheBreakdown:     false,
-	}
-
-	s.fallbackPrices["gpt-6-astra"] = &ModelPricing{
-		InputPricePerToken:                 10e-6,
-		InputPricePerTokenPriority:         20e-6,
-		OutputPricePerToken:                50e-6,
-		OutputPricePerTokenPriority:        100e-6,
-		CacheCreationPricePerToken:         12.5e-6,
-		CacheCreationPricePerTokenPriority: 25e-6,
-		CacheReadPricePerToken:             1e-6,
-		CacheReadPricePerTokenPriority:     2e-6,
-		LongContextInputThreshold:          272_000,
-		LongContextInputMultiplier:         2,
-		LongContextOutputMultiplier:        1.5,
 	}
 
 	// OpenAI GPT-5.6 官方价格（USD/token）。缓存写入为输入价的 1.25 倍。
@@ -889,12 +851,6 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	if strings.Contains(modelLower, "gemini-3.6-flash") || strings.Contains(modelLower, "gemini-3-6-flash") {
 		return s.fallbackPrices["gemini-3.6-flash"]
 	}
-	if strings.Contains(modelLower, "gemini-3.7-flash") || strings.Contains(modelLower, "gemini-3-7-flash") {
-		return s.fallbackPrices["gemini-3.7-flash"]
-	}
-	if strings.Contains(modelLower, "gemini-3.8-flash") || strings.Contains(modelLower, "gemini-3-8-flash") {
-		return s.fallbackPrices["gemini-3.8-flash"]
-	}
 
 	// DeepSeek 系列：官方模型 V4 Pro/Flash（含 vision-exp）按各自价卡；
 	// 其余 deepseek-*（含已停服的 deepseek-chat / deepseek-reasoner 与未知型号）
@@ -1020,8 +976,6 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	// OpenAI（GPT-5 / Codex 族）：仅匹配已知型号，避免未知 OpenAI 型号误计价。
 	if normalized := normalizeKnownOpenAICodexModel(modelLower); normalized != "" {
 		switch normalized {
-		case "gpt-6-astra":
-			return s.fallbackPrices["gpt-6-astra"]
 		case "gpt-5.6-sol":
 			return s.fallbackPrices["gpt-5.6-sol"]
 		case "gpt-5.6-terra":
@@ -1699,7 +1653,7 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 // 档的模型（如 gpt-5.5-pro、gpt-5.4-mini/nano）返回 0。
 func openAIModelFastPricingRatio(normalized string) float64 {
 	switch normalized {
-	case "gpt-6-astra", "gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+	case "gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
 		return 2.0
 	case "gpt-5.5":
 		return 2.5

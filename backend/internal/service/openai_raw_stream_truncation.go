@@ -123,8 +123,6 @@ func recordOpenAIRawStreamTruncation(
 
 	setOpsUpstreamError(c, http.StatusBadGateway, message, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-		ProxyID:            opsUpstreamProxyID(account),
-		ProxyName:          opsUpstreamProxyName(account),
 		Platform:           platform,
 		AccountID:          accountID,
 		AccountName:        accountName,
