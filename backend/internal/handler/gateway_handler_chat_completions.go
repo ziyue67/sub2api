@@ -293,7 +293,14 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		accountReleaseFunc = wrapReleaseOnDone(c.Request.Context(), accountReleaseFunc)
 
-		if groupPlatform == service.PlatformGemini && account.Platform != service.PlatformGemini {
+		// Gemini 分组允许混合调度 Antigravity OAuth 账号（与 /v1/messages 及
+		// Gemini 原生路径一致）。此处只排除既非 Gemini、也无法走 Antigravity
+		// 兼容转发的账号；否则下方 shouldUseAntigravityCompat 分支对 Gemini
+		// 分组永远不可达，Antigravity 独占模型（gemini-3.6/3.7/3.8-flash 系列）
+		// 会因候选集被清空而返回「模型不受支持」。
+		if groupPlatform == service.PlatformGemini &&
+			account.Platform != service.PlatformGemini &&
+			!shouldUseAntigravityCompat(account) {
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
 			}

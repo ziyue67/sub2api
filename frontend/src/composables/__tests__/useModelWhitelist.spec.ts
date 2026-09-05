@@ -45,6 +45,32 @@ describe('useModelWhitelist', () => {
     expect(models).toContain('gemini-3-pro-image')
   })
 
+  it('antigravity 模型列表包含 Gemini 3.6/3.7/3.8 Flash 全部分档', () => {
+    const models = getModelsByPlatform('antigravity')
+
+    for (const base of ['gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash']) {
+      for (const suffix of ['', '-high', '-low', '-medium', '-tiered']) {
+        expect(models).toContain(`${base}${suffix}`)
+      }
+    }
+  })
+
+  it('antigravity 预设映射提供 Flash 分档显式透传，避免被 gemini-3* 通配符降级', () => {
+    const presets = getPresetMappingsByPlatform('antigravity')
+
+    expect(presets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: 'gemini-3.8-flash', to: 'gemini-3.8-flash' }),
+      expect.objectContaining({ from: 'gemini-3.8-flash-high', to: 'gemini-3.8-flash-high' }),
+      expect.objectContaining({ from: 'gemini-3.7-flash', to: 'gemini-3.7-flash' }),
+      expect.objectContaining({ from: 'gemini-3.6-flash', to: 'gemini-3.6-flash' })
+    ]))
+
+    const wildcardIndex = presets.findIndex(p => p.from === 'gemini-3*')
+    const passthroughIndex = presets.findIndex(p => p.from === 'gemini-3.8-flash')
+    expect(passthroughIndex).toBeGreaterThanOrEqual(0)
+    expect(wildcardIndex).toBeGreaterThan(passthroughIndex)
+  })
+
   it('Claude 模型列表包含新发布的 Claude 模型', () => {
     expect(getModelsByPlatform('claude')).toContain('claude-fable-5-1')
     expect(getModelsByPlatform('antigravity')).toContain('claude-fable-5-1')

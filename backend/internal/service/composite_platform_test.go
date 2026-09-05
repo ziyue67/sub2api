@@ -166,6 +166,18 @@ func TestDetectModelPlatform(t *testing.T) {
 		{name: "embedding", model: "text-embedding-3-large", platform: PlatformOpenAI, ok: true},
 		{name: "gemini", model: "gemini-3-pro", platform: PlatformGemini, ok: true},
 		{name: "gemini models prefix", model: "models/gemini-2.5-flash", platform: PlatformGemini, ok: true},
+		// Antigravity 独占的 Flash 分档模型不能落到 gemini 平台，否则 composite
+		// 分组会在调度阶段跳过全部 antigravity 账号（#6523）。
+		{name: "antigravity only 3.8 flash", model: "gemini-3.8-flash", platform: PlatformAntigravity, ok: true},
+		{name: "antigravity only 3.8 flash high", model: "gemini-3.8-flash-high", platform: PlatformAntigravity, ok: true},
+		{name: "antigravity only 3.8 flash tiered", model: "gemini-3.8-flash-tiered", platform: PlatformAntigravity, ok: true},
+		{name: "antigravity only 3.7 flash", model: "gemini-3.7-flash", platform: PlatformAntigravity, ok: true},
+		{name: "antigravity only 3.6 flash medium", model: "gemini-3.6-flash-medium", platform: PlatformAntigravity, ok: true},
+		{name: "antigravity only with models prefix", model: "models/gemini-3.8-flash", platform: PlatformAntigravity, ok: true},
+		// 公共 Gemini 通道同名系列保持 gemini 归属，避免误伤既有部署。
+		{name: "shared gemini 3 flash", model: "gemini-3-flash", platform: PlatformGemini, ok: true},
+		{name: "shared gemini 3.5 flash", model: "gemini-3.5-flash", platform: PlatformGemini, ok: true},
+		{name: "shared gemini 3.1 pro high", model: "gemini-3.1-pro-high", platform: PlatformGemini, ok: true},
 		{name: "learnlm", model: "learnlm-2.0-flash-experimental", platform: PlatformGemini, ok: true},
 		{name: "grok", model: "grok-4", platform: PlatformGrok, ok: true},
 		{name: "xai prefix", model: "xai/grok-4", platform: PlatformGrok, ok: true},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
@@ -134,6 +135,12 @@ func DetectModelPlatform(model string) (string, bool) {
 		strings.HasPrefix(normalized, "whisper-"),
 		hasOpenAISeriesPrefix(normalized):
 		return PlatformOpenAI, true
+	// Antigravity 独占的 Gemini Flash 分档模型（3.6/3.7/3.8 及 -high/-low/
+	// -medium/-tiered）必须在通用 "gemini-" 前缀之前判定：公共 Gemini 通道
+	// 不提供这些 ID，归类成 gemini 会让 composite 分组在调度阶段跳过全部
+	// antigravity 账号，客户端只能收到「不支持该模型」的 400/404。
+	case antigravity.IsAntigravityOnlyGeminiModel(normalized):
+		return PlatformAntigravity, true
 	case strings.HasPrefix(normalized, "gemini-"),
 		strings.HasPrefix(normalized, "learnlm-"):
 		return PlatformGemini, true
