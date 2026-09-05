@@ -113,7 +113,7 @@ func TestGetSchedulableAccount_AppliesGrokFreeSoftGate(t *testing.T) {
 		gatewayGrokFreeQuotaGateCache.Delete(key)
 		return true
 	})
-	if root, ok := freeQuotaRefreshInFlight.Load(&gatewayGrokFreeQuotaGateCache); ok {
+	if root, ok := freeQuotaRefreshInFlight.Load(gatewayGrokFreeQuotaGateCache); ok {
 		if m, ok := root.(*sync.Map); ok {
 			m.Delete(account.ID)
 		}
@@ -159,7 +159,7 @@ func TestOpenAIGetSchedulableAccount_AppliesGrokFreeSoftGate(t *testing.T) {
 		openaiGrokFreeQuotaGateCache.Delete(key)
 		return true
 	})
-	if root, ok := freeQuotaRefreshInFlight.Load(&openaiGrokFreeQuotaGateCache); ok {
+	if root, ok := freeQuotaRefreshInFlight.Load(openaiGrokFreeQuotaGateCache); ok {
 		if m, ok := root.(*sync.Map); ok {
 			m.Delete(account.ID)
 		}
