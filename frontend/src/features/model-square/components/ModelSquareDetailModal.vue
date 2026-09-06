@@ -77,6 +77,9 @@
                 <span class="rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400">
                   {{ billingModeLabel(channel.pricing) }}
                 </span>
+                <span v-if="channel.isOfficialFallback" class="rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 border border-amber-500/20" title="该渠道未配置独立价格，已自动采用官方参考基准定价">
+                  官方参考价
+                </span>
               </div>
               <span class="font-mono text-xs text-gray-400">{{ channel.key }}</span>
             </div>

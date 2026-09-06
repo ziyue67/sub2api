@@ -48,14 +48,14 @@
         </div>
         <!-- 输入价 -->
         <div class="flex flex-col">
-          <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-dark-500">输入价格</span>
+          <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-dark-500 inline-flex items-center justify-center gap-1">输入价格<span v-if="model.isOfficialPriceFallback" class="rounded px-1 py-0.2 text-[9px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400" title="官方参考定价">官方</span></span>
           <span class="text-xs font-black text-emerald-600 dark:text-emerald-400 mt-0.5 font-mono">
             {{ formatPriceDisplay(model.minInputPrice) }}
           </span>
         </div>
         <!-- 输出价 -->
         <div class="flex flex-col">
-          <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-dark-500">输出价格</span>
+          <span class="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-dark-500 inline-flex items-center justify-center gap-1">输出价格<span v-if="model.isOfficialPriceFallback" class="rounded px-1 py-0.2 text-[9px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400" title="官方参考定价">官方</span></span>
           <span class="text-xs font-black text-blue-600 dark:text-blue-400 mt-0.5 font-mono">
             {{ formatPriceDisplay(model.minOutputPrice) }}
           </span>

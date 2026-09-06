@@ -74,12 +74,18 @@
 
           <!-- 输入价格 -->
           <td class="px-3 py-3 font-mono font-bold text-emerald-600 dark:text-emerald-400">
-            {{ formatPriceDisplay(model.minInputPrice) }}
+            <div class="flex items-center gap-1.5">
+              <span>{{ formatPriceDisplay(model.minInputPrice) }}</span>
+              <span v-if="model.isOfficialPriceFallback" class="rounded px-1 py-0.2 text-[9px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 font-sans" title="官方参考定价">官方</span>
+            </div>
           </td>
 
           <!-- 输出价格 -->
           <td class="px-3 py-3 font-mono font-bold text-blue-600 dark:text-blue-400">
-            {{ formatPriceDisplay(model.minOutputPrice) }}
+            <div class="flex items-center gap-1.5">
+              <span>{{ formatPriceDisplay(model.minOutputPrice) }}</span>
+              <span v-if="model.isOfficialPriceFallback" class="rounded px-1 py-0.2 text-[9px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 font-sans" title="官方参考定价">官方</span>
+            </div>
           </td>
 
           <!-- 可用渠道数 -->
