@@ -4,7 +4,7 @@ import userGroupsAPI from '@/api/groups'
 import { useAppStore } from '@/stores/app'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import type { ModelSquareChannel, ModelSquareModel } from '../types'
-import { inferCapabilities, inferContextWindow } from '../utils/capabilities'
+import { resolveCapabilities, resolveContextWindow, resolveEffectivePricing, hasCustomPricing } from '../utils/modelCatalog'
 import { isRequestBilling } from '../utils/pricing'
 
 function groupChannels(entries: ModelSquareEntry[]): ModelSquareChannel[] {
@@ -15,11 +15,13 @@ function groupChannels(entries: ModelSquareEntry[]): ModelSquareChannel[] {
     if (existing) {
       existing.entries.push(entry)
     } else {
+      const { pricing: effectivePricing, isOfficialFallback } = resolveEffectivePricing(entry.name, entry.pricing)
       channelsByKey.set(key, {
         key,
         name: entry.channel_name || '未关联渠道',
         entries: [entry],
-        pricing: entry.pricing,
+        pricing: effectivePricing,
+        isOfficialFallback,
       })
     }
   }
@@ -68,6 +70,7 @@ export function useModelSquare() {
         let isReq = false
         let hasIntervals = false
         let accounts = 0
+        let hasAnyCustomPrice = false
 
         for (const entry of model.entries) {
           accounts += entry.account_count || 0
@@ -75,19 +78,23 @@ export function useModelSquare() {
           if (effectiveMultiplier != null) {
             multipliers.push(effectiveMultiplier)
           }
-          if (entry.pricing) {
-            if (isRequestBilling(entry.pricing)) isReq = true
-            if (entry.pricing.intervals && entry.pricing.intervals.length > 0) hasIntervals = true
-            if (entry.pricing.input_price != null) allInputPrices.push(entry.pricing.input_price * (effectiveMultiplier ?? 1))
-            if (entry.pricing.output_price != null) allOutputPrices.push(entry.pricing.output_price * (effectiveMultiplier ?? 1))
-            if (entry.pricing.cache_write_price != null) allCacheWritePrices.push(entry.pricing.cache_write_price * (effectiveMultiplier ?? 1))
-            if (entry.pricing.cache_read_price != null) allCacheReadPrices.push(entry.pricing.cache_read_price * (effectiveMultiplier ?? 1))
+          if (hasCustomPricing(entry.pricing)) {
+            hasAnyCustomPrice = true
+          }
+          const { pricing: effectivePricing } = resolveEffectivePricing(model.name, entry.pricing)
+          if (effectivePricing) {
+            if (isRequestBilling(effectivePricing)) isReq = true
+            if (effectivePricing.intervals && effectivePricing.intervals.length > 0) hasIntervals = true
+            if (effectivePricing.input_price != null) allInputPrices.push(effectivePricing.input_price * (effectiveMultiplier ?? 1))
+            if (effectivePricing.output_price != null) allOutputPrices.push(effectivePricing.output_price * (effectiveMultiplier ?? 1))
+            if (effectivePricing.cache_write_price != null) allCacheWritePrices.push(effectivePricing.cache_write_price * (effectiveMultiplier ?? 1))
+            if (effectivePricing.cache_read_price != null) allCacheReadPrices.push(effectivePricing.cache_read_price * (effectiveMultiplier ?? 1))
           }
         }
 
         const firstPricing = model.channels.find((c) => c.pricing != null)?.pricing
-        const { tokens: contextTokens, label: contextWindow } = inferContextWindow(model.name)
-        const capabilities = inferCapabilities(model.name, firstPricing)
+        const { tokens: contextTokens, label: contextWindow } = resolveContextWindow(model.name)
+        const capabilities = resolveCapabilities(model.name, firstPricing)
 
         return {
           ...model,
@@ -104,6 +111,7 @@ export function useModelSquare() {
           hasIntervals,
           bestMultiplier: multipliers.length > 0 ? Math.min(...multipliers) : null,
           totalAccounts: accounts,
+          isOfficialPriceFallback: !hasAnyCustomPrice && (allInputPrices.length > 0 || allOutputPrices.length > 0),
         }
       })
       .sort((a, b) => a.platform.localeCompare(b.platform) || a.name.localeCompare(b.name))

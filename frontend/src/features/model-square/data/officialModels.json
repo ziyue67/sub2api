@@ -1,0 +1,3640 @@
+{
+  "claude-3-7-sonnet-20250219": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-haiku-20240307": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.5e-07,
+    "output_price": 1.25e-06,
+    "cache_write_price": 3e-07,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-opus-20240229": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 7.5e-05,
+    "cache_write_price": 1.875e-05,
+    "cache_read_price": 1.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-4-opus-20250514": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 7.5e-05,
+    "cache_write_price": 1.875e-05,
+    "cache_read_price": 1.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-4-sonnet-20250514": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-haiku-4-5": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-06,
+    "output_price": 5e-06,
+    "cache_write_price": 1.25e-06,
+    "cache_read_price": 1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-haiku-4-5-20251001": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-06,
+    "output_price": 5e-06,
+    "cache_write_price": 1.25e-06,
+    "cache_read_price": 1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-1": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 7.5e-05,
+    "cache_write_price": 1.875e-05,
+    "cache_read_price": 1.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-1-20250805": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 7.5e-05,
+    "cache_write_price": 1.875e-05,
+    "cache_read_price": 1.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-20250514": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 7.5e-05,
+    "cache_write_price": 1.875e-05,
+    "cache_read_price": 1.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-5": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-5-20251101": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-6": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-6-20260205": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-6-thinking": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-7": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-7-20260416": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4-8": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-5": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-sonnet-4-20250514": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-sonnet-4-5": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-sonnet-4-5-20250929": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-sonnet-4-5-20250929-v1:0": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-sonnet-4-6": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "codex-auto-review": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-07,
+    "output_price": 1.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "deepseek-v4-flash": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.2e-07,
+    "output_price": 6.6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7e-09,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "deepseek-v4-flash-vision-exp": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.2e-07,
+    "output_price": 6.6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7e-09,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "deepseek-v4-pro": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 6.6e-07,
+    "output_price": 1.98e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.2e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.0-flash": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 1e-07,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.0-flash-001": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 1.5e-07,
+    "output_price": 6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 3.75e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.0-flash-exp-image-generation": {
+    "context_tokens": 32768,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 0.0,
+    "output_price": 0.0,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": 0.034,
+    "billing_mode": "image"
+  },
+  "gemini-2.0-flash-lite": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 7.5e-08,
+    "output_price": 3e-07,
+    "cache_write_price": null,
+    "cache_read_price": 1.875e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.0-flash-lite-001": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 7.5e-08,
+    "output_price": 3e-07,
+    "cache_write_price": null,
+    "cache_read_price": 1.875e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-computer-use-preview-10-2025": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash-image": {
+    "context_tokens": 32768,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "image_gen"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-08,
+    "per_request_price": 0.039,
+    "billing_mode": "image"
+  },
+  "gemini-2.5-flash-lite": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-07,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 1e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash-lite-preview-06-17": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-07,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash-lite-preview-09-2025": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-07,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 1e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash-native-audio-latest": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "audio"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash-native-audio-preview-09-2025": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "audio"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash-native-audio-preview-12-2025": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "audio"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash-preview-09-2025": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-flash-preview-tts": {
+    "context_tokens": 128000,
+    "capabilities": [],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-pro": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": 1.25e-06,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-2.5-pro-preview-tts": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3-flash": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-07,
+    "output_price": 3e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3-flash-preview": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-07,
+    "output_price": 3e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3-pro-image-preview": {
+    "context_tokens": 65536,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": 0.134,
+    "billing_mode": "image"
+  },
+  "gemini-3-pro-image": {
+    "context_tokens": 65536,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": 0.134,
+    "billing_mode": "image"
+  },
+  "gemini-3-pro-preview": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": 2e-06,
+    "cache_read_price": 2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3.1-flash-image": {
+    "context_tokens": 65536,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 5e-07,
+    "output_price": 3e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": 0.0672,
+    "billing_mode": "image"
+  },
+  "gemini-3.1-flash-lite-image": {
+    "context_tokens": 32768,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": 0.034,
+    "billing_mode": "image"
+  },
+  "gemini-3.1-flash-image-preview": {
+    "context_tokens": 65536,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 5e-07,
+    "output_price": 3e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": 0.0672,
+    "billing_mode": "image"
+  },
+  "gemini-3.1-flash-lite": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 2.5e-07,
+    "output_price": 1.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3.1-flash-lite-preview": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 2.5e-07,
+    "output_price": 1.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3.1-flash-live-preview": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 7.5e-07,
+    "output_price": 4.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3.1-pro-high": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": 2e-06,
+    "cache_read_price": 2e-07,
+    "per_request_price": 0.00012,
+    "billing_mode": "image"
+  },
+  "gemini-3.1-pro-low": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": 2e-06,
+    "cache_read_price": 2e-07,
+    "per_request_price": 0.00012,
+    "billing_mode": "image"
+  },
+  "gemini-3.1-pro-preview": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": 2e-06,
+    "cache_read_price": 2e-07,
+    "per_request_price": 0.00012,
+    "billing_mode": "image"
+  },
+  "gemini-3.1-pro-preview-customtools": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": 2e-06,
+    "cache_read_price": 2e-07,
+    "per_request_price": 0.00012,
+    "billing_mode": "image"
+  },
+  "gemini-3.5-flash": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 1.5e-06,
+    "output_price": 9e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3.6-flash": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "reasoning"
+    ],
+    "input_price": 1.5e-06,
+    "output_price": 7.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-embedding-001": {
+    "context_tokens": 2048,
+    "capabilities": [
+      "embedding"
+    ],
+    "input_price": 1.5e-07,
+    "output_price": 0,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-embedding-2": {
+    "context_tokens": 8192,
+    "capabilities": [
+      "embedding"
+    ],
+    "input_price": 2e-07,
+    "output_price": 0,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-embedding-2-preview": {
+    "context_tokens": 8192,
+    "capabilities": [
+      "embedding"
+    ],
+    "input_price": 2e-07,
+    "output_price": 0,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-exp-1206": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-flash-experimental": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "embedding"
+    ],
+    "input_price": 0,
+    "output_price": 0,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-flash-latest": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-flash-lite-latest": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-07,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 1e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-live-2.5-flash-preview-native-audio-09-2025": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-pro-latest": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-robotics-er-1.5-preview": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-07,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 0,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-3.5-turbo": {
+    "context_tokens": 16385,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 5e-07,
+    "output_price": 1.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-3.5-turbo-0125": {
+    "context_tokens": 16385,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 5e-07,
+    "output_price": 1.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-3.5-turbo-1106": {
+    "context_tokens": 16385,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1e-06,
+    "output_price": 2e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-3.5-turbo-16k": {
+    "context_tokens": 16385,
+    "capabilities": [],
+    "input_price": 3e-06,
+    "output_price": 4e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-3.5-turbo-instruct": {
+    "context_tokens": 8192,
+    "capabilities": [],
+    "input_price": 1.5e-06,
+    "output_price": 2e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-3.5-turbo-instruct-0914": {
+    "context_tokens": 8192,
+    "capabilities": [],
+    "input_price": 1.5e-06,
+    "output_price": 2e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4": {
+    "context_tokens": 8192,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 3e-05,
+    "output_price": 6e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4-0125-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1e-05,
+    "output_price": 3e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4-0314": {
+    "context_tokens": 8192,
+    "capabilities": [],
+    "input_price": 3e-05,
+    "output_price": 6e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4-0613": {
+    "context_tokens": 8192,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 3e-05,
+    "output_price": 6e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4-1106-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1e-05,
+    "output_price": 3e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4-turbo": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1e-05,
+    "output_price": 3e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4-turbo-2024-04-09": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1e-05,
+    "output_price": 3e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4-turbo-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1e-05,
+    "output_price": 3e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4.1": {
+    "context_tokens": 1047576,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2e-06,
+    "output_price": 8e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4.1-2025-04-14": {
+    "context_tokens": 1047576,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2e-06,
+    "output_price": 8e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4.1-mini": {
+    "context_tokens": 1047576,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 4e-07,
+    "output_price": 1.6e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4.1-mini-2025-04-14": {
+    "context_tokens": 1047576,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 4e-07,
+    "output_price": 1.6e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4.1-nano": {
+    "context_tokens": 1047576,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1e-07,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4.1-nano-2025-04-14": {
+    "context_tokens": 1047576,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1e-07,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-2024-05-13": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 5e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-2024-08-06": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-2024-11-20": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-audio-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-audio-preview-2024-12-17": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-audio-preview-2025-06-03": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.5e-07,
+    "output_price": 6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-2024-07-18": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.5e-07,
+    "output_price": 6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-audio-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 1.5e-07,
+    "output_price": 6e-07,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-audio-preview-2024-12-17": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 1.5e-07,
+    "output_price": 6e-07,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-realtime-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-realtime-preview-2024-12-17": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-search-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.5e-07,
+    "output_price": 6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-search-preview-2025-03-11": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.5e-07,
+    "output_price": 6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-transcribe": {
+    "context_tokens": 16000,
+    "capabilities": [],
+    "input_price": 1.25e-06,
+    "output_price": 5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-transcribe-2025-03-20": {
+    "context_tokens": 16000,
+    "capabilities": [],
+    "input_price": 1.25e-06,
+    "output_price": 5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-transcribe-2025-12-15": {
+    "context_tokens": 16000,
+    "capabilities": [],
+    "input_price": 1.25e-06,
+    "output_price": 5e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-tts": {
+    "context_tokens": 128000,
+    "capabilities": [],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-tts-2025-03-20": {
+    "context_tokens": 128000,
+    "capabilities": [],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-mini-tts-2025-12-15": {
+    "context_tokens": 128000,
+    "capabilities": [],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-realtime-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2e-05,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-realtime-preview-2024-12-17": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2e-05,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-realtime-preview-2025-06-03": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2e-05,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-search-preview": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-search-preview-2025-03-11": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-transcribe": {
+    "context_tokens": 16000,
+    "capabilities": [],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-4o-transcribe-diarize": {
+    "context_tokens": 16000,
+    "capabilities": [],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-2025-08-07": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-chat": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-chat-latest": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-codex": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-mini": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.5e-07,
+    "output_price": 2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-mini-2025-08-07": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.5e-07,
+    "output_price": 2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-nano": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-08,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 5e-09,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-nano-2025-08-07": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-08,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 5e-09,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-pro": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 0.00012,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-pro-2025-10-06": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 0.00012,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-search-api": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5-search-api-2025-10-14": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.1": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.1-2025-11-13": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.1-chat-latest": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.1-codex": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.1-codex-max": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.1-codex-mini": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.5e-07,
+    "output_price": 2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.2": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.75e-06,
+    "output_price": 1.4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.2-2025-12-11": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.75e-06,
+    "output_price": 1.4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.2-chat-latest": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.75e-06,
+    "output_price": 1.4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.2-codex": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.75e-06,
+    "output_price": 1.4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.2-pro": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.1e-05,
+    "output_price": 0.000168,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.2-pro-2025-12-11": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.1e-05,
+    "output_price": 0.000168,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.3-chat-latest": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.75e-06,
+    "output_price": 1.4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.3-codex": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.75e-06,
+    "output_price": 1.4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.3-codex-spark": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.75e-06,
+    "output_price": 1.4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.4": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.4-2026-03-05": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.4-mini": {
+    "context_tokens": 400000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 7.5e-07,
+    "output_price": 4.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.4-mini-2026-03-17": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 7.5e-07,
+    "output_price": 4.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.4-nano": {
+    "context_tokens": 400000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-07,
+    "output_price": 1.25e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.4-nano-2026-03-17": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-07,
+    "output_price": 1.25e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.4-pro": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-05,
+    "output_price": 0.00018,
+    "cache_write_price": null,
+    "cache_read_price": 3e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.4-pro-2026-03-05": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-05,
+    "output_price": 0.00018,
+    "cache_write_price": null,
+    "cache_read_price": 3e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.6-sol": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 3e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.6-terra": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": 2.5e-06,
+    "cache_read_price": 2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.6-luna": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-07,
+    "output_price": 1.2e-06,
+    "cache_write_price": 2.5e-07,
+    "cache_read_price": 2e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.5": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 3e-05,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.5-2026-04-23": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 3e-05,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.5-pro": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-05,
+    "output_price": 0.00018,
+    "cache_write_price": null,
+    "cache_read_price": 3e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-5.5-pro-2026-04-23": {
+    "context_tokens": 1050000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-05,
+    "output_price": 0.00018,
+    "cache_write_price": null,
+    "cache_read_price": 3e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-audio": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-audio-1.5": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-audio-2025-08-28": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-audio-mini": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-audio-mini-2025-10-06": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-audio-mini-2025-12-15": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-image-1": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 5e-06,
+    "output_price": null,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "image"
+  },
+  "gpt-image-1-mini": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 2e-06,
+    "output_price": null,
+    "cache_write_price": null,
+    "cache_read_price": 2e-07,
+    "per_request_price": null,
+    "billing_mode": "image"
+  },
+  "gpt-image-1.5": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "image"
+  },
+  "gpt-image-1.5-2025-12-16": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "image"
+  },
+  "gpt-image-2": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "image"
+  },
+  "gpt-image-2-2026-04-21": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "image_gen"
+    ],
+    "input_price": 5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "image"
+  },
+  "gpt-realtime": {
+    "context_tokens": 32000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 4e-06,
+    "output_price": 1.6e-05,
+    "cache_write_price": null,
+    "cache_read_price": 4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-realtime-1.5": {
+    "context_tokens": 32000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 4e-06,
+    "output_price": 1.6e-05,
+    "cache_write_price": null,
+    "cache_read_price": 4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-realtime-2": {
+    "context_tokens": 32000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 4e-06,
+    "output_price": 1.6e-05,
+    "cache_write_price": null,
+    "cache_read_price": 4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-realtime-2025-08-28": {
+    "context_tokens": 32000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 4e-06,
+    "output_price": 1.6e-05,
+    "cache_write_price": null,
+    "cache_read_price": 4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-realtime-mini": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-realtime-mini-2025-10-06": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 6e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-realtime-mini-2025-12-15": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "audio"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 6e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o1-2024-12-17": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 6e-05,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o1-pro": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 0.00015,
+    "output_price": 0.0006,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o1-pro-2025-03-19": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 0.00015,
+    "output_price": 0.0006,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o3": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-06,
+    "output_price": 8e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o3-2025-04-16": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-06,
+    "output_price": 8e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o3-deep-research": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1e-05,
+    "output_price": 4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o3-deep-research-2025-06-26": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1e-05,
+    "output_price": 4e-05,
+    "cache_write_price": null,
+    "cache_read_price": 2.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o3-mini": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.1e-06,
+    "output_price": 4.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o3-mini-2025-01-31": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.1e-06,
+    "output_price": 4.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o3-pro": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-05,
+    "output_price": 8e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o3-pro-2025-06-10": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-05,
+    "output_price": 8e-05,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o4-mini": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.1e-06,
+    "output_price": 4.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o4-mini-2025-04-16": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.1e-06,
+    "output_price": 4.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.75e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o4-mini-deep-research": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2e-06,
+    "output_price": 8e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "o4-mini-deep-research-2025-06-26": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2e-06,
+    "output_price": 8e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4.8": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4.7": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4.6": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-opus-4.5": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5e-06,
+    "output_price": 2.5e-05,
+    "cache_write_price": 6.25e-06,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-sonnet-4": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-5-sonnet": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-5-haiku": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1e-06,
+    "output_price": 5e-06,
+    "cache_write_price": 1.25e-06,
+    "cache_read_price": 1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-opus": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 7.5e-05,
+    "cache_write_price": 1.875e-05,
+    "cache_read_price": 1.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-haiku": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.5e-07,
+    "output_price": 1.25e-06,
+    "cache_write_price": 3e-07,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-fable-5": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-05,
+    "output_price": 5e-05,
+    "cache_write_price": 1.25e-05,
+    "cache_read_price": 1e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-fable-5-1": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-05,
+    "output_price": 5e-05,
+    "cache_write_price": 1.25e-05,
+    "cache_read_price": 2.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3.1-pro": {
+    "context_tokens": 2000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 2e-06,
+    "output_price": 1.2e-05,
+    "cache_write_price": 2e-06,
+    "cache_read_price": 2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3.7-flash": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 7.5e-07,
+    "output_price": 3.75e-06,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gemini-3.8-flash": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning",
+      "audio"
+    ],
+    "input_price": 7.5e-07,
+    "output_price": 3.75e-06,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "gpt-6-astra": {
+    "context_tokens": 272000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-05,
+    "output_price": 5e-05,
+    "cache_write_price": 1.25e-05,
+    "cache_read_price": 1e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-5.2": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.4e-06,
+    "output_price": 4.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.6e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-5.1": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.4e-06,
+    "output_price": 4.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.6e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-5": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1e-06,
+    "output_price": 3.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-5-turbo": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 1.2e-06,
+    "output_price": 4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.7": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.7-flashx": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 7e-08,
+    "output_price": 4e-07,
+    "cache_write_price": null,
+    "cache_read_price": 1e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.6": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.5": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.5-x": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.2e-06,
+    "output_price": 8.9e-06,
+    "cache_write_price": null,
+    "cache_read_price": 4.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.5-air": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 2e-07,
+    "output_price": 1.1e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.5-airx": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1.1e-06,
+    "output_price": 4.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4-32b-0414-128k": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1e-07,
+    "output_price": 1e-07,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.5-flash": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 0,
+    "output_price": 0,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "glm-4.7-flash": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 0,
+    "output_price": 0,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "kimi-k3": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": null,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "kimi-k2.6": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 9.5e-07,
+    "output_price": 4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "kimi-for-coding": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 9.5e-07,
+    "output_price": 4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "kimi-k2.5": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 6e-07,
+    "output_price": 3e-06,
+    "cache_write_price": null,
+    "cache_read_price": 9.8e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "kimi-k2-thinking": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5.6e-07,
+    "output_price": 2.24e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "kimi-k2": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 5.6e-07,
+    "output_price": 2.24e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "minimax-m3": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "minimax-m2.7": {
+    "context_tokens": 245760,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 3e-07,
+    "output_price": 1.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 6e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "minimax-m2.7-highspeed": {
+    "context_tokens": 245760,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 6e-07,
+    "output_price": 2.4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 6e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "minimax-m2.5": {
+    "context_tokens": 245760,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 3e-07,
+    "output_price": 1.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "minimax-m2.1": {
+    "context_tokens": 245760,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 3e-07,
+    "output_price": 1.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "minimax-m2": {
+    "context_tokens": 245760,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 3e-07,
+    "output_price": 1.2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "doubao-embedding-vision": {
+    "context_tokens": 8192,
+    "capabilities": [
+      "embedding",
+      "vision"
+    ],
+    "input_price": 9.8e-08,
+    "output_price": 0,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "grok-4.6": {
+    "context_tokens": 2000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-06,
+    "output_price": 6e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "grok-4.5": {
+    "context_tokens": 2000000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2e-06,
+    "output_price": 6e-06,
+    "cache_write_price": null,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "grok-4.3": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "grok-4.20": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1.25e-06,
+    "output_price": 2.5e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "grok-3-mini": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-07,
+    "output_price": 5e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "grok-3-mini-fast": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 6e-07,
+    "output_price": 4e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.5e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "grok-build-0.1": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1e-06,
+    "output_price": 2e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "deepseek-chat": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.2e-07,
+    "output_price": 6.6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7e-09,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "deepseek-reasoner": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 6.6e-07,
+    "output_price": 1.98e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.2e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "deepseek-r1": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 6.6e-07,
+    "output_price": 1.98e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.2e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "deepseek-v3": {
+    "context_tokens": 1048576,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.2e-07,
+    "output_price": 6.6e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7e-09,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-5-sonnet-latest": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-5-haiku-latest": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1e-06,
+    "output_price": 5e-06,
+    "cache_write_price": 1.25e-06,
+    "cache_read_price": 1e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-opus-latest": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.5e-05,
+    "output_price": 7.5e-05,
+    "cache_write_price": 1.875e-05,
+    "cache_read_price": 1.5e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-7-sonnet-latest": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "claude-3-7-sonnet": {
+    "context_tokens": 200000,
+    "capabilities": [
+      "vision",
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 3e-06,
+    "output_price": 1.5e-05,
+    "cache_write_price": 3.75e-06,
+    "cache_read_price": 3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "chatgpt-4o-latest": {
+    "context_tokens": 128000,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.5e-06,
+    "output_price": 1e-05,
+    "cache_write_price": null,
+    "cache_read_price": 1.25e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-2.5-72b-instruct": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5.7e-07,
+    "output_price": 1.71e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-2.5-72b": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 5.7e-07,
+    "output_price": 1.71e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-2.5-32b": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 2.8e-07,
+    "output_price": 8.5e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-2.5-14b": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1.4e-07,
+    "output_price": 4.2e-07,
+    "cache_write_price": null,
+    "cache_read_price": 3.5e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-2.5-7b": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 7e-08,
+    "output_price": 2.1e-07,
+    "cache_write_price": null,
+    "cache_read_price": 1.8e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-2.5-coder-32b-instruct": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 2.8e-07,
+    "output_price": 8.5e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-2.5-coder-32b": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 2.8e-07,
+    "output_price": 8.5e-07,
+    "cache_write_price": null,
+    "cache_read_price": 7e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-max": {
+    "context_tokens": 32768,
+    "capabilities": [
+      "tool_call",
+      "reasoning"
+    ],
+    "input_price": 2.29e-06,
+    "output_price": 6.86e-06,
+    "cache_write_price": null,
+    "cache_read_price": 5.7e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-plus": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 5.7e-07,
+    "output_price": 1.71e-06,
+    "cache_write_price": null,
+    "cache_read_price": 1.4e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-turbo": {
+    "context_tokens": 1000000,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 4.3e-08,
+    "output_price": 8.6e-08,
+    "cache_write_price": null,
+    "cache_read_price": 1.1e-08,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-vl-max": {
+    "context_tokens": 32768,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 2.86e-06,
+    "output_price": 8.57e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "qwen-vl-plus": {
+    "context_tokens": 32768,
+    "capabilities": [
+      "vision",
+      "tool_call"
+    ],
+    "input_price": 1.14e-06,
+    "output_price": 3.43e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "moonshot-v1-8k": {
+    "context_tokens": 8192,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1.71e-06,
+    "output_price": 1.71e-06,
+    "cache_write_price": null,
+    "cache_read_price": 4.3e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "moonshot-v1-32k": {
+    "context_tokens": 32768,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 3.43e-06,
+    "output_price": 3.43e-06,
+    "cache_write_price": null,
+    "cache_read_price": 8.6e-07,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "moonshot-v1-128k": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 8.57e-06,
+    "output_price": 8.57e-06,
+    "cache_write_price": null,
+    "cache_read_price": 2.14e-06,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "meta-llama/llama-3.3-70b-instruct": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 7e-07,
+    "output_price": 8e-07,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "meta-llama/llama-3.1-405b-instruct": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 2e-06,
+    "output_price": 4e-06,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "meta-llama/llama-3.1-70b-instruct": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 5.2e-07,
+    "output_price": 7.5e-07,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  },
+  "meta-llama/llama-3.1-8b-instruct": {
+    "context_tokens": 131072,
+    "capabilities": [
+      "tool_call"
+    ],
+    "input_price": 1e-07,
+    "output_price": 1e-07,
+    "cache_write_price": null,
+    "cache_read_price": null,
+    "per_request_price": null,
+    "billing_mode": "token"
+  }
+}

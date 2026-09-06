@@ -47,6 +47,7 @@ export interface ModelSquareModel {
   hasIntervals?: boolean
   bestMultiplier?: number | null
   totalAccounts?: number
+  isOfficialPriceFallback?: boolean
 }
 
 export interface ModelSquareChannel {
@@ -54,4 +55,5 @@ export interface ModelSquareChannel {
   name: string
   entries: ModelSquareEntry[]
   pricing: UserSupportedModelPricing | null
+  isOfficialFallback?: boolean
 }
