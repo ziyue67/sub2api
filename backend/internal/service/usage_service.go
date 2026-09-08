@@ -123,10 +123,11 @@ func (s *UsageService) Create(ctx context.Context, req CreateUsageLogRequest) (*
 		return nil, fmt.Errorf("create usage log: %w", err)
 	}
 
-	// 扣除用户余额
+	// 扣除用户余额。必须走带余额条件的原子扣款，不能通过
+	// UpdateBalance 的无条件加法把并发请求推入负数。
 	balanceUpdated := false
 	if inserted && req.ActualCost > 0 {
-		if err := s.userRepo.UpdateBalance(txCtx, req.UserID, -req.ActualCost); err != nil {
+		if err := s.userRepo.DeductBalance(txCtx, req.UserID, req.ActualCost); err != nil {
 			return nil, fmt.Errorf("update user balance: %w", err)
 		}
 		balanceUpdated = true

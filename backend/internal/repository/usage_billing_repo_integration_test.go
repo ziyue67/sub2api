@@ -80,6 +80,76 @@ func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	require.Equal(t, 1, dedupCount)
 }
 
+func TestUsageBillingRepositoryGatewayReservation_ConcurrentHoldsNeverOverdraft(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+	reservationRepo, ok := repo.(service.BalanceReservationRepository)
+	require.True(t, ok)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("gateway-reservation-race-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Balance:      10,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID: user.ID,
+		Key:    "sk-gateway-reservation-race-" + uuid.NewString(),
+		Name:   "gateway reservation race",
+	})
+
+	const requests = 16
+	start := make(chan struct{})
+	type outcome struct {
+		requestID string
+		err       error
+	}
+	results := make(chan outcome, requests)
+	for i := 0; i < requests; i++ {
+		requestID := fmt.Sprintf("gateway-race-%s-%d", uuid.NewString(), i)
+		go func(id string) {
+			<-start
+			_, err := reservationRepo.ReserveGatewayBalance(ctx, &service.BalanceReservationCommand{
+				RequestID:               id,
+				APIKeyID:                apiKey.ID,
+				UserID:                  user.ID,
+				ReserveAvailableBalance: true,
+			})
+			results <- outcome{requestID: id, err: err}
+		}(requestID)
+	}
+	close(start)
+
+	var successfulID string
+	successes := 0
+	for i := 0; i < requests; i++ {
+		result := <-results
+		if result.err == nil {
+			successes++
+			successfulID = result.requestID
+		} else {
+			require.ErrorIs(t, result.err, service.ErrInsufficientBalance)
+		}
+	}
+	require.Equal(t, 1, successes, "only one full-wallet reservation may own the available funds")
+
+	var balance, frozen float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance, frozen_balance FROM users WHERE id = $1", user.ID).Scan(&balance, &frozen))
+	require.InDelta(t, 0, balance, 1e-6)
+	require.InDelta(t, 10, frozen, 1e-6)
+	require.GreaterOrEqual(t, balance, 0.0)
+
+	_, err := reservationRepo.ReleaseGatewayBalance(ctx, &service.BalanceReservationCommand{
+		RequestID: successfulID,
+		APIKeyID:  apiKey.ID,
+		UserID:    user.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance, frozen_balance FROM users WHERE id = $1", user.ID).Scan(&balance, &frozen))
+	require.InDelta(t, 10, balance, 1e-6)
+	require.InDelta(t, 0, frozen, 1e-6)
+}
+
 func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

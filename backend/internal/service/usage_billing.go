@@ -14,6 +14,9 @@ import (
 
 var ErrUsageBillingRequestIDRequired = errors.New("usage billing request_id is required")
 var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerprint conflict")
+var ErrBalanceReservationNotFound = errors.New("balance reservation not found")
+var ErrBalanceReservationClosed = errors.New("balance reservation is already closed")
+var ErrBalanceReservationExceedsHold = errors.New("actual balance cost exceeds reservation")
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
@@ -163,11 +166,61 @@ type AccountQuotaState struct {
 }
 
 type UsageBillingApplyResult struct {
-	Applied              bool
-	APIKeyQuotaExhausted bool
-	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
-	BalanceOverdrafted   bool               // true when the sufficient-balance guard missed and debt was still recorded
-	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	Applied                   bool
+	APIKeyQuotaExhausted      bool
+	NewBalance                *float64           // post-deduction balance (nil = no balance deduction)
+	BalanceOverdrafted        bool               // retained for API compatibility; hard-gated billing never sets this true
+	BalanceReservationSettled bool               // true when the gateway hold was captured/released in this transaction
+	QuotaState                *AccountQuotaState // post-increment quota state (nil = no quota increment)
+}
+
+// BalanceReservationCommand is the durable gateway precharge contract. A
+// reservation is keyed by request_id, so failover across API keys and retries
+// of the same request reuse one hold instead of freezing the wallet repeatedly.
+type BalanceReservationCommand struct {
+	RequestID      string
+	APIKeyID       int64
+	UserID         int64
+	Amount         float64
+	MinimumBalance float64
+	// ReserveAvailableBalance asks the repository to read and hold the user's
+	// current available balance inside the reservation transaction. It avoids a
+	// separate preflight DB read, while Amount remains available for callers
+	// that need a fixed hold amount.
+	ReserveAvailableBalance bool
+}
+
+// BalanceReservationResult contains the post-operation wallet state.
+type BalanceReservationResult struct {
+	Applied       bool
+	Reserved      float64
+	Actual        float64
+	NewBalance    float64
+	FrozenBalance float64
+}
+
+type BalanceReservationOperation uint8
+
+const (
+	BalanceReservationCapture BalanceReservationOperation = iota
+	BalanceReservationRelease
+)
+
+// BalanceReservationRepository persists gateway reservations. It is kept as a
+// separate optional interface so test doubles and non-gateway billing paths do
+// not need to implement precharge methods.
+type BalanceReservationRepository interface {
+	ReserveGatewayBalance(ctx context.Context, cmd *BalanceReservationCommand) (*BalanceReservationResult, error)
+	CaptureGatewayBalance(ctx context.Context, cmd *BalanceReservationCommand) (*BalanceReservationResult, error)
+	ReleaseGatewayBalance(ctx context.Context, cmd *BalanceReservationCommand) (*BalanceReservationResult, error)
+}
+
+// BalanceReservationCleanupRepository is implemented by durable reservation
+// stores that can reclaim holds left behind by a crashed process. Cleanup is
+// intentionally separate from the request path so expiry scanning never adds
+// latency to admission.
+type BalanceReservationCleanupRepository interface {
+	CleanupExpiredGatewayBalanceReservations(ctx context.Context, limit int) (int, error)
 }
 
 // BatchImageBalanceHoldCommand describes an idempotent balance hold operation.

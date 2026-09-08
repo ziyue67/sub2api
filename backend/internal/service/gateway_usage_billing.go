@@ -374,8 +374,15 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
 			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
 		}
-	} else if p.Cost.ActualCost > 0 && p.User != nil {
-		syncBalanceCacheAfterDeduction(ctx, p, deps, result)
+	} else if p.User != nil {
+		if deps.billingCacheService != nil && result != nil && result.BalanceReservationSettled && result.NewBalance != nil {
+			// Reservation capture already returned the authoritative post-settlement
+			// balance. The precharge set Redis to zero, so applying a second delta
+			// would corrupt the cache (and free responses would remain stuck at zero).
+			deps.billingCacheService.setBalanceCache(ctx, p.User.ID, *result.NewBalance)
+		} else if p.Cost.ActualCost > 0 {
+			syncBalanceCacheAfterDeduction(ctx, p, deps, result)
+		}
 	}
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
@@ -865,6 +872,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		APIKeyService:         input.APIKeyService,
 		Platform:              quotaPlatform,
 	}, s.billingDeps(), s.usageBillingRepo)
+	if s.billingCacheService != nil {
+		s.billingCacheService.ForgetGatewayReservation(ctx)
+	}
 
 	if billingErr != nil {
 		usageLog.ActualCost = 0

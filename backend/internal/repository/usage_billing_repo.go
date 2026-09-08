@@ -15,8 +15,318 @@ type usageBillingRepository struct {
 	db *sql.DB
 }
 
+const (
+	gatewayBalanceReservationStatusReserved = "reserved"
+	gatewayBalanceReservationStatusSettled  = "settled"
+	gatewayBalanceReservationStatusReleased = "released"
+	reservationAmountEpsilon                = 0.00000001
+)
+
 func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
 	return &usageBillingRepository{db: sqlDB}
+}
+
+// ReserveGatewayBalance atomically moves the user's currently available
+// balance into frozen_balance and records the request-scoped hold. When
+// ReserveAvailableBalance is set, the authoritative wallet row is locked and
+// read inside this transaction, so callers do not need a second DB round trip
+// that could observe a stale balance.
+func (r *usageBillingRepository) ReserveGatewayBalance(ctx context.Context, cmd *service.BalanceReservationCommand) (_ *service.BalanceReservationResult, err error) {
+	if cmd == nil || strings.TrimSpace(cmd.RequestID) == "" {
+		return nil, service.ErrUsageBillingRequestIDRequired
+	}
+	if r == nil || r.db == nil {
+		return nil, errors.New("usage billing repository db is nil")
+	}
+	amount := service.QuantizeUsageBillingAmount(cmd.Amount)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	// A retry/failover can see zero available balance because the original
+	// request already moved it to frozen_balance. Reuse an existing durable hold
+	// before applying the new amount gate.
+	var existingUserID int64
+	var existingStatus string
+	lookupErr := tx.QueryRowContext(ctx, `
+		SELECT user_id, status
+		FROM gateway_balance_reservations
+		WHERE request_id = $1
+		FOR UPDATE
+	`, cmd.RequestID).Scan(&existingUserID, &existingStatus)
+	if lookupErr == nil {
+		if existingUserID != cmd.UserID {
+			return nil, service.ErrUsageBillingRequestConflict
+		}
+		if existingStatus != gatewayBalanceReservationStatusReserved {
+			return nil, service.ErrBalanceReservationClosed
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		tx = nil
+		return &service.BalanceReservationResult{Applied: false}, nil
+	}
+	if !errors.Is(lookupErr, sql.ErrNoRows) {
+		return nil, lookupErr
+	}
+	if cmd.ReserveAvailableBalance {
+		// Lock the wallet before deriving the hold amount. Concurrent requests for
+		// the same user serialize here and each sees the post-commit balance.
+		if err := tx.QueryRowContext(ctx, `
+			SELECT balance
+			FROM users
+			WHERE id = $1 AND deleted_at IS NULL
+			FOR UPDATE
+		`, cmd.UserID).Scan(&amount); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				if exists, existsErr := userExistsForBilling(ctx, tx, cmd.UserID); existsErr != nil {
+					return nil, existsErr
+				} else if !exists {
+					return nil, service.ErrUserNotFound
+				}
+				return nil, service.ErrInsufficientBalance
+			}
+			return nil, err
+		}
+		amount = service.QuantizeUsageBillingAmount(amount)
+		minimum := service.QuantizeUsageBillingAmount(cmd.MinimumBalance)
+		if minimum > 0 && amount < minimum {
+			return nil, service.ErrInsufficientBalance
+		}
+	} else if amount <= 0 {
+		return nil, service.ErrInsufficientBalance
+	}
+	if amount <= 0 {
+		return nil, service.ErrInsufficientBalance
+	}
+
+	var id int64
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO gateway_balance_reservations
+			(request_id, api_key_id, user_id, reserved_amount, status, expires_at)
+		VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '30 minutes')
+		ON CONFLICT (request_id) DO NOTHING
+		RETURNING id
+	`, cmd.RequestID, cmd.APIKeyID, cmd.UserID, amount, gatewayBalanceReservationStatusReserved).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT user_id, status
+			FROM gateway_balance_reservations
+			WHERE request_id = $1
+		`, cmd.RequestID).Scan(&existingUserID, &existingStatus); err != nil {
+			return nil, err
+		}
+		if existingUserID != cmd.UserID {
+			return nil, service.ErrUsageBillingRequestConflict
+		}
+		if existingStatus != gatewayBalanceReservationStatusReserved {
+			return nil, service.ErrBalanceReservationClosed
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		tx = nil
+		return &service.BalanceReservationResult{Applied: false, Reserved: amount}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var balance, frozen float64
+	err = tx.QueryRowContext(ctx, `
+		UPDATE users
+		SET balance = balance - $1,
+			frozen_balance = COALESCE(frozen_balance, 0) + $1,
+			updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+		RETURNING balance, frozen_balance
+	`, amount, cmd.UserID).Scan(&balance, &frozen)
+	if errors.Is(err, sql.ErrNoRows) {
+		if exists, existsErr := userExistsForBilling(ctx, tx, cmd.UserID); existsErr != nil {
+			return nil, existsErr
+		} else if !exists {
+			return nil, service.ErrUserNotFound
+		}
+		return nil, service.ErrInsufficientBalance
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return &service.BalanceReservationResult{
+		Applied:       true,
+		Reserved:      amount,
+		NewBalance:    balance,
+		FrozenBalance: frozen,
+	}, nil
+}
+
+// CleanupExpiredGatewayBalanceReservations releases a bounded batch of holds
+// left behind by crashed processes. SKIP LOCKED keeps cleanup from blocking a
+// live capture/release transaction, and the limit prevents a large backlog
+// from monopolizing a database connection.
+func (r *usageBillingRepository) CleanupExpiredGatewayBalanceReservations(ctx context.Context, limit int) (count int, err error) {
+	if r == nil || r.db == nil {
+		return 0, errors.New("usage billing repository db is nil")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	res, err := tx.ExecContext(ctx, `
+		WITH expired AS (
+			SELECT id, user_id, reserved_amount
+			FROM gateway_balance_reservations
+			WHERE status = 'reserved' AND expires_at <= NOW()
+			ORDER BY expires_at ASC, id ASC
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		), released AS (
+			UPDATE gateway_balance_reservations r
+			SET actual_amount = 0, status = 'released', updated_at = NOW()
+			FROM expired e
+			WHERE r.id = e.id
+			RETURNING e.user_id, e.reserved_amount
+		), totals AS (
+			SELECT user_id, SUM(reserved_amount) AS amount
+			FROM released
+			GROUP BY user_id
+		)
+		UPDATE users u
+		SET balance = u.balance + totals.amount,
+			frozen_balance = GREATEST(COALESCE(u.frozen_balance, 0) - totals.amount, 0),
+			updated_at = NOW()
+		FROM totals
+		WHERE u.id = totals.user_id AND u.deleted_at IS NULL
+	`, limit)
+	if err != nil {
+		return 0, err
+	}
+	var affected int64
+	affected, err = res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	count = int(affected)
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	tx = nil
+	return count, nil
+}
+
+// CaptureGatewayBalance settles a reservation and returns any unused hold to
+// the available balance. It never permits actual cost to exceed the hold.
+func (r *usageBillingRepository) CaptureGatewayBalance(ctx context.Context, cmd *service.BalanceReservationCommand) (_ *service.BalanceReservationResult, err error) {
+	return r.applyGatewayBalanceReservation(ctx, cmd, service.BalanceReservationCapture)
+}
+
+// ReleaseGatewayBalance returns the full hold after an upstream failure or
+// request cancellation.
+func (r *usageBillingRepository) ReleaseGatewayBalance(ctx context.Context, cmd *service.BalanceReservationCommand) (_ *service.BalanceReservationResult, err error) {
+	return r.applyGatewayBalanceReservation(ctx, cmd, service.BalanceReservationRelease)
+}
+
+func (r *usageBillingRepository) applyGatewayBalanceReservation(ctx context.Context, cmd *service.BalanceReservationCommand, operation service.BalanceReservationOperation) (_ *service.BalanceReservationResult, err error) {
+	if cmd == nil || strings.TrimSpace(cmd.RequestID) == "" {
+		return nil, service.ErrUsageBillingRequestIDRequired
+	}
+	if r == nil || r.db == nil {
+		return nil, errors.New("usage billing repository db is nil")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var reservationID, userID int64
+	var reserved float64
+	var status string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, user_id, reserved_amount, status
+		FROM gateway_balance_reservations
+		WHERE request_id = $1
+		FOR UPDATE
+	`, cmd.RequestID).Scan(&reservationID, &userID, &reserved, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrBalanceReservationNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if userID != cmd.UserID {
+		return nil, service.ErrUsageBillingRequestConflict
+	}
+	if status != gatewayBalanceReservationStatusReserved {
+		return nil, service.ErrBalanceReservationClosed
+	}
+
+	actual := service.QuantizeUsageBillingAmount(cmd.Amount)
+	if operation == service.BalanceReservationRelease {
+		actual = 0
+	}
+	if actual > reserved+reservationAmountEpsilon {
+		return nil, service.ErrBalanceReservationExceedsHold
+	}
+
+	var balance, frozen float64
+	if err := tx.QueryRowContext(ctx, `
+		UPDATE users
+		SET balance = balance + $1 - $2,
+			frozen_balance = COALESCE(frozen_balance, 0) - $1,
+			updated_at = NOW()
+		WHERE id = $3 AND deleted_at IS NULL AND COALESCE(frozen_balance, 0) >= $1
+		RETURNING balance, frozen_balance
+	`, reserved, actual, cmd.UserID).Scan(&balance, &frozen); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrBalanceReservationClosed
+		}
+		return nil, err
+	}
+	newStatus := gatewayBalanceReservationStatusSettled
+	if operation == service.BalanceReservationRelease {
+		newStatus = gatewayBalanceReservationStatusReleased
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE gateway_balance_reservations
+		SET actual_amount = $1, status = $2, updated_at = NOW()
+		WHERE id = $3
+	`, actual, newStatus, reservationID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return &service.BalanceReservationResult{
+		Applied:       true,
+		Reserved:      reserved,
+		Actual:        actual,
+		NewBalance:    balance,
+		FrozenBalance: frozen,
+	}, nil
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -179,12 +489,32 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		reservation, found, err := captureGatewayBalanceReservationTx(ctx, tx, cmd, cmd.BalanceCost)
 		if err != nil {
 			return err
 		}
-		result.NewBalance = &newBalance
-		result.BalanceOverdrafted = !sufficient
+		if found {
+			result.NewBalance = &reservation.NewBalance
+			result.BalanceReservationSettled = true
+		} else {
+			newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+			if err != nil {
+				return err
+			}
+			result.NewBalance = &newBalance
+			result.BalanceOverdrafted = !sufficient
+		}
+	} else if cmd.BillingType == service.BillingTypeBalance {
+		// A zero-cost response still has to close a full-wallet reservation.
+		// Otherwise a free/error response would strand frozen funds.
+		reservation, found, err := captureGatewayBalanceReservationTx(ctx, tx, cmd, 0)
+		if err != nil {
+			return err
+		}
+		if found {
+			result.NewBalance = &reservation.NewBalance
+			result.BalanceReservationSettled = true
+		}
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
@@ -210,6 +540,69 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	return nil
+}
+
+// captureGatewayBalanceReservationTx settles an existing gateway hold inside
+// the caller's billing transaction. found=false means this request predates
+// gateway precharge or belongs to a non-precharged path and must use the
+// guarded direct deduction fallback.
+func captureGatewayBalanceReservationTx(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, actualAmount float64) (*service.BalanceReservationResult, bool, error) {
+	if cmd == nil || strings.TrimSpace(cmd.RequestID) == "" {
+		return nil, false, nil
+	}
+	var reservationID, userID int64
+	var reserved float64
+	var status string
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, user_id, reserved_amount, status
+		FROM gateway_balance_reservations
+		WHERE request_id = $1
+		FOR UPDATE
+	`, cmd.RequestID).Scan(&reservationID, &userID, &reserved, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if userID != cmd.UserID {
+		return nil, true, service.ErrUsageBillingRequestConflict
+	}
+	if status != gatewayBalanceReservationStatusReserved {
+		return nil, true, service.ErrBalanceReservationClosed
+	}
+	actual := service.QuantizeUsageBillingAmount(actualAmount)
+	if actual > reserved+reservationAmountEpsilon {
+		return nil, true, service.ErrBalanceReservationExceedsHold
+	}
+	var balance, frozen float64
+	if err := tx.QueryRowContext(ctx, `
+		UPDATE users
+		SET balance = balance + $1 - $2,
+			frozen_balance = COALESCE(frozen_balance, 0) - $1,
+			updated_at = NOW()
+		WHERE id = $3 AND deleted_at IS NULL AND COALESCE(frozen_balance, 0) >= $1
+		RETURNING balance, frozen_balance
+	`, reserved, actual, cmd.UserID).Scan(&balance, &frozen); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, true, service.ErrBalanceReservationClosed
+		}
+		return nil, true, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE gateway_balance_reservations
+		SET actual_amount = $1, status = $2, updated_at = NOW()
+		WHERE id = $3
+	`, actual, gatewayBalanceReservationStatusSettled, reservationID); err != nil {
+		return nil, true, err
+	}
+	return &service.BalanceReservationResult{
+		Applied:       true,
+		Reserved:      reserved,
+		Actual:        actual,
+		NewBalance:    balance,
+		FrozenBalance: frozen,
+	}, true, nil
 }
 
 func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {
@@ -241,6 +634,9 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 }
 
 func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, bool, error) {
+	if amount <= 0 {
+		return 0, true, nil
+	}
 	var newBalance float64
 	err := tx.QueryRowContext(ctx, `
 		UPDATE users
@@ -255,21 +651,23 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, false, err
 	}
-
-	err = tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, service.ErrUserNotFound
-	}
-	if err != nil {
+	// Do not fall back to an unconditional UPDATE. That fallback was the
+	// overdraft bug: concurrent requests could all pass the stale preflight and
+	// then drive the wallet below zero. Distinguish a missing user from an
+	// existing user whose balance is insufficient while remaining atomic with the
+	// surrounding billing transaction.
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL
+		)
+	`, userID).Scan(&exists); err != nil {
 		return 0, false, err
 	}
-	return newBalance, false, nil
+	if !exists {
+		return 0, false, service.ErrUserNotFound
+	}
+	return 0, false, service.ErrInsufficientBalance
 }
 
 func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {

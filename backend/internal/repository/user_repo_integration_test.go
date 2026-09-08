@@ -485,14 +485,14 @@ func (s *UserRepoSuite) TestDeductBalance() {
 func (s *UserRepoSuite) TestDeductBalance_InsufficientFunds() {
 	user := s.mustCreateUser(&service.User{Email: "insuf@test.com", Balance: 5})
 
-	// 透支策略：允许扣除超过余额的金额
+	// 余额不足必须被原子拒绝，不能再把钱包扣成负数。
 	err := s.repo.DeductBalance(s.ctx, user.ID, 999)
-	s.Require().NoError(err, "DeductBalance should allow overdraft")
+	s.Require().ErrorIs(err, service.ErrInsufficientBalance)
 
-	// 验证余额变为负数
+	// 验证余额保持不变
 	got, err := s.repo.GetByID(s.ctx, user.ID)
 	s.Require().NoError(err)
-	s.Require().InDelta(-994.0, got.Balance, 1e-6, "Balance should be negative after overdraft")
+	s.Require().InDelta(5.0, got.Balance, 1e-6, "Balance must not become negative")
 }
 
 func (s *UserRepoSuite) TestDeductBalance_ExactAmount() {
@@ -506,17 +506,49 @@ func (s *UserRepoSuite) TestDeductBalance_ExactAmount() {
 	s.Require().InDelta(0.0, got.Balance, 1e-6)
 }
 
-func (s *UserRepoSuite) TestDeductBalance_AllowsOverdraft() {
+func (s *UserRepoSuite) TestDeductBalance_RejectsOverdraft() {
 	user := s.mustCreateUser(&service.User{Email: "overdraft@test.com", Balance: 5.0})
 
-	// 扣除超过余额的金额 - 应该成功
+	// 扣除超过余额的金额必须失败
 	err := s.repo.DeductBalance(s.ctx, user.ID, 10.0)
-	s.Require().NoError(err, "DeductBalance should allow overdraft")
+	s.Require().ErrorIs(err, service.ErrInsufficientBalance)
 
-	// 验证余额为负
+	// 验证余额保持原值
 	got, err := s.repo.GetByID(s.ctx, user.ID)
 	s.Require().NoError(err)
-	s.Require().InDelta(-5.0, got.Balance, 1e-6, "Balance should be -5.0 after overdraft")
+	s.Require().InDelta(5.0, got.Balance, 1e-6, "Balance must not become negative")
+}
+
+func (s *UserRepoSuite) TestDeductBalance_ConcurrentRequestsCannotOverdraft() {
+	user := s.mustCreateUser(&service.User{Email: "deduct-race@test.com", Balance: 1.0})
+
+	const requestCount = 16
+	errs := make(chan error, requestCount)
+	var wg sync.WaitGroup
+	for i := 0; i < requestCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- s.repo.DeductBalance(context.Background(), user.ID, 0.6)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	successes := 0
+	for err := range errs {
+		if err == nil {
+			successes++
+			continue
+		}
+		s.Require().ErrorIs(err, service.ErrInsufficientBalance)
+	}
+	s.Require().Equal(1, successes, "only one request may spend the available balance")
+
+	got, err := s.repo.GetByID(s.ctx, user.ID)
+	s.Require().NoError(err)
+	s.Require().InDelta(0.4, got.Balance, 1e-6)
+	s.Require().GreaterOrEqual(got.Balance, 0.0)
 }
 
 func (s *UserRepoSuite) TestDeductAvailableBalance_ClampsToNonnegativeBalance() {
@@ -737,12 +769,12 @@ func (s *UserRepoSuite) TestCRUD_And_Filters_And_AtomicUpdates() {
 	s.Require().NoError(err, "GetByID after DeductBalance")
 	s.Require().InDelta(7.5, got4.Balance, 1e-6)
 
-	// 透支策略：允许扣除超过余额的金额
+	// 余额不足必须失败，不能覆盖并发扣费后把钱包写成负数
 	err = s.repo.DeductBalance(s.ctx, user1.ID, 999)
-	s.Require().NoError(err, "DeductBalance should allow overdraft")
-	gotOverdraft, err := s.repo.GetByID(s.ctx, user1.ID)
-	s.Require().NoError(err, "GetByID after overdraft")
-	s.Require().Less(gotOverdraft.Balance, 0.0, "Balance should be negative after overdraft")
+	s.Require().ErrorIs(err, service.ErrInsufficientBalance)
+	gotAfterRejectedDeduction, err := s.repo.GetByID(s.ctx, user1.ID)
+	s.Require().NoError(err, "GetByID after rejected deduction")
+	s.Require().InDelta(7.5, gotAfterRejectedDeduction.Balance, 1e-6, "Balance must not become negative")
 
 	s.Require().NoError(s.repo.UpdateConcurrency(s.ctx, user1.ID, 3), "UpdateConcurrency")
 	got5, err := s.repo.GetByID(s.ctx, user1.ID)

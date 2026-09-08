@@ -2,13 +2,16 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
@@ -104,15 +107,21 @@ type subscriptionCacheInvalidationPubSub interface {
 // BillingCacheService 计费缓存服务
 // 负责余额和订阅数据的缓存管理，提供高性能的计费资格检查
 type BillingCacheService struct {
-	cache                 BillingCache
-	userRepo              UserRepository
-	subRepo               UserSubscriptionRepository
-	apiKeyRateLimitLoader apiKeyRateLimitLoader
-	userRPMCache          UserRPMCache
-	userGroupRateRepo     UserGroupRateRepository
-	cfg                   *config.Config
-	circuitBreaker        *billingCircuitBreaker
-	userPlatformQuotaRepo UserPlatformQuotaRepository
+	cache                      BillingCache
+	userRepo                   UserRepository
+	subRepo                    UserSubscriptionRepository
+	apiKeyRateLimitLoader      apiKeyRateLimitLoader
+	userRPMCache               UserRPMCache
+	userGroupRateRepo          UserGroupRateRepository
+	cfg                        *config.Config
+	circuitBreaker             *billingCircuitBreaker
+	userPlatformQuotaRepo      UserPlatformQuotaRepository
+	balanceReservationRepo     BalanceReservationRepository
+	activeGatewayReservations  sync.Map
+	reservationCleanupStop     chan struct{}
+	reservationCleanupWg       sync.WaitGroup
+	reservationCleanupOnce     sync.Once
+	reservationCleanupStopOnce sync.Once
 
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
@@ -126,6 +135,50 @@ type BillingCacheService struct {
 	cacheWriteDropFullLastLog   int64
 	cacheWriteDropClosedCount   uint64
 	cacheWriteDropClosedLastLog int64
+}
+
+// SetBalanceReservationRepository connects the durable gateway precharge
+// store after dependency wiring. It is intentionally a setter to keep the
+// existing constructor and lightweight test doubles source-compatible.
+func (s *BillingCacheService) SetBalanceReservationRepository(repo BalanceReservationRepository) {
+	if s == nil {
+		return
+	}
+	s.balanceReservationRepo = repo
+	if cleanupRepo, ok := repo.(BalanceReservationCleanupRepository); ok {
+		s.startReservationCleanup(cleanupRepo)
+	}
+}
+
+// startReservationCleanup reclaims holds after process crashes without doing
+// a global expiry sweep on every gateway request. The first tick is delayed so
+// wiring/startup never competes with the request hot path.
+func (s *BillingCacheService) startReservationCleanup(repo BalanceReservationCleanupRepository) {
+	if s == nil || repo == nil {
+		return
+	}
+	s.reservationCleanupOnce.Do(func() {
+		stop := make(chan struct{})
+		s.reservationCleanupStop = stop
+		s.reservationCleanupWg.Add(1)
+		go func() {
+			defer s.reservationCleanupWg.Done()
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					if _, err := repo.CleanupExpiredGatewayBalanceReservations(ctx, 100); err != nil {
+						logger.LegacyPrintf("service.billing_cache", "Warning: expired gateway reservation cleanup failed: %v", err)
+					}
+					cancel()
+				case <-stop:
+					return
+				}
+			}
+		}()
+	})
 }
 
 // NewBillingCacheService 创建计费缓存服务
@@ -156,6 +209,10 @@ func NewBillingCacheService(
 
 // Stop 关闭缓存写入工作池
 func (s *BillingCacheService) Stop() {
+	if s.reservationCleanupStop != nil {
+		s.reservationCleanupStopOnce.Do(func() { close(s.reservationCleanupStop) })
+		s.reservationCleanupWg.Wait()
+	}
 	s.cacheWriteStopOnce.Do(func() {
 		s.stopped.Store(true)
 
@@ -405,6 +462,134 @@ func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID 
 		return err
 	}
 	return nil
+}
+
+func gatewayReservationRequestID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if requestID, _ := ctx.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
+		return strings.TrimSpace(requestID)
+	}
+	if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
+		return "client:" + strings.TrimSpace(clientRequestID)
+	}
+	return ""
+}
+
+func gatewayReservationAPIKeyID(apiKey *APIKey) int64 {
+	if apiKey == nil {
+		return 0
+	}
+	return apiKey.ID
+}
+
+// ReserveGatewayBalance freezes the user's current available wallet for one
+// gateway request. The full-wallet hold is deliberately conservative for the
+// emergency fix: it gives the provider request a hard upper bound even when a
+// model omits max_tokens or pricing has media/surcharge components.
+func (s *BillingCacheService) ReserveGatewayBalance(ctx context.Context, userID, apiKeyID int64) error {
+	if s == nil || s.balanceReservationRepo == nil || userID <= 0 || apiKeyID <= 0 {
+		return nil
+	}
+	requestID := gatewayReservationRequestID(ctx)
+	if requestID == "" {
+		// No stable id means we cannot make the hold idempotent. Keep the legacy
+		// eligibility check rather than risking a duplicate reservation.
+		return nil
+	}
+	if _, ok := s.activeGatewayReservations.Load(requestID); ok {
+		return nil
+	}
+
+	result, err := s.balanceReservationRepo.ReserveGatewayBalance(ctx, &BalanceReservationCommand{
+		RequestID:      requestID,
+		APIKeyID:       apiKeyID,
+		UserID:         userID,
+		MinimumBalance: s.minimumBalanceReserve(),
+		// The repository reads and locks the authoritative wallet row in the
+		// same transaction as the reservation. This removes the extra user
+		// lookup and closes the stale-balance window between read and hold.
+		ReserveAvailableBalance: true,
+	})
+	if err != nil {
+		return err
+	}
+	if result != nil && result.Applied {
+		// The frozen amount is no longer available to a second preflight. Update
+		// the cache synchronously so concurrent handlers see the new gate state.
+		s.setBalanceCache(ctx, userID, result.NewBalance)
+	}
+	s.activeGatewayReservations.Store(requestID, struct{}{})
+
+	// A request that exits before RecordUsage (upstream failure, client cancel,
+	// route selection failure) must not strand the hold. The callback is
+	// idempotent with CaptureGatewayBalance/ReleaseGatewayBalance.
+	if ctx != nil {
+		cmd := &BalanceReservationCommand{RequestID: requestID, APIKeyID: apiKeyID, UserID: userID}
+		context.AfterFunc(ctx, func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), postUsageBillingTimeout)
+			defer cancel()
+			result, releaseErr := s.balanceReservationRepo.ReleaseGatewayBalance(releaseCtx, cmd)
+			if releaseErr == nil && result != nil && result.Applied {
+				s.setBalanceCache(releaseCtx, userID, result.NewBalance)
+			}
+			if releaseErr != nil && !errors.Is(releaseErr, ErrBalanceReservationClosed) && !errors.Is(releaseErr, ErrBalanceReservationNotFound) {
+				logger.LegacyPrintf("service.billing_cache", "ALERT: gateway balance reservation release failed user=%d request=%s: %v", userID, requestID, releaseErr)
+			}
+			s.activeGatewayReservations.Delete(requestID)
+		})
+	}
+	return nil
+}
+
+// HasActiveGatewayReservation tells the usage submitter that this request's
+// money event must be processed inline before the HTTP handler returns. This
+// prevents request-context cancellation from releasing a hold before a queued
+// billing worker has had a chance to settle it.
+func (s *BillingCacheService) HasActiveGatewayReservation(ctx context.Context) bool {
+	if s == nil {
+		return false
+	}
+	requestID := gatewayReservationRequestID(ctx)
+	if requestID == "" {
+		return false
+	}
+	_, ok := s.activeGatewayReservations.Load(requestID)
+	return ok
+}
+
+func (s *BillingCacheService) ForgetGatewayReservation(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	if requestID := gatewayReservationRequestID(ctx); requestID != "" {
+		s.activeGatewayReservations.Delete(requestID)
+	}
+}
+
+func (s *BillingCacheService) releaseGatewayReservation(ctx context.Context, userID, apiKeyID int64) {
+	if s == nil || s.balanceReservationRepo == nil {
+		return
+	}
+	requestID := gatewayReservationRequestID(ctx)
+	if requestID == "" {
+		return
+	}
+	releaseCtx, cancel := context.WithTimeout(context.Background(), postUsageBillingTimeout)
+	defer cancel()
+	result, err := s.balanceReservationRepo.ReleaseGatewayBalance(releaseCtx, &BalanceReservationCommand{
+		RequestID: requestID,
+		APIKeyID:  apiKeyID,
+		UserID:    userID,
+	})
+	if err == nil && result != nil && result.Applied {
+		s.setBalanceCache(releaseCtx, userID, result.NewBalance)
+	}
+	if err != nil && !errors.Is(err, ErrBalanceReservationClosed) && !errors.Is(err, ErrBalanceReservationNotFound) {
+		logger.LegacyPrintf("service.billing_cache", "ALERT: gateway balance reservation release failed user=%d request=%s: %v", userID, requestID, err)
+	}
+	s.activeGatewayReservations.Delete(requestID)
 }
 
 // ============================================
@@ -749,7 +934,19 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 			return err
 		}
 	} else {
-		if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
+		if apiKey != nil {
+			// The durable reservation transaction is the authoritative balance
+			// check when a stable request id is available. This avoids an extra
+			// Redis read and lets retries reach the idempotent hold lookup even if
+			// another process has already moved the balance into frozen_balance.
+			if s.balanceReservationRepo != nil && gatewayReservationRequestID(ctx) != "" {
+				if err := s.ReserveGatewayBalance(ctx, user.ID, apiKey.ID); err != nil {
+					return err
+				}
+			} else if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
+				return err
+			}
+		} else if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
 			return err
 		}
 	}
@@ -757,6 +954,7 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	// user × platform quota 仅在 standard（余额）模式生效；订阅模式豁免
 	if !isSubscriptionMode {
 		if err := s.checkUserPlatformQuotaEligibility(ctx, user.ID, platform); err != nil {
+			s.releaseGatewayReservation(ctx, user.ID, gatewayReservationAPIKeyID(apiKey))
 			return err
 		}
 	}
@@ -764,12 +962,14 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 	// Check API Key rate limits (applies to both billing modes)
 	if apiKey != nil && apiKey.HasRateLimits() {
 		if err := s.checkAPIKeyRateLimits(ctx, apiKey); err != nil {
+			s.releaseGatewayReservation(ctx, user.ID, gatewayReservationAPIKeyID(apiKey))
 			return err
 		}
 	}
 
 	// RPM 限流：级联回落（Override → Group → User），放在最后以避免为注定失败的请求增加计数。
 	if err := s.checkRPM(ctx, user, group); err != nil {
+		s.releaseGatewayReservation(ctx, user.ID, gatewayReservationAPIKeyID(apiKey))
 		return err
 	}
 
@@ -877,6 +1077,12 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 
 // checkBalanceEligibility 检查余额模式资格
 func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
+	// A request that already owns a durable hold has passed the authoritative
+	// balance gate. Re-checks during failover must not reject it merely because
+	// the cache now reflects the held amount (normally zero available balance).
+	if s.HasActiveGatewayReservation(ctx) {
+		return nil
+	}
 	balance, err := s.GetUserBalance(ctx, userID)
 	if err != nil {
 		if s.circuitBreaker != nil {

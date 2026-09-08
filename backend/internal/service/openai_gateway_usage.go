@@ -505,6 +505,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		}, s.billingDeps(), s.usageBillingRepo)
 		return err
 	}()
+	if s.billingCacheService != nil {
+		s.billingCacheService.ForgetGatewayReservation(ctx)
+	}
 
 	if billingErr != nil {
 		usageLog.ActualCost = 0

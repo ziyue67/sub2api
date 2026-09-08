@@ -865,10 +865,15 @@ func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id in
 	return nil
 }
 
-// DeductBalance 扣除用户余额
-// 透支策略：允许余额变为负数，确保当前请求能够完成
-// 中间件会阻止余额 <= 0 的用户发起后续请求
+// DeductBalance 扣除用户余额。
+// The conditional UPDATE is the money-safety boundary: a request may only
+// spend funds that are available at the moment the row is updated. Never fall
+// back to an unconditional deduction, otherwise concurrent requests can drive
+// the wallet negative after a stale eligibility check.
 func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount float64) error {
+	if amount <= 0 {
+		return nil
+	}
 	client := clientFromContext(ctx, r.client)
 	n, err := client.User.Update().
 		Where(dbuser.IDEQ(id), dbuser.BalanceGTE(amount)).
@@ -881,17 +886,16 @@ func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount flo
 		return nil
 	}
 
-	n, err = client.User.Update().
+	exists, err := client.User.Query().
 		Where(dbuser.IDEQ(id)).
-		AddBalance(-amount).
-		Save(ctx)
+		Exist(ctx)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if !exists {
 		return service.ErrUserNotFound
 	}
-	return nil
+	return service.ErrInsufficientBalance
 }
 
 // DeductAvailableBalance atomically deducts min(amount, max(balance, 0)).
