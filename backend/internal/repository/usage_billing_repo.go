@@ -7,16 +7,22 @@ import (
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type usageBillingRepository struct {
-	db *sql.DB
+	db                     *sql.DB
+	minimumBalanceReserve  float64
 }
 
-func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
-	return &usageBillingRepository{db: sqlDB}
+func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfgs ...*config.Config) service.UsageBillingRepository {
+	var reserve float64
+	if len(cfgs) > 0 && cfgs[0] != nil {
+		reserve = cfgs[0].Billing.MinimumBalanceReserve
+	}
+	return &usageBillingRepository{db: sqlDB, minimumBalanceReserve: reserve}
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -179,7 +185,7 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost, r.minimumBalanceReserve)
 		if err != nil {
 			return err
 		}
@@ -240,20 +246,41 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 	return service.ErrSubscriptionNotFound
 }
 
-func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, bool, error) {
+func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64, minimumReserves ...float64) (float64, bool, error) {
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
 	var newBalance float64
+	// Keep a configurable reserve in the atomic UPDATE predicate. This closes
+	// the race between the preflight check and the actual deduction, so a user
+	// cannot spend the final reserve (production defaults to $0.10).
 	err := tx.QueryRowContext(ctx, `
 		UPDATE users
 		SET balance = balance - $1,
 			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+		WHERE id = $2 AND deleted_at IS NULL AND balance >= ($1 + GREATEST($3, 0))
 		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
+	`, amount, userID, minimumReserve).Scan(&newBalance)
 	if err == nil {
 		return newBalance, true, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, false, err
+	}
+
+	if minimumReserve > 0 {
+		// A failed guarded update means either insufficient spendable balance or
+		// a missing user. Distinguish the latter while preserving the existing
+		// service-level error contract for the former.
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)`, userID).Scan(&exists); err != nil {
+			return 0, false, err
+		}
+		if !exists {
+			return 0, false, service.ErrUserNotFound
+		}
+		return 0, false, service.ErrInsufficientBalance
 	}
 
 	err = tx.QueryRowContext(ctx, `

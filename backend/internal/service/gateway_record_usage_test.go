@@ -641,6 +641,40 @@ func TestGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *testin
 	require.Zero(t, usageRepo.lastLog.ActualCost)
 }
 
+func TestGatewayServiceRecordUsage_InsufficientBalanceInvalidatesBalanceCache(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	cache := &balanceEligibilityCacheStub{balance: 0.30}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	// billing repo 原子扣费失败（余额不足以覆盖 amount + reserve）→
+	// recordUsageCore 应把余额缓存失效，保证下一次 preflight 从 DB 重读并 403。
+	billingRepo := &openAIRecordUsageBillingRepoStub{err: ErrInsufficientBalance}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.usageBillingRepo = billingRepo
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_billing_insufficient",
+			Usage: ClaudeUsage{
+				InputTokens:  100,
+				OutputTokens: 60,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 509},
+		User:    &User{ID: 609},
+		Account: &Account{ID: 709},
+	})
+
+	require.ErrorIs(t, err, ErrInsufficientBalance)
+	require.Equal(t, int64(1), cache.invalidateCalls.Load(), "insufficient-balance billing error must invalidate the balance cache")
+}
+
 func TestGatewayServiceRecordUsage_ReasoningEffortPersisted(t *testing.T) {
 	usageRepo := &openAIRecordUsageBestEffortLogRepoStub{}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})

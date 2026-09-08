@@ -43,6 +43,7 @@ type BalanceNotifyService struct {
 	settingRepo              SettingRepository
 	accountRepo              AccountQuotaReader
 	notificationEmailService *NotificationEmailService
+	minimumBalanceReserve    float64
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.
@@ -51,6 +52,14 @@ func NewBalanceNotifyService(emailService *EmailService, settingRepo SettingRepo
 		emailService: emailService,
 		settingRepo:  settingRepo,
 		accountRepo:  accountRepo,
+	}
+}
+
+// SetMinimumBalanceReserve 注入计费保留额度（billing.minimum_balance_reserve）。
+// 当扣费后余额触及该保留线时，即使未配置提醒阈值也会强制发一封“最后可用额度”邮件。
+func (s *BalanceNotifyService) SetMinimumBalanceReserve(reserve float64) {
+	if reserve > 0 {
+		s.minimumBalanceReserve = reserve
 	}
 }
 
@@ -74,14 +83,42 @@ func (s *BalanceNotifyService) CheckBalanceAfterDeduction(ctx context.Context, u
 		return
 	}
 	effectiveThreshold, rechargeURL, ok := s.resolveUserEffectiveThreshold(ctx, user)
-	if !ok {
-		return
-	}
 	newBalance := oldBalance - cost
-	if !crossedDownward(oldBalance, newBalance, effectiveThreshold) {
+	effectiveThreshold, shouldSend := balanceLowNotifyDecision(
+		ok,
+		effectiveThreshold,
+		s.minimumBalanceReserve,
+		oldBalance,
+		newBalance,
+	)
+	if !shouldSend {
 		return
 	}
 	s.dispatchBalanceLowEmail(ctx, user, newBalance, effectiveThreshold, rechargeURL)
+}
+
+// balanceLowNotifyDecision 计算扣费后是否需要发“余额低”提醒，并返回展示用阈值。
+//
+// 规则：
+//  1. 常规提醒已配置（ok=true）：跨过用户/全局阈值（old >= t && new < t）即发；
+//     同时如果扣费后余额已经跌到计费保留线 reserve（“最后可用额度”）以下也发，
+//     保证用户一定能在真正没钱前收到提醒。
+//  2. 常规提醒未配置（ok=false）：只有 reserve > 0 且扣费后余额跌到 reserve 及以下时，
+//     强制用 reserve 作为阈值补发一封，避免“用户不知道已经快没钱”的静默断供。
+func balanceLowNotifyDecision(configured bool, threshold, reserve, oldBalance, newBalance float64) (effectiveThreshold float64, send bool) {
+	if configured {
+		if crossedDownward(oldBalance, newBalance, threshold) {
+			return threshold, true
+		}
+		if reserve > 0 && newBalance <= reserve && oldBalance > reserve {
+			return reserve, true
+		}
+		return threshold, false
+	}
+	if reserve > 0 && newBalance <= reserve && oldBalance > reserve {
+		return reserve, true
+	}
+	return 0, false
 }
 
 // canNotifyBalance checks nil guards and user-level toggle.

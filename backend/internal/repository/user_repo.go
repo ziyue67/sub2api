@@ -865,13 +865,33 @@ func (r *userRepository) ApplyRedeemBalanceAdjustment(ctx context.Context, id in
 	return nil
 }
 
-// DeductBalance 扣除用户余额
-// 透支策略：允许余额变为负数，确保当前请求能够完成
-// 中间件会阻止余额 <= 0 的用户发起后续请求
-func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount float64) error {
+// DeductBalance 扣除用户余额（无透支策略）。
+//
+// 历史行为允许余额扣成负数（透支），代价是用户可以为超过自身余额的请求付费，
+// 出现 -$5 这类负余额。现在改为与 usage_billing_repo 的原子扣费一致：
+// 余额不足以覆盖 amount + reserve 时拒绝扣费，余额永远不会降到 0 以下。
+// 这样即使用户提交了超大请求，也不会产生负余额；后续请求由鉴权层 403 拦下。
+func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount float64, minimumReserves ...float64) error {
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
+	if amount < 0 {
+		return fmt.Errorf("deduction amount must be nonnegative")
+	}
+
+	// 可花余额 = balance - reserve。余额必须 >= amount + reserve 才允许扣减，
+	// 与 usage_billing_repo.deductUsageBillingBalance 保持同一语义，避免用户
+	// 花掉最后 reserve（默认 $0.10）或出现负余额。
+	//
+	// 先用带条件的 UPDATE（余额足够时）原子完成扣减；条件未命中再区分
+	// “用户不存在”与“余额不足”，与 usage_billing_repo 的错误契约保持一致。
 	client := clientFromContext(ctx, r.client)
 	n, err := client.User.Update().
-		Where(dbuser.IDEQ(id), dbuser.BalanceGTE(amount)).
+		Where(
+			dbuser.IDEQ(id),
+			dbuser.BalanceGTE(amount+minimumReserve),
+		).
 		AddBalance(-amount).
 		Save(ctx)
 	if err != nil {
@@ -881,17 +901,18 @@ func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount flo
 		return nil
 	}
 
-	n, err = client.User.Update().
-		Where(dbuser.IDEQ(id)).
-		AddBalance(-amount).
-		Save(ctx)
+	// 未命中：可能是用户不存在，也可能是余额不足（含 reserve 判断）。区分二者，
+	// 保持与 usage_billing_repo 一致的错误契约：余额不足 → ErrInsufficientBalance。
+	exists, err := client.User.Query().
+		Where(dbuser.IDEQ(id), dbuser.DeletedAtIsNil()).
+		Exist(ctx)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if !exists {
 		return service.ErrUserNotFound
 	}
-	return nil
+	return service.ErrInsufficientBalance
 }
 
 // DeductAvailableBalance atomically deducts min(amount, max(balance, 0)).

@@ -82,6 +82,44 @@ func TestCheckBalanceAfterDeduction_NoCrossingNotFired(t *testing.T) {
 	s.CheckBalanceAfterDeduction(context.Background(), u, 5, 2)
 }
 
+// ---------- balanceLowNotifyDecision ----------
+
+func TestBalanceLowNotifyDecision_UnconfiguredBelowReserveFires(t *testing.T) {
+	// 未配置常规提醒，但扣费后余额跌到保留线（最后 $0.10）以下 → 强制补发
+	threshold, send := balanceLowNotifyDecision(false, 0, 0.10, 0.30, 0.08)
+	require.True(t, send)
+	require.InDelta(t, 0.10, threshold, 1e-9)
+}
+
+func TestBalanceLowNotifyDecision_UnconfiguredAboveReserveSkips(t *testing.T) {
+	threshold, send := balanceLowNotifyDecision(false, 0, 0.10, 0.80, 0.40)
+	require.False(t, send)
+	require.Zero(t, threshold)
+}
+
+func TestBalanceLowNotifyDecision_UnconfiguredNoReserveSkips(t *testing.T) {
+	_, send := balanceLowNotifyDecision(false, 0, 0, 0.50, 0.05)
+	require.False(t, send)
+}
+
+func TestBalanceLowNotifyDecision_ConfiguredCrossingFires(t *testing.T) {
+	threshold, send := balanceLowNotifyDecision(true, 1.00, 0.10, 1.50, 0.90)
+	require.True(t, send)
+	require.InDelta(t, 1.00, threshold, 1e-9)
+}
+
+func TestBalanceLowNotifyDecision_ConfiguredNoCrossingButBelowReserveFires(t *testing.T) {
+	// 用户配置阈值 5.0，扣费后 0.30 → 0.08（跌穿 reserve 0.10）→ 应强制用 reserve 发
+	threshold, send := balanceLowNotifyDecision(true, 5.0, 0.10, 0.30, 0.08)
+	require.True(t, send)
+	require.InDelta(t, 0.10, threshold, 1e-9)
+}
+
+func TestBalanceLowNotifyDecision_ConfiguredNoCrossingAboveReserveSkips(t *testing.T) {
+	_, send := balanceLowNotifyDecision(true, 5.0, 0.10, 0.80, 0.40)
+	require.False(t, send)
+}
+
 // ---------- nil-service guards on CheckAccountQuotaAfterIncrement ----------
 
 func TestCheckAccountQuotaAfterIncrement_NilAccount(t *testing.T) {

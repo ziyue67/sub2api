@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -148,8 +149,23 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		}
 	} else {
 		if cost.ActualCost > 0 {
-			if err := deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost); err != nil {
-				slog.Error("deduct balance failed", "user_id", p.User.ID, "error", err)
+			// legacy 兜底路径：同样拒绝透支。reserve 缺省由调用方传入；此处沿用
+			// cfg 的 minimum_balance_reserve，与统一 usage_billing_repo 路径语义一致，
+			// 避免降级模式下用户花掉最后 reserve 或产生负余额。
+			minimumReserve := 0.0
+			if deps != nil && deps.cfg != nil && deps.cfg.Billing.MinimumBalanceReserve > 0 {
+				minimumReserve = deps.cfg.Billing.MinimumBalanceReserve
+			}
+			if err := deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost, minimumReserve); err != nil {
+				slog.Error("deduct balance failed", "user_id", p.User.ID, "amount", cost.ActualCost, "error", err)
+				// 余额不足导致扣费失败：立刻失效余额缓存，确保下一次请求的
+				// preflight 会从 DB 读到真实余额并返回 403（INSUFFICIENT_BALANCE），
+				// 而不是继续拿 Redis 里过期的余额放行。
+				if errors.Is(err, ErrInsufficientBalance) && deps.billingCacheService != nil {
+					if invalidateErr := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); invalidateErr != nil {
+						slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", invalidateErr)
+					}
+				}
 			} else if deps.billingCacheService != nil {
 				if err := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); err != nil {
 					slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", err)
@@ -869,6 +885,14 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if billingErr != nil {
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		// 余额不足导致整笔计费被原子拒绝：失效余额缓存，让下一次请求的 preflight
+		// 从 DB 重新读取真实余额，命中 reserve/负余额门槛后以 403 拒绝，防止
+		// Redis 旧余额让用户继续发出注定扣费失败的请求。
+		if errors.Is(billingErr, ErrInsufficientBalance) && user != nil && s.billingCacheService != nil {
+			if invalidateErr := s.billingCacheService.InvalidateUserBalance(ctx, user.ID); invalidateErr != nil {
+				slog.Warn("invalidate balance cache after billing rejection", "user_id", user.ID, "error", invalidateErr)
+			}
+		}
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
