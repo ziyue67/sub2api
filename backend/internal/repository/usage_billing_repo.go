@@ -284,34 +284,22 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 		return 0, false, err
 	}
 
-	if minimumReserve > 0 {
-		// A failed guarded update means either insufficient spendable balance or
-		// a missing user. Distinguish the latter while preserving the existing
-		// service-level error contract for the former.
-		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)`, userID).Scan(&exists); err != nil {
-			return 0, false, err
-		}
-		if !exists {
-			return 0, false, service.ErrUserNotFound
-		}
-		return 0, false, service.ErrInsufficientBalance
-	}
-
-	err = tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, service.ErrUserNotFound
-	}
-	if err != nil {
+	// A failed guarded update means either insufficient spendable balance or a
+	// missing user. Distinguish the latter while preserving the service-level
+	// error contract for the former.
+	//
+	// No overdraft fallback exists anymore: even when the configured reserve is
+	// 0 the balance must cover the full amount (balance >= amount), so a user
+	// can never be driven to a negative balance. This closes the historical
+	// "debt still recorded" path that produced -$5 users.
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)`, userID).Scan(&exists); err != nil {
 		return 0, false, err
 	}
-	return newBalance, false, nil
+	if !exists {
+		return 0, false, service.ErrUserNotFound
+	}
+	return 0, false, service.ErrInsufficientBalance
 }
 
 func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
