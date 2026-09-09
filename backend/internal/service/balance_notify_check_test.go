@@ -43,7 +43,32 @@ func TestCheckBalanceAfterDeduction_GlobalDisabled(t *testing.T) {
 	s, repo := newBalanceNotifyServiceForTest()
 	repo.data[SettingKeyBalanceLowNotifyEnabled] = "false"
 	u := &User{ID: 1, BalanceNotifyEnabled: true}
-	s.CheckBalanceAfterDeduction(context.Background(), u, 20, 15)
+	s.SetMinimumBalanceReserve(0.10)
+	// 触及 reserve 也不能在全局关闭时发送
+	s.CheckBalanceAfterDeduction(context.Background(), u, 0.30, 0.22)
+	require.Zero(t, s.balanceLowDispatchCount.Load(), "global switch off must never dispatch, even on reserve crossing")
+}
+
+func TestCheckBalanceAfterDeduction_GlobalDisabledEvenWithUserExtraEmails(t *testing.T) {
+	s, repo := newBalanceNotifyServiceForTest()
+	repo.data[SettingKeyBalanceLowNotifyEnabled] = "false"
+	u := &User{ID: 1, BalanceNotifyEnabled: true, BalanceNotifyExtraEmails: []NotifyEmailEntry{
+		{Email: "owner@example.com", Verified: true, Disabled: false},
+	}}
+	s.SetMinimumBalanceReserve(0.10)
+	s.CheckBalanceAfterDeduction(context.Background(), u, 0.30, 0.22)
+	require.Zero(t, s.balanceLowDispatchCount.Load())
+}
+
+func TestCheckBalanceAfterDeduction_GlobalEnabledNoThresholdReserveCrossingDispatches(t *testing.T) {
+	s, repo := newBalanceNotifyServiceForTest()
+	// 全局开启但未配置阈值（threshold 空 → 0）
+	repo.data[SettingKeyBalanceLowNotifyEnabled] = "true"
+	s.SetMinimumBalanceReserve(0.10)
+	u := &User{ID: 1, BalanceNotifyEnabled: true}
+	// 0.30 → 0.08 跌穿 reserve：应强制补发一封
+	s.CheckBalanceAfterDeduction(context.Background(), u, 0.30, 0.22)
+	require.Equal(t, int64(1), s.balanceLowDispatchCount.Load(), "reserve fallback must dispatch when global switch is on")
 }
 
 func TestCheckBalanceAfterDeduction_ThresholdZero(t *testing.T) {

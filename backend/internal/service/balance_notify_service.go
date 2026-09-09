@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -44,6 +45,9 @@ type BalanceNotifyService struct {
 	accountRepo              AccountQuotaReader
 	notificationEmailService *NotificationEmailService
 	minimumBalanceReserve    float64
+	// balanceLowDispatchCount 累计实际触发的余额低邮件派发次数（含兜底）。
+	// 仅供单元测试断言“全局关闭时必须为 0”，不参与生产逻辑。
+	balanceLowDispatchCount atomic.Int64
 }
 
 // NewBalanceNotifyService creates a new BalanceNotifyService.
@@ -82,7 +86,14 @@ func (s *BalanceNotifyService) CheckBalanceAfterDeduction(ctx context.Context, u
 	if !s.canNotifyBalance(user) {
 		return
 	}
-	effectiveThreshold, rechargeURL, ok := s.resolveUserEffectiveThreshold(ctx, user)
+	// 全局开关是总闸：balance_low_notify_enabled=false 时绝不允许发送任何余额提醒
+	// （包括触及计费保留线 reserve 的“最后可用额度”兜底邮件）。区分“全局关闭”与
+	// “全局开启但未配置阈值”——后者仍允许 reserve 兜底补发。
+	globalEnabled, globalThreshold, rechargeURL := s.getBalanceNotifyConfig(ctx)
+	if !globalEnabled {
+		return
+	}
+	effectiveThreshold, rechargeURL, ok := s.resolveUserEffectiveThresholdWithGlobal(ctx, user, globalThreshold, rechargeURL)
 	newBalance := oldBalance - cost
 	effectiveThreshold, shouldSend := balanceLowNotifyDecision(
 		ok,
@@ -136,6 +147,15 @@ func (s *BalanceNotifyService) resolveUserEffectiveThreshold(ctx context.Context
 	if !globalEnabled {
 		return 0, "", false
 	}
+	return s.resolveUserEffectiveThresholdWithGlobal(ctx, user, globalThreshold, rechargeURL)
+}
+
+// resolveUserEffectiveThresholdWithGlobal computes the effective balance-low threshold
+// from the user override (falling back to the already-read global threshold).
+// ok=false means no threshold is configured — the caller may still send the
+// reserve-floor fallback email. The global switch must be checked by the caller
+// before invoking this helper; a disabled global switch must never send.
+func (s *BalanceNotifyService) resolveUserEffectiveThresholdWithGlobal(ctx context.Context, user *User, globalThreshold float64, rechargeURL string) (effectiveThreshold float64, url string, ok bool) {
 	threshold := globalThreshold
 	if user.BalanceNotifyThreshold != nil {
 		threshold = *user.BalanceNotifyThreshold
@@ -159,6 +179,7 @@ func crossedDownward(oldV, newV, threshold float64) bool {
 func (s *BalanceNotifyService) dispatchBalanceLowEmail(ctx context.Context, user *User, newBalance, threshold float64, rechargeURL string) {
 	siteName := s.getSiteName(ctx)
 	recipients := s.collectBalanceNotifyRecipients(user)
+	s.balanceLowDispatchCount.Add(1)
 	slog.Info("CheckBalanceAfterDeduction: sending notification",
 		"user_id", user.ID, "recipients", recipients, "new_balance", newBalance, "threshold", threshold)
 	go func() {

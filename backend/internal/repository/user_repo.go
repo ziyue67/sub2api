@@ -890,6 +890,7 @@ func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount flo
 	n, err := client.User.Update().
 		Where(
 			dbuser.IDEQ(id),
+			dbuser.DeletedAtIsNil(),
 			dbuser.BalanceGTE(amount+minimumReserve),
 		).
 		AddBalance(-amount).

@@ -116,7 +116,9 @@ func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, t
 }
 
 func (r *usageBillingRepository) ReserveBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
-	return r.applyBatchImageBalanceHold(ctx, cmd, reserveUsageBillingBatchImageBalance)
+	return r.applyBatchImageBalanceHold(ctx, cmd, func(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+		return reserveUsageBillingBatchImageBalance(ctx, tx, cmd, r.minimumBalanceReserve)
+	})
 }
 
 func (r *usageBillingRepository) CaptureBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
@@ -302,19 +304,37 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 	return 0, false, service.ErrInsufficientBalance
 }
 
-func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand, minimumReserves ...float64) (*service.BatchImageBalanceHoldResult, error) {
 	if cmd.HoldAmount <= 0 {
 		return &service.BatchImageBalanceHoldResult{}, nil
 	}
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
 	var balance, frozen float64
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			frozen_balance = COALESCE(frozen_balance, 0) + $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
-		RETURNING balance, frozen_balance
-	`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
+	var err error
+	if minimumReserve > 0 {
+		// 冻结余额同样要遵守全局保留线：balance >= hold + reserve 才允许冻结，
+		// 避免用户通过 batch image hold 把最后 reserve（默认 $0.10）也花掉。
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				frozen_balance = COALESCE(frozen_balance, 0) + $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= ($1 + $3)
+			RETURNING balance, frozen_balance
+		`, cmd.HoldAmount, cmd.UserID, minimumReserve).Scan(&balance, &frozen)
+	} else {
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				frozen_balance = COALESCE(frozen_balance, 0) + $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+			RETURNING balance, frozen_balance
+		`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
+	}
 	if err == nil {
 		return &service.BatchImageBalanceHoldResult{NewBalance: &balance, FrozenBalance: &frozen}, nil
 	}

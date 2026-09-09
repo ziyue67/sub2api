@@ -375,6 +375,15 @@ func (s *BillingCacheService) DeductBalanceCache(ctx context.Context, userID int
 	return s.cache.DeductUserBalance(ctx, userID, amount)
 }
 
+// SetUserBalanceCache 同步覆写用户余额缓存（扣费后以 DB 事务结果为准写回，
+// 避免并发扣费下 Redis INCR 类操作产生负余额视图）。
+func (s *BillingCacheService) SetUserBalanceCache(ctx context.Context, userID int64, balance float64) error {
+	if s.cache == nil {
+		return nil
+	}
+	return s.cache.SetUserBalance(ctx, userID, balance)
+}
+
 // QueueDeductBalance 异步扣减余额缓存
 func (s *BillingCacheService) QueueDeductBalance(userID int64, amount float64) {
 	if s.cache == nil {

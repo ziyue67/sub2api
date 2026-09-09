@@ -133,7 +133,12 @@ func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
 // postUsageBilling is the legacy fallback billing path used when the unified
 // billing repo is unavailable (nil). Production uses applyUsageBilling → repo.Apply
 // for atomic billing. This path only runs in tests or degraded mode.
-func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) {
+//
+// It returns an error when the balance deduction fails so the caller can stop
+// updating APIKey/account/platform quotas and fail closed: a request whose
+// balance was not deducted must not also record quota consumption (or look
+// successful). Callers keep usage-log bookkeeping with ActualCost=0 on error.
+func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) error {
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
@@ -145,6 +150,7 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		if cost.ActualCost > 0 {
 			if err := deps.userSubRepo.IncrementUsage(billingCtx, p.Subscription.ID, cost.ActualCost); err != nil {
 				slog.Error("increment subscription usage failed", "subscription_id", p.Subscription.ID, "error", err)
+				return err
 			}
 		}
 	} else {
@@ -166,6 +172,9 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 						slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", invalidateErr)
 					}
 				}
+				// 扣费失败必须立即 fail-closed：余额未扣却继续累加 APIKey/account/
+				// platform quota 会造成账务不一致，也让上层以为计费已成功。
+				return err
 			} else if deps.billingCacheService != nil {
 				if err := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); err != nil {
 					slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", err)
@@ -217,6 +226,7 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	// cache updates. The legacy path does DB writes directly; the finalize path
 	// does cache queue + notifications. Notifications are dispatched separately
 	// by the caller after recording the usage log.
+	return nil
 }
 
 func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string) string {
@@ -354,7 +364,11 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
-		postUsageBilling(ctx, p, deps)
+		// Legacy fallback: propagate deduction failures so quota updates stop
+		// immediately and the caller records the usage log as unsettled (fail-closed).
+		if err := postUsageBilling(ctx, p, deps); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 
@@ -450,6 +464,19 @@ func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingPara
 				"user_id", p.User.ID,
 				"new_balance", *result.NewBalance,
 				"balance_overdrafted", result.BalanceOverdrafted,
+				"error", err,
+			)
+		}
+		return
+	}
+	if result != nil && result.NewBalance != nil {
+		// 有 DB 事务 RETURNING 的精确余额时直接覆写缓存：等价于
+		// QueueDeductBalance 的最终状态，但不会在并发扣费下把 Redis 视图
+		// 扣到低于真实余额（真实余额已含保留线保护，绝不为负）。
+		if err := deps.billingCacheService.SetUserBalanceCache(ctx, p.User.ID, *result.NewBalance); err != nil {
+			slog.Warn("set balance cache after deduction failed",
+				"user_id", p.User.ID,
+				"new_balance", *result.NewBalance,
 				"error", err,
 			)
 		}

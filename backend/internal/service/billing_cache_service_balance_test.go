@@ -7,7 +7,6 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -17,10 +16,12 @@ type balanceEligibilityCacheStub struct {
 	billingCacheWorkerStub
 
 	balance                  float64
+	balanceSet               atomic.Value // float64
 	cacheMissAfterInvalidate bool
 	invalidated              atomic.Bool
 	deductCalls              atomic.Int64
 	invalidateCalls          atomic.Int64
+	setCalls                 atomic.Int64
 }
 
 func (s *balanceEligibilityCacheStub) GetUserBalance(context.Context, int64) (float64, error) {
@@ -32,6 +33,12 @@ func (s *balanceEligibilityCacheStub) GetUserBalance(context.Context, int64) (fl
 
 func (s *balanceEligibilityCacheStub) DeductUserBalance(context.Context, int64, float64) error {
 	s.deductCalls.Add(1)
+	return nil
+}
+
+func (s *balanceEligibilityCacheStub) SetUserBalance(_ context.Context, _ int64, balance float64) error {
+	s.setCalls.Add(1)
+	s.balanceSet.Store(balance)
 	return nil
 }
 
@@ -108,7 +115,7 @@ func TestSyncBalanceCacheAfterDeduction_InvalidatesWhenBalanceFallsBelowReserve(
 	require.Equal(t, int64(0), cache.deductCalls.Load())
 }
 
-func TestSyncBalanceCacheAfterDeduction_QueuesDeductWhenBalanceStillEligible(t *testing.T) {
+func TestSyncBalanceCacheAfterDeduction_WritesExactDbBalanceWhenStillEligible(t *testing.T) {
 	cache := &balanceEligibilityCacheStub{balance: 1}
 	cfg := &config.Config{}
 	cfg.Billing.MinimumBalanceReserve = 0.01
@@ -122,7 +129,9 @@ func TestSyncBalanceCacheAfterDeduction_QueuesDeductWhenBalanceStillEligible(t *
 	}, &billingDeps{billingCacheService: svc}, &UsageBillingApplyResult{NewBalance: &newBalance})
 
 	require.Equal(t, int64(0), cache.invalidateCalls.Load())
-	require.Eventually(t, func() bool {
-		return cache.deductCalls.Load() == 1
-	}, 2*time.Second, 10*time.Millisecond)
+	// 有 DB RETURNING 精确余额时直接覆写缓存（不再做并发下可能扣过头的 INCR），
+	// 缓存值与真实余额一致，后续 preflight 不会误判。
+	require.Equal(t, int64(1), cache.setCalls.Load())
+	require.Equal(t, 0.75, cache.balanceSet.Load().(float64))
+	require.Equal(t, int64(0), cache.deductCalls.Load())
 }
