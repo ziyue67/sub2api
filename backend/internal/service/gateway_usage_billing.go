@@ -458,31 +458,14 @@ func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingPara
 	if p == nil || p.Cost == nil || p.User == nil || deps == nil || deps.billingCacheService == nil {
 		return
 	}
-	if result != nil && result.NewBalance != nil && deps.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
-		if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
-			slog.Warn("invalidate balance cache after exhausted deduction failed",
-				"user_id", p.User.ID,
-				"new_balance", *result.NewBalance,
-				"balance_overdrafted", result.BalanceOverdrafted,
-				"error", err,
-			)
-		}
-		return
+	// 统一扣费事务完成后，始终以 InvalidateUserBalance 失效缓存，避免并发扣费下
+	// 乱序裸 SET 覆盖最新真实余额。后续请求由 singleflight 回源从 DB 读取带 reserve 的真实余额。
+	if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
+		slog.Warn("invalidate balance cache after deduction failed",
+			"user_id", p.User.ID,
+			"error", err,
+		)
 	}
-	if result != nil && result.NewBalance != nil {
-		// 有 DB 事务 RETURNING 的精确余额时直接覆写缓存：等价于
-		// QueueDeductBalance 的最终状态，但不会在并发扣费下把 Redis 视图
-		// 扣到低于真实余额（真实余额已含保留线保护，绝不为负）。
-		if err := deps.billingCacheService.SetUserBalanceCache(ctx, p.User.ID, *result.NewBalance); err != nil {
-			slog.Warn("set balance cache after deduction failed",
-				"user_id", p.User.ID,
-				"new_balance", *result.NewBalance,
-				"error", err,
-			)
-		}
-		return
-	}
-	deps.billingCacheService.QueueDeductBalance(p.User.ID, p.Cost.ActualCost)
 }
 
 // notifyBalanceLow sends balance low notification after deduction.

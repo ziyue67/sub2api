@@ -349,6 +349,17 @@ func TestLoadMigratesLegacyMinimumBalanceReserveFromConfigFile(t *testing.T) {
 		"legacy default 0.000001 written into an old config.yaml must be migrated to the new 0.1 floor")
 }
 
+func TestLoadKeepsExplicitEnvironmentVariableReserveValues(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("BILLING_MINIMUM_BALANCE_RESERVE", "0.000001")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 0.000001, cfg.Billing.MinimumBalanceReserve,
+		"explicit environment variable BILLING_MINIMUM_BALANCE_RESERVE=0.000001 must not be overwritten by config file migration")
+}
+
 func TestLoadKeepsExplicitMinimumBalanceReserveValues(t *testing.T) {
 	for _, explicit := range []float64{0, 0.05, 0.5} {
 		t.Run(fmt.Sprintf("reserve_%v", explicit), func(t *testing.T) {

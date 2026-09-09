@@ -1844,9 +1844,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
 	// Billing reserve 迁移：2026-09 前版本把 legacy 默认 0.000001 写进了老 config.yaml，
-	// Viper 默认值 0.1 无法覆盖显式文件值。仅当文件值精确等于 legacy 默认（即部署从未
-	// 主动调整该键）时提升到 0.1；显式配置的 0 或其它值一律保留。
-	if cfg.Billing.MinimumBalanceReserve == 0.000001 {
+	// Viper 默认值 0.1 无法覆盖显式文件值。仅当该值确实来自配置文件 (InConfig) 且精确等于
+	// legacy 默认时才提升到 0.1；显式环境变量或其它配置值一律保留。
+	if viper.InConfig("billing.minimum_balance_reserve") && cfg.Billing.MinimumBalanceReserve == 0.000001 {
 		cfg.Billing.MinimumBalanceReserve = 0.1
 		slog.Warn("billing.minimum_balance_reserve migrated from legacy default 0.000001 to 0.1; remove the key from config.yaml to stop this warning")
 	}

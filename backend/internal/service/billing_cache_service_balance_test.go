@@ -59,8 +59,21 @@ func TestCheckBillingEligibility_RejectsBalanceBelowMinimumReserve(t *testing.T)
 	require.ErrorIs(t, err, ErrInsufficientBalance)
 }
 
-func TestCheckBillingEligibility_AllowsBalanceAtMinimumReserve(t *testing.T) {
+func TestCheckBillingEligibility_RejectsBalanceAtMinimumReserve(t *testing.T) {
 	cache := &balanceEligibilityCacheStub{balance: 0.01}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.01
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(svc.Stop)
+
+	// 当 balance == reserve 时，无可花余额 (balance - reserve <= 0)，
+	// 预检必须直接以 ErrInsufficientBalance 拦截，断言调用前即被挡下，不能放行到上游。
+	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "")
+	require.ErrorIs(t, err, ErrInsufficientBalance)
+}
+
+func TestCheckBillingEligibility_AllowsBalanceAboveMinimumReserve(t *testing.T) {
+	cache := &balanceEligibilityCacheStub{balance: 0.011}
 	cfg := &config.Config{}
 	cfg.Billing.MinimumBalanceReserve = 0.01
 	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
@@ -115,7 +128,7 @@ func TestSyncBalanceCacheAfterDeduction_InvalidatesWhenBalanceFallsBelowReserve(
 	require.Equal(t, int64(0), cache.deductCalls.Load())
 }
 
-func TestSyncBalanceCacheAfterDeduction_WritesExactDbBalanceWhenStillEligible(t *testing.T) {
+func TestSyncBalanceCacheAfterDeduction_InvalidatesCacheOnDeductionToAvoidConcurrentSetOverwrites(t *testing.T) {
 	cache := &balanceEligibilityCacheStub{balance: 1}
 	cfg := &config.Config{}
 	cfg.Billing.MinimumBalanceReserve = 0.01
@@ -128,10 +141,8 @@ func TestSyncBalanceCacheAfterDeduction_WritesExactDbBalanceWhenStillEligible(t 
 		User: &User{ID: 1},
 	}, &billingDeps{billingCacheService: svc}, &UsageBillingApplyResult{NewBalance: &newBalance})
 
-	require.Equal(t, int64(0), cache.invalidateCalls.Load())
-	// 有 DB RETURNING 精确余额时直接覆写缓存（不再做并发下可能扣过头的 INCR），
-	// 缓存值与真实余额一致，后续 preflight 不会误判。
-	require.Equal(t, int64(1), cache.setCalls.Load())
-	require.Equal(t, 0.75, cache.balanceSet.Load().(float64))
+	// 每次扣费均由 Invalidate 失效缓存，避免并发事务乱序裸 SET 覆盖最新值
+	require.Equal(t, int64(1), cache.invalidateCalls.Load())
+	require.Equal(t, int64(0), cache.setCalls.Load())
 	require.Equal(t, int64(0), cache.deductCalls.Load())
 }
