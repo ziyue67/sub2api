@@ -13,8 +13,8 @@ import (
 )
 
 type usageBillingRepository struct {
-	db                     *sql.DB
-	minimumBalanceReserve  float64
+	db                    *sql.DB
+	minimumBalanceReserve float64
 }
 
 func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfgs ...*config.Config) service.UsageBillingRepository {
