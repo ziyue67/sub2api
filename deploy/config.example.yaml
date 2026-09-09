@@ -1104,20 +1104,27 @@ billing:
     # Number of requests to allow in half-open state
     # 半开状态允许通过的请求数
     half_open_requests: 3
-  # Conservative minimum balance required before forwarding balance-billed requests.
-  # Users can never spend the final reserve: requests that would push the balance
-  # below this floor are rejected with 403 INSUFFICIENT_BALANCE, and the balance
-  # is never allowed to go negative. The last reserve also triggers the low-balance
-  # email so users are warned before they run out.
-  # Set to 0 to keep the plain balance >= cost gate (no reserve floor, but the
-  # balance still can never go negative: a request is rejected unless the balance
-  # can cover the full request cost). A positive reserve is strongly recommended.
-  # 余额计费请求转发前要求的保守最小余额（保留额度）。用户无法花掉这笔保留金：
-  # 会把余额打到该值以下的请求一律 403 INSUFFICIENT_BALANCE 拒绝，余额永不为负；
-  # 当余额触及该保留线时还会触发“余额不足”邮件提醒。
-  # 设为 0 则要求余额必须 >= 单笔扣费金额才放行（不再透支成负数，但没有 0.1
-  # 保留金防线；余额可能被单笔请求花到接近 0，一旦上游成本略超估算仍可能拒付）。
-  # 建议保留正数保留金。
+  # Wallet floor for balance-billed requests (a non-spendable minimum balance).
+  # - Preflight: once the balance is <= this floor, requests are rejected with
+  #   403 INSUFFICIENT_BALANCE before anything is sent upstream.
+  # - Settlement (billing is post-paid, the upstream call has already happened):
+  #   the deduction is clamped at the floor. A request the wallet cannot fully
+  #   cover drains it exactly to the floor — never below, never negative — and
+  #   the uncollected remainder is written off (usage_log.actual_cost records the
+  #   amount actually collected; an ALERT log records the shortfall). The next
+  #   preflight then sees balance <= floor and rejects, so the write-off is
+  #   bounded to the tail of one request per in-flight slot.
+  # Hitting the floor also triggers the low-balance email.
+  # Set to 0 to make the floor 0 (users can spend everything; the balance still
+  # never goes negative).
+  # 余额计费的钱包底线（不可花的最低余额）。
+  # - 预检：余额 <= 底线时直接 403 INSUFFICIENT_BALANCE，不再转发上游。
+  # - 结算（后付费，上游成本已经发生）：扣费以底线为下限。余额不足以覆盖全额时
+  #   只扣到底线——绝不低于底线、绝不为负——差额记为坏账（usage_log.actual_cost
+  #   记实际扣到的金额，差额打 ALERT 日志）。之后预检看到余额 <= 底线即拒绝，
+  #   因此坏账最多是每个并发槽位最后一笔请求的尾巴。
+  # 触及底线时还会触发“余额不足”邮件提醒。
+  # 设为 0 则底线为 0（用户可花完全部余额，余额同样永不为负）。
   minimum_balance_reserve: 0.1
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口

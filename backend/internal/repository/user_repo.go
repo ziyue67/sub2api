@@ -916,6 +916,35 @@ func (r *userRepository) DeductBalance(ctx context.Context, id int64, amount flo
 	return service.ErrInsufficientBalance
 }
 
+// DeductBalanceToFloor 为后付费计费扣款：能扣多少扣多少，但余额绝不低于 floor
+// （billing.minimum_balance_reserve，0 表示下限为 0），永不为负。
+//
+// 与 DeductBalance（严格"够才扣"，供管理员/业务显式扣款使用）不同，本方法用于
+// 上游已经产生成本、必须结算的场景：余额不足以覆盖全额时把余额扣到 floor，
+// 差额通过 BalanceDeduction.Shortfall 返回，由调用方记账并告警；下一次预检看到
+// balance <= floor 直接 403。余额本来就 <= floor 时返回 ErrInsufficientBalance，
+// 不扣任何钱。与 usage_billing_repo 统一计费路径共用同一条 SQL，语义完全一致。
+func (r *userRepository) DeductBalanceToFloor(ctx context.Context, id int64, amount, floor float64) (service.BalanceDeduction, error) {
+	client := clientFromContext(ctx, r.client)
+	deduction, ok, err := deductBalanceToFloor(ctx, client, id, amount, floor)
+	if err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if ok {
+		return deduction, nil
+	}
+	exists, err := client.User.Query().
+		Where(dbuser.IDEQ(id), dbuser.DeletedAtIsNil()).
+		Exist(ctx)
+	if err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if !exists {
+		return service.BalanceDeduction{}, service.ErrUserNotFound
+	}
+	return service.BalanceDeduction{}, service.ErrInsufficientBalance
+}
+
 // DeductAvailableBalance atomically deducts min(amount, max(balance, 0)).
 // Unlike DeductBalance, this refund-specific operation never increases an
 // existing deficit or permits a concurrent deduction to cause an overdraft.
