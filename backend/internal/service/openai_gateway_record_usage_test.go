@@ -45,6 +45,26 @@ type openAIRecordUsageAccountRepoStub struct {
 	calls   int
 }
 
+// openAIRecordUsageInvalidateCacheStub is a default-build-visible billing cache
+// stub used by balance-cache invalidation tests. It intentionally does not live
+// behind the `unit` build tag because this file is compiled by the default
+// (untagged) build too — golangci-lint typechecks the package without -tags.
+type openAIRecordUsageInvalidateCacheStub struct {
+	billingCacheWorkerStub
+
+	balance         float64
+	invalidateCalls int64
+}
+
+func (s *openAIRecordUsageInvalidateCacheStub) GetUserBalance(context.Context, int64) (float64, error) {
+	return s.balance, nil
+}
+
+func (s *openAIRecordUsageInvalidateCacheStub) InvalidateUserBalance(context.Context, int64) error {
+	s.invalidateCalls++
+	return nil
+}
+
 func (s *openAIRecordUsageAccountRepoStub) GetByID(_ context.Context, _ int64) (*Account, error) {
 	s.calls++
 	return s.account, nil
@@ -1049,7 +1069,7 @@ func TestOpenAIGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *
 
 func TestOpenAIGatewayServiceRecordUsage_InsufficientBalanceInvalidatesBalanceCache(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
-	cache := &balanceEligibilityCacheStub{balance: 0.30}
+	cache := &openAIRecordUsageInvalidateCacheStub{balance: 0.30}
 	cfg := &config.Config{}
 	cfg.Billing.MinimumBalanceReserve = 0.10
 	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
@@ -1075,7 +1095,7 @@ func TestOpenAIGatewayServiceRecordUsage_InsufficientBalanceInvalidatesBalanceCa
 	})
 
 	require.ErrorIs(t, err, ErrInsufficientBalance)
-	require.Equal(t, int64(1), cache.invalidateCalls.Load(), "insufficient-balance billing error must invalidate the balance cache")
+	require.Equal(t, int64(1), cache.invalidateCalls, "insufficient-balance billing error must invalidate the balance cache")
 }
 
 func TestOpenAIGatewayServiceRecordUsage_UpdatesAPIKeyQuotaWhenConfigured(t *testing.T) {
