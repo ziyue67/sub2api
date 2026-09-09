@@ -140,16 +140,6 @@ func (s *BalanceNotifyService) canNotifyBalance(user *User) bool {
 	return user.BalanceNotifyEnabled
 }
 
-// resolveUserEffectiveThreshold reads global + user config, returns the effective threshold.
-// Returns ok=false when notifications should be skipped.
-func (s *BalanceNotifyService) resolveUserEffectiveThreshold(ctx context.Context, user *User) (effectiveThreshold float64, rechargeURL string, ok bool) {
-	globalEnabled, globalThreshold, rechargeURL := s.getBalanceNotifyConfig(ctx)
-	if !globalEnabled {
-		return 0, "", false
-	}
-	return s.resolveUserEffectiveThresholdWithGlobal(ctx, user, globalThreshold, rechargeURL)
-}
-
 // resolveUserEffectiveThresholdWithGlobal computes the effective balance-low threshold
 // from the user override (falling back to the already-read global threshold).
 // ok=false means no threshold is configured — the caller may still send the
