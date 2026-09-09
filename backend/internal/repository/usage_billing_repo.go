@@ -252,16 +252,31 @@ func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, am
 		minimumReserve = minimumReserves[0]
 	}
 	var newBalance float64
-	// Keep a configurable reserve in the atomic UPDATE predicate. This closes
-	// the race between the preflight check and the actual deduction, so a user
-	// cannot spend the final reserve (production defaults to $0.10).
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= ($1 + GREATEST($3, 0))
-		RETURNING balance
-	`, amount, userID, minimumReserve).Scan(&newBalance)
+	var err error
+	if minimumReserve > 0 {
+		// Keep a configurable reserve in the atomic UPDATE predicate. This closes
+		// the race between the preflight check and the actual deduction, so a user
+		// cannot spend the final reserve (production defaults to $0.10). Reserve is
+		// passed as a plain typed parameter ($3) — avoid GREATEST/untyped literals,
+		// which make PostgreSQL infer $3 as integer and reject float bindings.
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= ($1 + $3)
+			RETURNING balance
+		`, amount, userID, minimumReserve).Scan(&newBalance)
+	} else {
+		// reserve=0 keeps the original SQL so parameter type inference stays
+		// identical to the pre-reserve behavior.
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+			RETURNING balance
+		`, amount, userID).Scan(&newBalance)
+	}
 	if err == nil {
 		return newBalance, true, nil
 	}

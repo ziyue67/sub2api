@@ -14,13 +14,14 @@ import (
 )
 
 const (
-	conditionalBalanceDeductSQL = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \(\$1 \+ GREATEST\(\$3, 0\)\)\s+RETURNING balance`
-	overdraftBalanceDeductSQL   = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING balance`
+	reservedBalanceDeductSQL      = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \(\$1 \+ \$3\)\s+RETURNING balance`
+	conditionalBalanceDeductSQL   = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance`
+	overdraftBalanceDeductSQL     = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING balance`
 	deductUserExistsForBillingSQL = `(?s)SELECT EXISTS\(SELECT 1 FROM users WHERE id = \$1 AND deleted_at IS NULL\)`
-	userExistsForBillingSQL     = `(?s)SELECT 1\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL`
-	reserveBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) \+ \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance, frozen_balance`
-	captureBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance\s+\+ CASE WHEN \$1 > \$2 THEN \$1 - \$2 ELSE 0 END\s+- CASE WHEN \$2 > \$1 THEN \$2 - \$1 ELSE 0 END,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$3 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
-	releaseBatchImageHoldSQL    = `(?s)UPDATE users\s+SET balance = balance \+ \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
+	userExistsForBillingSQL       = `(?s)SELECT 1\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL`
+	reserveBatchImageHoldSQL      = `(?s)UPDATE users\s+SET balance = balance - \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) \+ \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND balance >= \$1\s+RETURNING balance, frozen_balance`
+	captureBatchImageHoldSQL      = `(?s)UPDATE users\s+SET balance = balance\s+\+ CASE WHEN \$1 > \$2 THEN \$1 - \$2 ELSE 0 END\s+- CASE WHEN \$2 > \$1 THEN \$2 - \$1 ELSE 0 END,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$3 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
+	releaseBatchImageHoldSQL      = `(?s)UPDATE users\s+SET balance = balance \+ \$1,\s+frozen_balance = COALESCE\(frozen_balance, 0\) - \$1,\s+updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL AND COALESCE\(frozen_balance, 0\) >= \$1\s+RETURNING balance, frozen_balance`
 )
 
 func TestDeductUsageBillingBalance_UsesSufficientBalanceGuard(t *testing.T) {
@@ -33,7 +34,7 @@ func TestDeductUsageBillingBalance_UsesSufficientBalanceGuard(t *testing.T) {
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	mock.ExpectQuery(conditionalBalanceDeductSQL).
-		WithArgs(2.5, int64(42), 0.0).
+		WithArgs(2.5, int64(42)).
 		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(7.5))
 	mock.ExpectCommit()
 
@@ -54,7 +55,7 @@ func TestDeductUsageBillingBalance_WithReserve_RejectsWhenGuardMisses(t *testing
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	mock.ExpectQuery(conditionalBalanceDeductSQL).
+	mock.ExpectQuery(reservedBalanceDeductSQL).
 		WithArgs(10.0, int64(42), 0.10).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(deductUserExistsForBillingSQL).
@@ -77,7 +78,7 @@ func TestApplyUsageBillingEffects_WithReserve_RejectsOverdraft(t *testing.T) {
 	mock.ExpectBegin()
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
-	mock.ExpectQuery(conditionalBalanceDeductSQL).
+	mock.ExpectQuery(reservedBalanceDeductSQL).
 		WithArgs(10.0, int64(42), 0.10).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(deductUserExistsForBillingSQL).
@@ -106,7 +107,7 @@ func TestDeductUsageBillingBalance_ReturnsUserNotFoundWhenNoUserUpdated(t *testi
 	tx, err := db.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	mock.ExpectQuery(conditionalBalanceDeductSQL).
-		WithArgs(10.0, int64(42), 0.0).
+		WithArgs(10.0, int64(42)).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(overdraftBalanceDeductSQL).
 		WithArgs(10.0, int64(42)).
