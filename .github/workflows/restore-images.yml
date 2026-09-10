@@ -1,0 +1,170 @@
+name: Restore Release Images
+
+# 手动重建各版本镜像（仅推送 GHCR + Docker Hub 镜像，不创建/修改 GitHub Release）。
+# 统一标签方案：每个版本推送 <版本号> 与 <版本号>-amd64 两个标签（linux/amd64 单架构，不构建 arm64）。
+# latest_version 指定的版本会额外添加 latest、<主>.<次>、<主> 三个别名标签（通常为最新版本）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: '要重建的版本号，逗号分隔（如 0.1.168,0.1.169）'
+        required: true
+      latest_version:
+        description: '额外打 latest/0.2/0 别名标签的版本（可留空）'
+        required: false
+        default: ''
+      source_template:
+        description: '源码 ref 模板（{version} 替换为版本号）'
+        required: false
+        default: 'v{version}'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - name: Build version matrix
+        id: matrix
+        env:
+          RAW: ${{ inputs.versions }}
+        run: |
+          set -euo pipefail
+          VALUE="$(printf '%s' "$RAW" | tr -d ' ' | jq -Rc 'split(",") | map(ltrimstr("v")) | map(select(length > 0))')"
+          if [ "$VALUE" = "[]" ]; then
+            echo "versions 不能为空" >&2
+            exit 1
+          fi
+          echo "value={\"version\":$VALUE}" >> "$GITHUB_OUTPUT"
+          echo "将重建：$(printf '%s' "$VALUE" | jq -r 'join(", ")')"
+
+  rebuild:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      IMAGE: ${{ github.event.repository.name }}
+      LATEST_VERSION: ${{ inputs.latest_version }}
+    steps:
+      - name: Resolve source ref
+        id: src
+        env:
+          PATTERN: ${{ inputs.source_template }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          REF="$(printf '%s' "$PATTERN" | sed "s/{version}/$VERSION/g")"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "版本 $VERSION 源码 ref：$REF"
+
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.src.outputs.ref }}
+          fetch-depth: 1
+
+      - name: Stamp VERSION file
+        env:
+          VERSION: ${{ matrix.version }}
+        run: printf '%s' "$VERSION" > backend/cmd/server/VERSION
+
+      - name: Resolve commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check DockerHub credentials
+        id: dockerhub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，跳过 Docker Hub 推送"
+          fi
+
+      - name: Compose image tags
+        id: tags
+        env:
+          VERSION: ${{ matrix.version }}
+          DOCKERHUB_AVAILABLE: ${{ steps.dockerhub.outputs.available }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          GHCR="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/$IMAGE"
+          HUB="docker.io/$DOCKERHUB_USERNAME/$IMAGE"
+          TAGS=("$GHCR:$VERSION" "$GHCR:$VERSION-amd64")
+          if [ "$DOCKERHUB_AVAILABLE" = "true" ]; then
+            TAGS+=("$HUB:$VERSION" "$HUB:$VERSION-amd64")
+          fi
+          if [ -n "$LATEST_VERSION" ] && [ "$VERSION" = "$LATEST_VERSION" ]; then
+            MAJOR_MINOR="$(printf '%s' "$VERSION" | cut -d. -f1-2)"
+            MAJOR="$(printf '%s' "$VERSION" | cut -d. -f1)"
+            TAGS+=("$GHCR:latest" "$GHCR:$MAJOR_MINOR" "$GHCR:$MAJOR")
+            if [ "$DOCKERHUB_AVAILABLE" = "true" ]; then
+              TAGS+=("$HUB:latest" "$HUB:$MAJOR_MINOR" "$HUB:$MAJOR")
+            fi
+          fi
+          {
+            echo "value<<EOF"
+            printf '%s\n' "${TAGS[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "将推送以下标签："
+          printf '  %s\n' "${TAGS[@]}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: ${{ steps.dockerhub.outputs.available == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=${{ matrix.version }}
+            COMMIT=${{ steps.commit.outputs.sha }}
+            NODE_MAX_OLD_SPACE_SIZE=4096
+          tags: ${{ steps.tags.outputs.value }}
+
+      - name: Summary
+        if: always()
+        env:
+          VERSION: ${{ matrix.version }}
+        run: |
+          {
+            echo "### 重建 $VERSION"
+            echo ""
+            echo "- 源码：\`${{ steps.src.outputs.ref }}\`（\`${{ steps.commit.outputs.sha }}\`）"
+            echo "- 标签：见 Compose image tags 步骤"
+          } >> "$GITHUB_STEP_SUMMARY"
