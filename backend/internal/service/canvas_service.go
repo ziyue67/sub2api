@@ -752,10 +752,10 @@ func (s *CanvasService) canvasModelsForAPIKey(ctx context.Context, key *APIKey) 
 		models = append(models, model)
 	}
 	for _, group := range groups {
-		if !group.ModelsListConfig.Enabled {
+		if !group.ModelAllowlist.Enabled {
 			continue
 		}
-		for _, model := range group.ModelsListConfig.Models {
+		for _, model := range group.ModelAllowlist.Models {
 			addModel(model)
 		}
 	}
