@@ -1,0 +1,25 @@
+name: Probe DockerHub API
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(curl -fsS -X POST https://hub.docker.com/v2/users/login -H 'Content-Type: application/json' -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" | jq -r '.token // empty')
+          API="https://hub.docker.com/v2/repositories/${DH_USER}/sub2api/tags"
+          echo "=== default (no page params):"
+          curl -fsS -H "Authorization: JWT $TOKEN" "${API}/" | jq -r '{count: .count, results: (.results|length), first: (.results[0].name // "none")}'
+          echo "=== page=1&page_size=100:"
+          curl -fsS -H "Authorization: JWT $TOKEN" "${API}/?page=1&page_size=100" | jq -r '{count: .count, results: (.results|length), first: (.results[0].name // "none")}'
+          echo "=== page_size=10:"
+          curl -fsS -H "Authorization: JWT $TOKEN" "${API}/?page_size=10" | jq -r '{count: .count, results: (.results|length), first: (.results[0].name // "none")}'
+          echo "=== raw first 300 chars:"
+          curl -fsS -H "Authorization: JWT $TOKEN" "${API}/?page_size=10" | head -c 300
