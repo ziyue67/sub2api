@@ -1,0 +1,76 @@
+name: Cleanup DockerHub Tags
+
+# 手动清理 Docker Hub 上 <DOCKERHUB_USERNAME>/sub2api 的镜像标签。
+# 使用仓库现有 secrets（DOCKERHUB_USERNAME / DOCKERHUB_TOKEN），无需在本地暴露凭据。
+# keep 留空 = 删除全部标签（用于镜像重建前清场）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: '要保留的 tag（逗号分隔；留空 = 删除全部）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete tags on Docker Hub
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          KEEP: ${{ inputs.keep }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DH_USER" ] || [ -z "$DH_TOKEN" ]; then
+            echo "::error::未配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"; exit 1
+          fi
+
+          TOKEN=$(curl -fsS -X POST https://hub.docker.com/v2/users/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" | jq -r '.token // empty')
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Docker Hub 登录失败（检查 token 是否有效）"; exit 1
+          fi
+
+          API="https://hub.docker.com/v2/repositories/${DH_USER}/sub2api/tags"
+          keep_csv=",${KEEP// /},"
+          deleted=0; kept=0; failed=0
+
+          while :; do
+            page=$(curl -fsS -H "Authorization: JWT $TOKEN" "${API}/?page_size=100")
+            count=$(printf '%s' "$page" | jq -r '.count // 0')
+            if [ "$count" -eq 0 ]; then break; fi
+            names=$(printf '%s' "$page" | jq -r '.results[].name // empty')
+            [ -z "$names" ] && break
+            progress=0
+            for t in $names; do
+              case "$keep_csv" in
+                *",$t,"*) kept=$((kept+1)); echo "keep  $t"; continue;;
+              esac
+              if curl -fsS -X DELETE -H "Authorization: JWT $TOKEN" "${API}/$t/" >/dev/null; then
+                deleted=$((deleted+1)); echo "del   $t"; progress=1
+              else
+                failed=$((failed+1)); echo "::warning::删除失败: $t"
+              fi
+              sleep 0.2
+            done
+            if [ "$progress" -eq 0 ]; then
+              echo "本轮无删除动作（可能都在 keep 列表或权限不足）"
+              break
+            fi
+          done
+
+          remain=$(curl -fsS -H "Authorization: JWT $TOKEN" "${API}/?page_size=1" | jq -r '.count // 0')
+          echo "deleted=$deleted kept=$kept failed=$failed remaining=$remain"
+          {
+            echo "### DockerHub 清理结果"
+            echo "- 已删除: $deleted"
+            echo "- 保留: $kept"
+            echo "- 失败: $failed"
+            echo "- 剩余 tag 数: $remain"
+          } >> "$GITHUB_STEP_SUMMARY"
