@@ -674,6 +674,10 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 		deferredService:       s.deferredService,
 		balanceNotifyService:  s.balanceNotifyService,
 		userPlatformQuotaRepo: s.userPlatformQuotaRepo,
+		// cfg 必须一并下发：legacy 兜底扣费路径 (postUsageBilling) 需要从
+		// cfg.Billing.MinimumBalanceReserve 读取钱包底线，缺失会导致降级模式下
+		// reserve 退化成 0，与统一计费事务/预检的底线语义不一致。
+		cfg: s.cfg,
 	}
 }
 

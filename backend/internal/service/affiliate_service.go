@@ -482,7 +482,8 @@ func (s *AffiliateService) invalidateAffiliateCaches(ctx context.Context, userID
 		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
 	}
 	if s.billingCacheService != nil {
-		if err := s.billingCacheService.InvalidateUserBalance(ctx, userID); err != nil {
+		// 返利让余额增加：失效缓存的同时清除"钱包已耗尽"标记。
+		if err := s.billingCacheService.InvalidateUserBalanceAfterCredit(ctx, userID); err != nil {
 			logger.LegacyPrintf("service.affiliate", "[Affiliate] Failed to invalidate billing cache for user %d: %v", userID, err)
 		}
 	}

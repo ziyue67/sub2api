@@ -1173,6 +1173,8 @@ func (s *UserService) UpdateBalance(ctx context.Context, userID int64, amount fl
 			if err := s.billingCache.InvalidateUserBalance(cacheCtx, userID); err != nil {
 				slog.Error("invalidate user balance cache failed", "user_id", userID, "error", err)
 			}
+			// 余额增加后必须清除"钱包已耗尽"标记，否则用户充完值仍会被预检拦截。
+			ClearBalanceExhaustedMarker(cacheCtx, s.billingCache, userID)
 		}()
 	}
 	return nil

@@ -404,6 +404,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 			return false, err
 		}
 		settleUsageLogBalance(requestID, usageLog, p, result)
+		markBalanceExhaustedAfterSettlement(ctx, p, deps, result)
 		return true, nil
 	}
 
@@ -421,6 +422,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	settleUsageLogBalance(requestID, usageLog, p, result)
+	markBalanceExhaustedAfterSettlement(billingCtx, p, deps, result)
 
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
@@ -538,6 +540,25 @@ func collectedBalanceCost(p *postUsageBillingParams, result *UsageBillingApplyRe
 		return p.Cost.ActualCost
 	}
 	return 0
+}
+
+// markBalanceExhaustedAfterSettlement 在结算把钱包扣到 reserve 底线（存在无法收回的
+// 差额 BalanceShortfall）时，给用户打上"钱包已耗尽"标记。
+//
+// 这一步是"钱花完就立刻停止放行"的闭环关键：结算已经知道这笔钱扣不动了，不能只靠
+// InvalidateUserBalance 让下一次预检去回源——余额缓存的回源写回是异步的，扣费前读到
+// 的旧余额可能在失效之后才落盘，使预检在缓存 TTL 内持续放行（后付费下上游成本已经
+// 发生，等于免费调用）。标记与回源写回完全解耦，预检看到它立即 403。
+func markBalanceExhaustedAfterSettlement(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
+	if p == nil || p.User == nil || p.IsSubscriptionBill || deps == nil || deps.billingCacheService == nil {
+		return
+	}
+	if result == nil || result.BalanceShortfall <= 0 {
+		return
+	}
+	markCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	deps.billingCacheService.MarkBalanceExhausted(markCtx, p.User.ID)
 }
 
 func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
@@ -986,13 +1007,18 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if billingErr != nil {
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
-		// 余额不足导致整笔计费被原子拒绝：失效余额缓存，让下一次请求的 preflight
-		// 从 DB 重新读取真实余额，命中 reserve/负余额门槛后以 403 拒绝，防止
-		// Redis 旧余额让用户继续发出注定扣费失败的请求。
+		// 余额不足导致整笔计费被原子拒绝：打上"钱包已耗尽"标记，让下一次请求的
+		// preflight 立刻以 403 拒绝，而不再依赖余额缓存失效是否及时（回源的异步
+		// 写回可能把扣费前的旧余额复活，使预检在缓存 TTL 内持续放行）。
+		// 这里用脱离请求生命周期的 ctx：用量记录跑在后台 worker 上，请求 ctx 可能
+		// 已经结束，直接用它会让 Redis 写入静默失败。
 		if errors.Is(billingErr, ErrInsufficientBalance) && user != nil && s.billingCacheService != nil {
-			if invalidateErr := s.billingCacheService.InvalidateUserBalance(ctx, user.ID); invalidateErr != nil {
+			markCtx, cancel := detachedBillingContext(ctx)
+			s.billingCacheService.MarkBalanceExhausted(markCtx, user.ID)
+			if invalidateErr := s.billingCacheService.InvalidateUserBalance(markCtx, user.ID); invalidateErr != nil {
 				slog.Warn("invalidate balance cache after billing rejection", "user_id", user.ID, "error", invalidateErr)
 			}
+			cancel()
 		}
 		return billingErr
 	}
