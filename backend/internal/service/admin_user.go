@@ -551,9 +551,7 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 		go func() {
 			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			// 余额增加：失效余额缓存并清除"钱包已耗尽"标记，否则刚充值的用户
-			// 会在标记 TTL 内继续被预检以 403 拦截。
-			if err := s.billingCacheService.InvalidateUserBalanceAfterCredit(cacheCtx, userID); err != nil {
+			if err := s.billingCacheService.InvalidateUserBalance(cacheCtx, userID); err != nil {
 				logger.LegacyPrintf("service.admin", "invalidate user balance cache failed: user_id=%d err=%v", userID, err)
 			}
 		}()
