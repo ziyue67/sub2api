@@ -1,8 +1,11 @@
 name: Probe DockerHub API
+
 on:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -12,14 +15,39 @@ jobs:
           DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          TOKEN=$(curl -fsS -X POST https://hub.docker.com/v2/users/login -H 'Content-Type: application/json' -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" | jq -r '.token // empty')
-          API="https://hub.docker.com/v2/repositories/${DH_USER}/sub2api/tags"
-          echo "=== default (no page params):"
-          curl -fsS -H "Authorization: JWT $TOKEN" "${API}/" | jq -r '{count: .count, results: (.results|length), first: (.results[0].name // "none")}'
-          echo "=== page=1&page_size=100:"
-          curl -fsS -H "Authorization: JWT $TOKEN" "${API}/?page=1&page_size=100" | jq -r '{count: .count, results: (.results|length), first: (.results[0].name // "none")}'
-          echo "=== page_size=10:"
-          curl -fsS -H "Authorization: JWT $TOKEN" "${API}/?page_size=10" | jq -r '{count: .count, results: (.results|length), first: (.results[0].name // "none")}'
-          echo "=== raw first 300 chars:"
-          curl -fsS -H "Authorization: JWT $TOKEN" "${API}/?page_size=10" | head -c 300
+          python3 - <<'PYEOF'
+          import json, os, urllib.request
+
+          user = os.environ["DH_USER"]
+          token = os.environ["DH_TOKEN"]
+
+          login = urllib.request.Request(
+              "https://hub.docker.com/v2/users/login",
+              data=json.dumps({"username": user, "password": token}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(login, timeout=30) as resp:
+              jwt = json.loads(resp.read())["token"]
+
+          base = f"https://hub.docker.com/v2/repositories/{user}/sub2api/tags/"
+
+          def show(url):
+              req = urllib.request.Request(url)
+              req.add_header("Authorization", "JWT " + jwt)
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      data = json.loads(resp.read())
+                  print("URL:", url)
+                  print("  count:", data.get("count"), "results:", len(data.get("results", [])))
+                  print("  next:", data.get("next"))
+                  for item in data.get("results", [])[:60]:
+                      print("   -", item.get("name"), "|", item.get("last_updated"))
+              except Exception as exc:
+                  print("URL:", url, "ERROR:", exc)
+
+          show(base + "?page=1&page_size=100")
+          show(base + "?page=2&page_size=100")
+          show(base + "?page=2")
+          show(base + "?page_size=100")
+          PYEOF
