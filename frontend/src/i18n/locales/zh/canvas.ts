@@ -16,6 +16,7 @@ export default {
     descriptionPlaceholder: '描述这个工作流（可选）',
     untitledCanvas: '未命名 Canvas',
     stage: '节点画布',
+    nodeTypesLabel: '节点类型',
     nodeCount: '{count} 个节点',
     edgeCount: '{count} 条连线',
     zoomIn: '放大',

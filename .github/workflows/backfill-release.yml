@@ -1,0 +1,282 @@
+name: Backfill Release
+
+# 手动补齐历史上被"跨过"的版本。
+#
+# 背景：dockerhub.yml + sync-fork-release.yml 只认 backend/cmd/server/VERSION 这一个值，
+# 当 main 的 VERSION 一次从 0.2.1 跳到 0.2.4 时，中间的 0.2.2 / 0.2.3 不会有任何触发点，
+# 于是既没有 Release 说明，也没有 ghcr / Docker Hub 镜像。本工作流用于事后补齐。
+#
+# 默认以 PR #60 的合并提交（同步上游 v0.2.4，含上游 v0.2.2/v0.2.3 提交）作为构建源码，
+# 因此镜像内容为该同步树 + Fork 全部定制。不会改动 latest（除非显式勾选）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: '要补齐的版本号，逗号分隔（例如 0.2.2,0.2.3）'
+        required: true
+        default: '0.2.2,0.2.3'
+      source_ref:
+        description: '构建源码 ref / commit（默认 PR #60 合并提交）'
+        required: true
+        default: 'bde62060ba1a15c6124a3c854c423128e9b5b633'
+      push_latest:
+        description: '是否把 latest 一并指向本次最后一个版本（默认否，保持 0.2.4）'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: backfill-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+      latest: ${{ steps.matrix.outputs.latest }}
+    steps:
+      - name: Build version matrix
+        id: matrix
+        env:
+          RAW: ${{ inputs.versions }}
+        run: |
+          set -euo pipefail
+          VALUE="$(printf '%s' "$RAW" | tr -d ' ' | jq -Rc 'split(",") | map(ltrimstr("v")) | map(select(length > 0))')"
+          if [ "$VALUE" = "[]" ]; then
+            echo "versions 不能为空" >&2
+            exit 1
+          fi
+          LATEST="$(printf '%s' "$VALUE" | jq -r '.[-1]')"
+          echo "value={\"version\":$VALUE}" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "将补齐版本：$(printf '%s' "$VALUE" | jq -r 'join(", ")')（latest=$LATEST）"
+
+  backfill:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      IMAGE: ${{ github.event.repository.name }}
+      LATEST_VERSION: ${{ needs.prepare.outputs.latest }}
+    steps:
+      - name: Checkout build source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          RAW_VERSION: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${RAW_VERSION#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "非法版本号: $VERSION" >&2
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "版本 $VERSION，构建源码 $(git rev-parse --short HEAD)"
+
+      - name: Stamp VERSION file
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: printf '%s' "$VERSION" > backend/cmd/server/VERSION
+
+      - name: Check DockerHub credentials
+        id: dockerhub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，本次跳过 Docker Hub 推送"
+          fi
+
+      - name: Compose image tags
+        id: tags
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
+          DOCKERHUB_AVAILABLE: ${{ steps.dockerhub.outputs.available }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          GHCR="ghcr.io/$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')/$IMAGE"
+          HUB="docker.io/$DOCKERHUB_USERNAME/$IMAGE"
+
+          TAGS=("$GHCR:$VERSION" "$GHCR:$VERSION-amd64")
+          if [ "$DOCKERHUB_AVAILABLE" = "true" ]; then
+            TAGS+=("$HUB:$VERSION" "$HUB:$VERSION-amd64")
+          fi
+
+          if [ "$PUSH_LATEST" = "true" ] && [ "$VERSION" = "$LATEST_VERSION" ]; then
+            TAGS+=("$GHCR:latest")
+            if [ "$DOCKERHUB_AVAILABLE" = "true" ]; then
+              TAGS+=("$HUB:latest")
+            fi
+          fi
+
+          {
+            echo "value<<EOF"
+            printf '%s\n' "${TAGS[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "将推送以下标签："
+          printf '  %s\n' "${TAGS[@]}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: ${{ steps.dockerhub.outputs.available == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+            COMMIT=${{ steps.version.outputs.source_sha }}
+            NODE_MAX_OLD_SPACE_SIZE=4096
+          tags: ${{ steps.tags.outputs.value }}
+
+      - name: Build release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+          TAG: ${{ steps.version.outputs.tag }}
+          NOTES_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          NOTES="release-notes.md"
+
+          # 1) 优先使用仓库内的说明文件（docs/releases/vX.Y.Z.md），保证内容可审计
+          if gh api "repos/$REPO/contents/docs/releases/$TAG.md?ref=$NOTES_REF" \
+               --jq '.content' 2>/dev/null | base64 -d > "$NOTES" 2>/dev/null \
+             && [ -s "$NOTES" ]; then
+            echo "使用仓库内说明：docs/releases/$TAG.md（ref=$NOTES_REF）"
+            exit 0
+          fi
+
+          echo "::notice::未找到 docs/releases/$TAG.md，回退到上游 Release 正文"
+
+          # 2) 回退：复用 sync-fork-release.yml 的逻辑（上游正文 + 镜像段落）
+          if ! gh api "repos/Wei-Shaw/sub2api/releases/tags/$TAG" --jq .body > upstream-release.md 2>/dev/null; then
+            printf '> AI API Gateway Platform - 将 AI 订阅配额分发和管理\n' > upstream-release.md
+          fi
+
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          body = Path("upstream-release.md").read_text(encoding="utf-8").strip()
+          for marker in (
+              "\n---\n\n## 📥 Installation",
+              "\n## 📥 Installation",
+              "\n---\n\n## Installation",
+              "\n## Installation",
+          ):
+              index = body.find(marker)
+              if index >= 0:
+                  body = body[:index].rstrip()
+                  break
+
+          version = os.environ["VERSION"]
+          owner = os.environ["OWNER"].lower()
+          image = os.environ["IMAGE"]
+          images = "\n".join([
+              f"## Docker 镜像（{owner}/{image}）",
+              "",
+              "```text",
+              f"{owner}/{image}:{version}",
+              f"ghcr.io/{owner}/{image}:{version}",
+              "```",
+              "",
+              "拉取示例：",
+              "",
+              "```bash",
+              f"docker pull {owner}/{image}:{version}",
+              f"docker pull ghcr.io/{owner}/{image}:{version}",
+              "```",
+              "",
+              "## 文档",
+              "",
+              f"- [GitHub Repository](https://github.com/{os.environ['REPO']})",
+              f"- [Deployment Guide](https://github.com/{os.environ['REPO']}/tree/main/deploy)",
+          ])
+          Path("release-notes.md").write_text(
+              f"{body}\n\n---\n\n{images}", encoding="utf-8"
+          )
+          PY
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+          TAG: ${{ steps.version.outputs.tag }}
+          SOURCE_SHA: ${{ steps.version.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，仅更新标题与说明"
+            gh release edit "$TAG" --repo "$REPO" \
+              --title "Sub2API $VERSION" \
+              --notes-file release-notes.md
+          elif gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG 已存在但无 Release，基于现有 tag 创建"
+            gh release create "$TAG" --repo "$REPO" \
+              --verify-tag \
+              --title "Sub2API $VERSION" \
+              --notes-file release-notes.md
+          else
+            echo "创建 Tag $TAG -> $SOURCE_SHA 并发布 Release"
+            gh release create "$TAG" --repo "$REPO" \
+              --target "$SOURCE_SHA" \
+              --title "Sub2API $VERSION" \
+              --notes-file release-notes.md
+          fi
+
+      - name: Summary
+        if: always()
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          {
+            echo "### Backfill $VERSION"
+            echo ""
+            echo "- 源码: \`${{ inputs.source_ref }}\`"
+            echo "- 镜像标签见上方 Compose image tags 步骤输出"
+            echo "- Release: https://github.com/$REPO/releases/tag/v$VERSION"
+          } >> "$GITHUB_STEP_SUMMARY"
