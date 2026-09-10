@@ -30,24 +30,31 @@ jobs:
           with urllib.request.urlopen(login, timeout=30) as resp:
               jwt = json.loads(resp.read())["token"]
 
-          base = f"https://hub.docker.com/v2/repositories/{user}/sub2api/tags/"
-
-          def show(url):
+          def show(url, auth=True):
               req = urllib.request.Request(url)
-              req.add_header("Authorization", "JWT " + jwt)
+              if auth:
+                  req.add_header("Authorization", "JWT " + jwt)
               try:
                   with urllib.request.urlopen(req, timeout=30) as resp:
-                      data = json.loads(resp.read())
+                      body = resp.read().decode("utf-8", "replace")
                   print("URL:", url)
-                  print("  count:", data.get("count"), "results:", len(data.get("results", [])))
-                  print("  next:", data.get("next"))
-                  for item in data.get("results", [])[:60]:
-                      print("   -", item.get("name"), "|", item.get("last_updated"))
+                  try:
+                      data = json.loads(body)
+                      if isinstance(data, dict) and "results" in data:
+                          print("  count:", data.get("count"), "results:", len(data.get("results", [])))
+                          print("  next:", data.get("next"))
+                          for item in data.get("results", [])[:60]:
+                              print("   -", item.get("name"), "|", item.get("last_updated"))
+                      else:
+                          print("  keys:", list(data)[:15] if isinstance(data, dict) else type(data))
+                          print("  raw:", body[:400])
+                  except Exception:
+                      print("  raw(non-json):", body[:400])
               except Exception as exc:
                   print("URL:", url, "ERROR:", exc)
 
-          show(base + "?page=1&page_size=100")
-          show(base + "?page=2&page_size=100")
-          show(base + "?page=2")
-          show(base + "?page_size=100")
+          show(f"https://hub.docker.com/v2/namespaces/{user}/repositories/sub2api/tags?page_size=100")
+          show(f"https://hub.docker.com/v2/namespaces/{user}/repositories/sub2api/")
+          show(f"https://hub.docker.com/v2/repositories/{user}/sub2api/")
+          show(f"https://hub.docker.com/v2/repositories/{user}/sub2api/tags/?page=1&page_size=100&ordering=last_updated")
           PYEOF
