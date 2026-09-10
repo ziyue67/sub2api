@@ -7,16 +7,22 @@ import (
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type usageBillingRepository struct {
-	db *sql.DB
+	db                    *sql.DB
+	minimumBalanceReserve float64
 }
 
-func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
-	return &usageBillingRepository{db: sqlDB}
+func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfgs ...*config.Config) service.UsageBillingRepository {
+	var reserve float64
+	if len(cfgs) > 0 && cfgs[0] != nil {
+		reserve = cfgs[0].Billing.MinimumBalanceReserve
+	}
+	return &usageBillingRepository{db: sqlDB, minimumBalanceReserve: reserve}
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -110,7 +116,9 @@ func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, t
 }
 
 func (r *usageBillingRepository) ReserveBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
-	return r.applyBatchImageBalanceHold(ctx, cmd, reserveUsageBillingBatchImageBalance)
+	return r.applyBatchImageBalanceHold(ctx, cmd, func(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+		return reserveUsageBillingBatchImageBalance(ctx, tx, cmd, r.minimumBalanceReserve)
+	})
 }
 
 func (r *usageBillingRepository) CaptureBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
@@ -179,12 +187,14 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		deduction, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost, r.minimumBalanceReserve)
 		if err != nil {
 			return err
 		}
+		newBalance := deduction.NewBalance
 		result.NewBalance = &newBalance
-		result.BalanceOverdrafted = !sufficient
+		result.BalanceCollected = deduction.Collected
+		result.BalanceShortfall = deduction.Shortfall
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
@@ -240,51 +250,180 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 	return service.ErrSubscriptionNotFound
 }
 
-func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, bool, error) {
-	var newBalance float64
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if err == nil {
-		return newBalance, true, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, false, err
-	}
-
-	err = tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, service.ErrUserNotFound
-	}
-	if err != nil {
-		return 0, false, err
-	}
-	return newBalance, false, nil
+// balanceSQLQuerier is satisfied by *sql.Tx and by the ent client, so the same
+// floor-guarded deduction SQL serves both the unified billing transaction and the
+// legacy userRepository fallback path.
+type balanceSQLQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+// deductBalanceToFloorSQL takes as much of $1 (amount) as the wallet can cover
+// without dropping below $3 (floor), in one atomic statement:
+//
+//   - The wallet row is locked (FOR UPDATE) and its pre-deduction balance is
+//     captured, so concurrent deductions serialize and each sees the committed
+//     result of the previous one.
+//   - `balance > $3` in the lock predicate means a wallet already at/below the
+//     floor matches no row → the caller reports ErrInsufficientBalance and
+//     nothing is deducted.
+//   - `GREATEST(balance - $1, $3)` clamps the new balance at the floor. When the
+//     wallet cannot cover the full amount it is drained exactly to the floor and
+//     the difference is reported as a shortfall — it is never pushed negative.
+//
+// Why "drain to floor" instead of "reject the whole deduction": billing is
+// post-paid (the upstream call already happened), so an all-or-nothing rejection
+// would leave the wallet untouched in a dust zone (floor < balance < cost) where
+// every request passes preflight and is then never charged — an unbounded free
+// ride. Draining to the floor collects what is available, and the next preflight
+// sees balance <= floor and rejects with 403 INSUFFICIENT_BALANCE. The maximum
+// write-off is bounded by one request per in-flight slot.
+//
+// $3 is compared against the float `balance` column before it reaches GREATEST,
+// so PostgreSQL infers it as double precision (the same pattern as the shipped
+// DeductAvailableBalance refund helper).
+const deductBalanceToFloorSQL = `
+		WITH target AS (
+			SELECT id, balance
+			FROM users
+			WHERE id = $2 AND deleted_at IS NULL AND balance > $3
+			FOR UPDATE
+		), updated AS (
+			UPDATE users AS u
+			SET balance = GREATEST(target.balance - $1, $3),
+				updated_at = NOW()
+			FROM target
+			WHERE u.id = target.id
+			RETURNING target.balance AS previous_balance, u.balance AS new_balance
+		)
+		SELECT previous_balance, new_balance FROM updated
+	`
+
+// deductBalanceToFloor runs deductBalanceToFloorSQL and translates the outcome.
+// ok=false means no row matched (user missing or wallet already at/below floor);
+// callers distinguish the two with a follow-up existence check.
+func deductBalanceToFloor(ctx context.Context, q balanceSQLQuerier, userID int64, amount, floor float64) (_ service.BalanceDeduction, ok bool, err error) {
+	if amount < 0 {
+		return service.BalanceDeduction{}, false, errors.New("deduction amount must be nonnegative")
+	}
+	if floor < 0 {
+		floor = 0
+	}
+	rows, err := q.QueryContext(ctx, deductBalanceToFloorSQL, amount, userID, floor)
+	if err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+	if !rows.Next() {
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return service.BalanceDeduction{}, false, rowsErr
+		}
+		return service.BalanceDeduction{}, false, nil
+	}
+	var previous, current float64
+	if err := rows.Scan(&previous, &current); err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	if err := rows.Err(); err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	return settleBalanceDeduction(amount, previous, current), true, nil
+}
+
+// settleBalanceDeduction derives collected/shortfall from the pre/post balances,
+// quantized to the billing monetary scale so float noise (0.3-0.1 != 0.2 in
+// binary) never produces a phantom sub-cent shortfall or over-collection.
+func settleBalanceDeduction(amount, previous, current float64) service.BalanceDeduction {
+	collected := service.QuantizeUsageBillingAmount(previous - current)
+	if collected < 0 {
+		collected = 0
+	}
+	if collected > amount {
+		collected = amount
+	}
+	shortfall := service.QuantizeUsageBillingAmount(amount - collected)
+	if shortfall <= 0 {
+		shortfall = 0
+		collected = amount
+	}
+	return service.BalanceDeduction{
+		NewBalance: current,
+		Collected:  collected,
+		Shortfall:  shortfall,
+	}
+}
+
+// deductUsageBillingBalance charges `amount` against the user's wallet inside the
+// unified billing transaction, keeping the wallet at or above the configured
+// reserve floor (billing.minimum_balance_reserve; 0 means the floor is 0).
+//
+// Outcomes:
+//   - wallet covers amount + floor        → full deduction, Shortfall == 0
+//   - floor < wallet < amount + floor     → drained to the floor, Shortfall > 0
+//   - wallet already <= floor             → ErrInsufficientBalance, nothing deducted
+//   - user missing / soft-deleted         → ErrUserNotFound
+//
+// The wallet can never become negative on this path.
+func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64, minimumReserves ...float64) (service.BalanceDeduction, error) {
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
+	deduction, ok, err := deductBalanceToFloor(ctx, tx, userID, amount, minimumReserve)
+	if err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if ok {
+		return deduction, nil
+	}
+
+	// No row matched: either the wallet is already at/below the floor or the
+	// user does not exist. Distinguish the latter while preserving the
+	// service-level error contract for the former.
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)`, userID).Scan(&exists); err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if !exists {
+		return service.BalanceDeduction{}, service.ErrUserNotFound
+	}
+	return service.BalanceDeduction{}, service.ErrInsufficientBalance
+}
+
+func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand, minimumReserves ...float64) (*service.BatchImageBalanceHoldResult, error) {
 	if cmd.HoldAmount <= 0 {
 		return &service.BatchImageBalanceHoldResult{}, nil
 	}
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
 	var balance, frozen float64
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			frozen_balance = COALESCE(frozen_balance, 0) + $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
-		RETURNING balance, frozen_balance
-	`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
+	var err error
+	if minimumReserve > 0 {
+		// 冻结余额同样要遵守全局保留线：balance >= hold + reserve 才允许冻结，
+		// 避免用户通过 batch image hold 把最后 reserve（默认 $0.10）也花掉。
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				frozen_balance = COALESCE(frozen_balance, 0) + $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= ($1 + $3)
+			RETURNING balance, frozen_balance
+		`, cmd.HoldAmount, cmd.UserID, minimumReserve).Scan(&balance, &frozen)
+	} else {
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				frozen_balance = COALESCE(frozen_balance, 0) + $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+			RETURNING balance, frozen_balance
+		`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
+	}
 	if err == nil {
 		return &service.BatchImageBalanceHoldResult{NewBalance: &balance, FrozenBalance: &frozen}, nil
 	}

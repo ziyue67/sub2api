@@ -375,6 +375,15 @@ func (s *BillingCacheService) DeductBalanceCache(ctx context.Context, userID int
 	return s.cache.DeductUserBalance(ctx, userID, amount)
 }
 
+// SetUserBalanceCache 同步覆写用户余额缓存（扣费后以 DB 事务结果为准写回，
+// 避免并发扣费下 Redis INCR 类操作产生负余额视图）。
+func (s *BillingCacheService) SetUserBalanceCache(ctx context.Context, userID int64, balance float64) error {
+	if s.cache == nil {
+		return nil
+	}
+	return s.cache.SetUserBalance(ctx, userID, balance)
+}
+
 // QueueDeductBalance 异步扣减余额缓存
 func (s *BillingCacheService) QueueDeductBalance(userID int64, amount float64) {
 	if s.cache == nil {
@@ -872,7 +881,10 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 		return true
 	}
 	minimumReserve := s.minimumBalanceReserve()
-	return minimumReserve > 0 && balance < minimumReserve
+	// 严格守卫：balance 必须严格大于 reserve（可花余额 balance - reserve > 0）。
+	// 当 balance <= reserve 时，无可花额度，任何请求都无法通过扣费的 (balance >= amount + reserve) 门槛，
+	// 此时必须在预检直接以 ErrInsufficientBalance 拦截 (403)，防止调用上游后扣费失败而产生未结算调用。
+	return minimumReserve > 0 && balance <= minimumReserve
 }
 
 // checkBalanceEligibility 检查余额模式资格

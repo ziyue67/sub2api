@@ -28,7 +28,15 @@ func TestValidateAffiliateAttributionToken(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(42), inviterID)
 
-	tampered := token[:len(token)-1] + "x"
+	// Flip the second-to-last signature character: it carries a full 6 bits, so the
+	// decoded signature always changes. The final base64url character only encodes 4
+	// significant bits, so replacing just that one can decode back to the
+	// byte-identical signature and let the tampered token pass validation.
+	replacement := byte('A')
+	if token[len(token)-2] == replacement {
+		replacement = 'B'
+	}
+	tampered := token[:len(token)-2] + string(replacement) + token[len(token)-1:]
 	_, err = svc.ValidateAffiliateAttributionToken(tampered)
 	require.ErrorIs(t, err, ErrInvalidToken)
 }

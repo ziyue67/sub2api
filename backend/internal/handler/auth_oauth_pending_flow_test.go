@@ -3344,7 +3344,7 @@ func (r *oauthPendingFlowUserRepo) UpdateBalance(ctx context.Context, userID int
 	return client.User.UpdateOneID(userID).AddBalance(amount).Exec(ctx)
 }
 
-func (r *oauthPendingFlowUserRepo) DeductBalance(context.Context, int64, float64) error {
+func (r *oauthPendingFlowUserRepo) DeductBalance(context.Context, int64, float64, ...float64) error {
 	panic("unexpected DeductBalance call")
 }
 

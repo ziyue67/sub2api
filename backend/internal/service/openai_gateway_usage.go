@@ -509,6 +509,13 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if billingErr != nil {
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		// 余额不足导致整笔计费被原子拒绝：失效余额缓存，让下一次请求的 preflight
+		// 从 DB 重新读取真实余额，命中 reserve 门槛后以 403 拒绝。
+		if errors.Is(billingErr, ErrInsufficientBalance) && user != nil && s.billingCacheService != nil {
+			if invalidateErr := s.billingCacheService.InvalidateUserBalance(ctx, user.ID); invalidateErr != nil {
+				logger.LegacyPrintf("service.openai_gateway", "invalidate balance cache after openai billing rejection failed user=%d: %v", user.ID, invalidateErr)
+			}
+		}
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")

@@ -485,14 +485,14 @@ func (s *UserRepoSuite) TestDeductBalance() {
 func (s *UserRepoSuite) TestDeductBalance_InsufficientFunds() {
 	user := s.mustCreateUser(&service.User{Email: "insuf@test.com", Balance: 5})
 
-	// 透支策略：允许扣除超过余额的金额
+	// 无透支策略：余额不足以覆盖 amount + reserve 时拒绝扣费
 	err := s.repo.DeductBalance(s.ctx, user.ID, 999)
-	s.Require().NoError(err, "DeductBalance should allow overdraft")
+	s.Require().ErrorIs(err, service.ErrInsufficientBalance, "DeductBalance should reject overdraft")
 
-	// 验证余额变为负数
+	// 余额保持不变
 	got, err := s.repo.GetByID(s.ctx, user.ID)
 	s.Require().NoError(err)
-	s.Require().InDelta(-994.0, got.Balance, 1e-6, "Balance should be negative after overdraft")
+	s.Require().InDelta(5.0, got.Balance, 1e-6)
 }
 
 func (s *UserRepoSuite) TestDeductBalance_ExactAmount() {
@@ -506,17 +506,134 @@ func (s *UserRepoSuite) TestDeductBalance_ExactAmount() {
 	s.Require().InDelta(0.0, got.Balance, 1e-6)
 }
 
-func (s *UserRepoSuite) TestDeductBalance_AllowsOverdraft() {
-	user := s.mustCreateUser(&service.User{Email: "overdraft@test.com", Balance: 5.0})
+func (s *UserRepoSuite) TestDeductBalance_ReserveFloorNotSpendable() {
+	user := s.mustCreateUser(&service.User{Email: "reserve@test.com", Balance: 0.25})
 
-	// 扣除超过余额的金额 - 应该成功
-	err := s.repo.DeductBalance(s.ctx, user.ID, 10.0)
-	s.Require().NoError(err, "DeductBalance should allow overdraft")
-
-	// 验证余额为负
+	// 有 reserve=0.10 时，最多可花到余额=0.10，不允许把 reserve 花掉
+	err := s.repo.DeductBalance(s.ctx, user.ID, 0.20, 0.10)
+	s.Require().ErrorIs(err, service.ErrInsufficientBalance, "spending into reserve must be rejected")
 	got, err := s.repo.GetByID(s.ctx, user.ID)
 	s.Require().NoError(err)
-	s.Require().InDelta(-5.0, got.Balance, 1e-6, "Balance should be -5.0 after overdraft")
+	s.Require().InDelta(0.25, got.Balance, 1e-6)
+
+	// 恰好花到 reserve 边界（余额 0.25 - 0.15 = 0.10）允许
+	err = s.repo.DeductBalance(s.ctx, user.ID, 0.15, 0.10)
+	s.Require().NoError(err, "deduct down to reserve floor should succeed")
+	got, err = s.repo.GetByID(s.ctx, user.ID)
+	s.Require().NoError(err)
+	s.Require().InDelta(0.10, got.Balance, 1e-6)
+
+	// 再扣 0.01 会触到 reserve 下限，拒绝
+	err = s.repo.DeductBalance(s.ctx, user.ID, 0.01, 0.10)
+	s.Require().ErrorIs(err, service.ErrInsufficientBalance)
+}
+
+func (s *UserRepoSuite) TestDeductBalance_NoNegativeBalanceEver() {
+	user := s.mustCreateUser(&service.User{Email: "no-neg@test.com", Balance: 0.30})
+
+	// 即使请求金额 > 余额，也必须被拒绝而不是扣成负
+	err := s.repo.DeductBalance(s.ctx, user.ID, 5.00)
+	s.Require().ErrorIs(err, service.ErrInsufficientBalance)
+
+	got, err := s.repo.GetByID(s.ctx, user.ID)
+	s.Require().NoError(err)
+	s.Require().GreaterOrEqual(got.Balance, 0.0, "balance must never become negative")
+	s.Require().InDelta(0.30, got.Balance, 1e-6)
+}
+
+// DeductBalanceToFloor 是后付费结算用的扣款：余额够就全额扣；不够就扣到 floor 为止
+// （永不为负）并返回差额；余额已经 <= floor 时一分不扣、返回 ErrInsufficientBalance。
+func (s *UserRepoSuite) TestDeductBalanceToFloor() {
+	for _, tc := range []struct {
+		name          string
+		balance       float64
+		amount        float64
+		floor         float64
+		wantErr       error
+		wantBalance   float64
+		wantCollected float64
+		wantShortfall float64
+	}{
+		{name: "full deduction above floor", balance: 10, amount: 2.5, floor: 0.10, wantBalance: 7.5, wantCollected: 2.5},
+		{name: "full deduction exactly to floor", balance: 0.25, amount: 0.15, floor: 0.10, wantBalance: 0.10, wantCollected: 0.15},
+		// 审查者的死区场景：0.11 / reserve 0.10 / cost 0.05 → 扣到 0.10，实收 0.01，差额 0.04。
+		{name: "dead zone drains to floor", balance: 0.11, amount: 0.05, floor: 0.10, wantBalance: 0.10, wantCollected: 0.01, wantShortfall: 0.04},
+		{name: "huge request drains to floor", balance: 0.30, amount: 5.00, floor: 0.10, wantBalance: 0.10, wantCollected: 0.20, wantShortfall: 4.80},
+		{name: "zero floor drains to zero", balance: 0.30, amount: 5.00, floor: 0, wantBalance: 0, wantCollected: 0.30, wantShortfall: 4.70},
+		{name: "already at floor is rejected untouched", balance: 0.10, amount: 0.01, floor: 0.10, wantErr: service.ErrInsufficientBalance, wantBalance: 0.10},
+		{name: "already at zero is rejected untouched", balance: 0, amount: 0.01, floor: 0, wantErr: service.ErrInsufficientBalance, wantBalance: 0},
+	} {
+		s.Run(tc.name, func() {
+			user := s.mustCreateUser(&service.User{Email: "floor-" + strings.ReplaceAll(tc.name, " ", "-") + "@test.com", Balance: tc.balance})
+
+			deduction, err := s.repo.DeductBalanceToFloor(s.ctx, user.ID, tc.amount, tc.floor)
+			if tc.wantErr != nil {
+				s.Require().ErrorIs(err, tc.wantErr)
+			} else {
+				s.Require().NoError(err)
+				s.Require().InDelta(tc.wantBalance, deduction.NewBalance, 1e-6)
+				s.Require().InDelta(tc.wantCollected, deduction.Collected, 1e-6)
+				s.Require().InDelta(tc.wantShortfall, deduction.Shortfall, 1e-6)
+				s.Require().Equal(tc.wantShortfall > 0, deduction.PartiallyCollected())
+			}
+
+			got, err := s.repo.GetByID(s.ctx, user.ID)
+			s.Require().NoError(err)
+			s.Require().InDelta(tc.wantBalance, got.Balance, 1e-6)
+			s.Require().GreaterOrEqual(got.Balance, tc.floor, "balance must never drop below the floor")
+			s.Require().GreaterOrEqual(got.Balance, 0.0, "balance must never become negative")
+		})
+	}
+}
+
+func (s *UserRepoSuite) TestDeductBalanceToFloor_UserNotFound() {
+	_, err := s.repo.DeductBalanceToFloor(s.ctx, 999999, 1, 0.10)
+	s.Require().ErrorIs(err, service.ErrUserNotFound)
+}
+
+// 并发结算：多笔请求同时结算一个小钱包，行锁串行化后总扣款 == 初始余额 - floor，
+// 余额恰好停在 floor，绝不为负；每笔的 collected 之和等于实际扣减。
+func (s *UserRepoSuite) TestDeductBalanceToFloor_ConcurrentSettlementsNeverGoNegative() {
+	const (
+		initial  = 1.00
+		floor    = 0.10
+		perCost  = 0.30
+		attempts = 8
+	)
+	user := s.mustCreateUser(&service.User{Email: "floor-concurrent@test.com", Balance: initial})
+
+	results := make(chan service.BalanceDeduction, attempts)
+	errs := make(chan error, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d, err := s.repo.DeductBalanceToFloor(s.ctx, user.ID, perCost, floor)
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- d
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	var collected float64
+	for d := range results {
+		collected += d.Collected
+		s.Require().GreaterOrEqual(d.NewBalance, floor)
+	}
+	for err := range errs {
+		s.Require().ErrorIs(err, service.ErrInsufficientBalance, "the only acceptable failure is 'wallet already at floor'")
+	}
+
+	got, err := s.repo.GetByID(s.ctx, user.ID)
+	s.Require().NoError(err)
+	s.Require().InDelta(floor, got.Balance, 1e-6, "wallet must stop exactly at the floor")
+	s.Require().InDelta(initial-floor, collected, 1e-6, "sum of collected amounts must equal the actual deduction")
 }
 
 func (s *UserRepoSuite) TestDeductAvailableBalance_ClampsToNonnegativeBalance() {
@@ -737,12 +854,13 @@ func (s *UserRepoSuite) TestCRUD_And_Filters_And_AtomicUpdates() {
 	s.Require().NoError(err, "GetByID after DeductBalance")
 	s.Require().InDelta(7.5, got4.Balance, 1e-6)
 
-	// 透支策略：允许扣除超过余额的金额
+	// 无透支策略：余额不足时拒绝扣费且余额不为负
 	err = s.repo.DeductBalance(s.ctx, user1.ID, 999)
-	s.Require().NoError(err, "DeductBalance should allow overdraft")
-	gotOverdraft, err := s.repo.GetByID(s.ctx, user1.ID)
-	s.Require().NoError(err, "GetByID after overdraft")
-	s.Require().Less(gotOverdraft.Balance, 0.0, "Balance should be negative after overdraft")
+	s.Require().ErrorIs(err, service.ErrInsufficientBalance, "DeductBalance should reject overdraft")
+	gotAfterReject, err := s.repo.GetByID(s.ctx, user1.ID)
+	s.Require().NoError(err, "GetByID after rejected overdraft")
+	s.Require().InDelta(7.5, gotAfterReject.Balance, 1e-6, "Balance must stay unchanged after rejected overdraft")
+	s.Require().GreaterOrEqual(gotAfterReject.Balance, 0.0, "Balance must never become negative")
 
 	s.Require().NoError(s.repo.UpdateConcurrency(s.ctx, user1.ID, 3), "UpdateConcurrency")
 	got5, err := s.repo.GetByID(s.ctx, user1.ID)

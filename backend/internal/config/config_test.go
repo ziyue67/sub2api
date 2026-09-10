@@ -337,6 +337,46 @@ func TestLoadReturnsErrorForMissingConfigFile(t *testing.T) {
 	require.ErrorContains(t, err, "read config error")
 }
 
+func TestLoadMigratesLegacyMinimumBalanceReserveFromConfigFile(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	configFile := filepath.Join(t.TempDir(), "legacy-reserve.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte("billing:\n  minimum_balance_reserve: 0.000001\n"), 0o600))
+	t.Setenv("CONFIG_FILE", configFile)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 0.1, cfg.Billing.MinimumBalanceReserve,
+		"legacy default 0.000001 written into an old config.yaml must be migrated to the new 0.1 floor")
+}
+
+func TestLoadKeepsExplicitEnvironmentVariableReserveValues(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("BILLING_MINIMUM_BALANCE_RESERVE", "0.000001")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 0.000001, cfg.Billing.MinimumBalanceReserve,
+		"explicit environment variable BILLING_MINIMUM_BALANCE_RESERVE=0.000001 must not be overwritten by config file migration")
+}
+
+func TestLoadKeepsExplicitMinimumBalanceReserveValues(t *testing.T) {
+	for _, explicit := range []float64{0, 0.05, 0.5} {
+		t.Run(fmt.Sprintf("reserve_%v", explicit), func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			configFile := filepath.Join(t.TempDir(), "explicit-reserve.yaml")
+			content := fmt.Sprintf("billing:\n  minimum_balance_reserve: %v\n", explicit)
+			require.NoError(t, os.WriteFile(configFile, []byte(content), 0o600))
+			t.Setenv("CONFIG_FILE", configFile)
+
+			cfg, err := Load()
+			require.NoError(t, err)
+			require.Equal(t, explicit, cfg.Billing.MinimumBalanceReserve,
+				"explicitly configured reserve values must never be overwritten by the migration")
+		})
+	}
+}
+
 func TestLoadForBootstrapAllowsMissingJWTSecret(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
