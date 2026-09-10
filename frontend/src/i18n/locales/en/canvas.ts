@@ -16,6 +16,7 @@ export default {
     descriptionPlaceholder: 'Describe this workflow (optional)',
     untitledCanvas: 'Untitled Canvas',
     stage: 'Node Canvas',
+    nodeTypesLabel: 'Node types',
     nodeCount: '{count} nodes',
     edgeCount: '{count} edges',
     zoomIn: 'Zoom in',

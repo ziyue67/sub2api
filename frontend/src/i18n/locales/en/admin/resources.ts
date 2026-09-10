@@ -524,6 +524,7 @@ export default {
       userFilter: 'User',
       searchUserPlaceholder: 'Search user by email...',
       searchApiKeyPlaceholder: 'Search API key by name...',
+      selectUserBeforeApiKey: 'Select a user first',
       searchAccountPlaceholder: 'Search account by name...',
       selectedUser: 'Selected',
       user: 'User',
