@@ -3,8 +3,8 @@ name: Cleanup DockerHub Tags
 # 手动清理 Docker Hub 上 <DOCKERHUB_USERNAME>/sub2api 的镜像标签。
 # 使用仓库现有 secrets（DOCKERHUB_USERNAME / DOCKERHUB_TOKEN），无需在本地暴露凭据。
 # keep 留空 = 删除全部标签（用于镜像重建前清场）。
-# 注意：Docker Hub tags 接口存在读缓存抖动（count>0 但 results 为空 / 假 0），
-#       本脚本带重试与二次确认，保证清理彻底。
+# 说明：Docker Hub tags 接口删除后会出现页码空洞（page=1 为空但 count>0），
+#       因此按响应中的 next 链接逐页遍历，并按轮次重扫直到清空。
 
 on:
   workflow_dispatch:
@@ -27,83 +27,78 @@ jobs:
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           KEEP: ${{ inputs.keep }}
         run: |
-          set -euo pipefail
-          if [ -z "$DH_USER" ] || [ -z "$DH_TOKEN" ]; then
-            echo "::error::未配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"; exit 1
-          fi
+          python3 - <<'PYEOF'
+          import json, os, time, urllib.request
 
-          TOKEN=$(curl -fsS -X POST https://hub.docker.com/v2/users/login \
-            -H 'Content-Type: application/json' \
-            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" | jq -r '.token // empty')
-          if [ -z "$TOKEN" ]; then
-            echo "::error::Docker Hub 登录失败（检查 token 是否有效）"; exit 1
-          fi
+          user = os.environ["DH_USER"]
+          token = os.environ["DH_TOKEN"]
+          keep = set(filter(None, os.environ.get("KEEP", "").replace(" ", "").split(",")))
 
-          API="https://hub.docker.com/v2/repositories/${DH_USER}/sub2api/tags"
-          AUTH="Authorization: JWT $TOKEN"
-          keep_csv=",${KEEP// /},"
-          deleted=0; kept=0; failed=0
+          def http(url, method="GET", auth=None):
+              req = urllib.request.Request(url, method=method)
+              if auth:
+                  req.add_header("Authorization", "JWT " + auth)
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  body = resp.read()
+                  return json.loads(body) if body else {}
 
-          get_tags() {
-            local resp
-            resp=$(curl -fsS -H "$AUTH" "${API}/?page=1&page_size=100" || true)
-            printf '%s' "$resp" | jq -r '.count // empty' 2>/dev/null || true
-            printf '%s' "$resp" | jq -r '.results[]?.name // empty' 2>/dev/null || true
-          }
+          login = urllib.request.Request(
+              "https://hub.docker.com/v2/users/login",
+              data=json.dumps({"username": user, "password": token}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(login, timeout=30) as resp:
+              jwt = json.loads(resp.read()).get("token")
+          if not jwt:
+              raise SystemExit("Docker Hub 登录失败（检查 token 是否有效）")
 
-          while :; do
-            count=""; names=""
-            for attempt in 1 2 3 4 5 6; do
-              out=$(get_tags)
-              count=$(printf '%s\n' "$out" | head -n1)
-              names=$(printf '%s\n' "$out" | tail -n +2)
-              if [ -n "$count" ] && [ "$count" != "0" ] && [ -n "$names" ]; then
-                break
-              fi
-              if [ "$count" = "0" ]; then
-                sleep 6
-                out2=$(get_tags)
-                count2=$(printf '%s\n' "$out2" | head -n1)
-                if [ "$count2" = "0" ]; then count="0"; names=""; break; fi
-              fi
-              echo "读取抖动，重试 $attempt（count=$count）"
-              sleep 6
-            done
+          API = f"https://hub.docker.com/v2/repositories/{user}/sub2api/tags/"
+          deleted = kept = failed = 0
+          remaining = -1
+          for rnd in range(1, 201):
+              url = f"{API}?page=1&page_size=100"
+              round_deleted = 0
+              while url:
+                  try:
+                      data = http(url, auth=jwt)
+                  except Exception as exc:
+                      print("WARN fetch failed:", url, exc)
+                      time.sleep(5)
+                      break
+                  for item in data.get("results", []):
+                      name = item.get("name")
+                      if not name:
+                          continue
+                      if name in keep:
+                          kept += 1
+                          print("keep ", name)
+                          continue
+                      try:
+                          http(f"{API}{name}/", method="DELETE", auth=jwt)
+                          deleted += 1
+                          round_deleted += 1
+                          print("del  ", name)
+                          time.sleep(0.2)
+                      except Exception as exc:
+                          failed += 1
+                          print("WARN delete failed:", name, exc)
+                  url = data.get("next")
+              remaining = http(f"{API}?page=1&page_size=1", auth=jwt).get("count", 0)
+              print(f"round={rnd} round_deleted={round_deleted} remaining={remaining}")
+              if remaining == 0:
+                  break
+              if round_deleted == 0:
+                  print("no progress; stop")
+                  break
 
-            if [ "$count" = "0" ]; then break; fi
-            if [ -z "$count" ] || [ -z "$names" ]; then
-              echo "连续多次读取异常，停止（count=$count）"
-              exit 1
-            fi
-
-            echo "剩余 $count 个标签，本轮处理："
-            printf '%s\n' "$names"
-            progress=0
-            for t in $names; do
-              case "$keep_csv" in
-                *",$t,"*) kept=$((kept+1)); echo "keep  $t"; continue;;
-              esac
-              if curl -fsS -X DELETE -H "$AUTH" "${API}/$t/" >/dev/null; then
-                deleted=$((deleted+1)); echo "del   $t"; progress=1
-              else
-                failed=$((failed+1)); echo "::warning::删除失败: $t"
-              fi
-              sleep 0.3
-            done
-
-            if [ "$progress" -eq 0 ]; then
-              echo "本轮无删除动作（可能都在 keep 列表或权限不足），退出"
-              break
-            fi
-            sleep 4
-          done
-
-          remain=$(curl -fsS -H "$AUTH" "${API}/?page=1&page_size=1" | jq -r '.count // 0')
-          echo "deleted=$deleted kept=$kept failed=$failed remaining=$remain"
-          {
-            echo "### DockerHub 清理结果"
-            echo "- 已删除: $deleted"
-            echo "- 保留: $kept"
-            echo "- 失败: $failed"
-            echo "- 剩余 tag 数: $remain"
-          } >> "$GITHUB_STEP_SUMMARY"
+          print(f"RESULT deleted={deleted} kept={kept} failed={failed} remaining={remaining}")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write("### DockerHub 清理结果\n")
+                  fh.write(f"- 已删除: {deleted}\n")
+                  fh.write(f"- 保留: {kept}\n")
+                  fh.write(f"- 失败: {failed}\n")
+                  fh.write(f"- 剩余 tag 数: {remaining}\n")
+          PYEOF
