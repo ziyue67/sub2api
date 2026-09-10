@@ -58,3 +58,16 @@ jobs:
           show(f"https://hub.docker.com/v2/repositories/{user}/sub2api/")
           show(f"https://hub.docker.com/v2/repositories/{user}/sub2api/tags/?page=1&page_size=100&ordering=last_updated")
           PYEOF
+
+      - name: Probe multi-arch manifests
+        env:
+          DOCKER_CLI_EXPERIMENTAL: enabled
+        run: |
+          # 验证多架构清单的可拉取性：--verbose 会拉取每个子平台 manifest，
+          # 子镜像缺失时报错；同时用来确认 -arm64 标签的删除结果。
+          for img in ziyue67/sub2api:latest ziyue67/sub2api:0.2.4 ziyue67/sub2api:0.2.4-amd64 ziyue67/sub2api:0.2.4-arm64; do
+            echo "===== manifest: $img ====="
+            docker manifest inspect --verbose "$img" > /tmp/m.json 2>&1
+            echo "exit_code=$?"
+            grep -E '"architecture"|"os"|"mediaType"|no such manifest|manifest unknown|denied|unauthorized|Not Found' /tmp/m.json | head -16
+          done
