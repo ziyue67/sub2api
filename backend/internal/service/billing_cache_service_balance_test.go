@@ -88,24 +88,28 @@ func TestSyncBalanceCacheAfterDeduction_InvalidatesExhaustedBalance(t *testing.T
 		balance:                  0.50,
 		cacheMissAfterInvalidate: true,
 	}
-	userRepo := &balanceLoadUserRepoStub{balance: -0.25}
+	// 钱包被扣到 reserve 保留线（0.01）：DB 真实余额 == floor。
+	userRepo := &balanceLoadUserRepoStub{balance: 0.01}
 	cfg := &config.Config{}
 	cfg.Billing.MinimumBalanceReserve = 0.01
 	svc := NewBillingCacheService(cache, userRepo, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(svc.Stop)
 
-	newBalance := -0.25
+	// 请求成本 0.75，钱包只有 0.50：扣到 floor 为止（收 0.49，差额 0.26），永不为负。
+	newBalance := 0.01
 	syncBalanceCacheAfterDeduction(context.Background(), &postUsageBillingParams{
 		Cost: &CostBreakdown{ActualCost: 0.75},
 		User: &User{ID: 1},
 	}, &billingDeps{billingCacheService: svc}, &UsageBillingApplyResult{
-		NewBalance:         &newBalance,
-		BalanceOverdrafted: true,
+		NewBalance:       &newBalance,
+		BalanceCollected: 0.49,
+		BalanceShortfall: 0.26,
 	})
 
 	require.Equal(t, int64(1), cache.invalidateCalls.Load())
 	require.Equal(t, int64(0), cache.deductCalls.Load())
 
+	// 缓存失效后下一次预检回源读到 balance == floor → 403，闭环：钱不够就不再放行。
 	err := svc.CheckBillingEligibility(context.Background(), &User{ID: 1}, nil, nil, nil, "")
 	require.ErrorIs(t, err, ErrInsufficientBalance)
 	require.Equal(t, int64(1), userRepo.calls.Load())

@@ -541,6 +541,101 @@ func (s *UserRepoSuite) TestDeductBalance_NoNegativeBalanceEver() {
 	s.Require().InDelta(0.30, got.Balance, 1e-6)
 }
 
+// DeductBalanceToFloor 是后付费结算用的扣款：余额够就全额扣；不够就扣到 floor 为止
+// （永不为负）并返回差额；余额已经 <= floor 时一分不扣、返回 ErrInsufficientBalance。
+func (s *UserRepoSuite) TestDeductBalanceToFloor() {
+	for _, tc := range []struct {
+		name          string
+		balance       float64
+		amount        float64
+		floor         float64
+		wantErr       error
+		wantBalance   float64
+		wantCollected float64
+		wantShortfall float64
+	}{
+		{name: "full deduction above floor", balance: 10, amount: 2.5, floor: 0.10, wantBalance: 7.5, wantCollected: 2.5},
+		{name: "full deduction exactly to floor", balance: 0.25, amount: 0.15, floor: 0.10, wantBalance: 0.10, wantCollected: 0.15},
+		// 审查者的死区场景：0.11 / reserve 0.10 / cost 0.05 → 扣到 0.10，实收 0.01，差额 0.04。
+		{name: "dead zone drains to floor", balance: 0.11, amount: 0.05, floor: 0.10, wantBalance: 0.10, wantCollected: 0.01, wantShortfall: 0.04},
+		{name: "huge request drains to floor", balance: 0.30, amount: 5.00, floor: 0.10, wantBalance: 0.10, wantCollected: 0.20, wantShortfall: 4.80},
+		{name: "zero floor drains to zero", balance: 0.30, amount: 5.00, floor: 0, wantBalance: 0, wantCollected: 0.30, wantShortfall: 4.70},
+		{name: "already at floor is rejected untouched", balance: 0.10, amount: 0.01, floor: 0.10, wantErr: service.ErrInsufficientBalance, wantBalance: 0.10},
+		{name: "already at zero is rejected untouched", balance: 0, amount: 0.01, floor: 0, wantErr: service.ErrInsufficientBalance, wantBalance: 0},
+	} {
+		s.Run(tc.name, func() {
+			user := s.mustCreateUser(&service.User{Email: "floor-" + strings.ReplaceAll(tc.name, " ", "-") + "@test.com", Balance: tc.balance})
+
+			deduction, err := s.repo.DeductBalanceToFloor(s.ctx, user.ID, tc.amount, tc.floor)
+			if tc.wantErr != nil {
+				s.Require().ErrorIs(err, tc.wantErr)
+			} else {
+				s.Require().NoError(err)
+				s.Require().InDelta(tc.wantBalance, deduction.NewBalance, 1e-6)
+				s.Require().InDelta(tc.wantCollected, deduction.Collected, 1e-6)
+				s.Require().InDelta(tc.wantShortfall, deduction.Shortfall, 1e-6)
+				s.Require().Equal(tc.wantShortfall > 0, deduction.PartiallyCollected())
+			}
+
+			got, err := s.repo.GetByID(s.ctx, user.ID)
+			s.Require().NoError(err)
+			s.Require().InDelta(tc.wantBalance, got.Balance, 1e-6)
+			s.Require().GreaterOrEqual(got.Balance, tc.floor, "balance must never drop below the floor")
+			s.Require().GreaterOrEqual(got.Balance, 0.0, "balance must never become negative")
+		})
+	}
+}
+
+func (s *UserRepoSuite) TestDeductBalanceToFloor_UserNotFound() {
+	_, err := s.repo.DeductBalanceToFloor(s.ctx, 999999, 1, 0.10)
+	s.Require().ErrorIs(err, service.ErrUserNotFound)
+}
+
+// 并发结算：多笔请求同时结算一个小钱包，行锁串行化后总扣款 == 初始余额 - floor，
+// 余额恰好停在 floor，绝不为负；每笔的 collected 之和等于实际扣减。
+func (s *UserRepoSuite) TestDeductBalanceToFloor_ConcurrentSettlementsNeverGoNegative() {
+	const (
+		initial  = 1.00
+		floor    = 0.10
+		perCost  = 0.30
+		attempts = 8
+	)
+	user := s.mustCreateUser(&service.User{Email: "floor-concurrent@test.com", Balance: initial})
+
+	results := make(chan service.BalanceDeduction, attempts)
+	errs := make(chan error, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			d, err := s.repo.DeductBalanceToFloor(s.ctx, user.ID, perCost, floor)
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- d
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	var collected float64
+	for d := range results {
+		collected += d.Collected
+		s.Require().GreaterOrEqual(d.NewBalance, floor)
+	}
+	for err := range errs {
+		s.Require().ErrorIs(err, service.ErrInsufficientBalance, "the only acceptable failure is 'wallet already at floor'")
+	}
+
+	got, err := s.repo.GetByID(s.ctx, user.ID)
+	s.Require().NoError(err)
+	s.Require().InDelta(floor, got.Balance, 1e-6, "wallet must stop exactly at the floor")
+	s.Require().InDelta(initial-floor, collected, 1e-6, "sum of collected amounts must equal the actual deduction")
+}
+
 func (s *UserRepoSuite) TestDeductAvailableBalance_ClampsToNonnegativeBalance() {
 	for _, tc := range []struct {
 		name        string

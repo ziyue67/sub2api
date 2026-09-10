@@ -1098,6 +1098,51 @@ func TestOpenAIGatewayServiceRecordUsage_InsufficientBalanceInvalidatesBalanceCa
 	require.Equal(t, int64(1), cache.invalidateCalls, "insufficient-balance billing error must invalidate the balance cache")
 }
 
+// OpenAI 路径与 Claude 路径共用 applyUsageBilling：钱包被扣到 reserve 保留线时，
+// 请求视为已结算（不报错）、usage_log.ActualCost 记实收金额、并失效余额缓存。
+func TestOpenAIGatewayServiceRecordUsage_PartialCollectionSettlesUsageLogAndInvalidatesCache(t *testing.T) {
+	usage := OpenAIUsage{InputTokens: 1000, OutputTokens: 600}
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	cache := &openAIRecordUsageInvalidateCacheStub{balance: 0.30}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	floor := 0.10
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{
+		Applied:          true,
+		NewBalance:       &floor,
+		BalanceCollected: 0.20,
+		BalanceShortfall: 0.55,
+	}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_billing_partial",
+			Usage:     usage,
+			Model:     "gpt-5.1",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 10050},
+		User:    &User{ID: 20050},
+		Account: &Account{ID: 30050},
+	})
+
+	require.NoError(t, err, "partial collection is a settled request, not a billing failure")
+	require.Equal(t, 1, billingRepo.calls)
+	require.NotNil(t, billingRepo.lastCmd)
+	expected := expectedOpenAICost(t, svc, "gpt-5.1", usage, 1.1)
+	// BalanceCost 经 Normalize 量化到 8 位小数，容差放宽到量化精度。
+	require.InDelta(t, expected.ActualCost, billingRepo.lastCmd.BalanceCost, 1e-7, "the full cost must still be submitted to the billing transaction")
+	require.NotNil(t, usageRepo.lastLog)
+	require.InDelta(t, expected.TotalCost, usageRepo.lastLog.TotalCost, 1e-9, "TotalCost keeps the real upstream cost")
+	require.InDelta(t, 0.20, usageRepo.lastLog.ActualCost, 1e-9, "ActualCost must equal the amount actually collected")
+	require.Equal(t, int64(1), cache.invalidateCalls, "draining to the floor must invalidate the balance cache so the next preflight returns 403")
+}
+
 func TestOpenAIGatewayServiceRecordUsage_UpdatesAPIKeyQuotaWhenConfigured(t *testing.T) {
 	usage := OpenAIUsage{InputTokens: 10, OutputTokens: 6, CacheReadInputTokens: 2}
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
