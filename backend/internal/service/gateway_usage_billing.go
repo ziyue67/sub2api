@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -130,33 +129,14 @@ func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
 	return p.Cost.TotalCost > 0 && p.Account.IsAPIKeyOrBedrock() && p.Account.HasAnyQuotaLimit()
 }
 
-// balanceFloorDeductor is the optional repository capability used by the legacy
-// fallback billing path to drain a wallet to the reserve floor instead of
-// rejecting the whole post-paid deduction. The production userRepository
-// implements it; lightweight test doubles that only implement DeductBalance keep
-// the strict all-or-nothing behavior.
-type balanceFloorDeductor interface {
-	DeductBalanceToFloor(ctx context.Context, id int64, amount, floor float64) (BalanceDeduction, error)
-}
-
 // postUsageBilling is the legacy fallback billing path used when the unified
 // billing repo is unavailable (nil). Production uses applyUsageBilling → repo.Apply
 // for atomic billing. This path only runs in tests or degraded mode.
-//
-// It returns an error when the balance deduction fails so the caller can stop
-// updating APIKey/account/platform quotas and fail closed: a request whose
-// balance was not deducted must not also record quota consumption (or look
-// successful). Callers keep usage-log bookkeeping with ActualCost=0 on error.
-//
-// On success the returned result carries the post-deduction balance and, when
-// the wallet was drained to the floor, the collected/shortfall split so the
-// caller can settle the usage log for the amount actually charged.
-func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) (*UsageBillingApplyResult, error) {
+func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) {
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
 	cost := p.Cost
-	result := &UsageBillingApplyResult{Applied: true}
 
 	if p.IsSubscriptionBill {
 		// Subscription usage tracked by ActualCost so group rate multiplier
@@ -164,51 +144,13 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		if cost.ActualCost > 0 {
 			if err := deps.userSubRepo.IncrementUsage(billingCtx, p.Subscription.ID, cost.ActualCost); err != nil {
 				slog.Error("increment subscription usage failed", "subscription_id", p.Subscription.ID, "error", err)
-				return nil, err
 			}
 		}
 	} else {
 		if cost.ActualCost > 0 {
-			// legacy 兜底路径：同样拒绝透支。reserve 缺省由调用方传入；此处沿用
-			// cfg 的 minimum_balance_reserve，与统一 usage_billing_repo 路径语义一致，
-			// 避免降级模式下用户花掉最后 reserve 或产生负余额。
-			minimumReserve := 0.0
-			if deps != nil && deps.cfg != nil && deps.cfg.Billing.MinimumBalanceReserve > 0 {
-				minimumReserve = deps.cfg.Billing.MinimumBalanceReserve
-			}
-			var err error
-			if floorDeductor, ok := deps.userRepo.(balanceFloorDeductor); ok {
-				// 后付费结算：余额不足以覆盖全额时扣到 floor 为止（永不为负），
-				// 差额记为 shortfall；余额本来就 <= floor 时才返回 ErrInsufficientBalance。
-				var deduction BalanceDeduction
-				deduction, err = floorDeductor.DeductBalanceToFloor(billingCtx, p.User.ID, cost.ActualCost, minimumReserve)
-				if err == nil {
-					newBalance := deduction.NewBalance
-					result.NewBalance = &newBalance
-					result.BalanceCollected = deduction.Collected
-					result.BalanceShortfall = deduction.Shortfall
-				}
-			} else {
-				err = deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost, minimumReserve)
-				if err == nil {
-					result.BalanceCollected = cost.ActualCost
-				}
-			}
-			if err != nil {
-				slog.Error("deduct balance failed", "user_id", p.User.ID, "amount", cost.ActualCost, "error", err)
-				// 余额不足导致扣费失败：立刻失效余额缓存，确保下一次请求的
-				// preflight 会从 DB 读到真实余额并返回 403（INSUFFICIENT_BALANCE），
-				// 而不是继续拿 Redis 里过期的余额放行。
-				if errors.Is(err, ErrInsufficientBalance) && deps.billingCacheService != nil {
-					if invalidateErr := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); invalidateErr != nil {
-						slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", invalidateErr)
-					}
-				}
-				// 扣费失败必须立即 fail-closed：余额未扣却继续累加 APIKey/account/
-				// platform quota 会造成账务不一致，也让上层以为计费已成功。
-				return nil, err
-			}
-			if deps.billingCacheService != nil {
+			if err := deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost); err != nil {
+				slog.Error("deduct balance failed", "user_id", p.User.ID, "error", err)
+			} else if deps.billingCacheService != nil {
 				if err := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); err != nil {
 					slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", err)
 				}
@@ -259,7 +201,6 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	// cache updates. The legacy path does DB writes directly; the finalize path
 	// does cache queue + notifications. Notifications are dispatched separately
 	// by the caller after recording the usage log.
-	return result, nil
 }
 
 func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string) string {
@@ -397,13 +338,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
-		// Legacy fallback: propagate deduction failures so quota updates stop
-		// immediately and the caller records the usage log as unsettled (fail-closed).
-		result, err := postUsageBilling(ctx, p, deps)
-		if err != nil {
-			return false, err
-		}
-		settleUsageLogBalance(requestID, usageLog, p, result)
+		postUsageBilling(ctx, p, deps)
 		return true, nil
 	}
 
@@ -419,8 +354,6 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
 		return false, nil
 	}
-
-	settleUsageLogBalance(requestID, usageLog, p, result)
 
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
@@ -491,67 +424,22 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	go notifyAccountQuota(p, deps, result)
 }
 
-// settleUsageLogBalance reconciles the usage log with what the wallet actually
-// paid. Normally nothing changes. When the deduction drained the wallet to the
-// reserve floor (result.BalanceShortfall > 0), the usage log's ActualCost is
-// lowered to the collected amount so the ledger stays consistent
-// (sum(actual_cost) == total deducted), while TotalCost keeps recording the real
-// upstream cost of the request. The written-off remainder is logged at ALERT
-// level for reconciliation; it is bounded to a single request per in-flight slot
-// because the next preflight now sees balance <= floor and returns 403.
-func settleUsageLogBalance(requestID string, usageLog *UsageLog, p *postUsageBillingParams, result *UsageBillingApplyResult) {
-	if result == nil || result.BalanceShortfall <= 0 || p == nil || p.IsSubscriptionBill {
-		return
-	}
-	collected := result.BalanceCollected
-	if collected < 0 {
-		collected = 0
-	}
-	if usageLog != nil {
-		usageLog.ActualCost = collected
-	}
-	var userID int64
-	if p.User != nil {
-		userID = p.User.ID
-	}
-	var newBalance float64
-	if result.NewBalance != nil {
-		newBalance = *result.NewBalance
-	}
-	var requested float64
-	if p.Cost != nil {
-		requested = p.Cost.ActualCost
-	}
-	logger.LegacyPrintf("service.gateway",
-		"ALERT: balance drained to reserve floor, request cost partially uncollected: user=%d request=%s cost=%.8f collected=%.8f shortfall=%.8f new_balance=%.8f",
-		userID, requestID, requested, collected, result.BalanceShortfall, newBalance)
-}
-
-// collectedBalanceCost returns the amount actually taken from the wallet for
-// this request. Results that carry no collection detail (legacy stubs, older
-// repositories) are treated as fully collected.
-func collectedBalanceCost(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
-	if result != nil && (result.BalanceCollected > 0 || result.BalanceShortfall > 0) {
-		return result.BalanceCollected
-	}
-	if p != nil && p.Cost != nil {
-		return p.Cost.ActualCost
-	}
-	return 0
-}
-
 func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
 	if p == nil || p.Cost == nil || p.User == nil || deps == nil || deps.billingCacheService == nil {
 		return
 	}
-	// 统一扣费事务完成后，始终以 InvalidateUserBalance 失效缓存，避免并发扣费下
-	// 乱序裸 SET 覆盖最新真实余额。后续请求由 singleflight 回源从 DB 读取带 reserve 的真实余额。
-	if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
-		slog.Warn("invalidate balance cache after deduction failed",
-			"user_id", p.User.ID,
-			"error", err,
-		)
+	if result != nil && result.NewBalance != nil && deps.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
+		if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
+			slog.Warn("invalidate balance cache after exhausted deduction failed",
+				"user_id", p.User.ID,
+				"new_balance", *result.NewBalance,
+				"balance_overdrafted", result.BalanceOverdrafted,
+				"error", err,
+			)
+		}
+		return
 	}
+	deps.billingCacheService.QueueDeductBalance(p.User.ID, p.Cost.ActualCost)
 }
 
 // notifyBalanceLow sends balance low notification after deduction.
@@ -574,27 +462,22 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 	}
 
 	oldBalance := resolveOldBalance(p, result)
-	// Use the amount actually taken from the wallet: when the wallet was drained
-	// to the floor, old - collected == floor exactly, which is what triggers the
-	// "last available balance" notification.
-	collected := collectedBalanceCost(p, result)
 	slog.Debug("notifyBalanceLow: calling CheckBalanceAfterDeduction",
 		"user_id", p.User.ID,
 		"old_balance", oldBalance,
 		"cost", p.Cost.ActualCost,
-		"collected", collected,
 		"notify_enabled", p.User.BalanceNotifyEnabled,
 		"threshold", p.User.BalanceNotifyThreshold,
 		"result_has_new_balance", result != nil && result.NewBalance != nil,
 	)
-	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, collected)
+	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, p.Cost.ActualCost)
 }
 
 // resolveOldBalance returns the pre-deduction balance.
-// Prefers the DB transaction result (newBalance + collected) over snapshot.
+// Prefers the DB transaction result (newBalance + cost) over snapshot.
 func resolveOldBalance(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
 	if result != nil && result.NewBalance != nil {
-		return *result.NewBalance + collectedBalanceCost(p, result)
+		return *result.NewBalance + p.Cost.ActualCost
 	}
 	// Legacy fallback: snapshot balance from request context
 	return p.User.Balance
@@ -986,14 +869,6 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if billingErr != nil {
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
-		// 余额不足导致整笔计费被原子拒绝：失效余额缓存，让下一次请求的 preflight
-		// 从 DB 重新读取真实余额，命中 reserve/负余额门槛后以 403 拒绝，防止
-		// Redis 旧余额让用户继续发出注定扣费失败的请求。
-		if errors.Is(billingErr, ErrInsufficientBalance) && user != nil && s.billingCacheService != nil {
-			if invalidateErr := s.billingCacheService.InvalidateUserBalance(ctx, user.ID); invalidateErr != nil {
-				slog.Warn("invalidate balance cache after billing rejection", "user_id", user.ID, "error", invalidateErr)
-			}
-		}
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
