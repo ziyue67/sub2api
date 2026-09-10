@@ -1,0 +1,91 @@
+name: Cleanup GHCR Tags
+
+# 手动删除 GHCR 容器包中带指定后缀的镜像版本（默认 -arm64）。
+#
+# ⚠️ 注意：GHCR 不支持"只删标签"——删除版本会一并删除该镜像本身。
+#    若该镜像被子多架构清单（如 latest / 0.2.x）引用，删除后对应平台的拉取会失败。
+#    验证方式：docker manifest inspect --verbose <img>（见 probe-dockerhub.yml）。
+#
+# 权限：优先使用 secret GHCR_ADMIN_TOKEN（带 Packages: Read and write 的 PAT），
+#       未配置时回退到仓库 GITHUB_TOKEN（packages: write）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      suffix:
+        description: '要删除的 tag 后缀（逗号分隔，例如 -arm64）'
+        required: true
+        default: '-arm64'
+      dry_run:
+        description: '仅列出，不删除'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete GHCR versions by tag suffix
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_ADMIN_TOKEN || github.token }}
+          SUFFIXES: ${{ inputs.suffix }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, subprocess, sys
+
+          owner = os.environ["OWNER"]
+          suffixes = [s for s in os.environ["SUFFIXES"].replace(" ", "").split(",") if s]
+          dry = os.environ.get("DRY_RUN", "false").lower() == "true"
+          pkg = "sub2api"
+
+          def gh_json(args):
+              p = subprocess.run(["gh", *args], capture_output=True, text=True)
+              if p.returncode != 0:
+                  print("gh call failed:", args)
+                  print("  stderr:", p.stderr.strip()[:400])
+                  return None
+              try:
+                  return json.loads(p.stdout) if p.stdout.strip() else []
+              except Exception as exc:
+                  print("json parse failed:", exc, p.stdout[:200])
+                  return None
+
+          versions = gh_json(["api", f"/users/{owner}/packages/container/{pkg}/versions?per_page=100"])
+          if versions is None:
+              versions = gh_json(["api", f"/user/packages/container/{pkg}/versions?per_page=100"])
+          if versions is None:
+              sys.exit("无法读取 GHCR 包版本列表（权限不足？）")
+
+          print(f"共 {len(versions)} 个版本")
+          targets = []
+          for v in versions:
+              tags = (v.get("metadata", {}).get("container", {}) or {}).get("tags", []) or []
+              hit = [t for t in tags if any(t.endswith(s) for s in suffixes)]
+              print(f"  version={v.get('id')} tags={tags} -> {'DELETE' if hit else 'keep'}")
+              if hit:
+                  targets.append(v.get("id"))
+
+          print(f"计划删除 {len(targets)} 个版本（suffixes={suffixes}, dry_run={dry}）")
+          if dry:
+              sys.exit(0)
+          failed = 0
+          for vid in targets:
+              p = subprocess.run(
+                  ["gh", "api", "-X", "DELETE", f"/users/{owner}/packages/container/{pkg}/versions/{vid}"],
+                  capture_output=True, text=True)
+              if p.returncode == 0:
+                  print("deleted", vid)
+              else:
+                  failed += 1
+                  print("delete failed", vid, p.stderr.strip()[:200])
+          print(f"RESULT deleted={len(targets)-failed} failed={failed}")
+          if failed:
+              sys.exit(1)
+          PYEOF
