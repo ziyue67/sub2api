@@ -18,9 +18,17 @@ const (
 	billingBalanceKeyPrefix   = "billing:balance:"
 	billingSubKeyPrefix       = "billing:sub:"
 	billingRateLimitKeyPrefix = "apikey:rate:"
-	subCacheInvalidateChannel = "subscription:cache:invalidate"
-	billingCacheTTL           = 5 * time.Minute
-	billingCacheJitter        = 30 * time.Second
+	// billingBalanceExhaustedKeyPrefix 是"钱包已耗尽（余额已到 reserve 底线）"标记键。
+	// 该标记与余额缓存（billing:balance:）严格分离：只有"结算判定钱包已耗尽"与
+	// "余额增加"两条路径会写它，余额未命中回源的异步写回永远不会写它，
+	// 因此它不会被扣费前的旧余额快照"复活"。
+	billingBalanceExhaustedKeyPrefix = "billing:balance_exhausted:"
+	subCacheInvalidateChannel        = "subscription:cache:invalidate"
+	billingCacheTTL                  = 5 * time.Minute
+	billingCacheJitter               = 30 * time.Second
+	// balanceExhaustedMarkerTTL 必须 >= 余额缓存的最长存活时间（billingCacheTTL），
+	// 否则标记先过期、而余额缓存里仍留着偏高的旧值，预检又会被放行。
+	balanceExhaustedMarkerTTL = billingCacheTTL + time.Minute
 	rateLimitCacheTTL         = 7 * 24 * time.Hour // 7 days matches the longest window
 
 	// Rate limit window durations — must match service.RateLimitWindow* constants.
@@ -42,6 +50,11 @@ func jitteredTTL() time.Duration {
 // billingBalanceKey generates the Redis key for user balance cache.
 func billingBalanceKey(userID int64) string {
 	return fmt.Sprintf("%s%d", billingBalanceKeyPrefix, userID)
+}
+
+// billingBalanceExhaustedKey generates the Redis key for the "wallet exhausted" marker.
+func billingBalanceExhaustedKey(userID int64) string {
+	return fmt.Sprintf("%s%d", billingBalanceExhaustedKeyPrefix, userID)
 }
 
 // billingSubKey generates the Redis key for subscription cache.
@@ -171,6 +184,36 @@ func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amou
 func (c *billingCache) InvalidateUserBalance(ctx context.Context, userID int64) error {
 	key := billingBalanceKey(userID)
 	return c.rdb.Del(ctx, key).Err()
+}
+
+// MarkUserBalanceExhausted 记录"该用户的钱包已经没有可花余额（已到 reserve 底线）"。
+//
+// 计费是后付费：一旦结算才发现余额不足，上游成本已经发生。因此转发前的预检必须
+// 尽可能 fail-closed。但预检读的是余额缓存，而余额缓存采用"未命中回源 + 异步写回"，
+// 扣费后的 InvalidateUserBalance(DEL) 可能被扣费前读到的旧余额写回"复活"，
+// 使预检在缓存 TTL（5 分钟）内持续放行注定扣费失败的请求。
+//
+// 这个标记由结算路径在"扣到底线 / 扣费被拒"时写入，回源路径永不写它，因此不受该竞态影响。
+func (c *billingCache) MarkUserBalanceExhausted(ctx context.Context, userID int64) error {
+	key := billingBalanceExhaustedKey(userID)
+	return c.rdb.Set(ctx, key, 1, balanceExhaustedMarkerTTL).Err()
+}
+
+// ClearUserBalanceExhausted 清除"钱包已耗尽"标记。任何让余额增加的路径（充值、兑换、
+// 返利、管理员调整）都必须调用它，否则刚充值的用户在标记 TTL 内仍会被预检拦截。
+func (c *billingCache) ClearUserBalanceExhausted(ctx context.Context, userID int64) error {
+	key := billingBalanceExhaustedKey(userID)
+	return c.rdb.Del(ctx, key).Err()
+}
+
+// IsUserBalanceExhausted 查询"钱包已耗尽"标记是否存在。
+func (c *billingCache) IsUserBalanceExhausted(ctx context.Context, userID int64) (bool, error) {
+	key := billingBalanceExhaustedKey(userID)
+	n, err := c.rdb.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (c *billingCache) GetSubscriptionCache(ctx context.Context, userID, groupID int64) (*service.SubscriptionCacheData, error) {

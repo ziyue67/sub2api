@@ -96,6 +96,24 @@ type apiKeyRateLimitLoader interface {
 	GetRateLimitData(ctx context.Context, keyID int64) (*APIKeyRateLimitData, error)
 }
 
+// balanceExhaustionStore 是 BillingCache 的可选扩展能力：记录"该用户的钱包已经没有
+// 可花余额（已扣到 reserve 底线，或扣费被原子拒绝）"。
+//
+// 为什么需要它：计费是**后付费**，唯一的准入闸门是转发前的预检，而预检读的是 Redis
+// 余额缓存。扣费结束后我们只做 InvalidateUserBalance(DEL)，但余额缓存的写入是
+// "未命中回源 + 异步写回"：扣费**前**读到的旧余额可能在 DEL **之后**才落盘，把偏高的
+// 旧值"复活"进缓存；此后预检持续放行，而上游已经被调用（成本已经发生），结算必然
+// 失败（balance <= floor）——于是 usage_log.actual_cost 记 0、余额不再下降，表现为
+// "余额扣不动、token 照统计、请求不阻断"，窗口最长等于余额缓存的 TTL。
+//
+// 这个标记只由"结算判定钱包已耗尽"写入、只在余额增加时清除；余额未命中回源的写回
+// 路径永远不会写它，所以它不会被旧快照复活，预检可以据此立即 fail-closed。
+type balanceExhaustionStore interface {
+	MarkUserBalanceExhausted(ctx context.Context, userID int64) error
+	ClearUserBalanceExhausted(ctx context.Context, userID int64) error
+	IsUserBalanceExhausted(ctx context.Context, userID int64) (bool, error)
+}
+
 type subscriptionCacheInvalidationPubSub interface {
 	PublishSubscriptionCacheInvalidation(ctx context.Context, cacheKey string) error
 	SubscribeSubscriptionCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error
@@ -876,6 +894,98 @@ func (s *BillingCacheService) minimumBalanceReserve() float64 {
 	return s.cfg.Billing.MinimumBalanceReserve
 }
 
+// balanceExhaustion 返回底层缓存实现提供的"钱包已耗尽"标记读写能力。
+// 未实现（例如测试用的轻量 stub）时返回 false，标记功能静默降级为 no-op，
+// 预检仍然依靠余额缓存阈值把关。
+func (s *BillingCacheService) balanceExhaustion() (balanceExhaustionStore, bool) {
+	if s == nil || s.cache == nil {
+		return nil, false
+	}
+	store, ok := s.cache.(balanceExhaustionStore)
+	if !ok {
+		return nil, false
+	}
+	return store, true
+}
+
+// MarkBalanceExhausted 打上"钱包已耗尽"标记。
+//
+// 只负责写标记，不负责失效余额缓存：缓存失效由调用方按各自语义决定——结算成功路径
+// 已由 syncBalanceCacheAfterDeduction 失效，扣费被拒的失败路径会显式再失效一次，
+// 而预检命中标记时也会顺手失效（自愈），避免把被旧回源值污染的缓存一直留着。
+func (s *BillingCacheService) MarkBalanceExhausted(ctx context.Context, userID int64) {
+	if s == nil {
+		return
+	}
+	store, ok := s.balanceExhaustion()
+	if !ok {
+		return
+	}
+	if err := store.MarkUserBalanceExhausted(ctx, userID); err != nil {
+		logger.LegacyPrintf("service.billing_cache", "Warning: mark balance exhausted failed for user %d: %v", userID, err)
+	}
+}
+
+// ClearBalanceExhausted 清除"钱包已耗尽"标记。所有让余额增加的路径都必须调用，
+// 否则刚充值的用户会在标记 TTL 内继续被预检拦截。
+func (s *BillingCacheService) ClearBalanceExhausted(ctx context.Context, userID int64) {
+	if s == nil {
+		return
+	}
+	ClearBalanceExhaustedMarker(ctx, s.cache, userID)
+}
+
+// ClearBalanceExhaustedMarker 供只持有 BillingCache 接口的调用方清除"钱包已耗尽"标记。
+// 底层实现未提供该能力时静默 no-op。
+func ClearBalanceExhaustedMarker(ctx context.Context, cache BillingCache, userID int64) {
+	if cache == nil {
+		return
+	}
+	store, ok := cache.(balanceExhaustionStore)
+	if !ok {
+		return
+	}
+	if err := store.ClearUserBalanceExhausted(ctx, userID); err != nil {
+		logger.LegacyPrintf("service.billing_cache", "Warning: clear balance exhausted failed for user %d: %v", userID, err)
+	}
+}
+
+// InvalidateUserBalanceAfterCredit 在余额**增加**（充值 / 兑换 / 返利 / 管理员调整）后
+// 统一失效余额缓存并清除"钱包已耗尽"标记。
+func (s *BillingCacheService) InvalidateUserBalanceAfterCredit(ctx context.Context, userID int64) error {
+	err := s.InvalidateUserBalance(ctx, userID)
+	s.ClearBalanceExhausted(ctx, userID)
+	return err
+}
+
+// balanceExhausted 查询"钱包已耗尽"标记。Redis 故障时返回 false（fail-open）：
+// 此时余额阈值判断仍然生效，不能让一次 Redis 抖动把全体用户拦在门外。
+func (s *BillingCacheService) balanceExhausted(ctx context.Context, userID int64) bool {
+	store, ok := s.balanceExhaustion()
+	if !ok {
+		return false
+	}
+	exhausted, err := store.IsUserBalanceExhausted(ctx, userID)
+	if err != nil {
+		logger.LegacyPrintf("service.billing_cache", "Warning: read balance exhausted marker failed for user %d: %v", userID, err)
+		return false
+	}
+	return exhausted
+}
+
+// balanceNearEligibilityThreshold 判断缓存余额是否已经贴近 reserve 底线。
+//
+// 缓存余额只会在"未命中回源 + 异步写回"之间出现偏差，而真正危险、也真正需要
+// 用 DB 真值复核的区间就是贴近底线的这一段；正常用户不为此多付一次 DB 查询。
+func (s *BillingCacheService) balanceNearEligibilityThreshold(balance float64) bool {
+	minimumReserve := s.minimumBalanceReserve()
+	if minimumReserve <= 0 {
+		return false
+	}
+	// 可花余额（balance - reserve）不超过一个 reserve 时，视为贴近底线。
+	return balance <= 2*minimumReserve
+}
+
 func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) bool {
 	if balance <= 0 {
 		return true
@@ -889,6 +999,17 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 
 // checkBalanceEligibility 检查余额模式资格
 func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
+	// 1) 先看"钱包已耗尽"标记。它是结算路径在"扣到底线 / 扣费被拒"时写下的权威信号，
+	//    与余额缓存的回源写回无关，因此不会被旧余额快照复活。命中即 fail-closed：
+	//    绝不再把注定扣费失败的请求转发到上游（后付费下上游成本无法追回）。
+	if s.balanceExhausted(ctx, userID) {
+		// 顺手失效余额缓存，让后续请求回源到真实余额，标记过期后立即恢复正常判断。
+		if err := s.InvalidateUserBalance(ctx, userID); err != nil {
+			logger.LegacyPrintf("service.billing_cache", "Warning: invalidate balance cache for exhausted user %d failed: %v", userID, err)
+		}
+		return ErrInsufficientBalance
+	}
+
 	balance, err := s.GetUserBalance(ctx, userID)
 	if err != nil {
 		if s.circuitBreaker != nil {
@@ -903,6 +1024,30 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 
 	if s.balanceBelowEligibilityThreshold(balance) {
 		return ErrInsufficientBalance
+	}
+
+	// 2) 余额贴近底线时，用 DB 真值复核一次。
+	//    缓存余额在并发扣费 + 异步回源之间可能偏高，而"贴近底线"正是放行后会立刻
+	//    扣不动钱的危险区间；这里多一次 PK 查询，换来"预检放行 ⇒ 结算必然可扣"。
+	//    只能读到 DB 时才复核：缺少 userRepo（部分降级/测试装配）时退回缓存判断。
+	if s.userRepo != nil && s.balanceNearEligibilityThreshold(balance) {
+		fresh, dbErr := s.getUserBalanceFromDB(ctx, userID)
+		if dbErr != nil {
+			// 无法确认真实余额时 fail-closed，避免继续白用上游。
+			if s.circuitBreaker != nil {
+				s.circuitBreaker.OnFailure(dbErr)
+			}
+			logger.LegacyPrintf("service.billing_cache", "ALERT: billing balance recheck failed for user %d: %v", userID, dbErr)
+			return ErrBillingServiceUnavailable.WithCause(dbErr)
+		}
+		if s.balanceBelowEligibilityThreshold(fresh) {
+			s.MarkBalanceExhausted(ctx, userID)
+			return ErrInsufficientBalance
+		}
+		// DB 真值仍可花：把缓存纠正为真值，消除旧快照带来的偏差。
+		if setErr := s.SetUserBalanceCache(ctx, userID, fresh); setErr != nil {
+			logger.LegacyPrintf("service.billing_cache", "Warning: refresh balance cache for user %d failed: %v", userID, setErr)
+		}
 	}
 
 	return nil
