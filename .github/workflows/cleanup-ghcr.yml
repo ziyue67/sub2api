@@ -13,9 +13,13 @@ on:
   workflow_dispatch:
     inputs:
       suffix:
-        description: '要删除的 tag 后缀（逗号分隔，例如 -arm64）'
-        required: true
+        description: '要删除的 tag 后缀（逗号分隔，例如 -arm64；tags 未填时生效）'
+        required: false
         default: '-arm64'
+      tags:
+        description: '精确匹配的 tag（逗号分隔，例如 0.2,0）；设置后忽略 suffix'
+        required: false
+        default: ''
       dry_run:
         description: '仅列出，不删除'
         type: boolean
@@ -34,6 +38,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GHCR_ADMIN_TOKEN || github.token }}
           SUFFIXES: ${{ inputs.suffix }}
+          TAGS: ${{ inputs.tags }}
           DRY_RUN: ${{ inputs.dry_run }}
           OWNER: ${{ github.repository_owner }}
         run: |
@@ -42,6 +47,7 @@ jobs:
 
           owner = os.environ["OWNER"]
           suffixes = [s for s in os.environ["SUFFIXES"].replace(" ", "").split(",") if s]
+          exact = [t for t in os.environ.get("TAGS", "").replace(" ", "").split(",") if t]
           dry = os.environ.get("DRY_RUN", "false").lower() == "true"
           pkg = "sub2api"
 
@@ -67,12 +73,15 @@ jobs:
           targets = []
           for v in versions:
               tags = (v.get("metadata", {}).get("container", {}) or {}).get("tags", []) or []
-              hit = [t for t in tags if any(t.endswith(s) for s in suffixes)]
+              if exact:
+                  hit = [t for t in tags if t in exact]
+              else:
+                  hit = [t for t in tags if any(t.endswith(s) for s in suffixes)]
               print(f"  version={v.get('id')} tags={tags} -> {'DELETE' if hit else 'keep'}")
               if hit:
                   targets.append(v.get("id"))
 
-          print(f"计划删除 {len(targets)} 个版本（suffixes={suffixes}, dry_run={dry}）")
+          print(f"计划删除 {len(targets)} 个版本（match={'exact:' + ','.join(exact) if exact else 'suffix:' + ','.join(suffixes)}, dry_run={dry}）")
           if dry:
               sys.exit(0)
           failed = 0
