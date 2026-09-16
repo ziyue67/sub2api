@@ -336,6 +336,7 @@ let modelStatsReqSeq = 0
 const defaultRange = getLast24HourRange()
 const startDate = ref(defaultRange.start)
 const endDate = ref(defaultRange.end)
+const activeRangePreset = ref<string | null>('last24Hours')
 const granularity = ref<'day' | 'hour'>(getGranularityForRange(startDate.value, endDate.value))
 
 const modelDistributionMetric = ref<DistributionMetric>('tokens')
@@ -536,7 +537,19 @@ const applyFilters = () => {
   resetErrorRows()
 }
 
+const refreshRollingRange = () => {
+  if (activeRangePreset.value !== 'last24Hours') return
+  const range = getLast24HourRange()
+  startDate.value = range.start
+  endDate.value = range.end
+  filters.value.start_date = range.start
+  filters.value.end_date = range.end
+}
+
 const refreshData = () => {
+  refreshRollingRange()
+  pagination.page = 1
+  errorPage.value = 1
   void loadLogs()
   void loadStats()
   void loadModelStats()
@@ -556,6 +569,7 @@ const resetFilters = () => {
     billing_type: null,
     billing_mode: null,
   }
+  activeRangePreset.value = 'last24Hours'
   granularity.value = getGranularityForRange(range.start, range.end)
   applyFilters()
   if (activeTab.value === 'errors') {
@@ -569,6 +583,7 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
   endDate.value = range.endDate
   filters.value.start_date = range.startDate
   filters.value.end_date = range.endDate
+  activeRangePreset.value = range.preset
   granularity.value = getGranularityForRange(range.startDate, range.endDate)
   applyFilters()
 }
@@ -685,8 +700,8 @@ const exportToCSV = async () => {
     const link = document.createElement('a')
     link.href = url
     // Fork(#36)：最近 24 小时预设改为真正滚动窗口后 startDate 可能带时刻，
-    // 文件名统一归一化为 YYYY-MM-DD（与上游 exportParams.start_date 同源，语义等价）。
-    link.download = `usage_${toDateInputValue(startDate.value)}_to_${toDateInputValue(endDate.value)}.csv`
+    // 文件名与导出开始时冻结的查询范围保持一致，避免导出期间改筛选导致名称错配。
+    link.download = `usage_${toDateInputValue(exportParams.start_date ?? '')}_to_${toDateInputValue(exportParams.end_date ?? '')}.csv`
     link.click()
     window.URL.revokeObjectURL(url)
     appStore.showSuccess(t('usage.exportSuccess'))
