@@ -36,4 +36,13 @@ describe('getLast24HourRange', () => {
 
     expect(second).toEqual(first)
   })
+
+  it('advances an exact-minute clock value to the next minute', () => {
+    vi.setSystemTime(new Date(2026, 6, 11, 14, 3, 0, 0))
+
+    const { start, end } = getLast24HourRange()
+
+    expect(new Date(end)).toEqual(new Date(2026, 6, 11, 14, 4, 0, 0))
+    expect(new Date(end).getTime() - new Date(start).getTime()).toBe(24 * 60 * 60 * 1000)
+  })
 })

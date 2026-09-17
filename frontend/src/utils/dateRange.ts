@@ -20,9 +20,7 @@ export function formatDateTimeRFC3339(date: Date): string {
 /** 滚动 24 小时窗口(RFC3339 边界);上界向上对齐到整分钟,避免漏掉当前分钟的数据 */
 export function getLast24HourRange(): { start: string; end: string } {
   const end = new Date()
-  if (end.getSeconds() !== 0 || end.getMilliseconds() !== 0) {
-    end.setMinutes(end.getMinutes() + 1)
-  }
+  end.setMinutes(end.getMinutes() + 1)
   end.setSeconds(0, 0)
   const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
   return { start: formatDateTimeRFC3339(start), end: formatDateTimeRFC3339(end) }
