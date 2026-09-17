@@ -22,6 +22,8 @@ describe('getLast24HourRange', () => {
     expect(end).toMatch(RFC3339_RE)
     expect(new Date(end).getSeconds()).toBe(0)
     expect(new Date(end).getMilliseconds()).toBe(0)
+    expect(new Date(end)).toEqual(new Date(2026, 6, 11, 14, 4, 0, 0))
+    expect(new Date(end).getTime()).toBeGreaterThan(Date.now())
     expect(new Date(end).getTime() - new Date(start).getTime()).toBe(24 * 60 * 60 * 1000)
   })
 
