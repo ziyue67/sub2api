@@ -26,6 +26,8 @@ import type {
   UpstreamBillingProbeResult,
   UpstreamBillingProbeSettings,
   UpstreamBillingRatesResponse,
+  UpstreamUsageProbeResult,
+  UpstreamUsageSnapshotsResponse,
   OllamaCloudUsageSettings,
   OllamaCloudUsageState,
   OpenCodeGoUsageSettings,
@@ -1083,6 +1085,26 @@ export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<U
   return data.results
 }
 
+export async function probeUpstreamUsage(id: number): Promise<UpstreamUsageProbeResult> {
+  const { data } = await apiClient.post<UpstreamUsageProbeResult>(`/admin/accounts/${id}/upstream-usage-probe`)
+  return data
+}
+
+export async function probeUpstreamUsageBatch(accountIds: number[]): Promise<UpstreamUsageProbeResult[]> {
+  const { data } = await apiClient.post<{ results: UpstreamUsageProbeResult[] }>(
+    '/admin/accounts/upstream-usage-probe/batch',
+    { account_ids: accountIds }
+  )
+  return data.results
+}
+
+export async function getUpstreamUsageSnapshots(accountIds: number[]): Promise<UpstreamUsageSnapshotsResponse> {
+  const { data } = await apiClient.get<UpstreamUsageSnapshotsResponse>('/admin/accounts/upstream-usage-snapshots', {
+    params: { ids: accountIds.join(',') }
+  })
+  return data
+}
+
 export async function getOllamaCloudUsageSettings(): Promise<OllamaCloudUsageSettings> {
   const { data } = await apiClient.get<OllamaCloudUsageSettings>('/admin/accounts/ollama-cloud-usage/settings')
   return data
@@ -1217,6 +1239,9 @@ export const accountsAPI = {
   setUpstreamBillingProbeEnabled,
   probeUpstreamBilling,
   probeUpstreamBillingBatch,
+  probeUpstreamUsage,
+  probeUpstreamUsageBatch,
+  getUpstreamUsageSnapshots,
   getOllamaCloudUsageSettings,
   updateOllamaCloudUsageSettings,
   getOllamaCloudUsage,

@@ -135,6 +135,25 @@ func (r *upstreamBillingProbeAccountRepo) UpdateUpstreamBillingProbeSnapshot(
 	return nil
 }
 
+func (r *upstreamBillingProbeAccountRepo) UpdateUpstreamUsageProbeSnapshot(
+	_ context.Context,
+	expected *Account,
+	snapshot *UpstreamUsageProbeSnapshot,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	account := r.accounts[expected.ID]
+	if account == nil || account.Platform != expected.Platform || account.Type != expected.Type ||
+		!reflect.DeepEqual(account.Credentials, expected.Credentials) || !reflect.DeepEqual(account.ProxyID, expected.ProxyID) {
+		return ErrUpstreamBillingProbeIdentityChanged
+	}
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+	account.Extra[UpstreamUsageProbeExtraKey] = snapshot
+	return nil
+}
+
 func (r *upstreamBillingProbeAccountRepo) FindByExtraField(_ context.Context, key string, value any) ([]Account, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

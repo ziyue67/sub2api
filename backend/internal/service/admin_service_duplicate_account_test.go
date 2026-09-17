@@ -144,6 +144,7 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 	source.Extra[UpstreamBillingProbeEnabledExtraKey] = true
 	source.Extra[UpstreamBillingRateSyncEnabledExtraKey] = true
 	source.Extra[UpstreamBillingProbeExtraKey] = map[string]any{"status": "ok"}
+	source.Extra[UpstreamUsageProbeExtraKey] = map[string]any{"status": "ok", "data": map[string]any{"remaining": 12.5}}
 	require.NoError(t, repo.Create(ctx, source))
 
 	duplicate, err := svc.DuplicateAccount(ctx, source.ID, "admin:1", "")
@@ -165,6 +166,7 @@ func TestDuplicateAccountCopiesConfigurationAndResetsRuntimeState(t *testing.T) 
 		"codex_cli_only": true,
 	}, duplicate.Extra)
 	require.NotContains(t, duplicate.Extra, UpstreamBillingRateSyncEnabledExtraKey)
+	require.NotContains(t, duplicate.Extra, UpstreamUsageProbeExtraKey)
 	require.NotNil(t, duplicate.ExpiresAt)
 	require.True(t, source.ExpiresAt.Equal(*duplicate.ExpiresAt))
 	require.Equal(t, source.Notes, duplicate.Notes)

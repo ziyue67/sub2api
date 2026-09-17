@@ -59,6 +59,7 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 	"codex_reset_credit_",
 	"passive_usage_",
 	"upstream_billing_probe",
+	"upstream_usage_probe",
 	"upstream_billing_rate_sync",
 	"ollama_cloud_usage",
 }
@@ -838,6 +839,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 					)
 				THEN COALESCE(extra, '{}'::jsonb)
 					- 'upstream_billing_probe'
+					- 'upstream_usage_probe'
 					- 'ollama_cloud_usage_session'
 					- 'ollama_cloud_usage_auto_refresh'
 					- 'ollama_cloud_usage_snapshot'
@@ -845,7 +847,7 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 				-- 身份变化，丢弃 stale 快照。
 				WHEN type = 'apikey'
 					AND credentials IS DISTINCT FROM $1::jsonb
-				THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe'
+				THEN COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' - 'upstream_usage_probe'
 				ELSE extra
 			END,
 			updated_at = NOW()
@@ -2671,7 +2673,7 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	}
 	extraExpression := "COALESCE(extra, '{}'::jsonb) || $1::jsonb"
 	if clearProbeSnapshot {
-		extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
+		extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe' - 'upstream_usage_probe'"
 	}
 	if service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates) {
 		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
@@ -2752,6 +2754,91 @@ func (r *accountRepository) UpdateUpstreamBillingProbeSnapshot(
 		return nil
 	}
 	return r.updateUpstreamBillingProbeSnapshotInTx(ctx, account, snapshot, rateMultiplier)
+}
+
+// UpdateUpstreamUsageProbeSnapshot stores a read-only usage observation only
+// while the account identity used for the request is still current.
+func (r *accountRepository) UpdateUpstreamUsageProbeSnapshot(
+	ctx context.Context,
+	account *service.Account,
+	snapshot *service.UpstreamUsageProbeSnapshot,
+) error {
+	if account == nil || snapshot == nil {
+		return service.ErrAccountNilInput
+	}
+	if dbent.TxFromContext(ctx) == nil {
+		tx, err := r.client.Tx(ctx)
+		if errors.Is(err, dbent.ErrTxStarted) {
+			return r.updateUpstreamUsageProbeSnapshotInTx(ctx, account, snapshot)
+		}
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := r.updateUpstreamUsageProbeSnapshotInTx(dbent.NewTxContext(ctx, tx), account, snapshot); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		r.syncSchedulerAccountSnapshot(ctx, account.ID)
+		return nil
+	}
+	return r.updateUpstreamUsageProbeSnapshotInTx(ctx, account, snapshot)
+}
+
+func (r *accountRepository) updateUpstreamUsageProbeSnapshotInTx(
+	ctx context.Context,
+	account *service.Account,
+	snapshot *service.UpstreamUsageProbeSnapshot,
+) error {
+	payload, err := json.Marshal(map[string]any{service.UpstreamUsageProbeExtraKey: snapshot})
+	if err != nil {
+		return err
+	}
+	credentials, err := json.Marshal(account.Credentials)
+	if err != nil {
+		return err
+	}
+	var proxyID any
+	if account.ProxyID != nil {
+		proxyID = *account.ProxyID
+	}
+	client := clientFromContext(ctx, r.client)
+	proxyMatches, err := lockAndMatchProbeProxyIdentity(ctx, client, account)
+	if err != nil {
+		return err
+	}
+	if !proxyMatches {
+		return service.ErrUpstreamBillingProbeIdentityChanged
+	}
+	result, err := client.ExecContext(ctx, `
+		UPDATE accounts
+		SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb, updated_at = NOW()
+		WHERE id = $2
+		  AND platform = $3
+		  AND type = $4
+		  AND credentials = $5::jsonb
+		  AND proxy_id IS NOT DISTINCT FROM $6
+		  AND deleted_at IS NULL
+	`, string(payload), account.ID, account.Platform, account.Type, string(credentials), proxyID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrUpstreamBillingProbeIdentityChanged
+	}
+	// This is an observation-only extra field. Keep the local scheduler cache
+	// coherent, but do not enqueue a durable bucket rebuild for every balance
+	// refresh.
+	if dbent.TxFromContext(ctx) == nil {
+		r.syncSchedulerAccountSnapshot(ctx, account.ID)
+	}
+	return nil
 }
 
 func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
@@ -3016,7 +3103,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			args = append(args, payload)
 			idx++
 			if upstreamBillingProbeExplicitlyDisabled(updates.Extra) || upstreamBillingProbeSnapshotClearRequested(updates.Extra) {
-				extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
+				extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe' - 'upstream_usage_probe'"
 			}
 			if ollamaCloudUsageSnapshotClearRequested(updates.Extra) {
 				extraExpression = "(" + extraExpression + ") - 'ollama_cloud_usage_snapshot'"
@@ -3039,10 +3126,10 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		if groupIdentityChanged != "" {
 			extraExpression = "CASE" +
 				" WHEN " + groupIdentityChanged + " THEN (" + extraExpression + ") - 'ollama_cloud_usage_session' - 'ollama_cloud_usage_auto_refresh' - 'ollama_cloud_usage_snapshot'" +
-				" WHEN " + snapshotIdentityChanged + " THEN (" + extraExpression + ") - 'ollama_cloud_usage_snapshot'" +
+				" WHEN " + snapshotIdentityChanged + " THEN (" + extraExpression + ") - 'ollama_cloud_usage_snapshot' - 'upstream_usage_probe'" +
 				" ELSE " + extraExpression + " END"
 		} else if snapshotIdentityChanged != "" {
-			extraExpression = "CASE WHEN " + snapshotIdentityChanged + " THEN (" + extraExpression + ") - 'ollama_cloud_usage_snapshot' ELSE " + extraExpression + " END"
+			extraExpression = "CASE WHEN " + snapshotIdentityChanged + " THEN (" + extraExpression + ") - 'ollama_cloud_usage_snapshot' - 'upstream_usage_probe' ELSE " + extraExpression + " END"
 		}
 		if updates.EnsureCodexFingerprintSeed {
 			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
