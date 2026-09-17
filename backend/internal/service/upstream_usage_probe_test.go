@@ -182,3 +182,17 @@ func TestProbeUpstreamUsageRecordsUnavailableProxyWithoutSendingRequest(t *testi
 	require.Equal(t, "proxy_unavailable", snapshot.LastError)
 	require.Nil(t, upstream.request)
 }
+
+func TestProbeUpstreamUsageBatchSkipsNonAPIKeyAccountWithoutSendingRequest(t *testing.T) {
+	svc, repo, upstream := newLiveUsageProbeService(t, http.StatusOK, `{"remaining":12.5}`)
+	repo.accounts[417].Type = AccountTypeOAuth
+
+	results := svc.ProbeUpstreamUsageBatch(context.Background(), []int64{417})
+
+	require.Len(t, results, 1)
+	require.Equal(t, int64(417), results[0].AccountID)
+	require.True(t, results[0].Skipped)
+	require.Empty(t, results[0].Error)
+	require.Nil(t, results[0].Snapshot)
+	require.Nil(t, upstream.request)
+}

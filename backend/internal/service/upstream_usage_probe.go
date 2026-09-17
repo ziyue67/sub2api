@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"golang.org/x/sync/errgroup"
 )
@@ -30,7 +31,9 @@ const (
 	UpstreamUsageProbeStatusFailed      = "failed"
 )
 
-var ErrUpstreamUsageProbeUnavailable = errors.New("upstream usage probe is unavailable")
+var ErrUpstreamUsageProbeUnavailable = infraerrors.ServiceUnavailable(
+	"UPSTREAM_USAGE_PROBE_UNAVAILABLE", "upstream usage probe is unavailable",
+)
 
 // UpstreamUsageProbeSnapshot contains only the small, sanitized amount fields
 // needed by the admin UI. Raw responses, credentials and usage-detail arrays
@@ -51,23 +54,7 @@ type UpstreamUsageProbeResult struct {
 	AccountID int64                       `json:"account_id"`
 	Snapshot  *UpstreamUsageProbeSnapshot `json:"snapshot,omitempty"`
 	Error     string                      `json:"error,omitempty"`
-}
-
-type UpstreamUsageSnapshotItem struct {
-	AccountID int64                       `json:"account_id"`
-	Snapshot  *UpstreamUsageProbeSnapshot `json:"snapshot"`
-}
-
-func BuildUpstreamUsageSnapshotItems(accounts []Account) []UpstreamUsageSnapshotItem {
-	items := make([]UpstreamUsageSnapshotItem, 0, len(accounts))
-	for _, account := range accounts {
-		var snapshot *UpstreamUsageProbeSnapshot
-		if account.Type == AccountTypeAPIKey {
-			snapshot = decodeUpstreamUsageProbeSnapshot(account.Extra)
-		}
-		items = append(items, UpstreamUsageSnapshotItem{AccountID: account.ID, Snapshot: snapshot})
-	}
-	return items
+	Skipped   bool                        `json:"skipped,omitempty"`
 }
 
 type upstreamUsageSnapshotWriter interface {
@@ -126,6 +113,10 @@ func (s *UpstreamBillingProbeService) ProbeUpstreamUsageBatch(ctx context.Contex
 		group.Go(func() error {
 			snapshot, err := s.ProbeUpstreamUsage(ctx, accountID)
 			if err != nil {
+				if errors.Is(err, ErrUpstreamBillingProbeAccountInvalid) {
+					results[i].Skipped = true
+					return nil
+				}
 				results[i].Error = safeUsageProbeError(err)
 				return nil
 			}

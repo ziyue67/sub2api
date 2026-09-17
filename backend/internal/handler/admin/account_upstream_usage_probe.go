@@ -1,9 +1,7 @@
 package admin
 
 import (
-	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -61,41 +59,6 @@ func (h *AccountHandler) ProbeUpstreamUsageBatch(c *gin.Context) {
 	response.Success(c, gin.H{"results": h.upstreamBillingProbe.ProbeUpstreamUsageBatch(c.Request.Context(), accountIDs)})
 }
 
-// GetUpstreamUsageSnapshots returns only previously persisted, sanitized
-// snapshots for the requested account IDs. It never probes an upstream.
-func (h *AccountHandler) GetUpstreamUsageSnapshots(c *gin.Context) {
-	if h.adminService == nil {
-		response.Error(c, http.StatusServiceUnavailable, "account service unavailable")
-		return
-	}
-	ids, err := parseAccountIDQuery(c.Query("ids"), 1000)
-	if err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	accounts, err := h.adminService.GetAccountsByIDs(c.Request.Context(), ids)
-	if err != nil {
-		response.ErrorFrom(c, err)
-		return
-	}
-	byID := make(map[int64]*service.Account, len(accounts))
-	for _, account := range accounts {
-		if account != nil {
-			byID[account.ID] = account
-		}
-	}
-	items := make([]service.UpstreamUsageSnapshotItem, 0, len(ids))
-	for _, id := range ids {
-		account, ok := byID[id]
-		if !ok {
-			items = append(items, service.UpstreamUsageSnapshotItem{AccountID: id})
-			continue
-		}
-		items = append(items, service.BuildUpstreamUsageSnapshotItems([]service.Account{*account})[0])
-	}
-	response.Success(c, gin.H{"items": items})
-}
-
 func uniquePositiveAccountIDs(ids []int64) []int64 {
 	seen := make(map[int64]struct{}, len(ids))
 	result := make([]int64, 0, len(ids))
@@ -111,35 +74,3 @@ func uniquePositiveAccountIDs(ids []int64) []int64 {
 	}
 	return result
 }
-
-func parseAccountIDQuery(raw string, max int) ([]int64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, responseQueryError("ids is required")
-	}
-	parts := strings.Split(raw, ",")
-	if len(parts) > max {
-		return nil, responseQueryError("too many account IDs")
-	}
-	ids := make([]int64, 0, len(parts))
-	seen := make(map[int64]struct{}, len(parts))
-	for _, part := range parts {
-		id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
-		if err != nil || id <= 0 {
-			return nil, responseQueryError("ids must contain positive integers")
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	if len(ids) == 0 {
-		return nil, responseQueryError("ids is required")
-	}
-	return ids, nil
-}
-
-type responseQueryError string
-
-func (e responseQueryError) Error() string { return string(e) }

@@ -1991,11 +1991,16 @@ const handleBulkProbeUpstreamUsage = async () => {
     results.forEach(result => {
       if (result.snapshot) patchUpstreamUsageSnapshot(result.account_id, result.snapshot)
     })
-    const failed = results.filter(result => result.error).length
+    const successful = results.filter(result => result.snapshot).length
+    const failed = results.filter(result => !result.skipped && result.error).length
+    if (successful === 0 && failed === 0) {
+      appStore.showError(t('admin.accounts.upstreamUsage.noEligibleAccounts'))
+      return
+    }
     if (failed > 0) {
-      appStore.showError(t('admin.accounts.upstreamUsage.batchPartial', { success: results.length - failed, failed }))
+      appStore.showError(t('admin.accounts.upstreamUsage.batchPartial', { success: successful, failed }))
     } else {
-      appStore.showSuccess(t('admin.accounts.upstreamUsage.batchCompleted', { count: results.length }))
+      appStore.showSuccess(t('admin.accounts.upstreamUsage.batchCompleted', { count: successful }))
     }
   } catch (error) {
     console.error('Failed to probe upstream usage in batch:', error)

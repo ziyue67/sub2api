@@ -1162,15 +1162,7 @@ export interface UpstreamUsageProbeResult {
   account_id: number
   snapshot?: UpstreamUsageProbeSnapshot
   error?: string
-}
-
-export interface UpstreamUsageSnapshotItem {
-  account_id: number
-  snapshot?: UpstreamUsageProbeSnapshot | null
-}
-
-export interface UpstreamUsageSnapshotsResponse {
-  items: UpstreamUsageSnapshotItem[]
+  skipped?: boolean
 }
 
 export interface UpstreamBillingRatesResponse {

@@ -27,7 +27,6 @@ import type {
   UpstreamBillingProbeSettings,
   UpstreamBillingRatesResponse,
   UpstreamUsageProbeResult,
-  UpstreamUsageSnapshotsResponse,
   OllamaCloudUsageSettings,
   OllamaCloudUsageState,
   OpenCodeGoUsageSettings,
@@ -1098,13 +1097,6 @@ export async function probeUpstreamUsageBatch(accountIds: number[]): Promise<Ups
   return data.results
 }
 
-export async function getUpstreamUsageSnapshots(accountIds: number[]): Promise<UpstreamUsageSnapshotsResponse> {
-  const { data } = await apiClient.get<UpstreamUsageSnapshotsResponse>('/admin/accounts/upstream-usage-snapshots', {
-    params: { ids: accountIds.join(',') }
-  })
-  return data
-}
-
 export async function getOllamaCloudUsageSettings(): Promise<OllamaCloudUsageSettings> {
   const { data } = await apiClient.get<OllamaCloudUsageSettings>('/admin/accounts/ollama-cloud-usage/settings')
   return data
@@ -1241,7 +1233,6 @@ export const accountsAPI = {
   probeUpstreamBillingBatch,
   probeUpstreamUsage,
   probeUpstreamUsageBatch,
-  getUpstreamUsageSnapshots,
   getOllamaCloudUsageSettings,
   updateOllamaCloudUsageSettings,
   getOllamaCloudUsage,
