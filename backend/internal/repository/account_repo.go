@@ -652,6 +652,7 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'upstream_billing_probe_enabled',
 			extra -> 'upstream_billing_rate_sync_enabled',
 			extra -> 'upstream_billing_probe',
+			extra -> 'upstream_usage_probe',
 			extra -> 'ollama_cloud_usage_session',
 			extra -> 'ollama_cloud_usage_auto_refresh',
 			extra -> 'ollama_cloud_usage_snapshot'
@@ -677,6 +678,7 @@ func lockAndMergeAccountProbeExtra(
 		currentEnabled               []byte
 		currentRateSyncEnabled       []byte
 		currentSnapshot              []byte
+		currentUsageSnapshot         []byte
 		currentOllamaSession         []byte
 		currentOllamaAutoRefresh     []byte
 		currentOllamaSnapshot        []byte
@@ -688,6 +690,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentEnabled,
 		&currentRateSyncEnabled,
 		&currentSnapshot,
+		&currentUsageSnapshot,
 		&currentOllamaSession,
 		&currentOllamaAutoRefresh,
 		&currentOllamaSnapshot,
@@ -703,6 +706,7 @@ func lockAndMergeAccountProbeExtra(
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
 		service.UpstreamBillingProbeExtraKey,
+		service.UpstreamUsageProbeExtraKey,
 		service.OllamaCloudUsageSessionExtraKey,
 		service.OllamaCloudUsageAutoRefreshExtraKey,
 		service.OllamaCloudUsageSnapshotExtraKey,
@@ -761,6 +765,13 @@ func lockAndMergeAccountProbeExtra(
 			return nil, err
 		} else if ok {
 			extra[service.UpstreamBillingProbeExtraKey] = snapshot
+		}
+	}
+	if identityUnchanged {
+		if snapshot, ok, err := decodeAccountExtraJSON(currentUsageSnapshot); err != nil {
+			return nil, err
+		} else if ok {
+			extra[service.UpstreamUsageProbeExtraKey] = snapshot
 		}
 	}
 
@@ -2654,6 +2665,7 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	}
 
 	clearProbeSnapshot := upstreamBillingProbeExplicitlyDisabled(updates) || upstreamBillingProbeSnapshotClearRequested(updates)
+	clearUsageSnapshot := upstreamUsageProbeSnapshotClearRequested(updates)
 	durableSchedulerChange := shouldEnqueueSchedulerOutboxForExtraUpdates(updates) || clearProbeSnapshot
 	baseCtx := ctx
 	contextTx := dbent.TxFromContext(ctx)
@@ -2673,7 +2685,10 @@ func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates m
 	}
 	extraExpression := "COALESCE(extra, '{}'::jsonb) || $1::jsonb"
 	if clearProbeSnapshot {
-		extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe' - 'upstream_usage_probe'"
+		extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
+	}
+	if clearUsageSnapshot {
+		extraExpression = "(" + extraExpression + ") - 'upstream_usage_probe'"
 	}
 	if service.ShouldEnsureCodexFingerprintSeedForExtraUpdates(updates) {
 		extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
@@ -2995,6 +3010,11 @@ func upstreamBillingProbeSnapshotClearRequested(extra map[string]any) bool {
 	return ok && value == nil
 }
 
+func upstreamUsageProbeSnapshotClearRequested(extra map[string]any) bool {
+	value, ok := extra[service.UpstreamUsageProbeExtraKey]
+	return ok && value == nil
+}
+
 func ollamaCloudUsageSnapshotClearRequested(extra map[string]any) bool {
 	value, ok := extra[service.OllamaCloudUsageSnapshotExtraKey]
 	return ok && value == nil
@@ -3103,7 +3123,10 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			args = append(args, payload)
 			idx++
 			if upstreamBillingProbeExplicitlyDisabled(updates.Extra) || upstreamBillingProbeSnapshotClearRequested(updates.Extra) {
-				extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe' - 'upstream_usage_probe'"
+				extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
+			}
+			if upstreamUsageProbeSnapshotClearRequested(updates.Extra) {
+				extraExpression = "(" + extraExpression + ") - 'upstream_usage_probe'"
 			}
 			if ollamaCloudUsageSnapshotClearRequested(updates.Extra) {
 				extraExpression = "(" + extraExpression + ") - 'ollama_cloud_usage_snapshot'"
@@ -3978,7 +4001,19 @@ func (r *accountRepository) ResetQuotaUsedAndClearRateLimitCooldown(ctx context.
 // 若影响行数为 0，则返回 ErrAccountNotInFallback（账号存在但不在 fallback 状态）。
 func (r *accountRepository) RevertProxyFallback(ctx context.Context, accountID int64) error {
 	res, err := r.sql.ExecContext(ctx, `
-		UPDATE accounts SET proxy_id=proxy_fallback_origin_id, proxy_fallback_origin_id=NULL, updated_at=NOW()
+		UPDATE accounts
+		SET proxy_id=proxy_fallback_origin_id,
+			proxy_fallback_origin_id=NULL,
+			extra=CASE
+				WHEN type='apikey' AND (
+					extra ? 'upstream_billing_probe'
+					OR extra ? 'upstream_usage_probe'
+					OR extra ? 'ollama_cloud_usage_snapshot'
+				)
+				THEN extra - 'upstream_billing_probe' - 'upstream_usage_probe' - 'ollama_cloud_usage_snapshot'
+				ELSE extra
+			END,
+			updated_at=NOW()
 		WHERE id=$1 AND proxy_fallback_origin_id IS NOT NULL AND deleted_at IS NULL`, accountID)
 	if err != nil {
 		return err

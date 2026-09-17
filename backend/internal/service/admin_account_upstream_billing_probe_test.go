@@ -735,6 +735,8 @@ func TestBulkUpdateAccountsInvalidatesProbeSnapshotForIdentityCredentials(t *tes
 	require.Len(t, repo.bulkUpdates, 1)
 	require.Contains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
 	require.Nil(t, repo.bulkUpdates[0].Extra[UpstreamBillingProbeExtraKey])
+	require.Contains(t, repo.bulkUpdates[0].Extra, UpstreamUsageProbeExtraKey)
+	require.Nil(t, repo.bulkUpdates[0].Extra[UpstreamUsageProbeExtraKey])
 }
 
 func TestBulkUpdateAccountsInvalidatesProbeSnapshotForProxyUpdate(t *testing.T) {
@@ -752,6 +754,8 @@ func TestBulkUpdateAccountsInvalidatesProbeSnapshotForProxyUpdate(t *testing.T) 
 	require.Len(t, baseRepo.bulkUpdates, 1)
 	require.Contains(t, baseRepo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
 	require.Nil(t, baseRepo.bulkUpdates[0].Extra[UpstreamBillingProbeExtraKey])
+	require.Contains(t, baseRepo.bulkUpdates[0].Extra, UpstreamUsageProbeExtraKey)
+	require.Nil(t, baseRepo.bulkUpdates[0].Extra[UpstreamUsageProbeExtraKey])
 }
 
 func TestBulkUpdateAccountsKeepsProbeSnapshotForUnrelatedCredentials(t *testing.T) {
@@ -766,4 +770,5 @@ func TestBulkUpdateAccountsKeepsProbeSnapshotForUnrelatedCredentials(t *testing.
 	require.NoError(t, err)
 	require.Len(t, repo.bulkUpdates, 1)
 	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
+	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamUsageProbeExtraKey)
 }

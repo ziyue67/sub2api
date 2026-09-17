@@ -23,8 +23,10 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 		identityUnchanged bool
 		databaseEnabled   any
 		databaseSnapshot  any
+		databaseUsage     any
 		inputExtra        map[string]any
 		wantSnapshot      any
+		wantUsage         any
 		wantEnabled       any
 	}{
 		{
@@ -32,18 +34,25 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 			identityUnchanged: true,
 			databaseEnabled:   []byte(`true`),
 			databaseSnapshot:  []byte(`{"status":"ok"}`),
-			inputExtra:        map[string]any{service.UpstreamBillingProbeEnabledExtraKey: false},
-			wantSnapshot:      map[string]any{"status": "ok"},
-			wantEnabled:       true,
+			databaseUsage:     []byte(`{"status":"ok","data":{"remaining":99}}`),
+			inputExtra: map[string]any{
+				service.UpstreamBillingProbeEnabledExtraKey: false,
+				service.UpstreamUsageProbeExtraKey:          map[string]any{"status": "ok", "data": map[string]any{"remaining": 1}},
+			},
+			wantSnapshot: map[string]any{"status": "ok"},
+			wantUsage:    map[string]any{"status": "ok", "data": map[string]any{"remaining": float64(99)}},
+			wantEnabled:  true,
 		},
 		{
 			name:              "identity change clears stale snapshot",
 			identityUnchanged: false,
 			databaseEnabled:   []byte(`true`),
 			databaseSnapshot:  []byte(`{"status":"ok"}`),
+			databaseUsage:     []byte(`{"status":"ok","data":{"remaining":99}}`),
 			inputExtra: map[string]any{
 				service.UpstreamBillingProbeEnabledExtraKey: true,
 				service.UpstreamBillingProbeExtraKey:        map[string]any{"status": "stale"},
+				service.UpstreamUsageProbeExtraKey:          map[string]any{"status": "stale"},
 			},
 			wantEnabled: true,
 		},
@@ -52,10 +61,13 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 			identityUnchanged: true,
 			databaseEnabled:   []byte(`false`),
 			databaseSnapshot:  []byte(`{"status":"ok"}`),
+			databaseUsage:     []byte(`{"status":"ok","data":{"remaining":99}}`),
 			inputExtra: map[string]any{
 				service.UpstreamBillingProbeEnabledExtraKey: true,
 				service.UpstreamBillingProbeExtraKey:        map[string]any{"status": "stale"},
+				service.UpstreamUsageProbeExtraKey:          map[string]any{"status": "stale"},
 			},
+			wantUsage:   map[string]any{"status": "ok", "data": map[string]any{"remaining": float64(99)}},
 			wantEnabled: false,
 		},
 		{
@@ -66,6 +78,7 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 			inputExtra: map[string]any{
 				service.UpstreamBillingProbeEnabledExtraKey: true,
 				service.UpstreamBillingProbeExtraKey:        map[string]any{"status": "stale"},
+				service.UpstreamUsageProbeExtraKey:          map[string]any{"status": "stale"},
 			},
 			wantEnabled: true,
 		},
@@ -81,8 +94,8 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
-				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-					AddRow(tt.identityUnchanged, false, true, tt.databaseEnabled, nil, tt.databaseSnapshot, nil, nil, nil))
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "usage_snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+					AddRow(tt.identityUnchanged, false, true, tt.databaseEnabled, nil, tt.databaseSnapshot, tt.databaseUsage, nil, nil, nil))
 
 			account := &service.Account{
 				ID:          27,
@@ -97,6 +110,11 @@ func TestLockAndMergeAccountProbeExtraUsesCurrentDatabaseSnapshot(t *testing.T) 
 				require.NotContains(t, got, service.UpstreamBillingProbeExtraKey)
 			} else {
 				require.Equal(t, tt.wantSnapshot, got[service.UpstreamBillingProbeExtraKey])
+			}
+			if tt.wantUsage == nil {
+				require.NotContains(t, got, service.UpstreamUsageProbeExtraKey)
+			} else {
+				require.Equal(t, tt.wantUsage, got[service.UpstreamUsageProbeExtraKey])
 			}
 			require.Equal(t, tt.wantEnabled, got[service.UpstreamBillingProbeEnabledExtraKey])
 			require.NoError(t, mock.ExpectationsWereMet())
@@ -172,8 +190,8 @@ func TestLockAndMergeAccountProbeExtraNeverInfersProbeFromRateSync(t *testing.T)
 
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(int64(31), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
-				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-					AddRow(true, false, true, tt.databaseEnabled, tt.databaseRateSync, nil, nil, nil, nil))
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "usage_snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+					AddRow(true, false, true, tt.databaseEnabled, tt.databaseRateSync, nil, nil, nil, nil, nil))
 
 			account := &service.Account{
 				ID:          31,
@@ -211,8 +229,8 @@ func TestLockAndMergeAccountProbeExtraProtectsOllamaManagedFields(t *testing.T) 
 
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(int64(29), service.PlatformAnthropic, service.AccountTypeAPIKey, `{"api_key":"key","base_url":"https://ollama.com"}`, nil).
-				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-					AddRow(identityUnchanged, identityUnchanged, true, nil, nil, nil, []byte(`"local-ciphertext"`), []byte(`true`), []byte(`{"status":"ok"}`)))
+				WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "usage_snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+					AddRow(identityUnchanged, identityUnchanged, true, nil, nil, nil, nil, []byte(`"local-ciphertext"`), []byte(`true`), []byte(`{"status":"ok"}`)))
 
 			account := &service.Account{
 				ID: 29, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
@@ -295,7 +313,9 @@ func TestBulkUpdateNilProbeRemovesKeyInsteadOfWritingJSONNull(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotEmpty(t, exec.execQueries)
-	require.Contains(t, normalizeSQLWhitespace(exec.execQueries[0]), "- 'upstream_billing_probe'")
+	query := normalizeSQLWhitespace(exec.execQueries[0])
+	require.Contains(t, query, "- 'upstream_billing_probe'")
+	require.NotContains(t, query, "- 'upstream_usage_probe'")
 }
 
 func TestBulkUpdateDisablingProbeRemovesSnapshot(t *testing.T) {
@@ -308,10 +328,41 @@ func TestBulkUpdateDisablingProbeRemovesSnapshot(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotEmpty(t, exec.execQueries)
-	require.Contains(t, normalizeSQLWhitespace(exec.execQueries[0]), "- 'upstream_billing_probe'")
+	query := normalizeSQLWhitespace(exec.execQueries[0])
+	require.Contains(t, query, "- 'upstream_billing_probe'")
+	require.NotContains(t, query, "- 'upstream_usage_probe'")
 	payload, ok := exec.execArgs[0][0].([]byte)
 	require.True(t, ok)
 	require.Equal(t, `{"upstream_billing_probe_enabled":false}`, string(payload))
+}
+
+func TestBulkUpdateNilUsageProbeRemovesOnlyUsageSnapshot(t *testing.T) {
+	exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
+	repo := newAccountRepositoryWithSQL(nil, exec, nil)
+
+	_, err := repo.BulkUpdate(context.Background(), []int64{27}, service.AccountBulkUpdate{
+		Extra: map[string]any{service.UpstreamUsageProbeExtraKey: nil},
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, exec.execQueries)
+	query := normalizeSQLWhitespace(exec.execQueries[0])
+	require.Contains(t, query, "- 'upstream_usage_probe'")
+	require.NotContains(t, query, "- 'upstream_billing_probe'")
+}
+
+func TestRevertProxyFallbackInvalidatesProxyBoundSnapshots(t *testing.T) {
+	exec := &recordingSQLExecutor{result: rowsAffectedResult(1)}
+	repo := newAccountRepositoryWithSQL(nil, exec, nil)
+
+	err := repo.RevertProxyFallback(context.Background(), 27)
+
+	require.NoError(t, err)
+	require.Len(t, exec.execQueries, 2)
+	query := normalizeSQLWhitespace(exec.execQueries[0])
+	require.Contains(t, query, "- 'upstream_billing_probe'")
+	require.Contains(t, query, "- 'upstream_usage_probe'")
+	require.Contains(t, query, "- 'ollama_cloud_usage_snapshot'")
 }
 
 func TestBulkUpdateProbeEligibilityMismatchRollsBack(t *testing.T) {
@@ -371,8 +422,8 @@ func TestUpdateWithAccountBillingSettingsRollsBackWhenOutboxFails(t *testing.T) 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 		WithArgs(int64(27), service.PlatformOpenAI, service.AccountTypeAPIKey, `{"api_key":"sk-test"}`, nil).
-		WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
-			AddRow(true, false, true, []byte(`true`), []byte(`true`), []byte(`{"status":"ok"}`), nil, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "usage_snapshot", "ollama_session", "ollama_auto", "ollama_snapshot"}).
+			AddRow(true, false, true, []byte(`true`), []byte(`true`), []byte(`{"status":"ok"}`), nil, nil, nil, nil))
 	mock.ExpectExec(`(?s)UPDATE .*accounts.*SET.*WHERE .*id.*`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)SELECT .* FROM "accounts" WHERE "id" = \$1`).
