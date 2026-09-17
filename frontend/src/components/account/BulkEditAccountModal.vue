@@ -1429,11 +1429,11 @@
         <button
           type="submit"
           form="bulk-edit-account-form"
-          :disabled="submitting"
+          :disabled="bulkUpdateBusy"
           class="btn btn-primary"
         >
           <svg
-            v-if="submitting"
+            v-if="bulkUpdateBusy"
             class="-ml-1 mr-2 h-4 w-4 animate-spin"
             fill="none"
             viewBox="0 0 24 24"
@@ -1453,7 +1453,7 @@
             />
           </svg>
           {{
-            submitting ? t('admin.accounts.bulkEdit.updating') : t('admin.accounts.bulkEdit.submit')
+            bulkUpdateBusy ? t('admin.accounts.bulkEdit.updating') : t('admin.accounts.bulkEdit.submit')
           }}
         </button>
       </div>
@@ -1464,7 +1464,7 @@
     data-testid="bulk-update-confirm-dialog"
     :show="showBulkUpdateConfirm"
     :title="t('admin.accounts.bulkEdit.confirmTitle')"
-    :message="t('admin.accounts.bulkEdit.confirmMessage', { count: bulkUpdateTargetCount })"
+    :message="bulkUpdateConfirmMessage"
     :confirm-text="t('admin.accounts.bulkEdit.confirmSubmit')"
     :cancel-text="t('common.cancel')"
     @confirm="handleBulkUpdateConfirm"
@@ -1559,6 +1559,12 @@ const targetPreviewCount = computed(() => props.target?.previewCount ?? props.ac
 const bulkUpdateTargetCount = computed(() =>
   targetMode.value === 'filtered' ? targetPreviewCount.value : props.accountIds.length
 )
+const bulkUpdateConfirmMessage = computed(() => t(
+  targetMode.value === 'filtered'
+    ? 'admin.accounts.bulkEdit.confirmFilteredMessage'
+    : 'admin.accounts.bulkEdit.confirmMessage',
+  { count: bulkUpdateTargetCount.value }
+))
 const targetSelectedPlatforms = computed(() => props.target?.selectedPlatforms ?? props.selectedPlatforms)
 const targetSelectedTypes = computed(() => props.target?.selectedTypes ?? props.selectedTypes)
 // Grok 快捷端点仅在所选账号全部为 grok 平台时展示（其他平台不显示）
@@ -1691,6 +1697,7 @@ const submitting = ref(false)
 const showBulkUpdateConfirm = ref(false)
 const pendingBulkUpdatePayload = ref<Record<string, unknown> | null>(null)
 const confirmingBulkUpdate = ref(false)
+const bulkUpdateBusy = computed(() => submitting.value || confirmingBulkUpdate.value)
 const showMixedChannelWarning = ref(false)
 const mixedChannelWarningMessage = ref('')
 const pendingUpdatesForConfirm = ref<Record<string, unknown> | null>(null)

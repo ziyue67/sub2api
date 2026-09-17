@@ -178,7 +178,32 @@ describe('BulkEditAccountModal', () => {
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { status: 'active' })
   })
 
-  it('筛选全量模式的确认文案使用预览账号数', async () => {
+  it('风险预检期间禁用提交按钮并展示更新中状态', async () => {
+    let resolveRisk!: (value: { has_risk: boolean }) => void
+    vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockReturnValueOnce(new Promise((resolve) => {
+      resolveRisk = resolve
+    }) as any)
+    const wrapper = mountModal({}, { autoConfirm: false })
+
+    await wrapper.get('#bulk-edit-groups-enabled').setValue(true)
+    wrapper.getComponent({ name: 'GroupSelector' }).vm.$emit('update:modelValue', [1])
+    await nextTick()
+    await submitWithoutConfirm(wrapper)
+    getBulkUpdateConfirm(wrapper).vm.$emit('confirm')
+    await nextTick()
+
+    const submitButton = wrapper.get('button[form="bulk-edit-account-form"]')
+    expect(submitButton.attributes('disabled')).toBeDefined()
+    expect(submitButton.text()).toContain('admin.accounts.bulkEdit.updating')
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+
+    resolveRisk({ has_risk: false })
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('筛选全量模式明确数量是预览值且执行时可能变化', async () => {
     const wrapper = mountModal({
       accountIds: [],
       target: {
@@ -192,7 +217,9 @@ describe('BulkEditAccountModal', () => {
     await submitWithoutConfirm(wrapper)
 
     expect(getBulkUpdateConfirm(wrapper).props('show')).toBe(true)
-    expect(translate).toHaveBeenCalledWith('admin.accounts.bulkEdit.confirmMessage', { count: 37 })
+    expect(getBulkUpdateConfirm(wrapper).props('message'))
+      .toBe('admin.accounts.bulkEdit.confirmFilteredMessage')
+    expect(translate).toHaveBeenCalledWith('admin.accounts.bulkEdit.confirmFilteredMessage', { count: 37 })
     expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
   })
 

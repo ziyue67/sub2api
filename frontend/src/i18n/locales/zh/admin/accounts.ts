@@ -671,6 +671,7 @@ export default {
         submit: '批量更新',
         confirmTitle: '确认批量更新',
         confirmMessage: '确定要更新这 {count} 个账号吗？请确认已检查所有勾选字段。',
+        confirmFilteredMessage: '确定要按当前筛选条件批量更新账号吗？当前预览 {count} 个，执行时以实际匹配结果为准。请确认已检查所有勾选字段。',
         confirmSubmit: '确认更新',
         updating: '更新中...',
         success: '成功更新 {count} 个账号',

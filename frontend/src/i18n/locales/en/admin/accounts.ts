@@ -583,6 +583,7 @@ export default {
         submit: 'Update Accounts',
         confirmTitle: 'Confirm Bulk Update',
         confirmMessage: 'Update these {count} accounts? Check all selected fields before continuing.',
+        confirmFilteredMessage: 'Update accounts matching the current filters? The current preview contains {count} accounts; the actual matched total at execution time may differ. Check all selected fields before continuing.',
         confirmSubmit: 'Confirm Update',
         updating: 'Updating...',
         success: 'Updated {count} account(s)',
