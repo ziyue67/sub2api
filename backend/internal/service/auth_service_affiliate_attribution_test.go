@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -28,7 +29,14 @@ func TestValidateAffiliateAttributionToken(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(42), inviterID)
 
-	tampered := token[:len(token)-1] + "x"
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3)
+	replacement := byte('A')
+	if parts[2][0] == replacement {
+		replacement = 'B'
+	}
+	parts[2] = string(replacement) + parts[2][1:]
+	tampered := strings.Join(parts, ".")
 	_, err = svc.ValidateAffiliateAttributionToken(tampered)
 	require.ErrorIs(t, err, ErrInvalidToken)
 }

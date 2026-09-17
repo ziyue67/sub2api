@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick, watch } from 'vue'
 import BulkEditAccountModal from '../BulkEditAccountModal.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import { adminAPI } from '@/api/admin'
@@ -42,7 +42,35 @@ vi.mock('vue-i18n', async () => {
   }
 })
 
-function mountModal(extraProps: Record<string, unknown> = {}) {
+const AutoConfirmDialogStub = defineComponent({
+  name: 'ConfirmDialog',
+  inheritAttrs: false,
+  props: {
+    show: { type: Boolean, required: true },
+    title: { type: String, required: true },
+    message: { type: String, required: true },
+    confirmText: String,
+    cancelText: String,
+    danger: Boolean
+  },
+  emits: ['confirm', 'cancel'],
+  setup(props, { attrs, emit }) {
+    watch(
+      () => props.show,
+      (show) => {
+        if (show) emit('confirm')
+      },
+      { flush: 'sync' }
+    )
+
+    return () => h('div', attrs)
+  }
+})
+
+function mountModal(
+  extraProps: Record<string, unknown> = {},
+  { autoConfirm = true }: { autoConfirm?: boolean } = {}
+) {
   return mount(BulkEditAccountModal, {
     props: {
       show: true,
@@ -56,7 +84,7 @@ function mountModal(extraProps: Record<string, unknown> = {}) {
     global: {
       stubs: {
         BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' },
-        ConfirmDialog: true,
+        ConfirmDialog: autoConfirm ? AutoConfirmDialogStub : true,
         Select: {
           props: ['modelValue', 'options'],
           emits: ['update:modelValue'],
@@ -80,6 +108,15 @@ function mountModal(extraProps: Record<string, unknown> = {}) {
   })
 }
 
+async function submitWithoutConfirm(wrapper: ReturnType<typeof mountModal>) {
+  await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+  await flushPromises()
+}
+
+function getBulkUpdateConfirm(wrapper: ReturnType<typeof mountModal>) {
+  return wrapper.getComponent('[data-testid="bulk-update-confirm-dialog"]')
+}
+
 describe('BulkEditAccountModal', () => {
   beforeEach(() => {
     vi.mocked(adminAPI.accounts.bulkUpdate).mockReset()
@@ -96,6 +133,104 @@ describe('BulkEditAccountModal', () => {
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockResolvedValue({
       has_risk: false
     } as any)
+  })
+
+  it('提交有效修改后先展示确认层，确认前不调用批量更新接口', async () => {
+    const wrapper = mountModal({}, { autoConfirm: false })
+
+    await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+    await submitWithoutConfirm(wrapper)
+
+    const confirmDialog = getBulkUpdateConfirm(wrapper)
+    expect(confirmDialog.props('show')).toBe(true)
+    expect(confirmDialog.props('title')).toBe('admin.accounts.bulkEdit.confirmTitle')
+    expect(confirmDialog.props('message')).toBe('admin.accounts.bulkEdit.confirmMessage')
+    expect(confirmDialog.props('confirmText')).toBe('admin.accounts.bulkEdit.confirmSubmit')
+    expect(translate).toHaveBeenCalledWith('admin.accounts.bulkEdit.confirmMessage', { count: 2 })
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+  })
+
+  it('取消确认后保留表单内容且不调用批量更新接口', async () => {
+    const wrapper = mountModal({}, { autoConfirm: false })
+
+    await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+    await submitWithoutConfirm(wrapper)
+    getBulkUpdateConfirm(wrapper).vm.$emit('cancel')
+    await nextTick()
+
+    expect(getBulkUpdateConfirm(wrapper).props('show')).toBe(false)
+    expect((wrapper.get('#bulk-edit-status-enabled').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.get('#bulk-edit-account-form').exists()).toBe(true)
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+  })
+
+  it('确认后仅调用一次批量更新接口，重复确认不会重复提交', async () => {
+    const wrapper = mountModal({}, { autoConfirm: false })
+
+    await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+    await submitWithoutConfirm(wrapper)
+    const confirmDialog = getBulkUpdateConfirm(wrapper)
+    confirmDialog.vm.$emit('confirm')
+    confirmDialog.vm.$emit('confirm')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { status: 'active' })
+  })
+
+  it('风险预检期间禁用提交按钮并展示更新中状态', async () => {
+    let resolveRisk!: (value: { has_risk: boolean }) => void
+    vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockReturnValueOnce(new Promise((resolve) => {
+      resolveRisk = resolve
+    }) as any)
+    const wrapper = mountModal({}, { autoConfirm: false })
+
+    await wrapper.get('#bulk-edit-groups-enabled').setValue(true)
+    wrapper.getComponent({ name: 'GroupSelector' }).vm.$emit('update:modelValue', [1])
+    await nextTick()
+    await submitWithoutConfirm(wrapper)
+    getBulkUpdateConfirm(wrapper).vm.$emit('confirm')
+    await nextTick()
+
+    const submitButton = wrapper.get('button[form="bulk-edit-account-form"]')
+    expect(submitButton.attributes('disabled')).toBeDefined()
+    expect(submitButton.text()).toContain('admin.accounts.bulkEdit.updating')
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+
+    resolveRisk({ has_risk: false })
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('筛选全量模式明确数量是预览值且执行时可能变化', async () => {
+    const wrapper = mountModal({
+      accountIds: [],
+      target: {
+        mode: 'filtered',
+        previewCount: 37,
+        filters: { platform: 'openai' }
+      }
+    }, { autoConfirm: false })
+
+    await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+    await submitWithoutConfirm(wrapper)
+
+    expect(getBulkUpdateConfirm(wrapper).props('show')).toBe(true)
+    expect(getBulkUpdateConfirm(wrapper).props('message'))
+      .toBe('admin.accounts.bulkEdit.confirmFilteredMessage')
+    expect(translate).toHaveBeenCalledWith('admin.accounts.bulkEdit.confirmFilteredMessage', { count: 37 })
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+  })
+
+  it('校验失败时不展示确认层', async () => {
+    const wrapper = mountModal({}, { autoConfirm: false })
+
+    await submitWithoutConfirm(wrapper)
+
+    expect(getBulkUpdateConfirm(wrapper).props('show')).toBe(false)
+    expect(showError).toHaveBeenCalledWith('admin.accounts.bulkEdit.noFieldsSelected')
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
   })
 
   it('批量修改倍率时提示自动同步账号需要先关闭同步', async () => {
