@@ -1461,6 +1461,18 @@
   </BaseDialog>
 
   <ConfirmDialog
+    data-testid="bulk-update-confirm-dialog"
+    :show="showBulkUpdateConfirm"
+    :title="t('admin.accounts.bulkEdit.confirmTitle')"
+    :message="t('admin.accounts.bulkEdit.confirmMessage', { count: bulkUpdateTargetCount })"
+    :confirm-text="t('admin.accounts.bulkEdit.confirmSubmit')"
+    :cancel-text="t('common.cancel')"
+    @confirm="handleBulkUpdateConfirm"
+    @cancel="handleBulkUpdateCancel"
+  />
+
+  <ConfirmDialog
+    data-testid="mixed-channel-confirm-dialog"
     :show="showMixedChannelWarning"
     :title="t('admin.accounts.mixedChannelWarningTitle')"
     :message="mixedChannelWarningMessage"
@@ -1544,6 +1556,9 @@ const appStore = useAppStore()
 // Platform awareness
 const targetMode = computed(() => props.target?.mode ?? 'selected')
 const targetPreviewCount = computed(() => props.target?.previewCount ?? props.accountIds.length)
+const bulkUpdateTargetCount = computed(() =>
+  targetMode.value === 'filtered' ? targetPreviewCount.value : props.accountIds.length
+)
 const targetSelectedPlatforms = computed(() => props.target?.selectedPlatforms ?? props.selectedPlatforms)
 const targetSelectedTypes = computed(() => props.target?.selectedTypes ?? props.selectedTypes)
 // Grok 快捷端点仅在所选账号全部为 grok 平台时展示（其他平台不显示）
@@ -1673,6 +1688,9 @@ const enableRpmLimit = ref(false)
 
 // State - field values
 const submitting = ref(false)
+const showBulkUpdateConfirm = ref(false)
+const pendingBulkUpdatePayload = ref<Record<string, unknown> | null>(null)
+const confirmingBulkUpdate = ref(false)
 const showMixedChannelWarning = ref(false)
 const mixedChannelWarningMessage = ref('')
 const pendingUpdatesForConfirm = ref<Record<string, unknown> | null>(null)
@@ -2164,6 +2182,9 @@ const canPreCheck = () =>
   (targetSelectedPlatforms.value[0] === 'antigravity' || targetSelectedPlatforms.value[0] === 'anthropic')
 
 const handleClose = () => {
+  showBulkUpdateConfirm.value = false
+  pendingBulkUpdatePayload.value = null
+  confirmingBulkUpdate.value = false
   showMixedChannelWarning.value = false
   mixedChannelWarningMessage.value = ''
   pendingUpdatesForConfirm.value = null
@@ -2193,7 +2214,9 @@ const preCheckMixedChannelRisk = async (built: Record<string, unknown>): Promise
   }
 }
 
-const handleSubmit = async () => {
+const handleSubmit = () => {
+  if (submitting.value || confirmingBulkUpdate.value || showBulkUpdateConfirm.value) return
+
   if (targetMode.value === 'selected' && props.accountIds.length === 0) {
     appStore.showError(t('admin.accounts.bulkEdit.noSelection'))
     return
@@ -2263,10 +2286,32 @@ const handleSubmit = async () => {
     return
   }
 
-  const canContinue = await preCheckMixedChannelRisk(built)
-  if (!canContinue) return
+  pendingBulkUpdatePayload.value = built
+  showBulkUpdateConfirm.value = true
+}
 
-  await submitBulkUpdate(built)
+const handleBulkUpdateConfirm = async () => {
+  if (confirmingBulkUpdate.value || submitting.value) return
+
+  const built = pendingBulkUpdatePayload.value
+  showBulkUpdateConfirm.value = false
+  pendingBulkUpdatePayload.value = null
+  if (!built) return
+
+  confirmingBulkUpdate.value = true
+  try {
+    const canContinue = await preCheckMixedChannelRisk(built)
+    if (!canContinue) return
+
+    await submitBulkUpdate(built)
+  } finally {
+    confirmingBulkUpdate.value = false
+  }
+}
+
+const handleBulkUpdateCancel = () => {
+  showBulkUpdateConfirm.value = false
+  pendingBulkUpdatePayload.value = null
 }
 
 const submitBulkUpdate = async (baseUpdates: Record<string, unknown>) => {
@@ -2414,7 +2459,10 @@ watch(
       bulkRpmStickyBuffer.value = null
       userMsgQueueMode.value = null
 
-      // Reset mixed channel warning state
+      // Reset confirmation state
+      showBulkUpdateConfirm.value = false
+      pendingBulkUpdatePayload.value = null
+      confirmingBulkUpdate.value = false
       showMixedChannelWarning.value = false
       mixedChannelWarningMessage.value = ''
       pendingUpdatesForConfirm.value = null
