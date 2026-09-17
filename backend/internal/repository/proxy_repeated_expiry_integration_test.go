@@ -60,7 +60,10 @@ func (s *ProxyExpirySuite) TestSweep_RepeatedExpiryPreservesOriginalProxy() {
 			s.Require().Zero(changed, "repeating the scan must be idempotent")
 			_, err = s.tx.ExecContext(s.ctx, `
 				UPDATE accounts
-				SET extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb
+				SET platform = 'openai',
+					type = 'apikey',
+					credentials = '{"api_key":"sk-test","base_url":"https://relay.example.com"}'::jsonb,
+					extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb
 				WHERE id = $2
 			`, `{
 				"upstream_billing_probe":{"status":"ok"},
