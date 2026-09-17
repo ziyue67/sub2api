@@ -126,6 +126,7 @@ func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
 			UpstreamBillingProbeEnabledExtraKey:    true,
 			UpstreamBillingRateSyncEnabledExtraKey: true,
 			UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
+			UpstreamUsageProbeExtraKey:             map[string]any{"status": "ok"},
 		},
 	})
 
@@ -133,6 +134,7 @@ func TestCreateAccountDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	require.NotContains(t, created.Extra, UpstreamBillingProbeEnabledExtraKey)
 	require.NotContains(t, created.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, created.Extra, UpstreamBillingProbeExtraKey)
+	require.NotContains(t, created.Extra, UpstreamUsageProbeExtraKey)
 }
 
 func TestCreateAccountAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) {
@@ -173,6 +175,7 @@ func TestUpdateAccountPreservesManagedUpstreamBillingProbeStateForUnrelatedEdit(
 				UpstreamBillingProbeEnabledExtraKey:    true,
 				UpstreamBillingRateSyncEnabledExtraKey: true,
 				UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
+				UpstreamUsageProbeExtraKey:             map[string]any{"status": "ok"},
 			},
 		},
 	}}
@@ -186,6 +189,7 @@ func TestUpdateAccountPreservesManagedUpstreamBillingProbeStateForUnrelatedEdit(
 	require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
 	require.Equal(t, true, updated.Extra[UpstreamBillingRateSyncEnabledExtraKey])
 	require.Contains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+	require.Contains(t, updated.Extra, UpstreamUsageProbeExtraKey)
 	require.Equal(t, "value", updated.Extra["custom"])
 }
 
@@ -234,6 +238,7 @@ func TestUpdateAccountPreservesProbeSnapshotWhenIdentityValuesAreUnchanged(t *te
 			Extra: map[string]any{
 				UpstreamBillingProbeEnabledExtraKey: true,
 				UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
+				UpstreamUsageProbeExtraKey:          map[string]any{"status": "ok"},
 			},
 		},
 	}}
@@ -248,6 +253,7 @@ func TestUpdateAccountPreservesProbeSnapshotWhenIdentityValuesAreUnchanged(t *te
 
 	require.NoError(t, err)
 	require.Contains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+	require.Contains(t, updated.Extra, UpstreamUsageProbeExtraKey)
 }
 
 func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *testing.T) {
@@ -298,6 +304,7 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *tes
 						UpstreamBillingProbeEnabledExtraKey:    true,
 						UpstreamBillingRateSyncEnabledExtraKey: true,
 						UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
+						UpstreamUsageProbeExtraKey:             map[string]any{"status": "ok"},
 					},
 				},
 			}}
@@ -306,6 +313,7 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenUpstreamIdentityChanges(t *tes
 
 			require.NoError(t, err)
 			require.NotContains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+			require.NotContains(t, updated.Extra, UpstreamUsageProbeExtraKey)
 			if tt.wantEnabled {
 				require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
 			} else {
@@ -331,6 +339,7 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenProxyChanges(t *testing.T) {
 			Extra: map[string]any{
 				UpstreamBillingProbeEnabledExtraKey: true,
 				UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
+				UpstreamUsageProbeExtraKey:          map[string]any{"status": "ok"},
 			},
 		},
 	}}
@@ -344,6 +353,7 @@ func TestUpdateAccountInvalidatesProbeSnapshotWhenProxyChanges(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, newProxyID, *updated.ProxyID)
 	require.NotContains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+	require.NotContains(t, updated.Extra, UpstreamUsageProbeExtraKey)
 }
 
 func TestUpdateAccountPreservesProbeSnapshotWhenProxyIsUnchanged(t *testing.T) {
@@ -361,6 +371,7 @@ func TestUpdateAccountPreservesProbeSnapshotWhenProxyIsUnchanged(t *testing.T) {
 			Extra: map[string]any{
 				UpstreamBillingProbeEnabledExtraKey: true,
 				UpstreamBillingProbeExtraKey:        map[string]any{"status": "ok"},
+				UpstreamUsageProbeExtraKey:          map[string]any{"status": "ok"},
 			},
 		},
 	}}
@@ -373,6 +384,7 @@ func TestUpdateAccountPreservesProbeSnapshotWhenProxyIsUnchanged(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Contains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+	require.Contains(t, updated.Extra, UpstreamUsageProbeExtraKey)
 }
 
 func TestUpdateAccountAcceptsProbeEnabledAndRejectsInjectedSnapshot(t *testing.T) {
@@ -393,6 +405,7 @@ func TestUpdateAccountAcceptsProbeEnabledAndRejectsInjectedSnapshot(t *testing.T
 			UpstreamBillingProbeEnabledExtraKey:    true,
 			UpstreamBillingRateSyncEnabledExtraKey: true,
 			UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
+			UpstreamUsageProbeExtraKey:             map[string]any{"status": "ok"},
 		},
 	})
 
@@ -400,6 +413,7 @@ func TestUpdateAccountAcceptsProbeEnabledAndRejectsInjectedSnapshot(t *testing.T
 	require.Equal(t, true, updated.Extra[UpstreamBillingProbeEnabledExtraKey])
 	require.NotContains(t, updated.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, updated.Extra, UpstreamBillingProbeExtraKey)
+	require.NotContains(t, updated.Extra, UpstreamUsageProbeExtraKey)
 }
 
 func TestUpdateAccountRateSyncControlsProbeAndManualMode(t *testing.T) {
@@ -610,6 +624,7 @@ func TestUpdateAccountExtraDropsManagedBillingProbeFields(t *testing.T) {
 		UpstreamBillingProbeEnabledExtraKey:    true,
 		UpstreamBillingRateSyncEnabledExtraKey: true,
 		UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
+		UpstreamUsageProbeExtraKey:             map[string]any{"status": "ok"},
 	})
 
 	require.NoError(t, err)
@@ -617,6 +632,7 @@ func TestUpdateAccountExtraDropsManagedBillingProbeFields(t *testing.T) {
 	require.NotContains(t, repo.accounts[accountID].Extra, UpstreamBillingProbeEnabledExtraKey)
 	require.NotContains(t, repo.accounts[accountID].Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, repo.accounts[accountID].Extra, UpstreamBillingProbeExtraKey)
+	require.NotContains(t, repo.accounts[accountID].Extra, UpstreamUsageProbeExtraKey)
 }
 
 func TestBulkUpdateAccountsDropsManagedUpstreamBillingProbeState(t *testing.T) {
@@ -629,6 +645,7 @@ func TestBulkUpdateAccountsDropsManagedUpstreamBillingProbeState(t *testing.T) {
 			UpstreamBillingProbeEnabledExtraKey:    true,
 			UpstreamBillingRateSyncEnabledExtraKey: true,
 			UpstreamBillingProbeExtraKey:           map[string]any{"status": "ok"},
+			UpstreamUsageProbeExtraKey:             map[string]any{"status": "ok"},
 		},
 	}
 
@@ -641,6 +658,7 @@ func TestBulkUpdateAccountsDropsManagedUpstreamBillingProbeState(t *testing.T) {
 	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeEnabledExtraKey)
 	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
+	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamUsageProbeExtraKey)
 }
 
 func TestBulkUpdateAccountsAcceptsDedicatedUpstreamBillingProbeSetting(t *testing.T) {
@@ -717,6 +735,8 @@ func TestBulkUpdateAccountsInvalidatesProbeSnapshotForIdentityCredentials(t *tes
 	require.Len(t, repo.bulkUpdates, 1)
 	require.Contains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
 	require.Nil(t, repo.bulkUpdates[0].Extra[UpstreamBillingProbeExtraKey])
+	require.Contains(t, repo.bulkUpdates[0].Extra, UpstreamUsageProbeExtraKey)
+	require.Nil(t, repo.bulkUpdates[0].Extra[UpstreamUsageProbeExtraKey])
 }
 
 func TestBulkUpdateAccountsInvalidatesProbeSnapshotForProxyUpdate(t *testing.T) {
@@ -734,6 +754,8 @@ func TestBulkUpdateAccountsInvalidatesProbeSnapshotForProxyUpdate(t *testing.T) 
 	require.Len(t, baseRepo.bulkUpdates, 1)
 	require.Contains(t, baseRepo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
 	require.Nil(t, baseRepo.bulkUpdates[0].Extra[UpstreamBillingProbeExtraKey])
+	require.Contains(t, baseRepo.bulkUpdates[0].Extra, UpstreamUsageProbeExtraKey)
+	require.Nil(t, baseRepo.bulkUpdates[0].Extra[UpstreamUsageProbeExtraKey])
 }
 
 func TestBulkUpdateAccountsKeepsProbeSnapshotForUnrelatedCredentials(t *testing.T) {
@@ -748,4 +770,5 @@ func TestBulkUpdateAccountsKeepsProbeSnapshotForUnrelatedCredentials(t *testing.
 	require.NoError(t, err)
 	require.Len(t, repo.bulkUpdates, 1)
 	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamBillingProbeExtraKey)
+	require.NotContains(t, repo.bulkUpdates[0].Extra, UpstreamUsageProbeExtraKey)
 }

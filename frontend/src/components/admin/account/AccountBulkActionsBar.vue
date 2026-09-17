@@ -48,6 +48,7 @@
         <button @click="$emit('reset-status')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkActions.resetStatus') }}</button>
         <button @click="$emit('refresh-token')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkActions.refreshToken') }}</button>
         <button @click="$emit('probe-upstream-billing')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkActions.probeUpstreamBilling') }}</button>
+        <button @click="$emit('probe-upstream-usage')" class="btn btn-secondary btn-sm">{{ t('admin.accounts.bulkActions.probeUpstreamUsage') }}</button>
         <button
           data-testid="batch-account-test"
           @click="$emit('test-connection')"
@@ -87,6 +88,7 @@ defineEmits([
   'reset-status',
   'refresh-token',
   'probe-upstream-billing',
+  'probe-upstream-usage',
   'test-connection'
 ])
 

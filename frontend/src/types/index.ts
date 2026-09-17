@@ -1125,6 +1125,46 @@ export interface UpstreamBillingRateSnapshotItem {
   snapshot?: UpstreamBillingProbeSnapshot | null
 }
 
+export type UpstreamUsageProbeStatus = 'ok' | 'unsupported' | 'failed'
+
+export interface UpstreamUsageQuota {
+  limit?: number
+  used?: number
+  remaining?: number
+  unit?: string
+}
+
+export interface UpstreamUsageProbeData {
+  mode?: string
+  planName?: string
+  unit?: string
+  isValid?: boolean
+  remaining?: number
+  balance?: number
+  quota?: UpstreamUsageQuota
+  source_field?: string
+  amount_kind?: 'wallet' | 'quota' | string
+}
+
+export interface UpstreamUsageProbeSnapshot {
+  status: UpstreamUsageProbeStatus
+  data?: UpstreamUsageProbeData
+  fetched_at?: string
+  fresh_until?: string
+  last_attempt_at: string
+  next_probe_at: string
+  failure_count?: number
+  http_status?: number
+  last_error?: string
+}
+
+export interface UpstreamUsageProbeResult {
+  account_id: number
+  snapshot?: UpstreamUsageProbeSnapshot
+  error?: string
+  skipped?: boolean
+}
+
 export interface UpstreamBillingRatesResponse {
   items: UpstreamBillingRateSnapshotItem[]
   total: number
@@ -1243,6 +1283,7 @@ export interface Account {
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
+    upstream_usage_probe?: UpstreamUsageProbeSnapshot
     codex_reset_credit_snapshot?: {
       available_count?: number
       credits?: { expires_at?: string }[]

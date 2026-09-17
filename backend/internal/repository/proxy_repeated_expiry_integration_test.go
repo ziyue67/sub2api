@@ -58,12 +58,38 @@ func (s *ProxyExpirySuite) TestSweep_RepeatedExpiryPreservesOriginalProxy() {
 			changed, err = s.repo.SweepExpiredProxies(s.ctx, now.Add(3*time.Hour))
 			s.Require().NoError(err)
 			s.Require().Zero(changed, "repeating the scan must be idempotent")
+			_, err = s.tx.ExecContext(s.ctx, `
+				UPDATE accounts
+				SET platform = 'openai',
+					type = 'apikey',
+					credentials = '{"api_key":"sk-test","base_url":"https://relay.example.com"}'::jsonb,
+					extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb
+				WHERE id = $2
+			`, `{
+				"upstream_billing_probe":{"status":"ok"},
+				"upstream_usage_probe":{"status":"ok"},
+				"ollama_cloud_usage_snapshot":{"status":"ok"}
+			}`, accountID)
+			s.Require().NoError(err)
 			accounts := newAccountRepositoryWithSQL(s.tx.Client(), s.tx, nil)
 			s.Require().NoError(accounts.RevertProxyFallback(s.ctx, accountID))
 			s.Require().Equal(&originalID, s.accountProxyID(accountID))
 			err = scanSingleRow(s.ctx, s.tx, `SELECT proxy_fallback_origin_id FROM accounts WHERE id=$1`, []any{accountID}, &origin)
 			s.Require().NoError(err)
 			s.Require().Nil(origin)
+			var hasBillingSnapshot, hasUsageSnapshot, hasOllamaSnapshot bool
+			err = scanSingleRow(s.ctx, s.tx, `
+				SELECT
+					extra ? 'upstream_billing_probe',
+					extra ? 'upstream_usage_probe',
+					extra ? 'ollama_cloud_usage_snapshot'
+				FROM accounts
+				WHERE id=$1
+			`, []any{accountID}, &hasBillingSnapshot, &hasUsageSnapshot, &hasOllamaSnapshot)
+			s.Require().NoError(err)
+			s.Require().False(hasBillingSnapshot)
+			s.Require().False(hasUsageSnapshot)
+			s.Require().False(hasOllamaSnapshot)
 		})
 	}
 }
