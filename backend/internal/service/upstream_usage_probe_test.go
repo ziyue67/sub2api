@@ -95,8 +95,12 @@ func TestParseUpstreamUsageProbeResponseBoundsPersistedText(t *testing.T) {
 	data, err := parseUpstreamUsageProbeResponse([]byte(`{"remaining":1,"unit":"` + strings.Repeat("U", 80) + `","planName":"` + strings.Repeat("计", 200) + `"}`))
 
 	require.NoError(t, err)
-	require.Len(t, []rune(data["unit"].(string)), 32)
-	require.Len(t, []rune(data["planName"].(string)), 128)
+	unit, ok := data["unit"].(string)
+	require.True(t, ok)
+	require.Len(t, []rune(unit), 32)
+	planName, ok := data["planName"].(string)
+	require.True(t, ok)
+	require.Len(t, []rune(planName), 128)
 }
 
 func TestProbeUpstreamUsageSendsOnlyReadOnlyUsageRequestAndPersistsSanitizedData(t *testing.T) {
