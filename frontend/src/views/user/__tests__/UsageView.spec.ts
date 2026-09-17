@@ -233,6 +233,57 @@ describe('user UsageView', () => {
     expect(getAvailable).toHaveBeenCalled()
   })
 
+  it('advances the rolling 24-hour range and returns to page one on refresh', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date(2026, 8, 16, 14, 3, 22))
+      const wrapper = mountUsageView()
+      await flushPromises()
+
+      const initialParams = query.mock.calls[query.mock.calls.length - 1][0]
+      expect(initialParams.page).toBe(1)
+
+      ;(wrapper.vm as any).pagination.page = 3
+      query.mockClear()
+      vi.setSystemTime(new Date(2026, 8, 16, 14, 5, 10))
+      ;(wrapper.vm as any).refreshData()
+      await flushPromises()
+
+      const refreshedParams = query.mock.calls[query.mock.calls.length - 1][0]
+      expect(refreshedParams.page).toBe(1)
+      expect(new Date(refreshedParams.end_date).getTime()).toBeGreaterThan(
+        new Date(initialParams.end_date).getTime()
+      )
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves a custom date range when refreshing', async () => {
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    ;(wrapper.vm as any).onDateRangeChange({
+      startDate: '2026-09-01',
+      endDate: '2026-09-08',
+      preset: null,
+    })
+    await flushPromises()
+    query.mockClear()
+
+    ;(wrapper.vm as any).refreshData()
+    await flushPromises()
+
+    const refreshedParams = query.mock.calls[query.mock.calls.length - 1][0]
+    expect(refreshedParams).toEqual(expect.objectContaining({
+      page: 1,
+      start_date: '2026-09-01',
+      end_date: '2026-09-08',
+    }))
+    wrapper.unmount()
+  })
+
   it('includes API keys after the first page in both record filters and queries by the selected key', async () => {
     const firstPageKeys = Array.from({ length: 100 }, (_, index) => ({
       id: index + 1,

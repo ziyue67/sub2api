@@ -259,6 +259,7 @@ const handleUserClick = async (userId: number) => {
 const granularityOptions = computed(() => [{ value: 'day', label: t('admin.dashboard.day') }, { value: 'hour', label: t('admin.dashboard.hour') }])
 const defaultRange = getLast24HourRange()
 const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
+const activeRangePreset = ref<string | null>('last24Hours')
 const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, native_compaction_v2: null, billing_type: null, start_date: startDate.value, end_date: endDate.value })
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 const sortState = reactive({
@@ -288,6 +289,9 @@ const applyRouteQueryFilters = () => {
   }
   if (queryEndDate) {
     endDate.value = queryEndDate
+  }
+  if (queryStartDate || queryEndDate) {
+    activeRangePreset.value = null
   }
 
   filters.value = {
@@ -325,6 +329,7 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
     start_date: range.startDate,
     end_date: range.endDate
   }
+  activeRangePreset.value = range.preset
   granularity.value = getGranularityForRange(range.startDate, range.endDate)
   applyFilters()
 }
@@ -490,7 +495,21 @@ const applyFilters = () => {
     errRows.value = []
   }
 }
+const refreshRollingRange = () => {
+  if (activeRangePreset.value !== 'last24Hours') return
+  const range = getLast24HourRange()
+  startDate.value = range.start
+  endDate.value = range.end
+  filters.value = {
+    ...filters.value,
+    start_date: range.start,
+    end_date: range.end
+  }
+}
 const refreshData = () => {
+  refreshRollingRange()
+  pagination.page = 1
+  errPage.value = 1
   invalidateModelStatsCache()
   loadLogs()
   loadStats(true)
@@ -503,6 +522,7 @@ const resetFilters = () => {
   startDate.value = range.start
   endDate.value = range.end
   filters.value = { start_date: startDate.value, end_date: endDate.value, request_type: undefined, native_compaction_v2: null, billing_type: null, billing_mode: undefined }
+  activeRangePreset.value = 'last24Hours'
   granularity.value = getGranularityForRange(startDate.value, endDate.value)
   applyFilters()
 }

@@ -196,6 +196,54 @@ describe('admin UsageView route filters', () => {
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('ranked-user@example.test')
   })
 
+  it('advances the rolling 24-hour range and returns to page one on refresh', async () => {
+    vi.setSystemTime(new Date(2026, 8, 16, 14, 3, 22))
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    const initialParams = list.mock.calls[list.mock.calls.length - 1][0]
+    expect(initialParams.page).toBe(1)
+
+    ;(wrapper.vm as any).pagination.page = 3
+    list.mockClear()
+    vi.setSystemTime(new Date(2026, 8, 16, 14, 5, 10))
+    ;(wrapper.vm as any).refreshData()
+    await flushPromises()
+
+    const refreshedParams = list.mock.calls[list.mock.calls.length - 1][0]
+    expect(refreshedParams.page).toBe(1)
+    expect(new Date(refreshedParams.end_date).getTime()).toBeGreaterThan(
+      new Date(initialParams.end_date).getTime()
+    )
+    wrapper.unmount()
+  })
+
+  it('preserves a custom date range when refreshing', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    ;(wrapper.vm as any).onDateRangeChange({
+      startDate: '2026-09-01',
+      endDate: '2026-09-08',
+      preset: null,
+    })
+    await flushPromises()
+    list.mockClear()
+
+    ;(wrapper.vm as any).refreshData()
+    await flushPromises()
+
+    const refreshedParams = list.mock.calls[list.mock.calls.length - 1][0]
+    expect(refreshedParams).toEqual(expect.objectContaining({
+      page: 1,
+      start_date: '2026-09-01',
+      end_date: '2026-09-08',
+    }))
+    wrapper.unmount()
+  })
+
   it('keeps previous model stats visible during refresh until new data arrives', async () => {
     // 首次加载返回 A
     getModelStats.mockResolvedValueOnce({ models: [{ model: 'A', total_tokens: 10 }] })
