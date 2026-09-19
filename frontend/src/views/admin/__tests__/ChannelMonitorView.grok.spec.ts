@@ -101,8 +101,7 @@ describe('channel monitor Grok provider', () => {
 
     expect(PROVIDERS).toContain(PROVIDER_GROK)
     const providerButtons = wrapper.findAll('[data-testid^="monitor-provider-"]')
-    // 上游 0.2.4 新增 MiniMax 平台后，provider 网格共 9 项。
-    expect(providerButtons).toHaveLength(9)
+    expect(providerButtons).toHaveLength(10)
     expect(providerButtons[0].element.parentElement?.className).toContain('grid-cols-2')
     expect(providerButtons[0].element.parentElement?.className).toContain('sm:grid-cols-4')
 
