@@ -380,6 +380,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ChannelMonitorHideThroughput:         settings.ChannelMonitorHideThroughput,
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
 		ChannelMonitorHideUserRanking:        settings.ChannelMonitorHideUserRanking,
+		LeaderboardShowActualCost:            settings.LeaderboardShowActualCost,
 
 		GrokDefaultTextModel:           settings.GrokDefaultTextModel,
 		GrokCrossClientModelMapEnabled: settings.GrokCrossClientModelMapEnabled,

@@ -178,10 +178,13 @@ type TokenLeaderboardItem struct {
 	CacheTokens       int64   `json:"cache_tokens"`
 	ImageOutputTokens int64   `json:"image_output_tokens"`
 	Cost              float64 `json:"cost"`
-	ActualCost        float64 `json:"actual_cost"`
-	AccountCost       float64 `json:"account_cost"`
-	LastActiveAt      string  `json:"last_active_at"`
-	IsMe              bool    `json:"is_me"`
+	// ActualCost is optional because ordinary users may be denied the actual
+	// deducted amount by the administrator. A nil pointer omits the JSON field;
+	// zero remains distinguishable from a hidden value when it is exposed.
+	ActualCost   *float64 `json:"actual_cost,omitempty"`
+	AccountCost  float64  `json:"account_cost"`
+	LastActiveAt string   `json:"last_active_at"`
+	IsMe         bool     `json:"is_me"`
 }
 
 // TokenLeaderboardRow is the raw aggregation row returned by the repository.

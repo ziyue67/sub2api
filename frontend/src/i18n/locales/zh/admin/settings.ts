@@ -38,6 +38,12 @@ export default {
           hideUserRankingHint:
             '开启后，用户端渠道监控 V2 不再显示「用户排行」页，用户 API 也不返回排行数据。管理员仍可查看。',
         },
+        leaderboardActualCost: {
+          title: '排行榜实际扣费展示',
+          description: '控制普通用户在 Token 排行榜中是否能看到每个用户的实际扣费金额。',
+          enabled: '向普通用户显示实际扣费',
+          enabledHint: '关闭后用户端排行榜不返回也不显示“实际扣费”列；管理员排行榜和真实扣费记录不受影响。',
+        },
         availableChannels: {
           title: '可用渠道',
           description: '向已登录用户展示他们能访问的渠道、模型和定价聚合视图。默认关闭。',

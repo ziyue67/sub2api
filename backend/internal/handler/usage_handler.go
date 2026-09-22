@@ -591,6 +591,16 @@ func (h *UsageHandler) DashboardLeaderboard(c *gin.Context) {
 		return
 	}
 
+	role, hasRole := middleware2.GetUserRoleFromContext(c)
+	isAdmin := hasRole && role == service.RoleAdmin
+	showActualCost := isAdmin || (h.settingService != nil && h.settingService.IsLeaderboardActualCostVisible(c.Request.Context()))
+	// Do not let a hidden cost become an ordering oracle. A regular user who
+	// sends an old/stale sort_by=actual_cost request gets the public default
+	// ordering instead of learning the private ranking through row order.
+	if !showActualCost && sortBy == "actual_cost" {
+		sortBy = "tokens"
+	}
+
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
 	if billingMode != "" && !service.BillingMode(billingMode).IsValidUsageFilter() {
 		response.BadRequest(c, "Invalid billing_mode")
@@ -676,6 +686,11 @@ func (h *UsageHandler) DashboardLeaderboard(c *gin.Context) {
 		if !row.LastActiveAt.IsZero() {
 			lastActive = row.LastActiveAt.In(loc).Format("01-02 15:04")
 		}
+		var actualCost *float64
+		if showActualCost {
+			value := row.ActualCost
+			actualCost = &value
+		}
 		items = append(items, usagestats.TokenLeaderboardItem{
 			Rank:              i + 1,
 			UserID:            0, // never expose raw user id to regular users
@@ -687,7 +702,7 @@ func (h *UsageHandler) DashboardLeaderboard(c *gin.Context) {
 			CacheTokens:       row.CacheTokens,
 			ImageOutputTokens: row.ImageOutputTokens,
 			Cost:              row.Cost,
-			ActualCost:        row.ActualCost,
+			ActualCost:        actualCost,
 			AccountCost:       row.AccountCost,
 			LastActiveAt:      lastActive,
 			IsMe:              isMe,

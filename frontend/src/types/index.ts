@@ -276,6 +276,8 @@ export interface PublicSettings {
   channel_monitor_show_quota?: boolean
   /** When true, user monitor hides the user ranking tab and /users payload. */
   channel_monitor_hide_user_ranking?: boolean
+  /** When false, ordinary users do not receive actual deducted cost on the leaderboard. */
+  leaderboard_show_actual_cost?: boolean
   available_channels_enabled: boolean
   /** When false, the whole user-facing subscription surface is hidden. Default true. */
   subscription_enabled: boolean

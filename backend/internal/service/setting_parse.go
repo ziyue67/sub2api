@@ -194,6 +194,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyChannelMonitorHideThroughput:         "true",
 		SettingKeyChannelMonitorShowQuota:              "false",
 		SettingKeyChannelMonitorHideUserRanking:        "false",
+		SettingKeyLeaderboardShowActualCost:            "true",
 
 		// Grok compatibility defaults: cross-client mapping stays enabled unless
 		// operators explicitly disable it.
@@ -842,6 +843,10 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// （与 setting_public.go 公开读取路径保持一致）。
 	result.ChannelMonitorShowQuota = settings[SettingKeyChannelMonitorShowQuota] == "true"
 	result.ChannelMonitorHideUserRanking = isTrueSettingValue(settings[SettingKeyChannelMonitorHideUserRanking])
+	// Keep the public leaderboard compatible with the pre-switch behavior:
+	// missing or unrecognized values mean visible; only an explicit false-like
+	// value hides the actual deducted cost from ordinary users.
+	result.LeaderboardShowActualCost = !isFalseSettingValue(settings[SettingKeyLeaderboardShowActualCost])
 
 	// Grok default mapping policy
 	result.GrokDefaultTextModel = strings.TrimSpace(settings[SettingKeyGrokDefaultTextModel])

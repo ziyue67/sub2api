@@ -154,6 +154,36 @@ func TestSettingService_ChannelMonitorHideUserRankingDefaultsToVisible(t *testin
 	}
 }
 
+func TestSettingService_LeaderboardActualCostVisibilityDefaultsToVisible(t *testing.T) {
+	cases := []struct {
+		name   string
+		values map[string]string
+		want   bool
+	}{
+		{name: "missing key", values: map[string]string{}, want: true},
+		{name: "explicit true", values: map[string]string{SettingKeyLeaderboardShowActualCost: "true"}, want: true},
+		{name: "explicit false", values: map[string]string{SettingKeyLeaderboardShowActualCost: "false"}, want: false},
+		{name: "zero alias", values: map[string]string{SettingKeyLeaderboardShowActualCost: "0"}, want: false},
+		{name: "off alias", values: map[string]string{SettingKeyLeaderboardShowActualCost: "off"}, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewSettingService(&settingPublicRepoStub{values: tc.values}, &config.Config{})
+			require.Equal(t, tc.want, svc.IsLeaderboardActualCostVisible(context.Background()))
+
+			public, err := svc.GetPublicSettings(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, tc.want, public.LeaderboardShowActualCost)
+		})
+	}
+}
+
+func TestSettingService_LeaderboardActualCostVisibilityFailsClosedOnReadError(t *testing.T) {
+	svc := NewSettingService(&settingPublicRepoStub{err: context.Canceled}, &config.Config{})
+	require.False(t, svc.IsLeaderboardActualCostVisible(context.Background()))
+}
+
 func TestSettingService_GetPublicSettings_ExposesForceEmailOnThirdPartySignup(t *testing.T) {
 	repo := &settingPublicRepoStub{
 		values: map[string]string{

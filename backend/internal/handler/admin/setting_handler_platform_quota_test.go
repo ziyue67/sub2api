@@ -93,6 +93,18 @@ func TestDiffSettings_DetectsCompactHomeChange(t *testing.T) {
 	require.Contains(t, changed, service.SettingKeyCompactHomeEnabled)
 }
 
+func TestDiffSettings_DetectsLeaderboardActualCostVisibilityChange(t *testing.T) {
+	changed := diffSettings(
+		&service.SystemSettings{LeaderboardShowActualCost: true},
+		&service.SystemSettings{LeaderboardShowActualCost: false},
+		nil,
+		nil,
+		UpdateSettingsRequest{},
+	)
+
+	require.Contains(t, changed, service.SettingKeyLeaderboardShowActualCost)
+}
+
 func TestEqualNullableFloat(t *testing.T) {
 	five := 5.0
 	five2 := 5.0

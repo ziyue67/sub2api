@@ -114,7 +114,7 @@
                 <th class="lb-col-num lb-hide-sm">{{ t('leaderboard.cacheTokensShort') }}</th>
                 <th class="lb-col-num lb-hide-sm">{{ t('leaderboard.imageOutputShort') }}</th>
                 <th class="lb-col-num">{{ t('leaderboard.requests') }}</th>
-                <th class="lb-col-num lb-hide-sm">{{ t('leaderboard.actualCost') }}</th>
+                <th v-if="showActualCost" class="lb-col-num lb-hide-sm">{{ t('leaderboard.actualCost') }}</th>
                 <th class="lb-col-time lb-hide-sm">{{ t('leaderboard.lastActive') }}</th>
               </tr>
             </thead>
@@ -141,7 +141,7 @@
                 <td class="lb-col-num lb-hide-sm">{{ formatTokens(item.cache_tokens) }}</td>
                 <td class="lb-col-num lb-hide-sm">{{ formatTokens(item.image_output_tokens) }}</td>
                 <td class="lb-col-num">{{ formatNumber(item.requests) }}</td>
-                <td class="lb-col-num lb-hide-sm lb-strong">{{ formatCost(item.actual_cost) }}</td>
+                <td v-if="showActualCost" class="lb-col-num lb-hide-sm lb-strong">{{ formatCost(item.actual_cost) }}</td>
                 <td class="lb-col-time lb-hide-sm">{{ item.last_active_at || '—' }}</td>
               </tr>
             </tbody>
@@ -165,9 +165,12 @@ import {
   type LeaderboardSortBy,
   type LeaderboardBillingMode
 } from '@/api/usage'
+import { useAuthStore } from '@/stores/auth'
 import type { UsageRequestType, ModelStat, GroupStat } from '@/types'
+import { isLeaderboardActualCostVisible } from '@/utils/featureFlags'
 
 const { t } = useI18n()
+const authStore = useAuthStore()
 
 type DaysWindow = 1 | 3 | 7 | 14 | 30
 
@@ -247,6 +250,13 @@ const groupOptions = computed(() => [
 ])
 
 const items = computed(() => leaderboard.value?.items ?? [])
+const showActualCost = computed(() => {
+  // The response is authoritative: never render a placeholder amount when the
+  // backend intentionally omitted the field, even if a stale public-settings
+  // cache still says the switch is enabled.
+  return (authStore.isAdmin || isLeaderboardActualCostVisible())
+    && items.value.every((item) => typeof item.actual_cost === 'number')
+})
 
 const themeToggleLabel = computed(() =>
   theme.value === 'dark' ? t('leaderboard.theme.light') : t('leaderboard.theme.dark')
@@ -313,7 +323,7 @@ function formatTokens(value: number): string {
   return numberFormatter.format(v)
 }
 
-function formatCost(value: number): string {
+function formatCost(value: number | null | undefined): string {
   return `$${(value ?? 0).toFixed(4)}`
 }
 

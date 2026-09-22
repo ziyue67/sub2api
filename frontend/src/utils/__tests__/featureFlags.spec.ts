@@ -62,4 +62,11 @@ describe('resolveFeatureFlag', () => {
     useAppStore().cachedPublicSettings = { subscription_enabled: false } as PublicSettings
     expect(isFeatureFlagEnabled(FeatureFlags.subscription)).toBe(false)
   })
+
+  it('keeps leaderboard actual cost visible by default and hides it only when disabled', () => {
+    expect(FeatureFlags.leaderboardActualCost.key).toBe('leaderboard_show_actual_cost')
+    expect(resolveFeatureFlag(undefined, FeatureFlags.leaderboardActualCost)).toBe(true)
+    expect(resolveFeatureFlag({ leaderboard_show_actual_cost: false }, FeatureFlags.leaderboardActualCost)).toBe(false)
+    expect(resolveFeatureFlag({ leaderboard_show_actual_cost: true }, FeatureFlags.leaderboardActualCost)).toBe(true)
+  })
 })
