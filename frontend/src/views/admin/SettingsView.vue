@@ -7294,6 +7294,30 @@
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.leaderboardActualCost.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.leaderboardActualCost.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-gray-900 dark:text-white">
+                  {{ t('admin.settings.features.leaderboardActualCost.enabled') }}
+                </p>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.leaderboardActualCost.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.leaderboard_show_actual_cost" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('admin.settings.features.availableChannels.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -10024,6 +10048,7 @@ const form = reactive<SettingsForm>({
   channel_monitor_hide_throughput: false,
   channel_monitor_show_quota: false,
   channel_monitor_hide_user_ranking: false,
+  leaderboard_show_actual_cost: true,
   // Available Channels feature switch
   available_channels_enabled: false,
   // Subscription feature switch (user sidebar "My Subscriptions" entry)
@@ -11043,6 +11068,7 @@ async function loadSettings() {
     form.channel_monitor_hide_user_ranking = Boolean(
       settings.channel_monitor_hide_user_ranking
     );
+    form.leaderboard_show_actual_cost = settings.leaderboard_show_actual_cost !== false;
     form.login_agreement_updated_at =
       settings.login_agreement_updated_at || "2026-03-31";
     form.login_agreement_documents =
@@ -11723,6 +11749,7 @@ async function saveSettings() {
       channel_monitor_hide_throughput: Boolean(form.channel_monitor_hide_throughput),
       channel_monitor_show_quota: Boolean(form.channel_monitor_show_quota),
       channel_monitor_hide_user_ranking: Boolean(form.channel_monitor_hide_user_ranking),
+      leaderboard_show_actual_cost: Boolean(form.leaderboard_show_actual_cost),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
       // Subscription feature switch

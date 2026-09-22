@@ -234,6 +234,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyChannelMonitorHideThroughput,
 		SettingKeyChannelMonitorShowQuota,
 		SettingKeyChannelMonitorHideUserRanking,
+		SettingKeyLeaderboardShowActualCost,
 		SettingKeyAvailableChannelsEnabled,
 		SettingKeySubscriptionEnabled,
 		SettingKeyModelPlazaEnabled,
@@ -363,6 +364,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		ChannelMonitorHideThroughput:         !isFalseSettingValue(settings[SettingKeyChannelMonitorHideThroughput]),
 		ChannelMonitorShowQuota:              settings[SettingKeyChannelMonitorShowQuota] == "true",
 		ChannelMonitorHideUserRanking:        isTrueSettingValue(settings[SettingKeyChannelMonitorHideUserRanking]),
+		LeaderboardShowActualCost:            !isFalseSettingValue(settings[SettingKeyLeaderboardShowActualCost]),
 
 		AvailableChannelsEnabled: settings[SettingKeyAvailableChannelsEnabled] == "true",
 
@@ -487,6 +489,23 @@ func (s *SettingService) GetChannelMonitorRuntime(ctx context.Context) ChannelMo
 		ShowQuota:              vals[SettingKeyChannelMonitorShowQuota] == "true",
 		HideUserRanking:        isTrueSettingValue(vals[SettingKeyChannelMonitorHideUserRanking]),
 	}
+}
+
+// IsLeaderboardActualCostVisible reports whether ordinary users may receive
+// actual deducted costs from the token leaderboard. A missing setting value
+// preserves the historical visible behavior; an unavailable store or read
+// error fails closed so a transient dependency failure cannot expose a value
+// an administrator hid.
+func (s *SettingService) IsLeaderboardActualCostVisible(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	vals, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyLeaderboardShowActualCost})
+	if err != nil {
+		slog.Warn("failed to get leaderboard actual cost visibility setting, defaulting to hidden", "error", err)
+		return false
+	}
+	return !isFalseSettingValue(vals[SettingKeyLeaderboardShowActualCost])
 }
 
 // AvailableChannelsRuntime is the lightweight view of the available-channels feature
@@ -635,6 +654,7 @@ type PublicSettingsInjectionPayload struct {
 	// from non-admin channel-monitor v2 viewers; default false (visible).
 	ChannelMonitorHideUserRanking bool `json:"channel_monitor_hide_user_ranking"`
 	ChannelMonitorShowQuota       bool `json:"channel_monitor_show_quota"`
+	LeaderboardShowActualCost     bool `json:"leaderboard_show_actual_cost"`
 	AvailableChannelsEnabled      bool `json:"available_channels_enabled"`
 	SubscriptionEnabled           bool `json:"subscription_enabled"`
 	ModelPlazaEnabled             bool `json:"model_plaza_enabled"`
@@ -719,6 +739,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		ChannelMonitorHideThroughput:         settings.ChannelMonitorHideThroughput,
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
 		ChannelMonitorHideUserRanking:        settings.ChannelMonitorHideUserRanking,
+		LeaderboardShowActualCost:            settings.LeaderboardShowActualCost,
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
 		SubscriptionEnabled:                  settings.SubscriptionEnabled,
 		ModelPlazaEnabled:                    settings.ModelPlazaEnabled,

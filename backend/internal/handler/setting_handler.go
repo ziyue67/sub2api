@@ -110,6 +110,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		ChannelMonitorHideThroughput:         settings.ChannelMonitorHideThroughput,
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
 		ChannelMonitorHideUserRanking:        settings.ChannelMonitorHideUserRanking,
+		LeaderboardShowActualCost:            settings.LeaderboardShowActualCost,
 
 		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
 		SubscriptionEnabled:      settings.SubscriptionEnabled,

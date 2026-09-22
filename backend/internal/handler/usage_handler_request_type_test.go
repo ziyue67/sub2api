@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -28,6 +29,21 @@ type userUsageRepoCapture struct {
 	modelStats       []usagestats.ModelStat
 	groupStats       []usagestats.GroupStat
 	leaderboardRows  []usagestats.TokenLeaderboardRow
+}
+
+// leaderboardVisibilitySettingRepo is intentionally minimal: the handler only
+// needs GetMultiple to resolve the public leaderboard visibility switch.
+type leaderboardVisibilitySettingRepo struct {
+	service.SettingRepository
+	values map[string]string
+	err    error
+}
+
+func (r *leaderboardVisibilitySettingRepo) GetMultiple(context.Context, []string) (map[string]string, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.values, nil
 }
 
 func (s *userUsageRepoCapture) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagestats.UsageLogFilters) ([]service.UsageLog, *pagination.PaginationResult, error) {
@@ -86,9 +102,13 @@ func (s *userUsageRepoCapture) GetTokenLeaderboardWithFilters(_ context.Context,
 }
 
 func newUserUsageRequestTypeTestRouterWithRole(repo *userUsageRepoCapture, role string) *gin.Engine {
+	return newUserUsageRequestTypeTestRouterWithSettings(repo, role, nil)
+}
+
+func newUserUsageRequestTypeTestRouterWithSettings(repo *userUsageRepoCapture, role string, settingService *service.SettingService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	usageSvc := service.NewUsageService(repo, nil, nil, nil)
-	handler := NewUsageHandler(usageSvc, nil, nil, nil)
+	handler := NewUsageHandler(usageSvc, nil, nil, settingService)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 42})
@@ -142,6 +162,127 @@ func TestDashboardLeaderboardRejectsInvalidSort(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestDashboardLeaderboardHidesActualCostForOrdinaryUsersWhenDisabled(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:     42,
+			Email:      "user@example.com",
+			ActualCost: 0.1,
+		}},
+	}
+	settings := service.NewSettingService(&leaderboardVisibilitySettingRepo{
+		values: map[string]string{service.SettingKeyLeaderboardShowActualCost: "false"},
+	}, &config.Config{})
+	router := newUserUsageRequestTypeTestRouterWithSettings(repo, service.RoleUser, settings)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), `"actual_cost"`)
+}
+
+func TestDashboardLeaderboardDoesNotExposeHiddenActualCostAsSortOracle(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:     42,
+			Email:      "user@example.com",
+			ActualCost: 0.1,
+		}},
+	}
+	settings := service.NewSettingService(&leaderboardVisibilitySettingRepo{
+		values: map[string]string{service.SettingKeyLeaderboardShowActualCost: "false"},
+	}, &config.Config{})
+	router := newUserUsageRequestTypeTestRouterWithSettings(repo, service.RoleUser, settings)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?sort_by=actual_cost", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "tokens", repo.leaderboardQuery.SortBy)
+	require.Contains(t, rec.Body.String(), `"sort_by":"tokens"`)
+	require.NotContains(t, rec.Body.String(), `"actual_cost"`)
+}
+
+func TestDashboardLeaderboardKeepsActualCostForAdminsWhenDisabled(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:     42,
+			Email:      "admin@example.com",
+			ActualCost: 0.1,
+		}},
+	}
+	settings := service.NewSettingService(&leaderboardVisibilitySettingRepo{
+		values: map[string]string{service.SettingKeyLeaderboardShowActualCost: "false"},
+	}, &config.Config{})
+	router := newUserUsageRequestTypeTestRouterWithSettings(repo, service.RoleAdmin, settings)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?sort_by=actual_cost", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "actual_cost", repo.leaderboardQuery.SortBy)
+	require.Contains(t, rec.Body.String(), `"actual_cost":0.1`)
+}
+
+func TestDashboardLeaderboardKeepsActualCostForOrdinaryUsersWhenSettingMissing(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:     42,
+			Email:      "user@example.com",
+			ActualCost: 0.1,
+		}},
+	}
+	settings := service.NewSettingService(&leaderboardVisibilitySettingRepo{values: map[string]string{}}, &config.Config{})
+	router := newUserUsageRequestTypeTestRouterWithSettings(repo, service.RoleUser, settings)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"actual_cost":0.1`)
+}
+
+func TestDashboardLeaderboardHidesActualCostForOrdinaryUsersWhenSettingsUnavailable(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:     42,
+			Email:      "user@example.com",
+			ActualCost: 0.1,
+		}},
+	}
+	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleUser)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), `"actual_cost"`)
+}
+
+func TestDashboardLeaderboardPreservesVisibleZeroActualCost(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:     42,
+			Email:      "user@example.com",
+			ActualCost: 0,
+		}},
+	}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"actual_cost":0`)
 }
 
 func TestUserUsageListRequestTypePriority(t *testing.T) {

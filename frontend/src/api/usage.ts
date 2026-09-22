@@ -334,7 +334,8 @@ export interface TokenLeaderboardItem {
   cache_tokens: number
   image_output_tokens: number
   cost: number
-  actual_cost: number
+  /** Omitted (or null from an older server) when the administrator hides actual deducted cost from users. */
+  actual_cost?: number | null
   account_cost: number
   last_active_at: string
   is_me: boolean

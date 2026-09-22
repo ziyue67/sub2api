@@ -134,6 +134,11 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Affiliate',
   }),
+  leaderboardActualCost: defineFlag({
+    key: 'leaderboard_show_actual_cost',
+    mode: 'opt-out',
+    label: 'Leaderboard actual cost',
+  }),
 } as const
 
 export type RegisteredFeatureFlag = keyof typeof FeatureFlags
@@ -222,4 +227,9 @@ export function isChannelMonitorQuotaVisible(): boolean {
 export function isChannelMonitorUserRankingHidden(): boolean {
   const appStore = useAppStore()
   return Boolean(appStore.cachedPublicSettings?.channel_monitor_hide_user_ranking)
+}
+
+/** Show actual deducted cost on the user-facing token leaderboard. */
+export function isLeaderboardActualCostVisible(): boolean {
+  return isFeatureFlagEnabled(FeatureFlags.leaderboardActualCost)
 }

@@ -38,6 +38,12 @@ export default {
           hideUserRankingHint:
             'When on, the user Channel Monitor V2 page hides the user ranking tab and the user API returns no ranking rows. Admins still see the ranking.',
         },
+        leaderboardActualCost: {
+          title: 'Leaderboard actual cost visibility',
+          description: 'Control whether ordinary users can see each user\'s actual deducted cost on the Token leaderboard.',
+          enabled: 'Show actual cost to ordinary users',
+          enabledHint: 'When off, the user leaderboard omits the actual-cost field and column. Admin leaderboards and billing records are unchanged.',
+        },
         availableChannels: {
           title: 'Available Channels',
           description: 'Show logged-in users an aggregate view of the channels, models and pricing they can access. Disabled by default.',
