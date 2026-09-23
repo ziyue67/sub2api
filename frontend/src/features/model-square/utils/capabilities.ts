@@ -125,7 +125,7 @@ export function inferCapabilities(modelName: string, pricing?: UserSupportedMode
     name.includes('r1') ||
     name.includes('thinking') ||
     name.includes('reasoner') ||
-    (pricing?.max_reasoning_effort_multiplier != null && pricing.max_reasoning_effort_multiplier > 0)
+    Object.values(pricing?.reasoning_effort_multipliers ?? {}).some((v) => typeof v === 'number' && v > 0)
   ) {
     caps.add('reasoning')
   }
