@@ -348,6 +348,7 @@ type AccountListItem struct {
 	CredentialsStatus map[string]bool                   `json:"credentials_status,omitempty"`
 	Extra             map[string]any                    `json:"extra,omitempty"`
 	OllamaCloudUsage  *service.OllamaCloudUsageState    `json:"ollama_cloud_usage,omitempty"`
+	OpenCodeGoUsage   *service.OpenCodeGoUsageState     `json:"opencode_go_usage,omitempty"`
 	CodexTurnTickets  []service.OpenAICodexTicketStatus `json:"codex_turn_tickets,omitempty"`
 
 	ProxyID                 *int64     `json:"proxy_id"`

@@ -179,7 +179,7 @@ export function resolveCapabilities(modelName: string, pricing?: UserSupportedMo
   }
 
   // 渠道中配置了推理倍率
-  if (pricing?.max_reasoning_effort_multiplier != null && pricing.max_reasoning_effort_multiplier > 0) {
+  if (Object.values(pricing?.reasoning_effort_multipliers ?? {}).some((v) => typeof v === 'number' && v > 0)) {
     caps.add('reasoning')
   }
 
@@ -265,7 +265,7 @@ export function resolveEffectivePricing(
       image_input_price: channelPricing?.image_input_price ?? null,
       image_output_price: channelPricing?.image_output_price ?? null,
       intervals: channelPricing?.intervals ?? [],
-      max_reasoning_effort_multiplier: channelPricing?.max_reasoning_effort_multiplier ?? null,
+      reasoning_effort_multipliers: channelPricing?.reasoning_effort_multipliers ?? null,
     }
     return {
       pricing: fallbackPricing,
