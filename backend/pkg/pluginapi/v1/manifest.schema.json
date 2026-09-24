@@ -33,7 +33,12 @@
         "additionalProperties": false,
         "required": ["id", "platform", "account_type"],
         "properties": {
-          "id": { "const": "openai.oauth.outbound_transport.v1" },
+          "id": {
+            "enum": [
+              "openai.oauth.outbound_transport.v1",
+              "openai.account.scheduling.v1"
+            ]
+          },
           "platform": { "const": "openai" },
           "account_type": { "const": "oauth" }
         }
