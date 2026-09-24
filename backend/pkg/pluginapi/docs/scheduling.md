@@ -185,3 +185,34 @@ SUB2API_TEST_PLUGIN_PACKAGE=/path/to/plugin.s2plugin \
 
 后者会真正拉起插件进程，验证 go-plugin 握手、gRPC 帧序、配置协商、提名语义与
 出站转发，以及"429 后解除亲和并改提名"的闭环。
+
+## 试用：测试镜像
+
+调度能力是宿主侧改动，插件包本身是管理后台上传的（装不进镜像）。想直接试用
+完整能力，用本分支自动构建的测试镜像：
+
+```bash
+docker pull ghcr.io/ziyue67/sub2api:test-plugin-scheduling
+```
+
+镜像标签**全部带 `test-` 前缀**，与正式镜像完全隔离，不会互相覆盖。也提供
+按提交区分的标签：`test-plugin-scheduling-<sha>`。
+
+镜像里的宿主已经编译进调度能力，因此可以安装完整版插件包
+（`ziyue67.cpa-advanced-core-<版本>.s2plugin`）。
+
+> 若是自行构建镜像，等价做法是在 `main` 上应用 `host-ext` 补丁再
+> `docker build`。
+
+### 两个变体怎么选
+
+| 宿主 | 基础包（`*-basic-*`） | 完整包 |
+| --- | --- | --- |
+| 官方镜像 / 自行构建但未打补丁 | 可安装 | **装不上**（清单校验只认单一能力） |
+| 本分支测试镜像 / 已打补丁自建 | 可安装 | 可安装（含调度） |
+
+原版 Sub2API 安装完整包会报：
+
+```
+初期仅支持能力 openai.oauth.outbound_transport.v1
+```
