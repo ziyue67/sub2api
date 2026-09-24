@@ -22,6 +22,18 @@ const (
 	// （状态/调度/限流/暂停原因等），供插件排除不可调度账号。纯加法变更，v1
 	// 插件忽略新字段即可继续工作。
 	HostServiceAPIVersion = 2
+	// SchedulingAPIVersion 是账号调度能力（openai.account.scheduling.v1）
+	// 的契约版本。与 HostService 一样，它独立于 TransportAPIVersion，通过
+	// NominateAccount 在运行时协商：
+	//
+	//   - 未实现该 RPC 的既有插件返回 Unimplemented，宿主静默跳过，
+	//     完全沿用自身排序，转发能力不受任何影响。
+	//   - 声明了该能力但宿主不支持时，清单会被判为不兼容，不会半启用。
+	//
+	// v1：插件只做"提名"，不抢并发槽位、不写粘性、不绕过利润门。宿主在
+	// 候选集过滤完成后询问偏好，拿到提名后把该账号排到选择序列首位，其余
+	// 流程（抢槽、lane 水合、粘性绑定、失败重放）一律由宿主原生逻辑处理。
+	SchedulingAPIVersion = 1
 	// TransportPluginName 是 go-plugin 中注册的唯一能力名称。
 	TransportPluginName = "oauth_transport"
 )
