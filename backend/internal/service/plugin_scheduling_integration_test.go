@@ -227,7 +227,9 @@ func forwardViaPluginForAccount(t *testing.T, runtime *pluginRuntime, targetURL,
 			return 0, "", nil, err
 		}
 		if chunk := frame.GetBodyChunk(); len(chunk) > 0 {
-			received.Write(chunk)
+			// bytes.Buffer.Write 永不返回错误（仅可能在内存耗尽时 panic），
+			// 显式丢弃以满足 errcheck；这里不需要错误处理路径。
+			_, _ = received.Write(chunk)
 			continue
 		}
 		if frame.GetEnd() != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
@@ -209,25 +208,4 @@ func (m *PluginManager) NominateOpenAIAccountForScheduling(
 		req.GroupId = *groupID
 	}
 	return m.NominateOpenAIAccount(ctx, req, ids)
-}
-
-// sanitizePluginReason 把插件返回的 reason 收敛成安全的短标记，供日志使用。
-func sanitizePluginReason(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "unspecified"
-	}
-	var builder strings.Builder
-	for _, ch := range trimmed {
-		switch {
-		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9', ch == '_', ch == '-':
-			builder.WriteRune(ch)
-		default:
-			builder.WriteByte('_')
-		}
-		if builder.Len() >= 32 {
-			break
-		}
-	}
-	return builder.String()
 }
