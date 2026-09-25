@@ -72,8 +72,11 @@ var ProviderSet = wire.NewSet(
 	NewCompositeModelRouteRepository,
 	NewAccountRepository,
 	NewAdminAccountRepository,
+	NewAccountOpsRepository,
+	NewAccountTokenGuardRepository,
 	NewScheduledTestPlanRepository,   // 定时测试计划仓储
 	NewScheduledTestResultRepository, // 定时测试结果仓储
+	NewPelicanShowcaseRepository,     // 鹈鹕测智用户展示快照仓储
 	NewProxyRepository,
 	NewRedeemCodeRepository,
 	NewPromoCodeRepository,
@@ -93,6 +96,8 @@ var ProviderSet = wire.NewSet(
 	NewUsageCleanupRepository,
 	NewDashboardAggregationRepository,
 	NewSettingRepository,
+	NewCodexHarvestNodeRepository,
+	NewCodexHarvestFlowRepository,
 	NewOpsRepository,
 	NewAuditLogRepository,
 	NewPasskeyRepository,

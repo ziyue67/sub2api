@@ -310,6 +310,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		Concurrency:           source.Concurrency,
 		Priority:              source.Priority,
 		RateMultiplier:        cloneAccountValuePointer(source.RateMultiplier),
+		GroupRateMultiplier:   cloneAccountValuePointer(source.GroupRateMultiplier),
 		LoadFactor:            cloneAccountValuePointer(source.LoadFactor),
 		GroupIDs:              groupIDs,
 		ExpiresAt:             expiresAt,
@@ -469,6 +470,12 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		}
 		account.RateMultiplier = input.RateMultiplier
 	}
+	if input.GroupRateMultiplier != nil {
+		if *input.GroupRateMultiplier < 0 {
+			return nil, errors.New("group_rate_multiplier must be >= 0")
+		}
+		account.GroupRateMultiplier = input.GroupRateMultiplier
+	}
 	if input.LoadFactor != nil && *input.LoadFactor > 0 {
 		if *input.LoadFactor > 10000 {
 			return nil, errors.New("load_factor must be <= 10000")
@@ -575,6 +582,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
+	if err := ValidateGroupAllowedModels(input.GroupAllowedModels); err != nil {
+		return nil, err
+	}
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -821,6 +831,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		account.RateMultiplier = input.RateMultiplier
 	}
+	if input.GroupRateMultiplier != nil {
+		if *input.GroupRateMultiplier < 0 {
+			return nil, errors.New("group_rate_multiplier must be >= 0")
+		}
+		account.GroupRateMultiplier = input.GroupRateMultiplier
+	}
 	if input.LoadFactor != nil {
 		if *input.LoadFactor <= 0 {
 			account.LoadFactor = nil // 0 或负数表示清除
@@ -912,6 +928,13 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 绑定分组
 	if input.GroupIDs != nil {
 		if err := s.accountRepo.BindGroups(ctx, account.ID, *input.GroupIDs); err != nil {
+			return nil, err
+		}
+	}
+
+	// 分组内的模型限制写在绑定之后，只作用于最终绑定的分组。
+	if input.GroupAllowedModels != nil {
+		if err := s.accountRepo.SetGroupAllowedModels(ctx, account.ID, input.GroupAllowedModels); err != nil {
 			return nil, err
 		}
 	}
@@ -1156,6 +1179,12 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	if input.RateMultiplier != nil {
 		repoUpdates.RateMultiplier = input.RateMultiplier
 	}
+	if input.GroupRateMultiplier != nil {
+		if *input.GroupRateMultiplier < 0 {
+			return nil, errors.New("group_rate_multiplier must be >= 0")
+		}
+		repoUpdates.GroupRateMultiplier = input.GroupRateMultiplier
+	}
 	if input.LoadFactor != nil {
 		if *input.LoadFactor <= 0 {
 			repoUpdates.LoadFactor = nil // 0 或负数表示清除
@@ -1333,7 +1362,14 @@ func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Ac
 	if s.runtimeBlocker != nil {
 		s.runtimeBlocker.ClearAccountSchedulingBlock(id)
 	}
-	return s.accountRepo.GetByID(ctx, id)
+	updated, err := s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if updated != nil && updated.Platform == PlatformOpenAI {
+		s.settingService.NotifyCodexHarvest()
+	}
+	return updated, nil
 }
 
 func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
@@ -1347,6 +1383,9 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 	updated, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if schedulable && updated != nil && updated.Platform == PlatformOpenAI {
+		s.settingService.NotifyCodexHarvest()
 	}
 	return updated, nil
 }

@@ -113,6 +113,7 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 		LeaderboardShowActualCost:            settings.LeaderboardShowActualCost,
 
 		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
+		PelicanShowcaseEnabled:   settings.PelicanShowcaseEnabled,
 		SubscriptionEnabled:      settings.SubscriptionEnabled,
 
 		ModelPlazaEnabled:       settings.ModelPlazaEnabled,

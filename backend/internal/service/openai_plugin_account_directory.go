@@ -101,6 +101,11 @@ func accountToPluginInfo(account *Account) PluginAccountInfo {
 //     recurse into a stack-overflow panic if the reverse relation is ever
 //     populated. GroupIDs already conveys membership, so drop these for
 //     correctness (not secrecy).
+//   - Extra entries whose key is a private Codex turn-ticket slot (see
+//     IsOpenAICodexTicketPrivateExtraKey): request-scoped ticket state that must
+//     not leak. The remaining Extra entries are still released in full.
+//   - ProxyLanes / SelectedProxyLane: internal egress configuration and
+//     request-scoped runtime state, never part of the readable snapshot.
 //
 // Unexported fields (e.g. the hot-path caches) are never marshaled by encoding/json.
 func accountReadableSnapshotJSON(account *Account) []byte {
@@ -113,6 +118,14 @@ func accountReadableSnapshotJSON(account *Account) []byte {
 	clone.AccountGroups = nil
 	clone.ProxyLanes = nil
 	clone.SelectedProxyLane = nil
+	// Copy Extra instead of aliasing the live map so private Codex turn-ticket
+	// state can be redacted without mutating the source account.
+	clone.Extra = make(map[string]any, len(account.Extra))
+	for key, value := range account.Extra {
+		if !IsOpenAICodexTicketPrivateExtraKey(key) {
+			clone.Extra[key] = value
+		}
+	}
 	data, err := json.Marshal(&clone)
 	if err != nil {
 		return nil

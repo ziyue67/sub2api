@@ -128,6 +128,9 @@ func (m *mockAccountRepoForPlatform) AutoPauseExpiredAccounts(ctx context.Contex
 func (m *mockAccountRepoForPlatform) BindGroups(ctx context.Context, accountID int64, groupIDs []int64) error {
 	return nil
 }
+func (m *mockAccountRepoForPlatform) SetGroupAllowedModels(ctx context.Context, accountID int64, allowed map[int64][]string) error {
+	return nil
+}
 func (m *mockAccountRepoForPlatform) ListSchedulable(ctx context.Context) ([]Account, error) {
 	return nil, nil
 }

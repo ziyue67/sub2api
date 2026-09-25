@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -141,6 +142,49 @@ func runAntigravityGeminiStreamWithIdle(t *testing.T, userAgent string, idle tim
 	return recorder.Body.String(), sawKeepalive
 }
 
+// runAntigravityGeminiStreamWithIdleSynctest is the deterministic twin of
+// runAntigravityGeminiStreamWithIdle: it drives the keepalive ticker on a fake
+// clock inside a synctest bubble so a loaded CI runner cannot skip the first
+// tick. It returns only the downstream bytes; the callers assert on the output.
+func runAntigravityGeminiStreamWithIdleSynctest(t *testing.T, userAgent string, idle time.Duration) string {
+	t.Helper()
+	var output string
+	synctest.Test(t, func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		svc := newAntigravityCompatService(
+			config.GatewayConfig{MaxLineSize: defaultMaxLineSize, StreamKeepaliveInterval: 1},
+			nil,
+		)
+		c, recorder := newAntigravityCompatContext(http.MethodPost, "/v1beta/models/gemini-3.8-flash:streamGenerateContent", nil)
+		if userAgent != "" {
+			c.Request.Header.Set("User-Agent", userAgent)
+		}
+		reader, writer := io.Pipe()
+		resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
+		done := make(chan error, 1)
+		go func() {
+			_, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+			done <- err
+		}()
+		_, err := io.WriteString(
+			writer,
+			`data: {"response":{"responseId":"resp_1","candidates":[{"content":{"parts":[{"text":"partial"}]}}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":1}}}`+"\n\n",
+		)
+		require.NoError(t, err)
+		// Drain the first event before advancing the fake clock. Wall-clock sleeps
+		// raced with lastDataAt: the first 1s tick could be skipped while the test
+		// closed the stream at 1.2s, before the next tick could emit a heartbeat.
+		synctest.Wait()
+		time.Sleep(idle)
+		synctest.Wait()
+		require.NoError(t, writer.Close())
+		require.NoError(t, <-done)
+		require.NoError(t, reader.Close())
+		output = recorder.Body.String()
+	})
+	return output
+}
+
 func TestAntigravityGeminiStreamKeepsCommentKeepaliveForOrdinaryClients(t *testing.T) {
 	// The keepalive interval is configured in whole seconds. Leave enough idle
 	// time for the first data event to be processed before the ticker fires;
@@ -152,9 +196,23 @@ func TestAntigravityGeminiStreamKeepsCommentKeepaliveForOrdinaryClients(t *testi
 	require.Contains(t, out, `"text":"partial"`)
 }
 
+func TestAntigravityGeminiStreamKeepsCommentKeepaliveForOrdinaryClientsSynctest(t *testing.T) {
+	out := runAntigravityGeminiStreamWithIdleSynctest(t, "curl/8.7.1", 2200*time.Millisecond)
+	require.Contains(t, out, ":\n\n", "ordinary clients should still get the idle keepalive")
+	require.Contains(t, out, `"text":"partial"`)
+}
+
 func TestAntigravityGeminiStreamSkipsCommentKeepaliveForGoGenai(t *testing.T) {
 	out, sawKeepalive := runAntigravityGeminiStreamWithIdle(t, "google-genai-sdk/1.71.0 gl-go/go1.28-20260721-RC03", 2200*time.Millisecond)
 	require.False(t, sawKeepalive, "go-genai must never receive an SSE comment event")
+	require.Contains(t, out, `"text":"partial"`)
+	for _, event := range strings.Split(out, "\n\n") {
+		require.False(t, strings.HasPrefix(event, ":"), "go-genai must never receive an SSE comment event, got %q", event)
+	}
+}
+
+func TestAntigravityGeminiStreamSkipsCommentKeepaliveForGoGenaiSynctest(t *testing.T) {
+	out := runAntigravityGeminiStreamWithIdleSynctest(t, "google-genai-sdk/1.71.0 gl-go/go1.28-20260721-RC03", 1200*time.Millisecond)
 	require.Contains(t, out, `"text":"partial"`)
 	for _, event := range strings.Split(out, "\n\n") {
 		require.False(t, strings.HasPrefix(event, ":"), "go-genai must never receive an SSE comment event, got %q", event)

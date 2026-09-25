@@ -406,6 +406,8 @@ export default {
     latency: '延迟',
     latencyFirstToken: '首字',
     latencyDuration: '总耗时',
+    latencyTps: '平均 TPS',
+    latencyTpsHint: '平均 TPS = 输出 Token ÷ 总耗时(秒). 包含等待时间及上游计入输出用量的推理 Token, 不代表模型实际生成速度.',
     time: '时间',
     ws: 'WS',
     stream: '流式',
@@ -612,6 +614,47 @@ export default {
     empty: {
       title: '暂无可显示的渠道',
       description: '管理员尚未配置可监控的渠道。'
+    }
+  },
+
+  // Pelican showcase (user-facing gallery)
+  pelicanShowcase: {
+    title: '鹈鹕测智',
+    description: '各分组的模型定时完成同一道绘图题，直接看生成的作品，直观比较模型水平',
+    allGroups: '全部分组',
+    keepRule: '每组保留最近 {count} 张',
+    retentionRule: '超过 {days} 天自动清理',
+    itemCount: '{count} 张',
+    latestAt: '最近更新 {time}',
+    groupEmpty: '该分组还没有作品，定时测试成功生成后会出现在这里',
+    loadMore: '加载更多',
+    loadError: '加载鹈鹕测智失败',
+    itemLoading: '作品加载中…',
+    itemLoadError: '作品加载失败',
+    invalidHtml: '这张作品无法显示',
+    duration: '耗时 {seconds} 秒',
+    reasoning: '思考强度 {effort}',
+    efforts: {
+      minimal: '最低',
+      low: '低',
+      medium: '中',
+      high: '高',
+      xhigh: '极高'
+    },
+    preview: '查看大图',
+    previewTitle: '{group} · {model}',
+    sandboxNote: '作品在隔离沙箱中运行，不能联网，也读取不到你的账号信息。',
+    remove: '从展示中移除',
+    removeConfirm: '确定把这张作品从鹈鹕测智中移除吗？移除后所有用户都看不到它，此操作不能撤销。',
+    removed: '已从展示中移除',
+    removeFailed: '移除失败',
+    disabled: {
+      title: '鹈鹕测智暂未开放',
+      description: '管理员开启后，这里会展示各分组定时生成的作品。'
+    },
+    empty: {
+      title: '暂无作品',
+      description: '管理员还没有选择要展示的分组。'
     }
   },
 

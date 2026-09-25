@@ -27,6 +27,9 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 | `sub2api-datamanagementd.service` | datamanagementd systemd service unit file |
 | `DATAMANAGEMENTD_CN.md` | datamanagementd 部署与联动说明（中文） |
 | `config.example.yaml` | Example configuration file |
+| `install-mihomo-codex.sh` | Optional Mihomo sidecar for rotating Codex ticket harvest exits |
+| `mihomo-codex.service` | Systemd unit for the Mihomo ticket proxy |
+| `mihomo-codex.config.example.yaml` | Sanitized Mihomo subscription configuration example |
 | `EDGE_SECURITY.md` | Reverse proxy, CDN/WAF, trusted proxy, and ingress hardening guide |
 
 ---
@@ -458,6 +461,40 @@ sudo journalctl -u sub2api -f
 # Enable auto-start on boot
 sudo systemctl enable sub2api
 ```
+
+### Codex 292 ticket proxy
+
+The Codex ticket harvester can use a local Mihomo sidecar backed by an airport
+subscription. This keeps subscription credentials outside the application
+database and limits the proxy listener to localhost. Run the optional installer
+as root on the same server as Sub2API:
+
+```bash
+sudo MIHOMO_CODEX_SUBSCRIPTION_URL='https://provider.example/subscription' \
+  bash deploy/install-mihomo-codex.sh
+```
+
+For a fresh or versioned binary install, the same environment variable makes
+`install.sh` configure the sidecar automatically after downloading the
+release:
+
+```bash
+sudo MIHOMO_CODEX_SUBSCRIPTION_URL='https://provider.example/subscription' \
+  bash deploy/install.sh install -v v2.7.2
+```
+
+Without the variable, the installer detects an already active sidecar and
+leaves it untouched. It cannot provision an airport subscription on your
+behalf; the subscription URL remains the only required provider input.
+
+The installer downloads the pinned compatible Mihomo release, configures the
+`airport` provider with health checks and a `CODEX-ROTATE` round-robin group,
+and listens on `http://127.0.0.1:3101`. Set the admin setting **292 harvest
+proxy** to that local URL. Mihomo rotates only the ticket-harvest traffic;
+normal account requests continue to use their configured residential proxy.
+
+The subscription URL is written only to `/etc/mihomo-codex/config.yaml`
+(`0640`, `root:mihomo-codex`) and must not be committed or printed in logs.
 
 ### Configuration
 

@@ -526,6 +526,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/request-captures',
+    name: 'AdminRequestCaptures',
+    component: () => import('@/views/admin/RequestCaptureView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, requiresRequestCapture: true, titleKey: 'admin.requestCapture.title' }
+  },
+  {
     path: '/admin/ops',
     name: 'AdminOps',
     component: () => import('@/views/admin/ops/OpsDashboard.vue'),
@@ -613,6 +619,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/pelican-showcase',
+    name: 'PelicanShowcase',
+    component: () => import('@/views/user/PelicanShowcaseView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Pelican Showcase',
+      titleKey: 'pelicanShowcase.title',
+      descriptionKey: 'pelicanShowcase.description'
+    }
+  },
+  {
     path: '/admin/subscriptions',
     name: 'AdminSubscriptions',
     component: () => import('@/views/admin/SubscriptionsView.vue'),
@@ -624,6 +642,15 @@ const routes: RouteRecordRaw[] = [
       descriptionKey: 'admin.subscriptions.description'
     }
   },
+  { path: '/admin/smart-ops', redirect: '/admin/account-quality', meta: { requiresAuth: true, requiresAdmin: true } },
+  { path: '/admin/token-guard', name: 'AdminTokenGuard', component: () => import('@/views/admin/ops/TokenGuardView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Credential Guard', titleKey: 'tokenGuard.title', descriptionKey: 'tokenGuard.description' } },
+  { path: '/admin/account-ops', name: 'AdminAccountOps', component: () => import('@/views/admin/AccountOpsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Account operations', titleKey: 'accountOps.title', descriptionKey: 'accountOps.description' } },
+  {
+    path: '/admin/account-quality',
+    name: 'AdminAccountQuality',
+    component: () => import('@/views/admin/AccountQualityView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Account Quality Operations', titleKey: 'qualityOps.title', descriptionKey: 'qualityOps.description' }
+  },
   {
     path: '/admin/accounts',
     name: 'AdminAccounts',
@@ -634,6 +661,18 @@ const routes: RouteRecordRaw[] = [
       title: 'Account Management',
       titleKey: 'admin.accounts.title',
       descriptionKey: 'admin.accounts.description'
+    }
+  },
+  {
+    path: '/admin/harvest-flow',
+    name: 'AdminHarvestFlow',
+    component: () => import('@/views/admin/HarvestFlowView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Ticket Harvest Flow',
+      titleKey: 'admin.harvestFlow.title',
+      descriptionKey: 'admin.harvestFlow.description'
     }
   },
   {
@@ -1028,6 +1067,11 @@ router.beforeEach(async (to, _from, next) => {
     // User is authenticated but not admin, redirect to user dashboard
     next('/dashboard')
     return
+  }
+
+  if (requiresAdmin && authStore.isAdmin && to.meta.requiresRequestCapture) {
+    await adminSettingsStore.fetch(true)
+    if (!adminSettingsStore.requestCaptureEnabled) { next('/admin/settings'); return }
   }
 
   if (requiresAdmin && authStore.isAdmin) {

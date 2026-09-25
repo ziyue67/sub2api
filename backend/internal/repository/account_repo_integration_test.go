@@ -1741,6 +1741,56 @@ func (s *AccountRepoSuite) TestBulkUpdate_MergeExtra() {
 	s.Require().Equal("new_val", got.Extra["new_key"])
 }
 
+func (s *AccountRepoSuite) TestBulkUpdate_ExcelBPSModelScope() {
+	ids := make([]int64, 0, 2)
+	for _, name := range []string{"bulk-bps-one", "bulk-bps-two"} {
+		account := mustCreateAccount(s.T(), s.client, &service.Account{
+			Name: name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+			Credentials: map[string]any{"model_mapping": map[string]any{"alias": "gpt-6-astra"}},
+			Extra: map[string]any{
+				"openai_excel_bps":                          true,
+				"openai_excel_bps_models":                   []string{"gpt-6-astra"},
+				"openai_excel_bps_cache_creation_as_input":  true,
+				"openai_passthrough":                        true,
+				"openai_oauth_responses_websockets_v2_mode": "context_pool",
+			},
+		})
+		ids = append(ids, account.ID)
+	}
+	steps := []struct {
+		extra               map[string]any
+		astra, sol, billing bool
+		scopePresent        bool
+	}{
+		{map[string]any{"openai_excel_bps_models": nil, "openai_excel_bps_cache_creation_as_input": false}, true, true, false, false},
+		{map[string]any{"openai_excel_bps_models": []string{}}, false, false, false, true},
+		{map[string]any{"openai_excel_bps_models": []string{"gpt-6-astra"}, "openai_excel_bps_cache_creation_as_input": true}, true, false, true, true},
+		{map[string]any{"unrelated": "preserved"}, true, false, true, true},
+		{map[string]any{"openai_excel_bps": false}, false, false, false, false},
+	}
+	for _, step := range steps {
+		affected, err := s.repo.BulkUpdate(s.ctx, ids, service.AccountBulkUpdate{Extra: step.extra})
+		s.Require().NoError(err)
+		s.Require().Equal(int64(2), affected)
+		for _, id := range ids {
+			got, err := s.repo.GetByID(s.ctx, id)
+			s.Require().NoError(err)
+			s.Require().Equal(step.astra, got.IsExcelBPSEnabledForModel("alias"))
+			s.Require().Equal(step.sol, got.IsExcelBPSEnabledForModel("gpt-6-sol"))
+			s.Require().Equal(step.billing, got.IsExcelBPSCacheCreationAsInputEnabled())
+			_, scopePresent := got.Extra["openai_excel_bps_models"]
+			s.Require().Equal(step.scopePresent, scopePresent)
+			s.Require().Equal(true, got.Extra["openai_passthrough"])
+			s.Require().Equal("context_pool", got.Extra["openai_oauth_responses_websockets_v2_mode"])
+			s.Require().Equal("gpt-6-astra", got.GetMappedModel("alias"))
+			if !got.IsExcelBPSEnabled() {
+				s.Require().NotContains(got.Extra, "openai_excel_bps")
+				s.Require().NotContains(got.Extra, "openai_excel_bps_cache_creation_as_input")
+			}
+		}
+	}
+}
+
 func (s *AccountRepoSuite) TestBulkUpdate_EmptyIDs() {
 	affected, err := s.repo.BulkUpdate(s.ctx, []int64{}, service.AccountBulkUpdate{})
 	s.Require().NoError(err)
