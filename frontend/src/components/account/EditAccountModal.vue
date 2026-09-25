@@ -3269,9 +3269,7 @@ import type {
   OpenCodeGoUsageState,
   OpenCodeGoUsageWindow,
   GrokMediaEligibilityMode,
-  GrokMediaEligibilityState,
-  OpenCodeGoUsageState,
-  OpenCodeGoUsageWindow
+  GrokMediaEligibilityState
 } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'

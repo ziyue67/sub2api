@@ -79,12 +79,13 @@ func TestEnsureDeepSeekChatReasoningPlaceholders(t *testing.T) {
 	})
 
 	t.Run("non_deepseek_upstream_unchanged", func(t *testing.T) {
-		// A non-DeepSeek egress must stay byte-identical for the original DeepSeek
-		// model name (ours) and for a rewired non-DeepSeek model (theirs).
-		got := ensureDeepSeekChatReasoningPlaceholders(otherOpenAI, missing)
-		require.Equal(t, string(missing), string(got))
+		// A non-DeepSeek egress carrying a non-DeepSeek model must stay
+		// byte-identical. The merged semantics (isDeepSeekSemanticsChatUpstream)
+		// intentionally still fill placeholders when the outbound model itself
+		// is a DeepSeek model on an aggregator host; that path is covered by
+		// TestForwardResponses_DeepSeekReasoningUsesOutboundModel.
 		body := bytes.ReplaceAll(missing, []byte("deepseek-chat"), []byte("gpt-4.1"))
-		got = ensureDeepSeekChatReasoningPlaceholders(otherOpenAI, body)
+		got := ensureDeepSeekChatReasoningPlaceholders(otherOpenAI, body)
 		require.Equal(t, string(body), string(got))
 		require.False(t, gjson.GetBytes(got, "messages.1.reasoning_content").Exists())
 	})

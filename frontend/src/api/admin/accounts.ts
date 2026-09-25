@@ -35,9 +35,7 @@ import type {
   OpenCodeGoUsageSettings,
   OpenCodeGoUsageState,
   GrokMediaEligibilityMode,
-  GrokMediaEligibilityState,
-  OpenCodeGoUsageSettings,
-  OpenCodeGoUsageState
+  GrokMediaEligibilityState
 } from '@/types'
 
 /**

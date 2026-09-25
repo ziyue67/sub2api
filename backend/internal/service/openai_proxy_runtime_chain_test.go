@@ -102,6 +102,17 @@ func TestRuntimeProxyChainEveryHopMustProveUnsent(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://example.invalid", strings.NewReader("test"))
+			// doOpenAIUpstream shallow-copies the request (proxy lane context), so
+			// clone failures are injected through the GetBody closure the copy
+			// inherits rather than by reassigning req.GetBody mid-flight.
+			var failBodyClone atomic.Bool
+			getBody := req.GetBody
+			req.GetBody = func() (io.ReadCloser, error) {
+				if failBodyClone.Load() {
+					return nil, errors.New("cannot clone")
+				}
+				return getBody()
+			}
 			var calls int
 			s.httpUpstream = &runtimeFallbackUpstream{do: func(r *http.Request, proxy string, _ int64, _ int) (*http.Response, error) {
 				calls++
@@ -137,7 +148,7 @@ func TestRuntimeProxyChainEveryHopMustProveUnsent(t *testing.T) {
 				case "plugin-sent", "plugin-without-trace":
 					return nil, &PluginTransportError{Message: "connection refused", RequestSent: tc == "plugin-sent"}
 				case "body-clone-fails":
-					req.GetBody = func() (io.ReadCloser, error) { return nil, errors.New("cannot clone") }
+					failBodyClone.Store(true)
 				}
 				return nil, syscall.ECONNREFUSED
 			}}
