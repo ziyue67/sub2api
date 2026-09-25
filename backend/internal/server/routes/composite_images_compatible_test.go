@@ -26,6 +26,11 @@ type compatibleImagesAccounts struct {
 	accounts []service.Account
 }
 
+func (r compatibleImagesAccounts) GetOpenAITurnAdmission(ctx context.Context, id int64) (*service.Account, *service.Account, error) {
+	account, err := r.GetByID(ctx, id)
+	return account, nil, err
+}
+
 func (r compatibleImagesAccounts) GetByID(_ context.Context, id int64) (*service.Account, error) {
 	for _, account := range r.accounts {
 		if account.ID == id {
@@ -103,7 +108,7 @@ func TestCompositeCompatibleImagesEndToEnd(t *testing.T) {
 			upstream, usage := &compatibleImagesUpstream{}, &compatibleImagesUsage{}
 			billingCache := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 			t.Cleanup(billingCache.Stop)
-			gateway := service.NewOpenAIGatewayService(repo, usage, nil, nil, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, billingCache, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
+			gateway := service.NewOpenAIGatewayService(repo, nil, usage, nil, nil, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, billingCache, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
 			imagesHandler := handler.NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), billingCache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
 			publicModel := model
 			if scenario == "multipart_alias" {

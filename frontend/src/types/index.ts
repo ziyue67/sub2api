@@ -279,6 +279,8 @@ export interface PublicSettings {
   /** When false, ordinary users do not receive actual deducted cost on the leaderboard. */
   leaderboard_show_actual_cost?: boolean
   available_channels_enabled: boolean
+  /** Opt-in user gallery of scheduled Pelican HTML results (sidebar「鹈鹕测智」). */
+  pelican_showcase_enabled?: boolean
   /** When false, the whole user-facing subscription surface is hidden. Default true. */
   subscription_enabled: boolean
   /** Mirrors payment config BALANCE_PAYMENT_DISABLED; true = balance top-up closed (subscription-only site). */
@@ -339,7 +341,7 @@ export interface UpdateSubscriptionRequest {
 export type AnnouncementStatus = 'draft' | 'active' | 'archived'
 export type AnnouncementNotifyMode = 'silent' | 'popup'
 
-export type AnnouncementConditionType = 'subscription' | 'balance'
+export type AnnouncementConditionType = 'subscription' | 'balance' | 'user'
 
 export type AnnouncementOperator = 'in' | 'gt' | 'gte' | 'lt' | 'lte' | 'eq'
 
@@ -347,6 +349,7 @@ export interface AnnouncementCondition {
   type: AnnouncementConditionType
   operator: AnnouncementOperator
   group_ids?: number[]
+  user_ids?: number[]
   value?: number
 }
 
@@ -635,6 +638,8 @@ export interface Group {
 export interface AdminGroup extends Group {
   force_openai_fast: boolean
   free_openai_fast: boolean
+  // 仅允许流式请求（管理端请求策略，用户侧分组不返回）
+  stream_only: boolean
   model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
 	// Dynamic pricing is admin-only because it exposes upstream cost data.
 	dynamic_rate_enabled?: boolean
@@ -826,6 +831,7 @@ export interface CreateGroupRequest {
   long_context_pricing_enabled?: boolean
   force_openai_fast?: boolean
   free_openai_fast?: boolean
+  stream_only?: boolean
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
@@ -894,6 +900,7 @@ export interface UpdateGroupRequest {
   long_context_pricing_enabled?: boolean
   force_openai_fast?: boolean
   free_openai_fast?: boolean
+  stream_only?: boolean
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
@@ -1279,6 +1286,8 @@ export interface Account {
   ollama_cloud_usage?: OllamaCloudUsageState
   opencode_go_usage?: OpenCodeGoUsageState
   codex_turn_tickets?: Array<{
+    standby_expires_at?: string
+    probe?: { result: string; http_status?: number; checked_at: string; next_probe_at?: string }
     model: string
     length?: number
     ready: boolean
@@ -1286,6 +1295,7 @@ export interface Account {
     blocked: boolean
     expires_at?: string
   }>
+  opencode_go_usage?: OpenCodeGoUsageState
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
@@ -1330,6 +1340,7 @@ export interface Account {
   scheduler_scores?: AccountSchedulerGroupScore[] | null
   priority: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
+  group_rate_multiplier?: number // Account-level multiplier applied to group billing
   status: 'active' | 'inactive' | 'error'
   error_message: string | null
   last_used_at: string | null
@@ -1340,6 +1351,7 @@ export interface Account {
   proxy?: Proxy
   group_ids?: number[] // Groups this account belongs to
   groups?: Group[] // Preloaded group objects
+  account_groups?: AccountGroupBinding[] // Per-group binding settings (detail responses only)
 
   // Rate limit & scheduling fields
   schedulable: boolean
@@ -1606,11 +1618,22 @@ export interface CreateAccountRequest {
   load_factor?: number | null
   priority?: number
   rate_multiplier?: number // Account billing multiplier (>=0, 0 means free)
+  group_rate_multiplier?: number
   group_ids?: number[]
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
+}
+
+// AccountGroupBinding is one account-to-group binding and its per-group settings.
+export interface AccountGroupBinding {
+  account_id: number
+  group_id: number
+  priority: number
+  // Models the account may serve in this group; omitted means no limit.
+  allowed_models?: string[]
+  created_at: string
 }
 
 export interface UpdateAccountRequest {
@@ -1627,6 +1650,8 @@ export interface UpdateAccountRequest {
   schedulable?: boolean
   status?: 'active' | 'inactive' | 'error'
   group_ids?: number[]
+  // Replaces the per-group model limits; groups not listed become unrestricted.
+  group_allowed_models?: Record<number, string[]>
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
@@ -2515,7 +2540,39 @@ export interface TotpLogin2FARequest {
 
 // ==================== Scheduled Test Types ====================
 
+export interface QualityJudgeConfig {
+  group_id: number
+  model_id: string
+  prompt: string
+}
+export interface QualityJudgment {
+  verdict: 'correct' | 'incorrect' | 'unknown'
+  reason: string
+  account_id?: number
+  group_id?: number
+  model_id?: string
+}
+export interface QualityPolicy {
+  judge?: QualityJudgeConfig
+  expected_answer: string
+  action: 'remove_groups' | 'disable_scheduling'
+  remove_group_ids: number[]
+  auto_restore: boolean
+}
+
+export interface PelicanTestConfig {
+  quality?: QualityPolicy
+  question_kind?: 'candy' | 'pelican'
+  prompt: string
+  reasoning_effort: string
+  parallel_count: number
+  model_id?: string
+}
+
 export interface ScheduledTestPlan {
+  account_name?: string
+  pelican_config?: PelicanTestConfig
+  running_until?: string | null
   id: number
   account_id: number
   model_id: string
@@ -2530,6 +2587,10 @@ export interface ScheduledTestPlan {
 }
 
 export interface ScheduledTestResult {
+  quality_judgment?: QualityJudgment
+  quality_round_id?: string
+  quality_action?: string
+  pelican_config?: PelicanTestConfig
   id: number
   plan_id: number
   status: string
@@ -2542,6 +2603,7 @@ export interface ScheduledTestResult {
 }
 
 export interface CreateScheduledTestPlanRequest {
+  pelican_config?: PelicanTestConfig
   account_id: number
   model_id: string
   cron_expression: string
@@ -2551,6 +2613,7 @@ export interface CreateScheduledTestPlanRequest {
 }
 
 export interface UpdateScheduledTestPlanRequest {
+  pelican_config?: PelicanTestConfig
   model_id?: string
   cron_expression?: string
   enabled?: boolean

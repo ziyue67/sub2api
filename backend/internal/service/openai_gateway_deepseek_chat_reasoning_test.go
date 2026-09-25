@@ -49,6 +49,9 @@ func TestEnsureDeepSeekChatReasoningPlaceholders(t *testing.T) {
 	deepSeekAccount := openaiPlatformDeepSeekAccount()
 	nativeDeepSeek := &Account{Platform: PlatformDeepseek, Type: AccountTypeAPIKey}
 	otherOpenAI := &Account{
+		Status:      StatusActive,
+		Schedulable: true,
+
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "http://upstream.example"},
@@ -76,8 +79,13 @@ func TestEnsureDeepSeekChatReasoningPlaceholders(t *testing.T) {
 	})
 
 	t.Run("non_deepseek_upstream_unchanged", func(t *testing.T) {
+		// A non-DeepSeek egress must stay byte-identical for the original DeepSeek
+		// model name (ours) and for a rewired non-DeepSeek model (theirs).
 		got := ensureDeepSeekChatReasoningPlaceholders(otherOpenAI, missing)
 		require.Equal(t, string(missing), string(got))
+		body := bytes.ReplaceAll(missing, []byte("deepseek-chat"), []byte("gpt-4.1"))
+		got = ensureDeepSeekChatReasoningPlaceholders(otherOpenAI, body)
+		require.Equal(t, string(body), string(got))
 		require.False(t, gjson.GetBytes(got, "messages.1.reasoning_content").Exists())
 	})
 
@@ -85,6 +93,43 @@ func TestEnsureDeepSeekChatReasoningPlaceholders(t *testing.T) {
 		got := ensureDeepSeekChatReasoningPlaceholders(nil, missing)
 		require.Equal(t, string(missing), string(got))
 	})
+}
+
+func TestForwardResponses_DeepSeekReasoningUsesOutboundModel(t *testing.T) {
+	for _, tc := range []struct {
+		name, requested, upstream string
+		mapping                   map[string]any
+		wantPlaceholder           bool
+	}{
+		{"mapped_deepseek", "gpt-5.6-sol", "deepseek-chat", map[string]any{"gpt-5.6-sol": "deepseek-chat"}, true},
+		{"mixed_non_deepseek", "gpt-5.6-sol", "gpt-4.1", map[string]any{"gpt-5.6-sol": "gpt-4.1", "deepseek-alias": "deepseek-chat"}, false},
+		{"direct_deepseek", "deepseek-chat", "deepseek-chat", nil, true},
+		{"deepseek_alias_to_other_model", "deepseek-alias", "gpt-4.1", map[string]any{"deepseek-alias": "gpt-4.1"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := openaiPlatformDeepSeekAccount()
+			account.Credentials["base_url"] = "https://aggregator.example"
+			if tc.mapping != nil {
+				account.Credentials["model_mapping"] = tc.mapping
+			}
+			body := bytes.ReplaceAll(deepSeekChatHistoryWithEncryptedReasoning(), []byte("gpt-5.6-sol"), []byte(tc.requested))
+			c := newDeepSeekChatFallbackContext(t, body)
+			upstream := newOKChatCompletionsUpstream("rid_model_scope", deepSeekChatFallbackOKBody)
+			svc := &OpenAIGatewayService{cfg: deepSeekChatFallbackTestConfig(), httpUpstream: upstream}
+
+			result, err := svc.Forward(context.Background(), c, account, body)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, tc.upstream, gjson.GetBytes(upstream.lastBody, "model").String())
+			reasoning := gjson.GetBytes(upstream.lastBody, "messages.0.reasoning_content")
+			if tc.wantPlaceholder {
+				require.Equal(t, deepSeekChatReasoningPlaceholderText, reasoning.String())
+			} else {
+				require.False(t, reasoning.Exists(), "non-DeepSeek outbound models must not receive placeholders")
+			}
+			require.Equal(t, "call_1", gjson.GetBytes(upstream.lastBody, "messages.0.tool_calls.0.id").String())
+		})
+	}
 }
 
 type reasoningHitCache struct {
@@ -170,6 +215,9 @@ func TestForwardResponses_NonDeepSeekChatFallbackDoesNotInjectReasoningPlacehold
 	c := newDeepSeekChatFallbackContext(t, body)
 	upstream := newOKChatCompletionsUpstream("rid_other_rc", deepSeekChatFallbackOKBody)
 	account := &Account{
+		Status:      StatusActive,
+		Schedulable: true,
+
 		ID:       99,
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeAPIKey,

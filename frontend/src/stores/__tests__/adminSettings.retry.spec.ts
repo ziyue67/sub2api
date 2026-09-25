@@ -49,3 +49,18 @@ describe('admin settings fetch retry', () => {
     expect(mocks.getConfig).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('request capture setting', () => {
+  it('stays hidden until settings explicitly enable it', async () => {
+    const store = useAdminSettingsStore(); expect(store.requestCaptureEnabled).toBe(false)
+    mocks.getSettings.mockResolvedValueOnce({ request_capture_enabled: true }); await store.fetch(); expect(store.requestCaptureEnabled).toBe(true)
+    store.setRequestCaptureEnabledLocal(false); expect(store.requestCaptureEnabled).toBe(false)
+  })
+  it('awaits the same in-flight settings load for route guards', async () => {
+    let resolve!: (v: unknown) => void
+    mocks.getSettings.mockReturnValueOnce(new Promise(r => { resolve = r }))
+    const store = useAdminSettingsStore(), first = store.fetch(), second = store.fetch(true)
+    let finished = false; void second.then(() => { finished = true }); await Promise.resolve(); expect(finished).toBe(false)
+    resolve({ request_capture_enabled: true }); await Promise.all([first, second]); expect(store.requestCaptureEnabled).toBe(true); expect(mocks.getSettings).toHaveBeenCalledTimes(1)
+  })
+})

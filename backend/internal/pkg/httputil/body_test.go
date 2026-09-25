@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,6 +14,13 @@ import (
 )
 
 const samplePayload = `{"model":"gpt-5.5","input":"hi","stream":false}`
+
+type zeroBodyReader struct{}
+
+func (zeroBodyReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
 
 func newRequestWithBody(t *testing.T, body []byte, encoding string) *http.Request {
 	t.Helper()
@@ -75,6 +84,27 @@ func TestReadRequestBodyWithPrealloc_DecodesGzip(t *testing.T) {
 	}
 	if string(got) != samplePayload {
 		t.Fatalf("body mismatch: got %q", got)
+	}
+}
+
+func TestReadRequestBodyWithPreallocLimit_DecodesAboveDefaultCap(t *testing.T) {
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	const decodedSize = 65 << 20
+	if _, err := io.CopyN(writer, zeroBodyReader{}, decodedSize); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := ReadRequestBodyWithPreallocLimit(newRequestWithBody(t, compressed.Bytes(), "gzip"), 128<<20)
+	if err != nil || len(body) != decodedSize {
+		t.Fatalf("decoded size = %d, error = %v", len(body), err)
+	}
+	_, err = ReadRequestBodyWithPreallocLimit(newRequestWithBody(t, compressed.Bytes(), "gzip"), 1<<20)
+	var maxErr *http.MaxBytesError
+	if !errors.As(err, &maxErr) || maxErr.Limit != 1<<20 {
+		t.Fatalf("expected 1 MiB limit, got %v", err)
 	}
 }
 

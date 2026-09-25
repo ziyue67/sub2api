@@ -102,7 +102,8 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 		"ID": {}, "Name": {}, "Notes": {}, "Platform": {}, "Type": {}, "Extra": {},
 		"Proxy": {}, "ProxyID": {}, "ProxyFallbackOriginID": {}, "ProxyFallbackOriginName": {},
 		"Concurrency": {}, "Priority": {}, "RateMultiplier": {}, "LoadFactor": {},
-		"Status": {}, "ErrorMessage": {}, "LastUsedAt": {}, "ExpiresAt": {},
+		"GroupRateMultiplier": {},
+		"Status":              {}, "ErrorMessage": {}, "LastUsedAt": {}, "ExpiresAt": {},
 		"AutoPauseOnExpired": {}, "CreatedAt": {}, "UpdatedAt": {}, "Schedulable": {},
 		"RateLimitedAt": {}, "RateLimitResetAt": {}, "OverloadUntil": {},
 		"TempUnschedulableUntil": {}, "TempUnschedulableReason": {},
@@ -128,7 +129,7 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 	acct := &Account{
 		ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive,
 		Credentials: map[string]any{"access_token": "AT", "refresh_token": "LEAK-REFRESH"},
-		Extra:       map[string]any{"opaque": "extra-released"},
+		Extra:       map[string]any{"opaque": "extra-released", "codex_turn_ticket:gpt-6-astra": map[string]any{"state": "private-ticket-state"}},
 		Proxy:       &Proxy{Host: "host", Port: 1, Username: "user", Password: "pw-released"},
 	}
 	snap := accountReadableSnapshotJSON(acct)
@@ -136,6 +137,8 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(snap, &m))
 	assert.NotContains(t, string(snap), "LEAK-REFRESH", "raw Credentials must never appear in metadata")
+	assert.NotContains(t, string(snap), "private-ticket-state")
+	assert.Contains(t, acct.Extra, "codex_turn_ticket:gpt-6-astra", "redaction must not mutate the source account")
 	assert.Contains(t, string(snap), "extra-released", "Extra is intentionally released")
 	assert.Contains(t, string(snap), "pw-released", "proxy is intentionally released (already exposed via 打票)")
 

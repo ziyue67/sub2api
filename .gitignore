@@ -144,6 +144,9 @@ docs/*
 !docs/releases/
 !docs/releases/*.md
 !docs/codex-credits.md
+!docs/cyber-session-blocking.md
+!docs/request-capture.md
+!docs/account-token-guard.md
 !docs/legal/
 !docs/legal/*.md
 !docs/screenshots/
@@ -165,3 +168,5 @@ issues/
 /plugins/
 
 .reasonix/
+
+!docs/codex-ticket-pinning.md

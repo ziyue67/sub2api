@@ -201,24 +201,92 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	acquireCtx, acquireCancel := context.WithTimeout(ctx, s.openAIWSAcquireTimeout())
 	defer acquireCancel()
+	if s.boundCodexTicketFromHeader(ctx, wsHeaders, account) != nil {
+		defer s.holdCodexTicketChat(account)()
+	}
+
+	proxyURL, releaseHarvest, pinErr := s.pinCodexTicketWSAcquire(acquireCtx, wsHeaders, account)
+	if pinErr != nil {
+		return nil, wrapOpenAIWSFallback("codex_ticket_unavailable", pinErr)
+	}
+	defer releaseHarvest()
 
 	lease, err := s.getOpenAIWSConnPool().Acquire(acquireCtx, openAIWSAcquireRequest{
 		Account: account,
 		WSURL:   wsURL,
 		Headers: wsHeaders,
 		HeadersFactory: func(factoryCtx context.Context, headers http.Header) (http.Header, error) {
+			latest, err := s.admitOpenAITurnForGroup(factoryCtx, groupID, account, mappedModel)
+			if err != nil {
+				s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
+					factoryCtx,
+					groupID,
+					sessionHash,
+					previousResponseID,
+					account.ID,
+					err,
+				)
+				return nil, err
+			}
+			if err := s.applyOpenAICodexTicket(factoryCtx, latest, mappedModel, headers, "websocket"); err != nil {
+				s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
+					factoryCtx,
+					groupID,
+					sessionHash,
+					previousResponseID,
+					account.ID,
+					err,
+				)
+				return nil, err
+			}
 			return s.refreshOpenAIAgentIdentityHeaders(factoryCtx, account, headers)
+		},
+		BindHandshake: func(headers http.Header) *openAIWSTurnBinding {
+			return s.bindOpenAIWSHandshake(account, mappedModel, headers)
+		},
+		CheckBinding: func(checkCtx context.Context, b *openAIWSTurnBinding) error {
+			latest, err := s.admitOpenAITurnForGroup(checkCtx, groupID, account, mappedModel)
+			if err != nil {
+				s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
+					checkCtx,
+					groupID,
+					sessionHash,
+					previousResponseID,
+					account.ID,
+					err,
+				)
+				return err
+			}
+			if err := s.checkOpenAIWSBinding(latest, mappedModel, b); err != nil {
+				s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
+					checkCtx,
+					groupID,
+					sessionHash,
+					previousResponseID,
+					account.ID,
+					err,
+				)
+				return err
+			}
+			return nil
 		},
 		PreferredConnID: preferredConnID,
 		ForceNewConn:    forceNewConn,
 		ProxyURL: func() string {
-			if account.ProxyID != nil && account.Proxy != nil {
-				return AccountProxyURL(account)
+			// Codex 门票采集出口 pin 成功时会给出与账号默认出口不同的 URL，
+			// 此时必须使用 pinned 出口；未发生 pinning 时按代理车道语义解析，
+			// 保证 direct / 未 hydrate 车道不会回退到账号旧代理。
+			baseURL := openAIAccountProxyURL(account)
+			if proxyURL != "" && proxyURL != baseURL {
+				return proxyURL
 			}
-			return ""
+			return AccountProxyURL(account)
 		}(),
 	})
 	if err != nil {
+		if IsOpenAITurnAdmissionError(err) {
+			return nil, err
+		}
 		var agentDialErr *openAIWSDialError
 		if s.isAgentIdentityAccount(ctx, account) && errors.As(err, &agentDialErr) && isAgentIdentityTaskInvalidWSDialError(agentDialErr) && agentTaskRecoveryTried != nil && !*agentTaskRecoveryTried {
 			*agentTaskRecoveryTried = true
@@ -328,6 +396,27 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
+	checkBeforeWrite := func() error {
+		latest, err := s.admitOpenAITurn(ctx, c, account, mappedModel)
+		if err == nil {
+			err = s.checkOpenAIWSBinding(latest, mappedModel, lease.conn.turnBinding)
+		}
+		if err != nil {
+			s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
+				ctx,
+				groupID,
+				sessionHash,
+				previousResponseID,
+				account.ID,
+				err,
+			)
+			lease.MarkBroken()
+		}
+		return err
+	}
+	if err := checkBeforeWrite(); err != nil {
+		return nil, err
+	}
 	if err := s.performOpenAIWSGeneratePrewarm(
 		ctx,
 		lease,
@@ -342,6 +431,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		return nil, err
 	}
 
+	if err := checkBeforeWrite(); err != nil {
+		return nil, err
+	}
 	if err := lease.WriteJSONWithContextTimeout(ctx, payload, s.openAIWSWriteTimeout()); err != nil {
 		lease.MarkBroken()
 		logOpenAIWSModeInfo(

@@ -20,6 +20,7 @@ import (
 
 // RateLimitService 处理限流和过载状态管理
 type RateLimitService struct {
+	accountOps            *AccountOpsService
 	accountRepo           AccountRepository
 	usageRepo             UsageLogRepository
 	cfg                   *config.Config
@@ -330,6 +331,7 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // HandleUpstreamError 处理上游错误响应，标记账号状态
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
+	ctx = s.observeAccountOps(ctx, account, statusCode, headers, responseBody)
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
 	// Team 联动熔断必须先于池模式/自定义错误码/临时不可调度的各类早退；
 	// 同请求内与 fastpath 调用点的重复触发由方法内去重吸收。
@@ -2285,7 +2287,11 @@ func (s *RateLimitService) HandleTempUnschedulable(ctx context.Context, account 
 		return false
 	}
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
-	return s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel))
+	matched := s.tryTempUnschedulable(ctx, account, statusCode, responseBody, firstRequestedModel(requestedModel))
+	if matched {
+		s.observeAccountOps(ctx, account, statusCode, nil, responseBody)
+	}
+	return matched
 }
 
 func (s *RateLimitService) HandleOpenAIImageRateLimit(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte) bool {

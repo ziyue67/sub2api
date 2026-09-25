@@ -55,6 +55,12 @@ func buildOpenAIResponsesURL(base string) string {
 // buildOpenAIResponsesURLForPlatform 组装 Responses 端点（平台感知）。
 // DeepSeek 官方 Responses 端点为 /responses（无 /v1 前缀，适配 Codex）；
 // 其余平台维持 /v1/responses。
+//
+// 第三方 DeepSeek 兼容上游（聚合站/自建 relay）不统一：有的与官方一样在根路径
+// 提供 /responses，有的只提供 /v1/responses。因此在 base_url 上显式带上版本号
+// 是唯一可靠的配置方式：base 以 /v1 结尾时 buildOpenAIEndpointURL 不再追加
+// /v1，直接得到 /v1/responses；base 写成 .../responses 时也不再追加路径。
+// 多协议账号用 credentials.api_base_urls.responses 指定该地址即可。
 func buildOpenAIResponsesURLForPlatform(platform string, base string) string {
 	if platform == PlatformDeepseek {
 		return buildOpenAIEndpointURL(base, "/responses")
@@ -190,7 +196,10 @@ func normalizeDeepSeekResponsesRequestBody(account *Account, body []byte) []byte
 }
 
 func shouldAliasDeepSeekResponsesInputImages(account *Account) bool {
-	return targetsDeepSeekAPIHost(account)
+	// 等价于 HEAD 侧的 targetsDeepSeekAPIHost(account)：platform=deepseek 或
+	// base_url 指向 api.deepseek.com。该 helper 已被 ranxi 侧更完整的
+	// isDeepSeekSemanticsChatUpstream 取代，这里保留同语义的账号级判定。
+	return account != nil && (account.Platform == PlatformDeepseek || isDeepSeekAPIHost(account.GetOpenAIBaseURL()))
 }
 
 // aliasDeepSeekResponsesInputImages 把图片 part 改写成 DeepSeek 能反序列化
@@ -656,6 +665,13 @@ func openAIRequestBodyHasTools(body []byte) bool {
 	if tools := gjson.GetBytes(body, "tools"); tools.IsArray() && len(tools.Array()) > 0 {
 		return true
 	}
+	return openAIRequestBodyHasAdditionalTools(body)
+}
+
+// openAIRequestBodyHasAdditionalTools 报告请求是否把工具声明放在
+// input[].additional_tools 条目上。这是 Codex Responses Lite 的形状：顶层没有
+// tools，工具声明挂在 input 的 additional_tools 条目里。
+func openAIRequestBodyHasAdditionalTools(body []byte) bool {
 	for _, item := range gjson.GetBytes(body, "input").Array() {
 		if strings.TrimSpace(item.Get("type").String()) != "additional_tools" {
 			continue

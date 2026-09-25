@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
+	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"io"
 	"log/slog"
 	"net"
@@ -202,8 +204,15 @@ func NewHTTPUpstream(cfg *config.Config) service.HTTPUpstream {
 //   - 调用方必须关闭 resp.Body，否则会导致 inFlight 计数泄漏
 //   - inFlight > 0 的客户端不会被淘汰，确保活跃请求不被中断
 func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	if req != nil {
+		requestcapture.FromContext(req.Context()).BindAccount(accountID)
+		req = req.WithContext(requestcapture.WithAccount(req.Context(), accountID))
+	}
 	applyGrokCLIProxyHeaders(req)
 	if err := s.validateRequestHost(req); err != nil {
+		if req != nil {
+			requestcapture.FromContext(req.Context()).SelectionFailed(accountID, 0, nil, nil, err)
+		}
 		return nil, err
 	}
 	profile := service.HTTPUpstreamProfileDefault
@@ -215,13 +224,14 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
 	entry, err := s.acquireClientWithProfileAndLane(proxyURL, accountID, accountConcurrency, profile, laneID)
 	if err != nil {
+		requestcapture.FromContext(req.Context()).SelectionFailed(accountID, 0, nil, nil, err)
 		return nil, err
 	}
 
 	// 执行请求
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
-	resp, err := doUpstreamRequest(client, req)
+	resp, err := doWithOpenAIPreRequestRetry(client, req, proxyURL, profile)
 	if err != nil {
 		s.recordOpenAIHTTP2Failure(profile, entry.protocolMode, entry.proxyKey, err)
 		// 请求失败，立即减少计数
@@ -261,6 +271,10 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	if req != nil && req.URL != nil && strings.EqualFold(req.URL.Scheme, "http") {
 		return s.Do(req, proxyURL, accountID, accountConcurrency)
 	}
+	if req != nil {
+		requestcapture.FromContext(req.Context()).BindAccount(accountID)
+		req = req.WithContext(requestcapture.WithAccount(req.Context(), accountID))
+	}
 	applyGrokCLIProxyHeaders(req)
 	upstreamProfile := service.HTTPUpstreamProfileDefault
 	if req != nil {
@@ -278,19 +292,23 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	slog.Debug("tls_fingerprint_enabled", "account_id", accountID, "target", targetHost, "proxy", proxyInfo, "profile", profile.Name)
 
 	if err := s.validateRequestHost(req); err != nil {
+		if req != nil {
+			requestcapture.FromContext(req.Context()).SelectionFailed(accountID, 0, nil, nil, err)
+		}
 		return nil, err
 	}
 
 	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
 	entry, err := s.acquireClientWithTLSAndLane(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID)
 	if err != nil {
+		requestcapture.FromContext(req.Context()).SelectionFailed(accountID, 0, nil, nil, err)
 		slog.Debug("tls_fingerprint_acquire_client_failed", "account_id", accountID, "error", err)
 		return nil, err
 	}
 
 	client := s.httpClientForUpstreamRequest(entry.client, req)
 	client = httpClientWithGrokAccessDeniedFallback(client)
-	resp, err := doUpstreamRequest(client, req)
+	resp, err := doWithOpenAIPreRequestRetry(client, req, proxyURL, upstreamProfile)
 	if err != nil {
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
@@ -308,7 +326,12 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 
 // doUpstreamRequest owns cancellation for one attempt, without cancelling the
 // caller's context (which may be detached for billing or reused for retries).
-func doUpstreamRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+func doUpstreamRequest(client *http.Client, req *http.Request) (result *http.Response, resultErr error) {
+	req, timingTrace := requesttiming.StartTransport(req)
+	defer func() { timingTrace.Response(result, resultErr) }()
+	_, observeCapture := requestcapture.FromContext(req.Context()).ObserveHTTPRequest(req, requestcapture.AccountFromContext(req.Context()))
+	defer func() { observeCapture(result, resultErr) }()
+
 	ctx, cancel := context.WithCancel(req.Context())
 	resp, err := servertiming.Do(client, req.WithContext(ctx))
 	if err != nil {

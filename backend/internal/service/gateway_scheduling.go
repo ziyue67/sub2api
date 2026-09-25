@@ -328,7 +328,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				filteredPlatform++
 				continue
 			}
-			if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, account, requestedModel) {
+			if requestedModel != "" && !s.isModelSupportedByAccountInGroup(ctx, account, groupID, requestedModel) {
 				filteredModelMapping++
 				continue
 			}
@@ -385,7 +385,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						gatePass := s.isAccountSchedulableForSelection(stickyAccount) &&
 							s.isGatewayAccountProfitEligible(ctx, stickyAccount) &&
 							s.isAccountAllowedForPlatform(stickyAccount, platform, useMixed) &&
-							(requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, stickyAccount, requestedModel)) &&
+							(requestedModel == "" || s.isModelSupportedByAccountInGroup(ctx, stickyAccount, groupID, requestedModel)) &&
 							!isChannelRestricted(stickyAccount) &&
 							s.isAccountSchedulableForModelSelection(ctx, stickyAccount, requestedModel) &&
 							s.isAccountSchedulableForQuota(stickyAccount) &&
@@ -583,7 +583,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				// 反序列化后 AccountGroups 字段为空，导致 isAccountInGroup 永远返回 false。
 				platformOK := s.isAccountAllowedForPlatform(account, platform, useMixed)
 				profitOK := s.isGatewayAccountProfitEligible(ctx, account)
-				modelSupported := requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)
+				modelSupported := requestedModel == "" || s.isModelSupportedByAccountInGroup(ctx, account, groupID, requestedModel)
 				channelOK := !isChannelRestricted(account)
 				modelSchedulable := s.isAccountSchedulableForModelSelection(ctx, account, requestedModel)
 				quotaOK := s.isAccountSchedulableForQuota(account)
@@ -719,7 +719,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !s.isAccountAllowedForPlatform(acc, platform, useMixed) {
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccountInGroup(ctx, acc, groupID, requestedModel) {
 			continue
 		}
 		if isChannelRestricted(acc) {
@@ -2083,7 +2083,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
-						if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) && !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel) {
+						if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountInGroup(ctx, account, groupID, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) && !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel) {
 							if s.debugModelRoutingEnabled() {
 								logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
 							}
@@ -2140,7 +2140,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 					fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
 				continue
 			}
-			if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
+			if requestedModel != "" && !s.isModelSupportedByAccountInGroup(ctx, acc, groupID, requestedModel) {
 				continue
 			}
 			if !s.isAccountSchedulableForModelSelection(ctx, acc, requestedModel) {
@@ -2205,7 +2205,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
-					if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
+					if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountInGroup(ctx, account, groupID, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
 						return account, nil
 					}
 				}
@@ -2254,7 +2254,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 				fmt.Sprintf("Privacy not set, required by group [%s]", schedGroup.Name))
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccountInGroup(ctx, acc, groupID, requestedModel) {
 			continue
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel) {
@@ -2347,7 +2347,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
-						if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
+						if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountInGroup(ctx, account, groupID, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
 							if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
 								if s.debugModelRoutingEnabled() {
 									logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
@@ -2406,7 +2406,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			if acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
 				continue
 			}
-			if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
+			if requestedModel != "" && !s.isModelSupportedByAccountInGroup(ctx, acc, groupID, requestedModel) {
 				continue
 			}
 			if !s.isAccountSchedulableForModelSelection(ctx, acc, requestedModel) {
@@ -2471,7 +2471,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
-					if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) && !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel) {
+					if !clearSticky && s.isGatewayAccountProfitEligible(ctx, account) && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountInGroup(ctx, account, groupID, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) && !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel) {
 						if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
 							return account, nil
 						}
@@ -2521,7 +2521,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		if acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccountInGroup(ctx, acc, groupID, requestedModel) {
 			continue
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel) {
@@ -2611,7 +2611,7 @@ func (s *GatewayService) logDetailedSelectionFailure(
 	excludedIDs map[int64]struct{},
 	allowMixedScheduling bool,
 ) selectionFailureStats {
-	stats := s.collectSelectionFailureStats(ctx, accounts, requestedModel, platform, excludedIDs, allowMixedScheduling)
+	stats := s.collectSelectionFailureStats(ctx, groupID, accounts, requestedModel, platform, excludedIDs, allowMixedScheduling)
 	logger.LegacyPrintf(
 		"service.gateway",
 		"[SelectAccountDetailed] group_id=%v model=%s platform=%s session=%s total=%d eligible=%d excluded=%d unschedulable=%d platform_filtered=%d model_unsupported=%d model_rate_limited=%d profit_threshold=%d profit_invalid_account_rate=%d sample_platform_filtered=%v sample_model_unsupported=%v sample_model_rate_limited=%v",
@@ -2637,6 +2637,7 @@ func (s *GatewayService) logDetailedSelectionFailure(
 
 func (s *GatewayService) collectSelectionFailureStats(
 	ctx context.Context,
+	groupID *int64,
 	accounts []Account,
 	requestedModel string,
 	platform string,
@@ -2649,7 +2650,7 @@ func (s *GatewayService) collectSelectionFailureStats(
 
 	for i := range accounts {
 		acc := &accounts[i]
-		diagnosis := s.diagnoseSelectionFailure(ctx, acc, requestedModel, platform, excludedIDs, allowMixedScheduling)
+		diagnosis := s.diagnoseSelectionFailure(ctx, groupID, acc, requestedModel, platform, excludedIDs, allowMixedScheduling)
 		switch diagnosis.Category {
 		case "excluded":
 			stats.Excluded++
@@ -2679,6 +2680,7 @@ func (s *GatewayService) collectSelectionFailureStats(
 
 func (s *GatewayService) diagnoseSelectionFailure(
 	ctx context.Context,
+	groupID *int64,
 	acc *Account,
 	requestedModel string,
 	platform string,
@@ -2704,6 +2706,12 @@ func (s *GatewayService) diagnoseSelectionFailure(
 		return selectionFailureDiagnosis{
 			Category: "model_unsupported",
 			Detail:   fmt.Sprintf("model=%s", requestedModel),
+		}
+	}
+	if requestedModel != "" && !acc.IsModelAllowedInGroup(groupID, requestedModel) {
+		return selectionFailureDiagnosis{
+			Category: "model_unsupported",
+			Detail:   fmt.Sprintf("model=%s not_allowed_in_group=%v", requestedModel, derefGroupID(groupID)),
 		}
 	}
 	if !s.isAccountSchedulableForModelSelection(ctx, acc, requestedModel) {
@@ -2794,6 +2802,12 @@ func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Contex
 		return true
 	}
 	return s.isModelSupportedByAccount(account, requestedModel)
+}
+
+// isModelSupportedByAccountInGroup 在账号自身的模型支持之外，再检查账号在当前调度分组里
+// 是否被限制了可用模型。选号的每一处模型判断都要走这里，否则分组内的限制会被绕过。
+func (s *GatewayService) isModelSupportedByAccountInGroup(ctx context.Context, account *Account, groupID *int64, requestedModel string) bool {
+	return s.isModelSupportedByAccountWithContext(ctx, account, requestedModel) && account.IsModelAllowedInGroup(groupID, requestedModel)
 }
 
 // isModelSupportedByAccount 根据账户平台检查模型支持（无 context，用于非 Antigravity 平台）

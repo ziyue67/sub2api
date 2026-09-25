@@ -145,6 +145,36 @@ func TestNormalizeCodexSessionJSONExtractsCredentialsAndIgnoresSessionToken(t *t
 	}
 }
 
+func TestNormalizeCodexSessionInfoUsesUserInfoAccountIDThenAccessTokenClaim(t *testing.T) {
+	accessToken := buildCodexImportTestJWT(t, time.Now().Add(time.Hour), map[string]any{
+		"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "jwt-account"},
+	})
+	for _, tt := range []struct {
+		name     string
+		userInfo map[string]any
+		wantID   string
+	}{
+		{"user_info account", map[string]any{"chatgpt_account_id": "user-info-account"}, "user-info-account"},
+		{"JWT fallback", map[string]any{}, "jwt-account"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			item, err := normalizeCodexImportEntry(codexImportEntry{Index: 1, Value: map[string]any{
+				"session_info": map[string]any{"access_token": accessToken},
+				"user_info":    tt.userInfo,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := item.Credentials["access_token"]; got != accessToken {
+				t.Fatalf("access_token = %v, want session_info token", got)
+			}
+			if got := item.Credentials["chatgpt_account_id"]; got != tt.wantID {
+				t.Fatalf("chatgpt_account_id = %v, want %s", got, tt.wantID)
+			}
+		})
+	}
+}
+
 func TestMergeCodexImportCredentialsPreservesExistingRefreshFieldsWhenIncomingHasNoRefreshToken(t *testing.T) {
 	existing := map[string]any{
 		"access_token":       "old-access-token",

@@ -110,7 +110,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	}
 
 	// 有专属倍率:user_rate_multiplier 序列化输出
-	dto := toModelPlazaGroupDTO(&g, map[int64]float64{2: 0.5})
+	dto := toModelPlazaGroupDTO(&g, map[int64]float64{2: 0.5}, nil)
 	raw, err := json.Marshal(dto)
 	require.NoError(t, err)
 	var decoded map[string]any
@@ -146,7 +146,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	require.False(t, hasTimePricing, "无分时时不输出 time_pricing")
 
 	// 无专属倍率:user_rate_multiplier 整个字段省略
-	dtoNoRate := toModelPlazaGroupDTO(&g, nil)
+	dtoNoRate := toModelPlazaGroupDTO(&g, nil, nil)
 	rawNoRate, err := json.Marshal(dtoNoRate)
 	require.NoError(t, err)
 	var decodedNoRate map[string]any
@@ -186,7 +186,7 @@ func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
 		}},
 	}
 
-	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil))
+	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
 	require.NoError(t, err)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(raw, &decoded))
@@ -230,7 +230,7 @@ func TestToModelPlazaGroupDTO_TimePricing(t *testing.T) {
 			}},
 		}},
 	}
-	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil))
+	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
 	require.NoError(t, err)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(raw, &decoded))

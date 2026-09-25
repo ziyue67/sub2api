@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+
+enableAutoUnmount(afterEach)
 
 const { updateAccountMock, checkMixedChannelRiskMock, authIsSimpleMode } = vi.hoisted(() => ({
   updateAccountMock: vi.fn(),
@@ -329,6 +331,157 @@ describe('EditAccountModal', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('saves and restores Excel BPS independently of existing OAuth settings', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.credentials = { access_token: 'test-token', chatgpt_account_id: 'test-account' }
+    account.extra = { unrelated: 'preserve', openai_oauth_responses_websockets_v2_mode: 'ctx_pool' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="excel-bps-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(wrapper.find('[data-testid="excel-bps-cache-creation-as-input"]').exists()).toBe(false)
+    await toggle.trigger('click')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-cache-creation-as-input"]').element.checked).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps).toBe(true)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_cache_creation_as_input).toBeUndefined()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated).toBe('preserve')
+  })
+
+  it('saves, restores and clears Excel BPS cache creation input billing', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, unrelated: 'preserve' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const selector = '[data-testid="excel-bps-cache-creation-as-input"]'
+    expect(wrapper.get<HTMLInputElement>(selector).element.checked).toBe(false)
+    await wrapper.get(selector).setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const savedExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(savedExtra.openai_excel_bps_cache_creation_as_input).toBe(true)
+    expect(savedExtra.openai_excel_bps).toBe(true)
+    expect(savedExtra.unrelated).toBe('preserve')
+
+    await wrapper.setProps({ account: { ...account, extra: savedExtra } })
+    expect(wrapper.get<HTMLInputElement>(selector).element.checked).toBe(true)
+    await wrapper.get(selector).setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const clearedExtra = updateAccountMock.mock.calls[1]?.[1]?.extra
+    expect(clearedExtra.openai_excel_bps_cache_creation_as_input).toBeUndefined()
+    expect(clearedExtra.openai_excel_bps).toBe(true)
+    expect(clearedExtra.unrelated).toBe('preserve')
+  })
+
+  it('clears cache creation input billing when Excel BPS is disabled', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, openai_excel_bps_cache_creation_as_input: true }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="excel-bps-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="excel-bps-cache-creation-as-input"]').exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra.openai_excel_bps).toBeUndefined()
+    expect(extra.openai_excel_bps_cache_creation_as_input).toBeUndefined()
+  })
+
+  it('resets the BPS billing checkbox when editing a different account', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, openai_excel_bps_cache_creation_as_input: true }
+    const wrapper = mountModal(account)
+    await wrapper.setProps({ account: { ...account, id: 2, extra: { openai_excel_bps: true } } })
+    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-cache-creation-as-input"]').element.checked).toBe(false)
+  })
+
+  it('hides BPS cache billing for API keys and shadow accounts even with stale settings', () => {
+    for (const account of [buildAccount(), buildOpenAISparkShadowAccount()]) {
+      account.extra = { openai_excel_bps: true, openai_excel_bps_cache_creation_as_input: true }
+      const wrapper = mountModal(account)
+      expect(wrapper.find('[data-testid="excel-bps-cache-creation-as-input"]').exists()).toBe(false)
+      wrapper.unmount()
+    }
+  })
+
+  it('defaults new BPS settings to Astra only', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = {}
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="excel-bps-toggle"]').trigger('click')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-all-models"]').element.checked).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_models).toEqual(['gpt-6-astra'])
+  })
+
+  it('preserves legacy all-model settings and lets users select Astra only', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, unrelated: 'preserve' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-all-models"]').element.checked).toBe(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('openai_excel_bps_models')
+    await wrapper.get('[data-testid="excel-bps-all-models"]').setValue(false)
+    await wrapper.get('[data-testid="excel-bps-astra-only"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.openai_excel_bps_models).toEqual(['gpt-6-astra'])
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.unrelated).toBe('preserve')
+  })
+
+  it.each([{ models: [] }, { models: ['gpt-6-astra', 'gpt-6-sol'] }])('restores and saves explicit BPS selection $models', async ({ models }) => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, openai_excel_bps_models: models }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-all-models"]').element.checked).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_models).toEqual(models)
+    await wrapper.get('[data-testid="excel-bps-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra).not.toHaveProperty('openai_excel_bps')
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra).not.toHaveProperty('openai_excel_bps_models')
+  })
+
+  it('hides Excel BPS on API Key accounts', () => {
+    expect(mountModal(buildAccount()).find('[data-testid="excel-bps-toggle"]').exists()).toBe(false)
+  })
+
+  it('loads and removes Copilot SDK mode without dropping unrelated extra', async () => {
+    const account = buildAccount()
+    account.extra = { openai_copilot_sdk: true, unrelated_setting: 'keep' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="copilot-sdk-toggle"]').element.checked).toBe(true)
+    await wrapper.get('[data-testid="copilot-sdk-toggle"]').setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_copilot_sdk).toBeUndefined()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated_setting).toBe('keep')
+  })
 
   it('sets expiry presets from now instead of extending the saved expiry', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -857,6 +1010,7 @@ describe('EditAccountModal', () => {
     // 关闭后应从 extra 中删除该键，而不是写入 false
     await toggle.trigger('click')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
