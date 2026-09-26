@@ -912,11 +912,17 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_GrokMediaCapabilityFilt
 	ineligible := Account{
 		ID: 36051, Platform: PlatformGrok, Type: AccountTypeOAuth,
 		Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"grok-4.3": "grok-4.3"},
+		},
 		Extra: map[string]any{GrokMediaEligibleExtraKey: false},
 	}
 	eligible := Account{
 		ID: 36052, Platform: PlatformGrok, Type: AccountTypeOAuth,
 		Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 0,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"grok-4.3": "grok-4.3"},
+		},
 		Extra: map[string]any{GrokMediaEligibleExtraKey: true},
 	}
 	newService := func(accounts []Account) *OpenAIGatewayService {

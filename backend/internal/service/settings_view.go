@@ -338,6 +338,7 @@ type SystemSettings struct {
 	RequestCaptureRetentionDays int
 	// 使用详情中长上下文计费 x2 徽标的展示开关（默认开启）
 	UsageShowLongContextBadge bool
+	ExcelBPSImageMode         string
 	ExcelBPSImageRelayEnabled bool
 	ExcelBPSImageBaseURL      string
 	ExcelBPSImageBodyLimitMiB int

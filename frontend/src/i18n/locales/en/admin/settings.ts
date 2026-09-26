@@ -15,9 +15,14 @@ export default {
       },
       features: {
         excelBpsImages: {
-          title: 'Excel / BPS Image Relay',
-          description: 'Automatically convert uploaded base64 images and tool screenshots to temporary HTTPS links hosted by this server.',
-          enabled: 'Enable image relay',
+          mode: 'Image transport',
+          modeRelay: 'Temporary HTTPS relay (default)',
+          modeNative: 'BPS native attachments',
+          nativeHint: 'Upload directly to BPS using the selected account OAuth credential and proxy. No public image domain is needed. Upload failure stops the request.',
+          nativeRetentionHint: 'Supports PNG, JPEG, GIF and WebP: 20 MiB per image, 20 images and 32 MiB per request. No local image files; only attachment IDs are cached (512 entries per process, expiring after 30 minutes), isolated by account, credential, API key and conversation. No cross-request reuse without a conversation ID. Upstream controls retention of uploaded images.',
+          title: 'Excel / BPS Images',
+          description: 'Choose temporary HTTPS relay links or BPS native attachments for base64 images and tool screenshots.',
+          enabled: 'Enable image support',
           enabledHint: 'Changes apply immediately after saving, without restarting. Disabling stops conversion and blocks temporary image access.',
           baseUrl: 'Public HTTPS address',
           baseUrlHint: 'Enter the public HTTPS origin of this service, without /v1 or another path. The account must still have the Excel / BPS protocol enabled.',

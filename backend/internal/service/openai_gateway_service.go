@@ -452,6 +452,7 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 type OpenAIGatewayService struct {
 	excelBPSImagesMu      sync.Mutex
 	excelBPSImages        *basispoints.ImageRelay
+	excelBPSAttachments   basispoints.AttachmentCache
 	codexHarvestRunMu     sync.RWMutex
 	accountRepo           AccountRepository
 	proxyRepo             ProxyRepository

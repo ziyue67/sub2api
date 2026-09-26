@@ -405,6 +405,7 @@ type UpdateSettingsRequest struct {
 	RequestCaptureEnabled       *bool   `json:"request_capture_enabled"`
 	RequestCaptureQuotaMiB      *int64  `json:"request_capture_quota_mib"`
 	RequestCaptureRetentionDays *int    `json:"request_capture_retention_days"`
+	ExcelBPSImageMode           *string `json:"excel_bps_image_mode"`
 	ExcelBPSImageRelayEnabled   *bool   `json:"excel_bps_image_relay_enabled"`
 	ExcelBPSImageBaseURL        *string `json:"excel_bps_image_base_url"`
 	ExcelBPSImageBodyLimitMiB   *int    `json:"excel_bps_image_body_limit_mib"`
@@ -1734,6 +1735,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.RequestCaptureRetentionDays
 		}(),
+		ExcelBPSImageMode: func() string {
+			if req.ExcelBPSImageMode != nil {
+				return *req.ExcelBPSImageMode
+			}
+			return previousSettings.ExcelBPSImageMode
+		}(),
 		ExcelBPSImageRelayEnabled: func() bool {
 			if req.ExcelBPSImageRelayEnabled != nil {
 				return *req.ExcelBPSImageRelayEnabled
@@ -2633,6 +2640,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RequestCaptureEnabled:             updatedSettings.RequestCaptureEnabled,
 		RequestCaptureQuotaMiB:            updatedSettings.RequestCaptureQuotaMiB,
 		RequestCaptureRetentionDays:       updatedSettings.RequestCaptureRetentionDays,
+		ExcelBPSImageMode:                 updatedSettings.ExcelBPSImageMode,
 		ExcelBPSImageRelayEnabled:         updatedSettings.ExcelBPSImageRelayEnabled,
 		ExcelBPSImageBaseURL:              updatedSettings.ExcelBPSImageBaseURL,
 		ExcelBPSImageBodyLimitMiB:         updatedSettings.ExcelBPSImageBodyLimitMiB,

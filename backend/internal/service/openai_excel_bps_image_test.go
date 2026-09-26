@@ -103,3 +103,40 @@ func TestExcelBPSImageCapabilityRedactedFromUpstreamError(t *testing.T) {
 	require.NotContains(t, out, "PRIVATE_CAPABILITY_123")
 	require.Contains(t, out, "/api/bps-images/[redacted]")
 }
+
+func TestExcelBPS429ImageAndCompactKeepCodexSchedulable(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	var pngBytes bytes.Buffer
+	require.NoError(t, png.Encode(&pngBytes, image.NewRGBA(image.Rect(0, 0, 2, 3))))
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes.Bytes())
+	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", path, stream), func(t *testing.T) {
+				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusTooManyRequests, Header: excelBPSQuotaHeaders("100", "100"), Body: io.NopCloser(strings.NewReader(`{"error":{"message":"PRIVATE_UPSTREAM"}}`))}}
+				svc := openAIClientToolsTestService(upstream)
+				t.Cleanup(func() { require.NoError(t, svc.CloseExcelBPSImages()) })
+				svc.settingService = NewSettingService(&excelBPSImageSettingsRepo{values: map[string]string{SettingKeyExcelBPSImageRelayEnabled: "true", SettingKeyExcelBPSImageBaseURL: "https://images.example"}}, svc.cfg)
+				repo := &excelBPSQuotaRepo{writes: make(chan excelBPSQuotaWrite, 4)}
+				svc.accountRepo = repo
+				svc.rateLimitService = NewRateLimitService(repo, nil, svc.cfg, nil, nil)
+				svc.rateLimitService.SetAccountRuntimeBlocker(svc)
+				body := []byte(fmt.Sprintf(`{"model":"gpt-6-astra","stream":%t,"input":[{"role":"user","content":[{"type":"input_image","image_url":%q}]}]}`, stream, dataURL))
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+				account := excelAccount()
+
+				_, err := svc.Forward(context.Background(), c, account, body)
+
+				require.EqualError(t, err, "excel BPS: basispoints_rate_limited")
+				require.Equal(t, http.StatusTooManyRequests, rec.Code)
+				require.Len(t, upstream.requests, 1)
+				require.NotContains(t, string(upstream.lastBody), "data:image")
+				require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")
+				requireNoExcelBPSQuotaWrite(t, repo)
+				require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+				require.True(t, account.IsSchedulable())
+			})
+		}
+	}
+}

@@ -70,3 +70,23 @@ func TestSettingsExcelBPSImagesRequireHTTPSOriginWhenEnabled(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "INVALID_EXCEL_BPS_IMAGE_BASE_URL")
 }
+
+func TestSettingsExcelBPSNativeModePersistsWithoutOrigin(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
+	rec := doUpdateSettings(t, h, map[string]any{"excel_bps_image_relay_enabled": true, "excel_bps_image_mode": "native"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "native", gjson.Get(rec.Body.String(), "data.excel_bps_image_mode").String())
+	require.Empty(t, repo.values[service.SettingKeyExcelBPSImageBaseURL])
+	rec = doUpdateSettings(t, h, map[string]any{"site_name": "preserve native"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "native", repo.values[service.SettingKeyExcelBPSImageMode])
+	for _, mode := range []string{"relay", "invalid"} {
+		rec = doUpdateSettings(t, h, map[string]any{"excel_bps_image_mode": mode}, nil)
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		require.Equal(t, "native", repo.values[service.SettingKeyExcelBPSImageMode])
+	}
+	settings, err := h.settingService.GetExcelBPSImageRelaySettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, service.ExcelBPSImageModeNative, settings.Mode)
+	require.True(t, settings.Enabled)
+}

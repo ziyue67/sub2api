@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,28 +160,20 @@ func (r *excelBPSCancelReader) Read(p []byte) (int, error) {
 	return r.Reader.Read(p)
 }
 
-func TestExcelBPS429PersistsQuotaAndCoolsDownWithoutReplay(t *testing.T) {
+func TestExcelBPS429DoesNotChangeCodexQuotaOrScheduling(t *testing.T) {
 	for _, tc := range []struct {
-		name             string
-		headers          http.Header
-		raw              string
-		fallbackDisabled bool
-		cancelOnRead     bool
-		writeError       bool
-		wantCooldown     time.Duration
+		name         string
+		headers      http.Header
+		raw          string
+		cancelOnRead bool
 	}{
-		{name: "five hour quota", headers: excelBPSQuotaHeaders("100", "20"), wantCooldown: 5 * time.Hour},
-		{name: "weekly quota wins", headers: excelBPSQuotaHeaders("100", "100"), wantCooldown: 7 * 24 * time.Hour},
-		{name: "body reset timestamp", raw: fmt.Sprintf("{\"error\":{\"type\":\"usage_limit_reached\",\"resets_at\":%d}}", time.Now().Add(2*time.Hour).Unix()), wantCooldown: 2 * time.Hour},
-		{name: "body reset duration", raw: "{\"error\":{\"type\":\"usage_limit_reached\",\"resets_in_seconds\":7200}}", wantCooldown: 2 * time.Hour},
-		{name: "no reset uses configured cooldown", wantCooldown: 11 * time.Second},
-		{name: "unexhausted windows use configured cooldown", headers: excelBPSQuotaHeaders("30", "20"), wantCooldown: 11 * time.Second},
-		{name: "malformed body uses configured cooldown", raw: "not json", wantCooldown: 11 * time.Second},
-		{name: "fallback disabled", fallbackDisabled: true},
-		{name: "snapshot still updates when fallback disabled", headers: excelBPSQuotaHeaders("30", "20"), fallbackDisabled: true},
-		{name: "known quota still cools when fallback disabled", headers: excelBPSQuotaHeaders("100", "20"), fallbackDisabled: true, wantCooldown: 5 * time.Hour},
-		{name: "client cancellation does not skip cooldown", headers: excelBPSQuotaHeaders("100", "20"), cancelOnRead: true, wantCooldown: 5 * time.Hour},
-		{name: "database failure preserves upstream error", headers: excelBPSQuotaHeaders("100", "20"), writeError: true, wantCooldown: 5 * time.Hour},
+		{name: "quota headers", headers: excelBPSQuotaHeaders("100", "100")},
+		{name: "unexhausted headers", headers: excelBPSQuotaHeaders("30", "20")},
+		{name: "body reset timestamp", raw: fmt.Sprintf(`{"error":{"type":"usage_limit_reached","resets_at":%d}}`, time.Now().Add(2*time.Hour).Unix())},
+		{name: "body reset duration", raw: `{"error":{"type":"usage_limit_reached","resets_in_seconds":7200}}`},
+		{name: "generic rate limit"},
+		{name: "malformed body", raw: "not json"},
+		{name: "client cancellation", headers: excelBPSQuotaHeaders("100", "100"), cancelOnRead: true},
 	} {
 		for _, stream := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%t", tc.name, stream), func(t *testing.T) {
@@ -190,7 +181,7 @@ func TestExcelBPS429PersistsQuotaAndCoolsDownWithoutReplay(t *testing.T) {
 				defer cancel()
 				raw := tc.raw
 				if raw == "" {
-					raw = "{\"error\":{\"type\":\"rate_limit_error\",\"code\":\"rate_limit_exceeded\",\"message\":\"PRIVATE_UPSTREAM\"}}"
+					raw = `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"PRIVATE_UPSTREAM"}}`
 				}
 				var reader io.Reader = strings.NewReader(raw)
 				if tc.cancelOnRead {
@@ -199,74 +190,37 @@ func TestExcelBPS429PersistsQuotaAndCoolsDownWithoutReplay(t *testing.T) {
 				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusTooManyRequests, Header: tc.headers, Body: io.NopCloser(reader)}}
 				svc := openAIClientToolsTestService(upstream)
 				repo := &excelBPSQuotaRepo{writes: make(chan excelBPSQuotaWrite, 4)}
-				if tc.writeError {
-					repo.updateErr, repo.limitErr = errors.New("snapshot write failed"), errors.New("cooldown write failed")
-				}
 				svc.accountRepo = repo
-				settings := &excelBPSQuotaSettingsRepo{cooldown: fmt.Sprintf("{\"enabled\":%t,\"cooldown_seconds\":11}", !tc.fallbackDisabled)}
 				svc.rateLimitService = NewRateLimitService(repo, nil, svc.cfg, nil, nil)
-				svc.rateLimitService.SetSettingService(NewSettingService(settings, svc.cfg))
+				svc.rateLimitService.SetSettingService(NewSettingService(&excelBPSQuotaSettingsRepo{cooldown: `{"enabled":true,"cooldown_seconds":11}`}, svc.cfg))
 				svc.rateLimitService.SetAccountRuntimeBlocker(svc)
 				account := excelAccount()
 				account.Extra["openai_excel_bps_auto_disable_on_403"] = true
-				svc.codexSnapshotThrottle = newAccountWriteThrottle(time.Hour)
-				require.True(t, svc.codexSnapshotThrottle.Allow(account.ID, time.Now()), "simulate a recently persisted success snapshot")
-				// An active Codex retry window must not defer a BPS cooldown.
-				svc.openaiOAuth429RetryStartedAt.Store(account.ID, time.Now())
+				retryStarted := time.Now()
+				svc.openaiOAuth429RetryStartedAt.Store(account.ID, retryStarted)
 				rec := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(rec)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
-				body := []byte(fmt.Sprintf("{\"model\":\"gpt-6-astra\",\"input\":\"test\",\"stream\":%t}", stream))
-				started := time.Now()
+				body := []byte(fmt.Sprintf(`{"model":"gpt-6-astra","input":"test","stream":%t}`, stream))
+
 				_, err := svc.Forward(ctx, c, account, body)
-				require.EqualError(t, err, "excel BPS: basispoints_upstream_error")
+
+				require.EqualError(t, err, "excel BPS: basispoints_rate_limited")
 				var failover *UpstreamFailoverError
 				require.NotErrorAs(t, err, &failover)
 				require.Equal(t, http.StatusTooManyRequests, rec.Code)
 				require.True(t, IsResponseCommitted(c))
-				require.NotContains(t, rec.Body.String(), "account scheduling was not changed")
+				require.Contains(t, rec.Body.String(), "basispoints_rate_limited")
 				require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")
 				require.Len(t, upstream.requests, 1)
-				if tc.headers != nil {
-					write := nextExcelBPSQuotaWrite(t, repo)
-					require.Equal(t, account.ID, write.accountID)
-					require.Contains(t, write.updates, "codex_5h_used_percent")
-					require.Contains(t, write.updates, "codex_7d_used_percent")
-					require.Contains(t, write.updates, "codex_usage_updated_at")
-					require.NoError(t, write.ctxErr)
-					require.WithinDuration(t, started.Add(openAIAccountStateUpdateTimeout), write.deadline, time.Second)
-				}
-				if tc.wantCooldown > 0 {
-					write := nextExcelBPSQuotaWrite(t, repo)
-					require.Equal(t, account.ID, write.accountID)
-					require.WithinDuration(t, started.Add(tc.wantCooldown), write.resetAt, 2*time.Second)
-					require.NoError(t, write.ctxErr)
-					require.WithinDuration(t, started.Add(openAIAccountStateUpdateTimeout), write.deadline, time.Second)
-					require.True(t, svc.isOpenAIAccountRuntimeBlocked(account), "register the runtime cooldown alongside the persistence attempt")
-					if tc.writeError {
-						// The existing scheduler trusts persisted cooldowns and fails open
-						// when persistence fails; this integration does not change that policy.
-						require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-6-astra", false))
-					} else {
-						reloaded := *account
-						reloaded.RateLimitResetAt = &write.resetAt
-						require.False(t, reloaded.IsSchedulable(), "persisted cooldown must prevent scheduling")
-						require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(&reloaded, "gpt-6-astra", false))
-						// Advance both persisted and runtime cooldowns to verify automatic recovery.
-						expired := time.Now().Add(-time.Second)
-						reloaded.RateLimitResetAt = &expired
-						svc.openaiAccountRuntimeBlockUntil.Store(account.ID, expired)
-						require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(&reloaded, "gpt-6-astra", false))
-						require.True(t, reloaded.IsSchedulable())
-					}
-				} else {
-					require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
-				}
 				requireNoExcelBPSQuotaWrite(t, repo)
-				require.True(t, account.Schedulable)
-				require.Equal(t, StatusActive, account.Status)
+				require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+				require.True(t, account.IsSchedulable())
 				require.True(t, account.IsExcelBPSEnabled())
-				require.Nil(t, account.RateLimitResetAt, "do not mutate a shared account snapshot")
+				require.Nil(t, account.RateLimitResetAt)
+				retryState, ok := svc.openaiOAuth429RetryStartedAt.Load(account.ID)
+				require.True(t, ok)
+				require.Equal(t, retryStarted, retryState)
 			})
 		}
 	}

@@ -7387,20 +7387,30 @@
               <Toggle id="excel-bps-image-enabled" v-model="form.excel_bps_image_relay_enabled" />
             </div>
             <div v-if="form.excel_bps_image_relay_enabled">
-              <label for="excel-bps-image-base-url" class="input-label">
-                {{ t('admin.settings.features.excelBpsImages.baseUrl') }}
-              </label>
-              <input
-                id="excel-bps-image-base-url"
-                v-model.trim="form.excel_bps_image_base_url"
-                type="url"
-                class="input"
-                placeholder="https://your-api.example.com"
-                required
-              />
-              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.settings.features.excelBpsImages.baseUrlHint') }}
+              <label for="excel-bps-image-mode" class="input-label">{{ t('admin.settings.features.excelBpsImages.mode') }}</label>
+              <select id="excel-bps-image-mode" v-model="form.excel_bps_image_mode" class="input">
+                <option value="relay">{{ t('admin.settings.features.excelBpsImages.modeRelay') }}</option>
+                <option value="native">{{ t('admin.settings.features.excelBpsImages.modeNative') }}</option>
+              </select>
+              <p v-if="form.excel_bps_image_mode === 'native'" class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.settings.features.excelBpsImages.nativeHint') }}
               </p>
+              <div v-if="form.excel_bps_image_mode === 'relay'" class="mt-5">
+                <label for="excel-bps-image-base-url" class="input-label">
+                  {{ t('admin.settings.features.excelBpsImages.baseUrl') }}
+                </label>
+                <input
+                  id="excel-bps-image-base-url"
+                  v-model.trim="form.excel_bps_image_base_url"
+                  type="url"
+                  class="input"
+                  placeholder="https://your-api.example.com"
+                  required
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.excelBpsImages.baseUrlHint') }}
+                </p>
+              </div>
               <div class="mt-5 grid gap-4 sm:grid-cols-3">
                 <div class="space-y-1">
                   <label for="excel-bps-image-body-limit" class="input-label">{{ t('admin.settings.features.excelBpsImages.bodyLimit') }}</label>
@@ -7419,7 +7429,7 @@
                 {{ t('admin.settings.features.excelBpsImages.budgetHint') }}
               </p>
               <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.settings.features.excelBpsImages.retentionHint') }}
+                {{ t(form.excel_bps_image_mode === 'native' ? 'admin.settings.features.excelBpsImages.nativeRetentionHint' : 'admin.settings.features.excelBpsImages.retentionHint') }}
               </p>
               <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.settings.features.excelBpsImages.capacityHint') }}
@@ -10399,6 +10409,7 @@ const form = reactive<SettingsForm>({
   request_capture_enabled: false,
   request_capture_quota_mib: 1024,
   request_capture_retention_days: 7,
+  excel_bps_image_mode: 'relay' as 'relay' | 'native',
   excel_bps_image_relay_enabled: false,
   excel_bps_image_base_url: '',
   excel_bps_image_body_limit_mib: 64,
@@ -11703,7 +11714,7 @@ async function saveSettings() {
   saving.value = true;
   try {
     const imageBaseUrl = form.excel_bps_image_base_url.trim();
-    if (form.excel_bps_image_relay_enabled || imageBaseUrl) {
+    if ((form.excel_bps_image_relay_enabled && form.excel_bps_image_mode === 'relay') || imageBaseUrl) {
       try {
         const parsed = new URL(imageBaseUrl);
         if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password ||
@@ -12225,6 +12236,7 @@ async function saveSettings() {
       request_capture_enabled: form.request_capture_enabled,
       request_capture_quota_mib: form.request_capture_quota_mib,
       request_capture_retention_days: form.request_capture_retention_days,
+      excel_bps_image_mode: form.excel_bps_image_mode,
       excel_bps_image_relay_enabled: form.excel_bps_image_relay_enabled,
       excel_bps_image_base_url: form.excel_bps_image_base_url.trim(),
       excel_bps_image_body_limit_mib: form.excel_bps_image_body_limit_mib,

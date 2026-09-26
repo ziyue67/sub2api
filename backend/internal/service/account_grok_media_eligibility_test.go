@@ -182,3 +182,67 @@ func TestNormalizeGrokMediaEligibilityUpdateExtra(t *testing.T) {
 		require.Equal(t, normalized, got)
 	})
 }
+
+func TestGrokMediaEligibilityControlsBuiltInMediaFallback(t *testing.T) {
+	account := &Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"grok-4.6": "grok-4.6",
+			},
+		},
+		Extra: map[string]any{GrokMediaEligibleExtraKey: true},
+	}
+
+	for _, test := range []struct {
+		requested string
+		mapped    string
+	}{
+		{requested: "grok-imagine-image", mapped: "grok-imagine-image"},
+		{requested: "grok-imagine-edit", mapped: "grok-imagine-image-quality"},
+		{requested: "grok-imagine-video", mapped: "grok-imagine-video"},
+		{requested: "grok-imagine-video-1.5-preview", mapped: "grok-imagine-video-1.5"},
+	} {
+		t.Run("enabled/"+test.requested, func(t *testing.T) {
+			require.True(t, account.IsModelSupported(test.requested))
+			mapped, matched := account.ResolveMappedModel(test.requested)
+			require.True(t, matched)
+			require.Equal(t, test.mapped, mapped)
+		})
+	}
+	require.True(t, account.IsModelSupported("grok-4.6"))
+	require.False(t, account.IsModelSupported("grok-imagine-image-unknown"))
+
+	account.Extra[GrokMediaEligibleExtraKey] = false
+	require.False(t, account.IsModelSupported("grok-imagine-image"))
+	require.False(t, account.IsModelSupported("grok-imagine-edit"))
+	require.False(t, account.IsModelSupported("grok-imagine-video"))
+
+	account.Extra[GrokMediaEligibleExtraKey] = true
+	account.Credentials["model_mapping"] = map[string]any{
+		"grok-imagine-image": "custom-image-model",
+	}
+	mapped, matched := account.ResolveMappedModel("grok-imagine-image")
+	require.True(t, matched)
+	require.Equal(t, "custom-image-model", mapped, "explicit media mapping must win")
+}
+
+func TestGrokMediaEligibilityFallbackKeepsAutomaticModeDynamic(t *testing.T) {
+	account := &Account{
+		Platform: PlatformGrok,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{"grok-4.6": "grok-4.6"},
+		},
+	}
+
+	require.True(t, account.IsModelSupported("grok-imagine-image"),
+		"automatic accounts with unobserved billing must remain scheduler candidates")
+
+	account.Extra = map[string]any{GrokMediaEligibleExtraKey: false}
+	require.False(t, account.IsModelSupported("grok-imagine-image"))
+
+	account.Extra[GrokMediaEligibleExtraKey] = true
+	require.True(t, account.IsModelSupported("grok-imagine-image"))
+}

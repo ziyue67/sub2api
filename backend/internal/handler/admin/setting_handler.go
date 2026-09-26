@@ -414,6 +414,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		RequestCaptureEnabled:       settings.RequestCaptureEnabled,
 		RequestCaptureQuotaMiB:      settings.RequestCaptureQuotaMiB,
 		RequestCaptureRetentionDays: settings.RequestCaptureRetentionDays,
+		ExcelBPSImageMode:           settings.ExcelBPSImageMode,
 		ExcelBPSImageRelayEnabled:   settings.ExcelBPSImageRelayEnabled,
 		ExcelBPSImageBaseURL:        settings.ExcelBPSImageBaseURL,
 		ExcelBPSImageBodyLimitMiB:   settings.ExcelBPSImageBodyLimitMiB,

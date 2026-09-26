@@ -780,6 +780,7 @@ export interface SystemSettings {
   request_capture_enabled: boolean;
   request_capture_quota_mib: number;
   request_capture_retention_days: number;
+  excel_bps_image_mode: 'relay' | 'native'
   excel_bps_image_relay_enabled: boolean;
   excel_bps_image_base_url: string;
   excel_bps_image_body_limit_mib: number;
@@ -1111,6 +1112,7 @@ export interface UpdateSettingsRequest {
   request_capture_enabled?: boolean;
   request_capture_quota_mib?: number;
   request_capture_retention_days?: number;
+  excel_bps_image_mode?: 'relay' | 'native'
   excel_bps_image_relay_enabled?: boolean;
   excel_bps_image_base_url?: string;
   excel_bps_image_body_limit_mib?: number;
