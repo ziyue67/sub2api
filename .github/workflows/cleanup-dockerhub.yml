@@ -10,9 +10,18 @@ on:
   workflow_dispatch:
     inputs:
       keep:
-        description: '要保留的 tag（逗号分隔；留空 = 删除全部）'
+        description: '要保留的 tag（逗号分隔；留空 = 删除全部；tags 未填时生效）'
         required: false
         default: ''
+      tags:
+        description: '精确匹配要删除的 tag（逗号分隔，例如 0.2.8.1,0.2.8.1-amd64）；设置后忽略 keep'
+        required: false
+        default: ''
+      dry_run:
+        description: '仅列出，不删除'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -26,6 +35,8 @@ jobs:
           DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           KEEP: ${{ inputs.keep }}
+          TAGS: ${{ inputs.tags }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           python3 - <<'PYEOF'
           import json, os, time, urllib.request
@@ -33,6 +44,10 @@ jobs:
           user = os.environ["DH_USER"]
           token = os.environ["DH_TOKEN"]
           keep = set(filter(None, os.environ.get("KEEP", "").replace(" ", "").split(",")))
+          exact = [t for t in os.environ.get("TAGS", "").replace(" ", "").split(",") if t]
+          dry = os.environ.get("DRY_RUN", "false").lower() == "true"
+          if dry:
+              print("DRY RUN：只列出，不删除")
 
           def http(url, method="GET", auth=None):
               req = urllib.request.Request(url, method=method)
@@ -70,9 +85,14 @@ jobs:
                       name = item.get("name")
                       if not name:
                           continue
-                      if name in keep:
+                      # tags 已设置：只删精确匹配的；否则按 keep 白名单删其余
+                      target = (name in exact) if exact else (name not in keep)
+                      if not target:
                           kept += 1
                           print("keep ", name)
+                          continue
+                      if dry:
+                          print("DRY  ", name)
                           continue
                       try:
                           http(f"{API}{name}/", method="DELETE", auth=jwt)
@@ -84,6 +104,8 @@ jobs:
                           failed += 1
                           print("WARN delete failed:", name, exc)
                   url = data.get("next")
+              if dry:
+                  break
               remaining = http(f"{API}?page=1&page_size=1", auth=jwt).get("count", 0)
               print(f"round={rnd} round_deleted={round_deleted} remaining={remaining}")
               if remaining == 0:
@@ -91,6 +113,10 @@ jobs:
               if round_deleted == 0:
                   print("no progress; stop")
                   break
+
+          if dry:
+              print(f"DRY RUN 结束：kept={kept} match={(','.join(exact) if exact else 'keep-白名单')}")
+              raise SystemExit(0)
 
           print(f"RESULT deleted={deleted} kept={kept} failed={failed} remaining={remaining}")
           summary = os.environ.get("GITHUB_STEP_SUMMARY")
