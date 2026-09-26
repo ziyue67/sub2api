@@ -114,7 +114,8 @@ type UserUpdateFields struct {
 	// BalanceNotifyExtraEmails 与上一项分开，避免"改通知阈值"覆盖并发的"加通知邮箱"。
 	BalanceNotifyExtraEmails bool
 	// AllowedGroups 为 true 时才同步 user_allowed_groups 关联表。
-	AllowedGroups bool
+	AllowedGroups    bool
+	ObserverGroupIDs bool
 	// RestrictPublicGroups 覆盖 restrict_public_groups 列。
 	RestrictPublicGroups bool
 }

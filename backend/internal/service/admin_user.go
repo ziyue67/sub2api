@@ -111,8 +111,8 @@ func normalizeUserRole(role, fallback string) (string, error) {
 	if role == "" {
 		return fallback, nil
 	}
-	if role != RoleAdmin && role != RoleUser {
-		return "", fmt.Errorf("invalid role: %q (must be %s or %s)", role, RoleAdmin, RoleUser)
+	if role != RoleAdmin && role != RoleUser && role != RoleObserver {
+		return "", fmt.Errorf("invalid role: %q (must be %s, %s or %s)", role, RoleAdmin, RoleUser, RoleObserver)
 	}
 	return role, nil
 }
@@ -131,16 +131,23 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 		return nil, err
 	}
 
+	if err := s.validateGroupIDsExist(ctx, input.ObserverGroupIDs); err != nil {
+		return nil, err
+	}
+	if role != RoleObserver {
+		input.ObserverGroupIDs = []int64{}
+	}
 	user := &User{
-		Email:         input.Email,
-		Username:      input.Username,
-		Notes:         input.Notes,
-		Role:          role,
-		Balance:       balance,
-		Concurrency:   input.Concurrency,
-		RPMLimit:      input.RPMLimit,
-		Status:        StatusActive,
-		AllowedGroups: input.AllowedGroups,
+		Email:            input.Email,
+		Username:         input.Username,
+		Notes:            input.Notes,
+		Role:             role,
+		Balance:          balance,
+		Concurrency:      input.Concurrency,
+		RPMLimit:         input.RPMLimit,
+		Status:           StatusActive,
+		AllowedGroups:    input.AllowedGroups,
+		ObserverGroupIDs: input.ObserverGroupIDs,
 
 		RestrictPublicGroups: input.RestrictPublicGroups,
 	}
@@ -257,7 +264,7 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		}
 		// 防锁死保护：不允许降级系统中最后一个管理员（自我降级已在 handler 层拦截，
 		// 此处兜底覆盖跨管理员互降导致零 admin 的场景）。
-		if user.Role == RoleAdmin && role == RoleUser {
+		if user.Role == RoleAdmin && role != RoleAdmin {
 			if err := s.ensureNotLastAdmin(ctx); err != nil {
 				return nil, err
 			}
@@ -279,6 +286,18 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	if input.AllowedGroups != nil {
 		user.AllowedGroups = *input.AllowedGroups
 		fields.AllowedGroups = true
+	}
+
+	if input.ObserverGroupIDs != nil {
+		if err := s.validateGroupIDsExist(ctx, *input.ObserverGroupIDs); err != nil {
+			return nil, err
+		}
+		user.ObserverGroupIDs = *input.ObserverGroupIDs
+		fields.ObserverGroupIDs = true
+	}
+	if user.Role != RoleObserver && (fields.Role || fields.ObserverGroupIDs) {
+		user.ObserverGroupIDs = []int64{}
+		fields.ObserverGroupIDs = true
 	}
 
 	oldRestrictPublicGroups := user.RestrictPublicGroups

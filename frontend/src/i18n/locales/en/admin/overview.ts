@@ -740,7 +740,11 @@ export default {
       failedToLoadBalanceHistory: 'Failed to load balance history',
       createdAt: 'Created',
       totalRecharged: 'Total Recharged',
+      observerGroups: 'Managed account groups',
+      observerGroupsHint: 'Account management only; independent of API consumption groups. No groups means no account access. Credentials can be viewed and exported. Changes to shared accounts also affect other groups.',
+      observerImportHint: 'Select destination groups. Observer imports exclude proxy configurations; use an export without proxies.',
       roles: {
+        observer: 'Observer',
         admin: 'Admin',
         user: 'User'
       },

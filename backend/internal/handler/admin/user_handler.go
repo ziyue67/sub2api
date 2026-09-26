@@ -63,11 +63,12 @@ type CreateUserRequest struct {
 	Password             string   `json:"password" binding:"required,min=6"`
 	Username             string   `json:"username"`
 	Notes                string   `json:"notes"`
-	Role                 string   `json:"role" binding:"omitempty,oneof=admin user"`
+	Role                 string   `json:"role" binding:"omitempty,oneof=admin user observer"`
 	Balance              *float64 `json:"balance"`
 	Concurrency          int      `json:"concurrency"`
 	RPMLimit             int      `json:"rpm_limit"`
 	AllowedGroups        []int64  `json:"allowed_groups"`
+	ObserverGroupIDs     []int64  `json:"observer_group_ids"`
 	RestrictPublicGroups bool     `json:"restrict_public_groups"`
 }
 
@@ -78,12 +79,13 @@ type UpdateUserRequest struct {
 	Password             string   `json:"password" binding:"omitempty,min=6"`
 	Username             *string  `json:"username"`
 	Notes                *string  `json:"notes"`
-	Role                 string   `json:"role" binding:"omitempty,oneof=admin user"`
+	Role                 string   `json:"role" binding:"omitempty,oneof=admin user observer"`
 	Balance              *float64 `json:"balance"`
 	Concurrency          *int     `json:"concurrency"`
 	RPMLimit             *int     `json:"rpm_limit"`
 	Status               string   `json:"status" binding:"omitempty,oneof=active disabled"`
 	AllowedGroups        *[]int64 `json:"allowed_groups"`
+	ObserverGroupIDs     *[]int64 `json:"observer_group_ids"`
 	RestrictPublicGroups *bool    `json:"restrict_public_groups"`
 	// GroupRates 用户专属分组倍率配置
 	// map[groupID]*rate，nil 表示删除该分组的专属倍率
@@ -279,7 +281,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 	}
 
 	// 创建管理员账号属权限敏感操作：需最近完成 step-up 2FA 验证。
-	if req.Role == service.RoleAdmin {
+	if req.Role == service.RoleAdmin || req.Role == service.RoleObserver {
 		if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
 			return
 		}
@@ -295,6 +297,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		Concurrency:          req.Concurrency,
 		RPMLimit:             req.RPMLimit,
 		AllowedGroups:        req.AllowedGroups,
+		ObserverGroupIDs:     req.ObserverGroupIDs,
 		RestrictPublicGroups: req.RestrictPublicGroups,
 		ActorAdminID:         getAdminIDFromContext(c),
 	})
@@ -323,20 +326,20 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 	// 防锁死保护：管理员不能把自己降级为普通用户(单管理员场景下会失去后台访问权)。
 	// 与既有"不能禁用/删除 admin"保护一致。降级其他管理员仍然允许。
-	if req.Role == service.RoleUser && userID == getAdminIDFromContext(c) {
+	if req.Role != "" && req.Role != service.RoleAdmin && userID == getAdminIDFromContext(c) {
 		response.BadRequest(c, "cannot demote yourself from admin")
 		return
 	}
 
 	// 把普通用户提升为管理员属权限敏感操作：需最近完成 step-up 2FA 验证。
 	// 目标已是管理员时（前端编辑表单总是携带 role）不触发，避免日常编辑被打断。
-	if req.Role == service.RoleAdmin {
+	if req.Role == service.RoleAdmin || req.Role == service.RoleObserver || req.ObserverGroupIDs != nil {
 		target, err := h.adminService.GetUser(c.Request.Context(), userID)
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
 		}
-		if target.Role != service.RoleAdmin {
+		if (req.Role != "" && target.Role != req.Role) || observerGrantsExpanded(target.ObserverGroupIDs, req.ObserverGroupIDs) {
 			if !middleware.EnforceStepUp(c, h.totpService, h.userService, h.settingService) {
 				return
 			}
@@ -355,6 +358,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		RPMLimit:             req.RPMLimit,
 		Status:               req.Status,
 		AllowedGroups:        req.AllowedGroups,
+		ObserverGroupIDs:     req.ObserverGroupIDs,
 		RestrictPublicGroups: req.RestrictPublicGroups,
 		GroupRates:           req.GroupRates,
 		ActorAdminID:         getAdminIDFromContext(c),
@@ -976,4 +980,20 @@ func (h *UserHandler) ResetUserPlatformQuotaWindow(c *gin.Context) {
 		out = append(out, quotaview.LazyZeroQuotaForResponse(records[i], now, true))
 	}
 	response.Success(c, map[string]any{"platform_quotas": out})
+}
+
+func observerGrantsExpanded(existing []int64, requested *[]int64) bool {
+	if requested == nil {
+		return false
+	}
+	allowed := make(map[int64]bool, len(existing))
+	for _, id := range existing {
+		allowed[id] = true
+	}
+	for _, id := range *requested {
+		if !allowed[id] {
+			return true
+		}
+	}
+	return false
 }

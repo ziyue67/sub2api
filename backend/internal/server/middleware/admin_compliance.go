@@ -11,6 +11,10 @@ import (
 
 func AdminComplianceGuard(settingService *service.SettingService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if _, observer := service.ObserverGroupIDs(c.Request.Context()); observer {
+			c.Next()
+			return
+		}
 		if settingService == nil || isAdminComplianceBypassPath(c.Request.URL.Path) {
 			c.Next()
 			return
