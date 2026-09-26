@@ -21,3 +21,26 @@ Additional review reference: JaxsonWang/cpa-plugin-oai-basispoints at
 were compared with this package. We retain scoped caches, incremental text
 streaming and multiple-terminal-tool handling rather than its global call-ID
 cache and single-transport extraction. No CPA plugin ABI is imported.
+
+## 2026-09-26 protocol comparison
+
+Behavioral references reviewed for this change:
+
+- JaxsonWang/cpa-plugin-oai-basispoints v0.1.14, commit
+  1b9359ae1eda41b0eee556af8ed6edd059d7f8e7: attachment endpoint and multipart
+  contract, tool validation, and bounded regeneration.
+- zhu961212/sub2api-oai-basispoints 0.5.20, commit
+  5b4afc1c01267190277e62eb4c3253ae2ed28015: session catalog inheritance,
+  first-tool correction eligibility, usage aggregation, and idle cache expiry.
+
+The second repository does not specify a license for its own code. These
+behaviors were implemented independently using this project's existing bridge,
+HTTP transport, replay cache, and JSON Schema dependency; no source files or
+plugin ABI from that repository were copied. The original attribution above
+continues to apply to the existing adapter.
+
+Native attachment interoperability reference: zhu961212/sub2api-oai-basispoints
+at 6c611b2562a7a316184b0ec3b27473ab6e767e6e, for the multipart attachments
+endpoint and openai_file_id response field. The uploader and metadata cache
+are implemented in this package using Sub2API's existing image validation and
+account transport; no plugin runtime or deployment configuration is imported.

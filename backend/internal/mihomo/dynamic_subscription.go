@@ -121,36 +121,47 @@ func dynamicProxyNodes(raw []string) ([]map[string]any, map[string]string, error
 	nodes := make([]map[string]any, 0, len(normalized))
 	names := make(map[string]string, len(normalized))
 	for index, value := range normalized {
-		proxy, _, err := parseDynamicProxy(value)
+		node, err := dynamicProxyNode(value)
 		if err != nil {
 			return nil, nil, err
 		}
-		hash := sha256.Sum256([]byte(value))
-		name := "DYNAMIC-" + hex.EncodeToString(hash[:])[:16]
-		nodeType := proxy.Scheme
-		switch nodeType {
-		case "https":
-			nodeType = "http"
-		case "socks5h":
-			// Mihomo's socks5 outbound performs remote DNS for proxy hosts;
-			// its YAML type is still "socks5".
-			nodeType = "socks5"
-		}
-		node := map[string]any{
-			"name":     name,
-			"type":     nodeType,
-			"server":   proxy.Host,
-			"port":     proxy.Port,
-			"username": proxy.Username,
-			"password": proxy.Password,
-		}
-		if proxy.Scheme == "https" {
-			node["tls"] = true
-		}
+		name, _ := node["name"].(string)
 		nodes = append(nodes, node)
 		names[name] = fmt.Sprintf("dynamic-%02d", index+1)
 	}
 	return nodes, names, nil
+}
+
+// Use the complete generated outbound to distinguish configured dynamic proxies
+// from subscription nodes, regardless of their names or transport protocol.
+func dynamicProxyNode(value string) (map[string]any, error) {
+	proxy, _, err := parseDynamicProxy(value)
+	if err != nil {
+		return nil, err
+	}
+	hash := sha256.Sum256([]byte(value))
+	name := "DYNAMIC-" + hex.EncodeToString(hash[:])[:16]
+	nodeType := proxy.Scheme
+	switch nodeType {
+	case "https":
+		nodeType = "http"
+	case "socks5h":
+		// Mihomo's socks5 outbound performs remote DNS for proxy hosts;
+		// its YAML type is still "socks5".
+		nodeType = "socks5"
+	}
+	node := map[string]any{
+		"name":     name,
+		"type":     nodeType,
+		"server":   proxy.Host,
+		"port":     proxy.Port,
+		"username": proxy.Username,
+		"password": proxy.Password,
+	}
+	if proxy.Scheme == "https" {
+		node["tls"] = true
+	}
+	return node, nil
 }
 
 // buildDynamicClashSubscription produces a provider-compatible YAML document.

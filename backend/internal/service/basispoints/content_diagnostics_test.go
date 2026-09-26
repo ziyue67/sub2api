@@ -8,7 +8,7 @@ import (
 
 func TestContentErrorsIdentifyPathAndKnownType(t *testing.T) {
 	for _, field := range []string{"content", "function_call_output", "custom_tool_call_output"} {
-		for _, kind := range []string{"input_file", "input_audio", "image_url", "image"} {
+		for _, kind := range []string{"input_file", "input_audio", "image_url", "image", "encrypted_content"} {
 			t.Run(field+"/"+kind, func(t *testing.T) {
 				source := testSource()
 				parts := []any{object{"type": "input_text", "text": "private-text"}, object{"type": kind, "data": "private-payload", "url": "https://private-url.example/image"}}

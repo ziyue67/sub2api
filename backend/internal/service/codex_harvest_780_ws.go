@@ -44,21 +44,18 @@ func requestCodex780WS(req *http.Request, proxy, edge string, payload []byte, se
 	defer func() { _ = conn.CloseNow() }()
 	conn.SetReadLimit(16 * 1024)
 	out.State = extractOpenAICodexTurnState(resp.Header)
-	incoming := responseCookiePairs(resp)
-	changed := false
-	for _, c := range resp.Cookies() {
-		if c.Name == "__cflb" || c.Name == "__oailb" {
-			changed = true
+	var routeErr error
+	out.Cookies, routeErr = codex780ResponseRoute(resp, seed, target, time.Now())
+	defer func() {
+		if routeErr == nil {
+			return
 		}
-	}
-	if !changed {
-		incoming = seed
-	}
-	out.Cookies, _, err = codex780Route(incoming, target, time.Now())
-	if err != nil {
-		out.Err = err
-		return
-	}
+		var eventErr *codexMintError
+		if errors.As(out.Err, &eventErr) && (eventErr.terminal || eventErr.kind == "rate_limited") {
+			return
+		}
+		out.Err = routeErr
+	}()
 	out.Gateway = codex780CookieGateway(out.Cookies)
 	var body map[string]any
 	if json.Unmarshal(payload, &body) != nil {
@@ -84,6 +81,10 @@ func requestCodex780WS(req *http.Request, proxy, edge string, payload []byte, se
 			out.Err = errors.New("mint websocket response incomplete")
 			return
 		}
+		if err := codex780EventError(message, ""); err != nil {
+			out.Err = err
+			return
+		}
 		var event struct {
 			Type     string            `json:"type"`
 			Headers  map[string]string `json:"headers"`
@@ -102,6 +103,10 @@ func requestCodex780WS(req *http.Request, proxy, edge string, payload []byte, se
 				out.State = ticket
 			}
 		case "response.created":
+			if routeErr != nil {
+				out.Err = routeErr
+				return
+			}
 			if strings.TrimSpace(event.Response.ID) == "" || event.Response.Model != model {
 				out.Err = &codexMintError{kind: "model_mismatch", detail: "mint model declaration mismatch"}
 				return

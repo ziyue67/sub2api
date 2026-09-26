@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -76,7 +77,7 @@ func TestExcelBPSImageSettingsPersistAndApplyImmediately(t *testing.T) {
 	require.Nil(t, relay)
 	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{
 		ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: " https://images.example/ ",
-		ExcelBPSImageBodyLimitMiB: 32, ExcelBPSImageBudgetMiB: 768, ExcelBPSImageMaxRequests: 48,
+		ExcelBPSImageBodyLimitMiB: 32, ExcelBPSImageBudgetMiB: 768, ExcelBPSImageMaxRequests: 48, ExcelBPSImageMaxImages: 40,
 	}))
 	saved, err := settings.GetAllSettings(ctx)
 	require.NoError(t, err)
@@ -85,6 +86,7 @@ func TestExcelBPSImageSettingsPersistAndApplyImmediately(t *testing.T) {
 	require.Equal(t, 32, saved.ExcelBPSImageBodyLimitMiB)
 	require.Equal(t, 768, saved.ExcelBPSImageBudgetMiB)
 	require.Equal(t, 48, saved.ExcelBPSImageMaxRequests)
+	require.Equal(t, 40, saved.ExcelBPSImageMaxImages)
 	runtime, err := settings.GetExcelBPSImageRelaySettings(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 32, runtime.BodyLimitMiB)
@@ -142,7 +144,7 @@ func TestExcelBPSImageSettingsRejectInvalidUpdatesAtomically(t *testing.T) {
 	} {
 		err := settings.UpdateSettings(ctx, &SystemSettings{
 			ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example",
-			ExcelBPSImageBodyLimitMiB: limits.body, ExcelBPSImageBudgetMiB: limits.budget, ExcelBPSImageMaxRequests: limits.requests,
+			ExcelBPSImageBodyLimitMiB: limits.body, ExcelBPSImageBudgetMiB: limits.budget, ExcelBPSImageMaxRequests: limits.requests, ExcelBPSImageMaxImages: 20,
 		})
 		require.Error(t, err)
 		runtime, err := settings.GetExcelBPSImageRelaySettings(ctx)
@@ -150,6 +152,7 @@ func TestExcelBPSImageSettingsRejectInvalidUpdatesAtomically(t *testing.T) {
 		require.Equal(t, DefaultExcelBPSImageBodyLimitMiB, runtime.BodyLimitMiB)
 		require.Equal(t, DefaultExcelBPSImageBudgetMiB, runtime.BudgetMiB)
 		require.Equal(t, DefaultExcelBPSImageMaxRequests, runtime.MaxRequests)
+		require.Equal(t, basispoints.DefaultImageRelayLimits().MaxImages, runtime.Limits.MaxImages)
 	}
 	for _, origin := range []string{"", "http://images.example", "https://images.example/v1", "https://user:secret@images.example", "https://images.example?token=secret"} {
 		err := settings.UpdateSettings(ctx, &SystemSettings{ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: origin})
@@ -165,4 +168,44 @@ func TestExcelBPSImageSettingsRejectInvalidUpdatesAtomically(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, runtime.Enabled)
 	require.NotContains(t, err.Error(), "database-private-error")
+}
+
+func TestExcelBPSImageLimitsHotReload(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	ctx := context.Background()
+	repo := &excelBPSImageSettingsRepo{values: map[string]string{
+		SettingKeyExcelBPSImageRelayEnabled: "true", SettingKeyExcelBPSImageBaseURL: "https://images.example",
+	}}
+	settings := NewSettingService(repo, &config.Config{})
+	gateway := &OpenAIGatewayService{settingService: settings}
+	t.Cleanup(func() { require.NoError(t, gateway.CloseExcelBPSImages()) })
+	runtime, err := settings.GetExcelBPSImageRelaySettings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 20, runtime.Limits.MaxImages)
+	relay, err := gateway.excelBPSImageRelay(ctx)
+	require.NoError(t, err)
+	imagePart := `{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRusAAAAASUVORK5CYII="}`
+	raw := []byte(`{"input":[{"role":"user","content":[` + strings.Repeat(imagePart+",", 20) + imagePart + `]}]}`)
+	_, err = relay.Rewrite(raw, "scope")
+	require.ErrorContains(t, err, "at most 20")
+	saved, err := settings.GetAllSettings(ctx)
+	require.NoError(t, err)
+	saved.ExcelBPSImageMaxImages = 100
+	saved.ExcelBPSImageTTLMinutes = 90
+	require.NoError(t, settings.UpdateSettings(ctx, saved))
+	updated, err := gateway.excelBPSImageRelay(ctx)
+	require.NoError(t, err)
+	require.Same(t, relay, updated)
+	_, err = updated.Rewrite(raw, "scope")
+	require.NoError(t, err)
+	runtime, err = settings.GetExcelBPSImageRelaySettings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 100, runtime.Limits.MaxImages)
+	require.Equal(t, 90, runtime.Limits.TTLMinutes)
+	// A corrupt stored limit must fail closed instead of silently allowing traffic.
+	repo.mu.Lock()
+	repo.values[SettingKeyExcelBPSImageMaxImages] = "0"
+	repo.mu.Unlock()
+	_, err = settings.GetExcelBPSImageRelaySettings(ctx)
+	require.Error(t, err)
 }

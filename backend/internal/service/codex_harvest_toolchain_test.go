@@ -28,7 +28,7 @@ func TestCodex780RouteFailuresKeepShapeAndSafeReason(t *testing.T) {
 		{"missing_pair", nil, "route_pair_missing"},
 		{"missing_cflb", pair[1:], "route_cflb_missing"},
 		{"missing_oailb", pair[:1], "route_oailb_missing"},
-		{"wrong_gateway", pair, "route_gateway_mismatch: got=unified-123 want=unified-95"},
+		{"wrong_gateway", pair, "route_gateway_mismatch: got=unified-123 want=unified-88"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{TargetLength: 780}}}}
@@ -113,8 +113,8 @@ func TestCodex780SeedPairCannotMaskPartialRotation(t *testing.T) {
 			account := ticketTestAccount(1)
 			svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TargetLength: 780}, nil)
 			now := time.Now()
-			pair := mint780Pair(now.Add(time.Hour), "unified-95")
-			svc.openaiCodexTickets.Store(openAICodexTicketKey(1, "gpt-6-astra"), &openAICodexTicket{AccountID: 1, Model: "gpt-6-astra", State: mint780State(now), Length: 780, Transport: "sse", Gateway: "unified-95", IssuedAt: now, ExpiresAt: now.Add(time.Minute), HarvestCookies: pair})
+			pair := mint780Pair(now.Add(time.Hour), "unified-88")
+			svc.openaiCodexTickets.Store(openAICodexTicketKey(1, "gpt-6-astra"), &openAICodexTicket{AccountID: 1, Model: "gpt-6-astra", State: mint780State(now), Length: 780, Transport: "sse", Gateway: "unified-88", IssuedAt: now, ExpiresAt: now.Add(time.Minute), HarvestCookies: pair})
 			svc.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, _ string) (*http.Response, error) {
 				require.Equal(t, strings.Join(pair, "; "), req.Header.Get("Cookie"))
 				h := http.Header{}

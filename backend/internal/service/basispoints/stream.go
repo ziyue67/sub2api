@@ -2,6 +2,7 @@ package basispoints
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,11 +13,14 @@ import (
 
 type protocolError struct{ error }
 
+func (e protocolError) Unwrap() error { return e.error }
+
 type streamBody struct {
 	*io.PipeReader
 	upstream io.ReadCloser
 	once     sync.Once
 	err      error
+	cancel   context.CancelFunc
 }
 
 func (b *streamBody) closeUpstream() error {
@@ -25,6 +29,7 @@ func (b *streamBody) closeUpstream() error {
 }
 
 func (b *streamBody) Close() error {
+	b.cancel()
 	readerErr := b.PipeReader.Close()
 	return errors.Join(readerErr, b.closeUpstream())
 }
@@ -33,19 +38,60 @@ func (b *streamBody) Close() error {
 // and structured final answers until validated.
 // Closing the downstream body interrupts an upstream read or a blocked pipe write.
 func (b *Bridge) Stream(upstream io.ReadCloser) io.ReadCloser {
+	return b.StreamWithToolRepair(context.Background(), upstream, nil)
+}
+
+// StreamWithToolRepair permits bounded native tool-error continuations before
+// dispatch. Closing the stream cancels both the active request and correction.
+func (b *Bridge) StreamWithToolRepair(ctx context.Context, upstream io.ReadCloser, repair ToolRepairFunc) io.ReadCloser {
+	return b.StreamWithRepairs(ctx, upstream, repair, nil)
+}
+
+// StreamWithRepair adds only first-turn unknown-target recovery.
+func (b *Bridge) StreamWithRepair(ctx context.Context, upstream io.ReadCloser, repair RepairToolCall) io.ReadCloser {
+	return b.StreamWithRepairs(ctx, upstream, nil, repair)
+}
+
+// StreamWithRepairs keeps known-target transport corrections and first-turn
+// unknown-target regeneration separate; neither can dispatch unvalidated tools.
+func (b *Bridge) StreamWithRepairs(ctx context.Context, upstream io.ReadCloser, repair ToolRepairFunc, unknown RepairToolCall) io.ReadCloser {
+	ctx, cancel := context.WithCancel(ctx)
 	reader, writer := io.Pipe()
-	body := &streamBody{PipeReader: reader, upstream: upstream}
+	body := &streamBody{PipeReader: reader, upstream: upstream, cancel: cancel}
+	var continueTool ToolRepairFunc
+	if repair != nil {
+		continueTool = func(ctx context.Context, response object, validation error) (object, error) {
+			// Release the first HTTP response's concurrency lease before issuing
+			// another request, including accounts with concurrency set to one.
+			_ = body.closeUpstream()
+			return repair(ctx, response, validation)
+		}
+	}
+	var regenerate RepairToolCall
+	if unknown != nil {
+		regenerate = func(ctx context.Context) (io.ReadCloser, error) {
+			_ = body.closeUpstream()
+			return unknown(ctx)
+		}
+	}
 	go func() {
-		err := b.transform(upstream, writer)
+		defer cancel()
+		stop := context.AfterFunc(ctx, func() {
+			_ = writer.CloseWithError(ctx.Err())
+			_ = body.closeUpstream()
+		})
+		defer stop()
+		err := b.transformWithRepairs(ctx, upstream, writer, continueTool, regenerate)
 		_ = body.closeUpstream()
 		_ = writer.CloseWithError(err)
 	}()
 	return body
 }
 
-func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
+func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, writer io.Writer, repair ToolRepairFunc, unknown RepairToolCall) error {
 	sequence := 0
 	terminal := false
+	var terminalResponse object
 	emitted := make(map[string]bool)
 	pendingTools := make(map[string]bool)
 	emit := func(kind string, payload object) error {
@@ -131,6 +177,7 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 				response["text"] = config
 			}
 			if kind == "response.completed" {
+				terminalResponse = response
 				if b.structured != nil {
 					if err := b.structured.validate(response); err != nil {
 						return err
@@ -146,9 +193,28 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 				if len(pendingTools) != 0 {
 					return fmt.Errorf("basispoints completed response omitted an original tool item")
 				}
-				if err := b.translateResponse(response); err != nil {
+				repairStart := -1
+				validation := b.validateToolResponse(response)
+				if unknown != nil && b.canRepair(response, validation) {
+					callback := unknown
+					unknown = nil
+					fixed, index, err := b.repairResponse(ctx, response, callback)
+					if err != nil {
+						return err
+					}
+					response = fixed
+					payload["response"] = fixed
+					terminalResponse = fixed
+					repairStart = index
+					if b.structured != nil {
+						if err := b.structured.validate(response); err != nil {
+							return err
+						}
+					}
+				} else if err := b.translateCompleted(ctx, response, repair); err != nil {
 					return err
 				}
+
 				output, _ = response["output"].([]any)
 				for i, raw := range output {
 					item, _ := raw.(object)
@@ -156,7 +222,7 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 						if err := emitTool(item, i); err != nil {
 							return err
 						}
-					} else if b.structured != nil && text(item["type"]) == "message" {
+					} else if (b.structured != nil || repairStart >= 0 && i >= repairStart) && text(item["type"]) == "message" {
 						if err := emitStructuredMessage(item, i, emit); err != nil {
 							return err
 						}
@@ -193,13 +259,19 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 	})
 	if err != nil && !errors.Is(err, io.EOF) {
 		var invalid protocolError
-		if errors.Is(err, io.ErrClosedPipe) || !errors.As(err, &invalid) {
+		if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &invalid) {
 			return err
 		}
-		return emit("response.failed", object{"response": object{
+		failed := object{
 			"status": "failed", "output": []any{},
 			"error": object{"code": "basispoints_protocol_error", "message": err.Error()},
-		}})
+		}
+		for _, field := range []string{"id", "model", "usage"} {
+			if value := terminalResponse[field]; value != nil {
+				failed[field] = value
+			}
+		}
+		return emit("response.failed", object{"response": failed})
 	}
 	if !terminal {
 		return io.ErrUnexpectedEOF

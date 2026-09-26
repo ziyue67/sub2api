@@ -102,10 +102,49 @@ func TestImageRelayRoundTripAndScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, out, repeated)
 	require.Len(t, r.entries, 1)
-	require.Equal(t, len(data), r.bytes)
+	require.EqualValues(t, len(data), r.bytes)
 	other, err := r.Rewrite(raw, "account:1/key:3/thread:a")
 	require.NoError(t, err)
 	require.NotEqual(t, url, relayTestURL(t, other), "API key scopes must not share capabilities")
+}
+
+func TestImageRelayPreservesOriginalDetail(t *testing.T) {
+	r, err := newTestImageRelay(t, "https://images.example")
+	require.NoError(t, err)
+	data := relayTestPNG(t)
+	var source object
+	require.NoError(t, decode(relayTestRequest(t, data), &source))
+	item := mustTestValue[object](t, mustTestValue[[]any](t, source["input"])[0])
+	part := mustTestValue[object](t, mustTestValue[[]any](t, item["content"])[1])
+	part["detail"] = "original"
+	for _, toolResult := range []bool{false, true} {
+		if toolResult {
+			source["input"] = []any{
+				object{"type": "function_call", "name": "view_image", "call_id": "call_image", "arguments": `{}`},
+				object{"type": "function_call_output", "call_id": "call_image", "output": []any{part}},
+			}
+		}
+		raw, err := json.Marshal(source)
+		require.NoError(t, err)
+		rewritten, err := r.Rewrite(raw, "scope")
+		require.NoError(t, err)
+		wire, _, err := Prepare(rewritten, "scope", nil)
+		require.NoError(t, err)
+		var prepared object
+		require.NoError(t, decode(wire, &prepared))
+		items := mustTestValue[[]any](t, prepared["input"])
+		last := mustTestValue[object](t, items[len(items)-1])
+		field, index := "content", 1
+		if toolResult {
+			field, index = "output", 0
+		}
+		image := mustTestValue[object](t, mustTestValue[[]any](t, last[field])[index])
+		require.Equal(t, "original", image["detail"])
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, text(image["image_url"]), nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		require.Equal(t, data, w.Body.Bytes())
+	}
 }
 
 func TestImageRelayToolResultsAndUntouchedFields(t *testing.T) {
@@ -137,7 +176,7 @@ func TestImageRelayDisabledAndHTTPSPassthrough(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, raw, out)
 	_, _, err = Prepare(out, "scope", nil)
-	require.ErrorContains(t, err, "HTTPS image URL")
+	require.ErrorContains(t, err, "image support is disabled")
 	r, err := newTestImageRelay(t, "https://images.example")
 	require.NoError(t, err)
 	raw = []byte(`{ "model":"gpt-6-astra", "input":[{"role":"user","content":[{"type":"input_image","image_url":"https://cdn.example/image.png?sig=a%2Fb"}]}] }`)
@@ -224,6 +263,24 @@ func TestImageRelayBatchValidationAndLimitsAreAtomic(t *testing.T) {
 	_, err = r.Rewrite(raw, "scope")
 	require.ErrorContains(t, err, "at most 20")
 	require.Empty(t, r.entries)
+	limited, err := newTestImageRelay(t, "https://images.example")
+	require.NoError(t, err)
+	limits := DefaultImageRelayLimits()
+	limits.MaxImages = 1
+	require.NoError(t, limited.Configure("https://images.example", limits))
+	_, err = limited.Rewrite(relayTestRequest(t, relayTestPNG(t)), "scope")
+	require.NoError(t, err)
+	entriesBeforeLimit := len(limited.entries)
+	parts = make([]any, 2)
+	for i := range parts {
+		parts[i] = part
+	}
+	item["content"] = parts
+	raw, err = json.Marshal(source)
+	require.NoError(t, err)
+	_, err = limited.Rewrite(raw, "scope")
+	require.ErrorContains(t, err, "at most 1")
+	require.Len(t, limited.entries, entriesBeforeLimit)
 	r.bytes = imageRelayMaxBytes
 	_, err = r.Rewrite(relayTestRequest(t, relayTestPNG(t)), "scope")
 	require.ErrorIs(t, err, ErrImageRelayFull)

@@ -12,6 +12,8 @@ func validateHistoryContent(value any, inputIndex int, field string) error {
 			if err := validateImage(part); err != nil {
 				return fmt.Errorf("%w (path=input[%d].%s[%d])", err, inputIndex, field, index)
 			}
+		case "encrypted_content":
+			return fmt.Errorf("basispoints cannot forward encrypted_content message parts; resend the message as plaintext from its source or start a new conversation (path=input[%d].%s[%d]; type=encrypted_content)", inputIndex, field, index)
 		default:
 			return fmt.Errorf("basispoints supports text and HTTPS input_image content only (path=input[%d].%s[%d]; type=%s)", inputIndex, field, index, contentTypeDiagnostic(part))
 		}

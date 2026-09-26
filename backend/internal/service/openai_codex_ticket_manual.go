@@ -104,6 +104,7 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 	ticketsStored := 0
 	consecutiveFails := 0
 	persistPending := map[string]bool{}
+	rejected := map[string]bool{}
 	forceSwitch := req.NodeSwitchRule == ManualHarvestNodeSwitchEveryRequest
 
 	emit(ManualHarvestProgress{
@@ -131,6 +132,16 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 		for model := range persistPending {
 			delete(got, model)
 		}
+		pending := false
+		for _, model := range req.Models {
+			if !manualHarvestModelDone(got, model) && !rejected[model] {
+				pending = true
+			}
+		}
+		if !pending && len(rejected) > 0 {
+			emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, TicketsStored: ticketsStored, Done: true, Result: "done", Level: "WARN", Message: "剩余目标模型已被上游明确拒绝，停止重试。"})
+			return nil
+		}
 		if manualHarvestRunComplete(req.StopOnSuccess, req.Models, got) {
 			emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, TicketsStored: ticketsStored, Done: true, Result: "hit", Level: "OK", Message: "目标模型已有有效门票，手动打票结束。"})
 			return nil
@@ -147,7 +158,7 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 				emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, TicketsStored: ticketsStored, Done: true, Result: "done", Level: "INFO", Message: "手动打票已停止。"})
 				return err
 			}
-			if manualHarvestModelDone(got, model) {
+			if manualHarvestModelDone(got, model) || rejected[model] {
 				continue
 			}
 			if attempt >= req.MaxAttempts {
@@ -243,6 +254,10 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 				if result.Kind == "account_error" {
 					emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Result: "error", Level: "ERROR", TicketsStored: ticketsStored, Done: true, Message: message, Detail: detail})
 					return nil
+				}
+				if result.Terminal {
+					rejected[model] = true
+					continue
 				}
 			}
 

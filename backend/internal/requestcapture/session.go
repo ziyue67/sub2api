@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 )
@@ -85,6 +86,7 @@ type Session struct {
 	resultBuffer    []byte
 	resultSkip      bool
 	resultError     bool
+	clientOutcome   string
 	done            atomic.Bool
 	pending         atomic.Int64
 	streams         map[*Stream]struct{}
@@ -244,6 +246,7 @@ func (s *Session) ClientFrame(body []byte) {
 		s.attempts = nil
 		s.reason, s.errorCode = "", ""
 		s.resultError, s.resultSkip = false, false
+		s.clientOutcome = ""
 		s.resultBuffer = s.resultBuffer[:0]
 		s.usage = map[string]int64{}
 		for _, t := range s.candidates {
@@ -331,7 +334,8 @@ func (s *Session) AttemptResponse(n, status int, h http.Header, err error) {
 	}
 	// Transport errors may contain credentials or a signed URL. Preserve class only.
 	if err != nil {
-		a.Error = "transport_error"
+		a.Error = transportdiag.Classify(err)
+		a.ErrorStage = "transport"
 	}
 }
 func (s *Session) Finish(status int) {
@@ -512,6 +516,13 @@ func (st *Stream) observeOutcomeLocked() {
 	if st.s.closed || st.s.turnEnded {
 		return
 	}
+	if st.part.Stage == "client_response" {
+		if st.responseFailed {
+			st.s.clientOutcome = "failed"
+		} else if st.s.clientOutcome != "failed" && st.observer.successful() {
+			st.s.clientOutcome = "completed"
+		}
+	}
 	if st.responseFailed {
 		st.s.resultError = true
 		if st.s.errorCode == "" {
@@ -601,6 +612,7 @@ func (s *Session) snapshotLocked(r *Record) {
 		}
 	}
 	r.ErrorCode = s.errorCode
+	r.ClientOutcome = s.clientOutcome
 	r.Usage = map[string]int64{}
 	for k, v := range s.usage {
 		r.Usage[k] = v
@@ -834,6 +846,7 @@ func recordKey(task string, turn int) string { return fmt.Sprintf("%s:%d", task,
 func (m *Manager) finishRecord(r *recordState, t *runtimeTask, snapshot *Record) {
 	r.Meta, r.Turn = snapshot.Meta, snapshot.Turn
 	r.Status, r.IsError = snapshot.Status, snapshot.IsError
+	r.ClientOutcome = snapshot.ClientOutcome
 	r.Attempts, r.Usage, r.ErrorCode = snapshot.Attempts, snapshot.Usage, snapshot.ErrorCode
 	if snapshot.Partial && r.Reason == "" {
 		r.Partial, r.Reason = true, snapshot.Reason
@@ -1072,6 +1085,9 @@ func (b *observedBody) observeReadError(class string) {
 		a := &s.attempts[st.part.Attempt-1]
 		if a.ReadError == "" {
 			a.ReadError = class
+			if a.ErrorStage == "" {
+				a.ErrorStage = st.part.Stage
+			}
 			a.LocalClose = b.closing.Load()
 		}
 	}
@@ -1120,6 +1136,7 @@ func (s *Session) ObserveHTTPRequest(req *http.Request, account int64) (int, fun
 	if s == nil {
 		return 0, func(*http.Response, error) {}
 	}
+	diagnostics := traceCaptureRequest(req)
 	n := s.BeginAttempt(account)
 	st := s.NewStream("upstream_request", n, 0, req.Header.Get("Content-Type"), req.Header)
 	st.part.URL = SafeURL(req.URL.String())
@@ -1134,6 +1151,13 @@ func (s *Session) ObserveHTTPRequest(req *http.Request, account int64) (int, fun
 			resp.Body = ObserveBody(resp.Body, s.NewStream("upstream_response", n, 0, h.Get("Content-Type"), h))
 		}
 		s.AttemptResponse(n, status, h, err)
+		if err != nil {
+			s.mu.Lock()
+			if n > 0 && n <= len(s.attempts) {
+				s.attempts[n-1].ErrorStage = diagnostics.stage()
+			}
+			s.mu.Unlock()
+		}
 	}
 }
 

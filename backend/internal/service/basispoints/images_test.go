@@ -8,7 +8,7 @@ import (
 )
 
 func TestHTTPSImagesPreserveURLsAndText(t *testing.T) {
-	for _, detail := range []string{"", "auto", "low", "high"} {
+	for _, detail := range []string{"", "auto", "low", "high", "original"} {
 		image := object{"type": "input_image", "image_url": "https://images.example/photo.png?signature=unchanged%2Fvalue&expires=123"}
 		if detail != "" {
 			image["detail"] = detail
@@ -33,9 +33,9 @@ func TestUnsupportedImageFormsReturnActionableErrors(t *testing.T) {
 		"missing host":    {"image_url": "https:///photo.png"},
 		"credentials":     {"image_url": "https://private-secret:password@images.example/photo.png"},
 		"URL object":      {"image_url": object{"url": "https://images.example/photo.png"}},
-		"file ID":         {"file_id": "file-private"},
+		"invalid file ID": {"file_id": "invalid-private"},
 		"mixed file ID":   {"image_url": "https://images.example/photo.png", "file_id": "file-private"},
-		"original detail": {"image_url": "https://images.example/photo.png", "detail": "original"},
+		"invalid detail":  {"image_url": "https://images.example/photo.png", "detail": "invalid"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			image["type"] = "input_image"

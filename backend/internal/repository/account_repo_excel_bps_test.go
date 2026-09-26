@@ -31,7 +31,7 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 		{
 			name:    "disabled removes all BPS settings",
 			extra:   map[string]any{"openai_excel_bps": false},
-			removed: []string{"openai_excel_bps", "openai_excel_bps_models", "openai_excel_bps_cache_creation_as_input", "openai_excel_bps_auto_disable_on_403"},
+			removed: []string{"openai_excel_bps", "openai_excel_bps_models", "openai_excel_bps_cache_creation_as_input", "openai_excel_bps_auto_disable_on_403", "openai_excel_bps_auto_move_on_403", "openai_excel_bps_403_target_group_id"},
 		},
 		{
 			name:  "unrelated changes preserve BPS settings",
@@ -41,6 +41,20 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 			name:    "auto disable false removes opt-in",
 			extra:   map[string]any{"openai_excel_bps_auto_disable_on_403": false},
 			removed: []string{"openai_excel_bps_auto_disable_on_403"},
+		},
+		{
+			name:    "auto move false removes policy and destination",
+			extra:   map[string]any{service.ExcelBPSAutoMoveOn403Key: false},
+			removed: []string{service.ExcelBPSAutoMoveOn403Key, service.ExcelBPS403TargetGroupIDKey},
+		},
+		{
+			name:  "zero destination remains explicit",
+			extra: map[string]any{service.ExcelBPSAutoMoveOn403Key: true, service.ExcelBPS403TargetGroupIDKey: 0},
+		},
+		{
+			name:    "nil destination removes key",
+			extra:   map[string]any{service.ExcelBPS403TargetGroupIDKey: nil},
+			removed: []string{service.ExcelBPS403TargetGroupIDKey},
 		},
 	}
 	for _, tt := range tests {
@@ -52,9 +66,12 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 			require.Len(t, exec.execQueries, 1)
 			query := normalizeSQLWhitespace(exec.execQueries[0])
 			expression := "COALESCE(extra, '{}'::jsonb) || $1::jsonb"
-			if tt.name == "disabled removes all BPS settings" {
-				expression = "(" + expression + ") - 'openai_excel_bps' - 'openai_excel_bps_models' - 'openai_excel_bps_cache_creation_as_input' - 'openai_excel_bps_auto_disable_on_403'"
-			} else {
+			switch tt.name {
+			case "disabled removes all BPS settings":
+				expression = "(" + expression + ") - 'openai_excel_bps' - 'openai_excel_bps_models' - 'openai_excel_bps_cache_creation_as_input' - 'openai_excel_bps_auto_disable_on_403' - 'openai_excel_bps_auto_move_on_403' - 'openai_excel_bps_403_target_group_id' - 'openai_excel_bps_mihomo'"
+			case "auto move false removes policy and destination":
+				expression = "(" + expression + ") - 'openai_excel_bps_auto_move_on_403' - 'openai_excel_bps_403_target_group_id'"
+			default:
 				for _, key := range tt.removed {
 					expression = "(" + expression + ") - '" + key + "'"
 				}

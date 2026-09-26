@@ -32,4 +32,18 @@ describe('request capture page', () => {
     await wrapper.findAll('button').find(b => b.text() === 'admin.requestCapture.nextSegment')!.trigger('click'); await flushPromises()
     expect(mocks.getContent).toHaveBeenLastCalledWith('task', 'record', '1-client_request.txt', 10); expect(wrapper.text()).not.toContain('<img src=x'); expect(wrapper.text()).toContain('next page'); wrapper.unmount()
   })
+  it.each([
+    ['failed', 'basispoints_stream_incomplete', 'streamFailed'],
+    ['completed', 'upstream_read_failed', 'completedWithErrors'],
+    [undefined, 'unknown_error', 'containsErrors'],
+  ])('shows business outcome for HTTP 200: %s', async (outcome, code, label) => {
+    mocks.listRecords.mockResolvedValue({ items: [{ ...record, status: 200, is_error: true, client_outcome: outcome, error_code: code }], has_more: false })
+    const wrapper = mount(View, options); await flushPromises()
+    await wrapper.findAll('button').find(b => b.text().includes('#7'))!.trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('HTTP 200')
+    expect(wrapper.get('[data-testid="capture-outcome"]').text()).toBe('admin.requestCapture.' + label)
+    expect(wrapper.text()).toContain(code)
+    wrapper.unmount()
+  })
+
 })

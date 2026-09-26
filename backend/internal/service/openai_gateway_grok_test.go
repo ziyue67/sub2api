@@ -1349,6 +1349,83 @@ func TestForwardGrokMediaAppliesAccountModelMappingAfterEndpointNormalization(t 
 	}
 }
 
+func TestForwardGrokMediaInheritsBuiltInMediaMappingForChatOnlyAccounts(t *testing.T) {
+	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		endpoint     GrokMediaEndpoint
+		path         string
+		body         string
+		responseBody string
+		wantUpstream string
+	}{
+		{
+			name:         "image generation",
+			endpoint:     GrokMediaEndpointImagesGenerations,
+			path:         "/v1/images/generations",
+			body:         `{"model":"grok-imagine","prompt":"draw a cat"}`,
+			responseBody: `{"data":[{"url":"https://images.test/chat-only.png"}]}`,
+			wantUpstream: xai.DefaultImagineImageQualityModel,
+		},
+		{
+			name:         "image edit",
+			endpoint:     GrokMediaEndpointImagesEdits,
+			path:         "/v1/images/edits",
+			body:         `{"model":"grok-imagine-edit","prompt":"edit","image":{"image_url":{"url":"https://example.com/input.png"}}}`,
+			responseBody: `{"data":[{"url":"https://images.test/chat-only-edit.png"}]}`,
+			wantUpstream: xai.DefaultImagineImageQualityModel,
+		},
+		{
+			name:         "video generation",
+			endpoint:     GrokMediaEndpointVideosGenerations,
+			path:         "/v1/videos/generations",
+			body:         `{"model":"grok-imagine-video-1.5-preview","prompt":"waves"}`,
+			responseBody: `{"request_id":"chat-only-video"}`,
+			wantUpstream: xai.DefaultImagineVideo15Model,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			account := &Account{
+				ID:          67,
+				Name:        "grok-chat-only",
+				Platform:    PlatformGrok,
+				Type:        AccountTypeAPIKey,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "api-key",
+					"base_url": "https://xai.test/v1",
+					"model_mapping": map[string]any{
+						"grok-4.3": "grok-4.3",
+					},
+				},
+				Extra: map[string]any{GrokMediaEligibleExtraKey: true},
+			}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(tt.responseBody)),
+			}}
+			svc := &OpenAIGatewayService{httpUpstream: upstream}
+
+			_, err := svc.ForwardGrokMedia(
+				context.Background(), c, account, tt.endpoint, "", []byte(tt.body), "application/json",
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantUpstream, gjson.GetBytes(upstream.lastBody, "model").String())
+		})
+	}
+}
+
 func TestForwardGrokMediaImagesGenerationRejectsEmptySuccessfulResponse(t *testing.T) {
 	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
 	gin.SetMode(gin.TestMode)

@@ -106,6 +106,11 @@ func TestAdminServiceBulkUpdateAccounts_RejectsInvalidExcelBPSValues(t *testing.
 		{"openai_excel_bps_cache_creation_as_input": nil},
 		{"openai_excel_bps_auto_disable_on_403": "true"},
 		{"openai_excel_bps_auto_disable_on_403": nil},
+		{ExcelBPSAutoMoveOn403Key: "true"},
+		{ExcelBPSAutoMoveOn403Key: nil},
+		{ExcelBPS403TargetGroupIDKey: "0"},
+		{ExcelBPS403TargetGroupIDKey: -1},
+		{ExcelBPS403TargetGroupIDKey: 1.5},
 		{"openai_excel_bps_models": "gpt-6-astra"},
 		{"openai_excel_bps_models": map[string]any{}},
 		{"openai_excel_bps_models": []any{"gpt-6-astra", 1}},
@@ -146,6 +151,7 @@ func TestAdminServiceBulkUpdateAccounts_RejectsInvalidExcelBPSTargets(t *testing
 				{"openai_excel_bps_models": nil},
 				{"openai_excel_bps_cache_creation_as_input": true},
 				{"openai_excel_bps_auto_disable_on_403": true},
+				{ExcelBPSAutoMoveOn403Key: true, ExcelBPS403TargetGroupIDKey: 0},
 			} {
 				repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{
 					{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth},

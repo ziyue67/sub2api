@@ -93,6 +93,23 @@ func TestCollectionWithOfficialKernel(t *testing.T) {
 	require.Equal(t, n2, fetch(p2))
 	require.Equal(t, n1, fetch(p1))
 	require.NoError(t, c.Close())
+	// The simulated upstream only serves local HTTP, not public TLS.
+	m.bpsProbe = func(context.Context, string) error { return nil }
+	// BPS binds sessions to immutable node listeners, independent of harvest use-once.
+	bps1, done1, err := AcquireBPSSession(ctx, "account:1/thread:first")
+	require.NoError(t, err)
+	defer done1()
+	bps2, done2, err := AcquireBPSSession(ctx, "account:1/thread:second")
+	require.NoError(t, err)
+	defer done2()
+	require.NotEqual(t, bps1, bps2)
+	firstExit, secondExit := fetch(bps1), fetch(bps2)
+	require.NotEqual(t, firstExit, secondExit)
+	again, done3, err := AcquireBPSSession(ctx, "account:1/thread:first")
+	require.NoError(t, err)
+	require.Equal(t, bps1, again)
+	require.Equal(t, firstExit, fetch(again))
+	done3()
 	proxy, release, err := PinNode(ctx, n1)
 	require.NoError(t, err)
 	defer release()
@@ -118,4 +135,8 @@ func TestCollectionWithOfficialKernel(t *testing.T) {
 			require.ErrorContains(t, err, "no eligible")
 		}
 	}
+	// Config reloads and harvest selector changes must preserve the BPS exits.
+	require.Equal(t, firstExit, fetch(bps1))
+	require.Equal(t, secondExit, fetch(bps2))
+
 }

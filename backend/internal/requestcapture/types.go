@@ -83,6 +83,7 @@ type Attempt struct {
 	Status            int       `json:"status,omitempty"`
 	UpstreamRequestID string    `json:"upstream_request_id,omitempty"`
 	Error             string    `json:"error,omitempty"`
+	ErrorStage        string    `json:"error_stage,omitempty"`
 	ReadError         string    `json:"read_error,omitempty"`
 	ResponseTerminal  string    `json:"response_terminal,omitempty"`
 	LocalClose        bool      `json:"local_close,omitempty"`
@@ -106,17 +107,18 @@ type Record struct {
 	InstanceID string `json:"instance_id"`
 	Turn       int    `json:"turn,omitempty"`
 	Meta
-	CreatedAt  time.Time        `json:"created_at"`
-	FinishedAt *time.Time       `json:"finished_at,omitempty"`
-	Status     int              `json:"status"`
-	IsError    bool             `json:"is_error"`
-	Partial    bool             `json:"partial"`
-	Reason     string           `json:"reason,omitempty"`
-	Bytes      int64            `json:"bytes"`
-	Attempts   []Attempt        `json:"attempts"`
-	Parts      []Part           `json:"parts"`
-	ErrorCode  string           `json:"error_code,omitempty"`
-	Usage      map[string]int64 `json:"usage,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	FinishedAt    *time.Time       `json:"finished_at,omitempty"`
+	Status        int              `json:"status"`
+	IsError       bool             `json:"is_error"`
+	Partial       bool             `json:"partial"`
+	Reason        string           `json:"reason,omitempty"`
+	Bytes         int64            `json:"bytes"`
+	Attempts      []Attempt        `json:"attempts"`
+	Parts         []Part           `json:"parts"`
+	ClientOutcome string           `json:"client_outcome,omitempty"`
+	ErrorCode     string           `json:"error_code,omitempty"`
+	Usage         map[string]int64 `json:"usage,omitempty"`
 }
 
 // Store accepts metadata only. Payload bytes must never enter this interface.

@@ -735,7 +735,7 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 			scope.GroupIDs = []int64{}
 		}
 	}
-	policy := CodexHarvestControls{Transport: "sse", TargetGateway: "unified-95"}
+	policy := CodexHarvestControls{Transport: "sse", TargetGateway: "unified-88"}
 	var runtime *CodexHarvestRuntime
 	if len(controls) > 0 && controls[0] != nil {
 		v, _, _ := controls[0].Controls(ctx)

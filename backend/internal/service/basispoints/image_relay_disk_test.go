@@ -150,13 +150,13 @@ func TestImageRelayExpiryDuringDownloadPreservesReplacementAndQuota(t *testing.T
 	old.expires = time.Now().Add(-time.Second)
 	r.pruneLocked(time.Now())
 	r.mu.Unlock()
-	require.Equal(t, len(data), r.bytes, "open downloads must retain disk quota")
+	require.EqualValues(t, len(data), r.bytes, "open downloads must retain disk quota")
 	require.Equal(t, 1, r.retiredEntries)
 	_, err = r.Rewrite(raw, "scope")
 	require.NoError(t, err)
 	fresh := r.entries[token]
 	require.NotEqual(t, old.path, fresh.path)
-	require.Equal(t, len(data)*2, r.bytes)
+	require.EqualValues(t, len(data)*2, r.bytes)
 	release.Do(func() { close(w.release) })
 	select {
 	case <-done:
@@ -164,7 +164,7 @@ func TestImageRelayExpiryDuringDownloadPreservesReplacementAndQuota(t *testing.T
 		t.Fatal("download did not finish")
 	}
 	require.Equal(t, data, w.data.Bytes())
-	require.Equal(t, len(data), r.bytes)
+	require.EqualValues(t, len(data), r.bytes)
 	require.Zero(t, r.retiredEntries)
 	_, err = os.Stat(old.path)
 	require.True(t, os.IsNotExist(err))

@@ -427,3 +427,41 @@ func TestNormalizeOpenAIResponsesWebSocketCompatibilityBodyStripsReasoningConten
 	require.False(t, changed)
 	require.JSONEq(t, string(body), string(normalized))
 }
+
+func TestNormalizeOpenAIResponsesReasoningReplayDropsOnlyItemStatus(t *testing.T) {
+	body := []byte(`{"status":"top-level","input":[{"type":"reasoning","status":"completed","summary":[],"content":[],"encrypted_content":"keep-cipher","opaque":{"status":"keep","n":9007199254740993}},{"type":"reasoning","status":null,"summary":[]},{"type":"message","status":"completed","content":"keep"},{"type":"function_call","status":"completed","name":"lookup","call_id":"call_1","arguments":"{}"},{"type":"compaction","status":"completed","encrypted_content":"keep-compaction"}]}`)
+	normalized, changed, err := normalizeOpenAIResponsesReasoningContentReplay(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, gjson.GetBytes(normalized, "input.0.status").Exists())
+	require.False(t, gjson.GetBytes(normalized, "input.1.status").Exists())
+	require.Equal(t, "keep-cipher", gjson.GetBytes(normalized, "input.0.encrypted_content").String())
+	require.Equal(t, "[]", gjson.GetBytes(normalized, "input.0.content").Raw)
+	require.Equal(t, "[]", gjson.GetBytes(normalized, "input.0.summary").Raw)
+	require.Equal(t, "keep", gjson.GetBytes(normalized, "input.0.opaque.status").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(normalized, "input.0.opaque.n").Raw)
+	for _, path := range []string{"input.2.status", "input.3.status", "input.4.status"} {
+		require.Equal(t, "completed", gjson.GetBytes(normalized, path).String())
+	}
+	require.Equal(t, "top-level", gjson.GetBytes(normalized, "status").String())
+	require.Equal(t, "keep-compaction", gjson.GetBytes(normalized, "input.4.encrypted_content").String())
+	again, changed, err := normalizeOpenAIResponsesReasoningContentReplay(normalized)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, normalized, again)
+}
+
+func TestNormalizeOpenAIResponsesWebSocketReasoningStatusScopedToOpenAI(t *testing.T) {
+	body := []byte(`{"type":"response.create","model":"gpt-5.6-sol","store":true,"input":[{"type":"reasoning","status":"completed","summary":[],"encrypted_content":"keep-cipher"}]}`)
+	for _, typ := range []string{AccountTypeOAuth, AccountTypeAPIKey} {
+		normalized, changed, err := normalizeOpenAIResponsesWebSocketCompatibilityBody(body, &Account{Platform: PlatformOpenAI, Type: typ}, false)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.False(t, gjson.GetBytes(normalized, "input.0.status").Exists())
+		require.Equal(t, "keep-cipher", gjson.GetBytes(normalized, "input.0.encrypted_content").String())
+	}
+	normalized, changed, err := normalizeOpenAIResponsesWebSocketCompatibilityBody(body, &Account{Platform: PlatformZhipu, Type: AccountTypeAPIKey}, false)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, body, normalized)
+}
