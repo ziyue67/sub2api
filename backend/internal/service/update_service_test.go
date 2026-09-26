@@ -175,9 +175,8 @@ func TestUpdateServiceRollbackToVersionRejectsDisallowedTargets(t *testing.T) {
 }
 
 func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
-	// The target passes the allowlist check and is then rejected because this
-	// fork ships Docker images only: rollback means moving the image tag on the
-	// host, not swapping a binary inside the container.
+	// No platform asset in the release: the target passes the allowlist check
+	// and fails later at asset lookup, proving the version itself was accepted.
 	releases := []*GitHubRelease{
 		{TagName: "v0.1.147"},
 		{TagName: "v0.1.146"},
@@ -188,5 +187,5 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrRollbackVersionNotAllowed)
-	require.ErrorIs(t, err, ErrRollbackImageRequired)
+	require.Contains(t, err.Error(), "no compatible release found")
 }

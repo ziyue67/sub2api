@@ -72,18 +72,15 @@ Nginx drops headers containing underscores by default (e.g. `session_id`), which
 
 ## Deployment
 
-> **This fork distributes Docker images only.** GitHub Releases no longer carry `tar.gz` / `zip`
-> archives, and `deploy/install.sh` installs, upgrades and rolls back by moving the image tag.
+### Method 1: Script Installation (Recommended)
 
-### Method 1: One-Click Script (Recommended)
-
-One-click Docker Compose deployment: downloads the compose file for the requested release, generates
-`.env` secrets, pins the image tag and starts Sub2API together with PostgreSQL and Redis.
+One-click installation script that downloads pre-built binaries from GitHub Releases.
 
 #### Prerequisites
 
-- Linux server (amd64; this fork publishes no arm64 image)
-- Docker Engine 20.10+ with the Compose v2 plugin
+- Linux server (amd64 or arm64)
+- PostgreSQL 15+ (installed and running)
+- Redis 7+ (installed and running)
 - Root privileges
 
 #### Installation Steps
@@ -93,24 +90,22 @@ curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.
 ```
 
 The script will:
-1. Verify Docker / Compose and refuse unsupported architectures
-2. Download `docker-compose.local.yml` for the release and pin the image tag
-3. Generate `.env` (`JWT_SECRET`, `TOTP_ENCRYPTION_KEY`, `POSTGRES_PASSWORD`)
-4. Create `data/`, `postgres_data/`, `redis_data/` under `/opt/sub2api`
-5. Start the stack with `docker compose up -d`
+1. Detect your system architecture
+2. Download the latest release
+3. Install binary to `/opt/sub2api`
+4. Create systemd service
+5. Configure system user and permissions
 
 #### Post-Installation
 
 ```bash
-cd /opt/sub2api
+# 1. Start the service
+sudo systemctl start sub2api
 
-# Container status
-docker compose ps
+# 2. Enable auto-start on boot
+sudo systemctl enable sub2api
 
-# Follow application logs
-docker compose logs -f sub2api
-
-# Open the Setup Wizard in browser
+# 3. Open Setup Wizard in browser
 # http://YOUR_SERVER_IP:8080
 ```
 
@@ -121,39 +116,32 @@ The Setup Wizard will guide you through:
 
 #### Upgrade
 
-```bash
-# Upgrade to the latest image
-curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- upgrade
+You can upgrade directly from the **Admin Dashboard** by clicking the **Check for Updates** button in the top-left corner.
 
-# Or manually, inside the deployment directory
-cd /opt/sub2api && docker compose pull && docker compose up -d
-```
-
-The admin dashboard still detects new versions and shows these commands; in-place binary updates are
-no longer offered because the application runs inside a container.
+The web interface will:
+- Check for new versions automatically
+- Download and apply updates with one click
+- Support rollback if needed
 
 #### Useful Commands
 
 ```bash
 # Check status
-cd /opt/sub2api && docker compose ps
+sudo systemctl status sub2api
 
 # View logs
-cd /opt/sub2api && docker compose logs -f sub2api
+sudo journalctl -u sub2api -f
 
-# Restart the application container
-cd /opt/sub2api && docker compose restart sub2api
+# Restart service
+sudo systemctl restart sub2api
 
-# Roll back to a specific image tag
-curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- rollback v0.2.81
-
-# Uninstall (keeps data directories; add --purge to delete them too)
+# Uninstall
 curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
 ```
 
 ---
 
-### Method 2: Docker Compose (Manual)
+### Method 2: Docker Compose (Recommended)
 
 Deploy with Docker Compose, including PostgreSQL and Redis containers.
 
@@ -738,7 +726,7 @@ sub2api/
     ├── docker-compose.yml    # Docker Compose configuration
     ├── .env.example          # Environment variables for Docker Compose
     ├── config.example.yaml   # Full config file for binary deployment
-    └── install.sh            # One-click Docker installer (install/upgrade/rollback)
+    └── install.sh            # One-click installation script
 ```
 
 ## License

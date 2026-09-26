@@ -222,19 +222,15 @@ Nginx はデフォルトでアンダースコアを含むヘッダー（例: `se
 
 ## デプロイ
 
-> **本 Fork は Docker イメージのみを配布します。** GitHub Releases は `tar.gz` / `zip` を
-> 提供せず、`deploy/install.sh` はイメージタグの切り替えでインストール・アップグレード・
-> ロールバックを行います。
+### 方法1: スクリプトによるインストール（推奨）
 
-### 方法1: ワンクリックスクリプト（推奨）
-
-ワンクリックの Docker Compose デプロイ: 指定バージョンの compose ファイルを取得し、`.env` の
-シークレットを生成してイメージタグを固定し、Sub2API と PostgreSQL / Redis をまとめて起動します。
+GitHub Releases からビルド済みバイナリをダウンロードするワンクリックインストールスクリプトです。
 
 #### 前提条件
 
-- Linux サーバー（amd64。本 Fork は arm64 イメージを配布しません）
-- Docker Engine 20.10+（Compose v2 プラグイン必須）
+- Linux サーバー（amd64 または arm64）
+- PostgreSQL 15+（インストール済みかつ稼働中）
+- Redis 7+（インストール済みかつ稼働中）
 - root 権限
 
 #### インストール手順
@@ -244,24 +240,22 @@ curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.
 ```
 
 スクリプトは以下を実行します:
-1. Docker / Compose を確認し、未対応アーキテクチャを拒否
-2. 指定バージョンの `docker-compose.local.yml` を取得してイメージタグを固定
-3. `.env`（`JWT_SECRET`、`TOTP_ENCRYPTION_KEY`、`POSTGRES_PASSWORD`）を生成
-4. `/opt/sub2api` 配下に `data/`、`postgres_data/`、`redis_data/` を作成
-5. `docker compose up -d` でスタックを起動
+1. システムアーキテクチャの検出
+2. 最新リリースのダウンロード
+3. バイナリを `/opt/sub2api` にインストール
+4. systemd サービスの作成
+5. システムユーザーと権限の設定
 
 #### インストール後の作業
 
 ```bash
-cd /opt/sub2api
+# 1. サービスを起動
+sudo systemctl start sub2api
 
-# コンテナの状態を確認
-docker compose ps
+# 2. 起動時の自動起動を有効化
+sudo systemctl enable sub2api
 
-# アプリケーションログを表示
-docker compose logs -f sub2api
-
-# ブラウザでセットアップウィザードを開く
+# 3. ブラウザでセットアップウィザードを開く
 # http://YOUR_SERVER_IP:8080
 ```
 
@@ -272,39 +266,32 @@ docker compose logs -f sub2api
 
 #### アップグレード
 
-```bash
-# 最新イメージへアップグレード
-curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- upgrade
+**管理ダッシュボード**の左上にある**アップデートを確認**ボタンをクリックすることで、ダッシュボードから直接アップグレードできます。
 
-# またはデプロイディレクトリで手動実行
-cd /opt/sub2api && docker compose pull && docker compose up -d
-```
-
-管理ダッシュボードは引き続き新バージョンを検出し、上記コマンドを表示します。アプリケーションは
-コンテナ内で動作するため、バイナリを直接置き換えるオンラインアップデートは提供されません。
+Web インターフェースでは以下が可能です:
+- 新しいバージョンの自動確認
+- ワンクリックでのアップデートのダウンロードと適用
+- 必要に応じたロールバック
 
 #### よく使うコマンド
 
 ```bash
 # ステータスを確認
-cd /opt/sub2api && docker compose ps
+sudo systemctl status sub2api
 
 # ログを表示
-cd /opt/sub2api && docker compose logs -f sub2api
+sudo journalctl -u sub2api -f
 
-# アプリケーションコンテナを再起動
-cd /opt/sub2api && docker compose restart sub2api
+# サービスを再起動
+sudo systemctl restart sub2api
 
-# 指定したイメージタグへロールバック
-curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- rollback v0.2.81
-
-# アンインストール（データディレクトリは保持。--purge で削除）
+# アンインストール
 curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
 ```
 
 ---
 
-### 方法2: Docker Compose（手動）
+### 方法2: Docker Compose（推奨）
 
 PostgreSQL と Redis のコンテナを含む Docker Compose でデプロイします。
 
@@ -734,7 +721,7 @@ sub2api/
     ├── docker-compose.yml    # Docker Compose 設定
     ├── .env.example          # Docker Compose 用環境変数
     ├── config.example.yaml   # バイナリデプロイ用フル設定ファイル
-    └── install.sh            # ワンクリック Docker インストーラ（install/upgrade/rollback）
+    └── install.sh            # ワンクリックインストールスクリプト
 ```
 
 ## スター履歴

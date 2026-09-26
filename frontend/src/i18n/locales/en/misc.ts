@@ -43,8 +43,7 @@ export default {
     rollbackSelectVersion: 'Select a version to roll back to (last 3 versions)',
     rollbackConfirm: 'Roll back to {version}',
     rollbackWarning:
-      'Rollback pins the older image tag and recreates the container. Data stays in the data/ and *_data directories.',
-    rollbackRecreateHint: 'Run the command below in the deploy directory on the host.',
+      'Rollback downloads the selected version and replaces the current binary. A service restart is required afterwards.',
     rollingBack: 'Rolling back...',
     rollbackComplete: 'Rollback Complete',
     rollbackFailed: 'Rollback Failed',
@@ -57,9 +56,7 @@ export default {
     deployScript: 'Script',
     deployDocker: 'Docker',
     dockerEditCompose: 'Edit the image tag in docker-compose.yml',
-    dockerRecreate: 'Recreate the container',
-    dockerUpgradeHint: 'This fork ships Docker images only. Run this in the deploy directory:',
-    copyUpgradeCommand: 'Copy command'
+    dockerRecreate: 'Recreate the container'
   },
 
   // Recharge / Subscription Page

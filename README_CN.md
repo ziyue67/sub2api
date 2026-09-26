@@ -247,18 +247,15 @@ fast_mode = true
 
 ## 部署方式
 
-> **本 Fork 只分发 Docker 镜像。** GitHub Releases 不再提供 `tar.gz` / `zip` 归档，
-> `deploy/install.sh` 通过切换镜像 tag 完成安装、升级与回滚。
+### 方式一：脚本安装（推荐）
 
-### 方式一：一键脚本（推荐）
-
-一键 Docker Compose 部署：按版本下载 compose 文件、生成 `.env` 密钥、固定镜像 tag，
-并同时启动 Sub2API、PostgreSQL 与 Redis。
+一键安装脚本，自动从 GitHub Releases 下载预编译的二进制文件。
 
 #### 前置条件
 
-- Linux 服务器（amd64；本 Fork 不发布 arm64 镜像）
-- Docker Engine 20.10+ 且带 Compose v2 插件
+- Linux 服务器（amd64 或 arm64）
+- PostgreSQL 15+（已安装并运行）
+- Redis 7+（已安装并运行）
 - Root 权限
 
 #### 安装步骤
@@ -268,24 +265,22 @@ curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.
 ```
 
 脚本会自动：
-1. 校验 Docker / Compose，并拒绝不支持的架构
-2. 按版本下载 `docker-compose.local.yml` 并固定镜像 tag
-3. 生成 `.env`（`JWT_SECRET`、`TOTP_ENCRYPTION_KEY`、`POSTGRES_PASSWORD`）
-4. 在 `/opt/sub2api` 下创建 `data/`、`postgres_data/`、`redis_data/`
-5. 执行 `docker compose up -d` 启动全部容器
+1. 检测系统架构
+2. 下载最新版本
+3. 安装二进制文件到 `/opt/sub2api`
+4. 创建 systemd 服务
+5. 配置系统用户和权限
 
 #### 安装后配置
 
 ```bash
-cd /opt/sub2api
+# 1. 启动服务
+sudo systemctl start sub2api
 
-# 查看容器状态
-docker compose ps
+# 2. 设置开机自启
+sudo systemctl enable sub2api
 
-# 查看应用日志
-docker compose logs -f sub2api
-
-# 在浏览器中打开设置向导
+# 3. 在浏览器中打开设置向导
 # http://你的服务器IP:8080
 ```
 
@@ -296,38 +291,32 @@ docker compose logs -f sub2api
 
 #### 升级
 
-```bash
-# 升级到最新镜像
-curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- upgrade
+可以直接在 **管理后台** 左上角点击 **检测更新** 按钮进行在线升级。
 
-# 或者在部署目录中手动执行
-cd /opt/sub2api && docker compose pull && docker compose up -d
-```
-
-管理后台仍会检测新版本并给出上述命令；应用跑在容器里，因此不再提供在线替换二进制的升级方式。
+网页升级功能支持：
+- 自动检测新版本
+- 一键下载并应用更新
+- 支持回滚
 
 #### 常用命令
 
 ```bash
 # 查看状态
-cd /opt/sub2api && docker compose ps
+sudo systemctl status sub2api
 
 # 查看日志
-cd /opt/sub2api && docker compose logs -f sub2api
+sudo journalctl -u sub2api -f
 
-# 重启应用容器
-cd /opt/sub2api && docker compose restart sub2api
+# 重启服务
+sudo systemctl restart sub2api
 
-# 回滚到指定镜像 tag
-curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- rollback v0.2.81
-
-# 卸载（保留数据目录；加 --purge 一并删除）
+# 卸载
 curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash -s -- uninstall -y
 ```
 
 ---
 
-### 方式二：Docker Compose（手动）
+### 方式二：Docker Compose（推荐）
 
 使用 Docker Compose 部署，包含 PostgreSQL 和 Redis 容器。
 
@@ -832,7 +821,7 @@ sub2api/
     ├── docker-compose.yml    # Docker Compose 配置
     ├── .env.example          # Docker Compose 环境变量
     ├── config.example.yaml   # 二进制部署完整配置文件
-    └── install.sh            # 一键 Docker 安装脚本（install/upgrade/rollback）
+    └── install.sh            # 一键安装脚本
 ```
 
 ## Star History

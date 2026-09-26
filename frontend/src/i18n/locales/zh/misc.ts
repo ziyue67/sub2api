@@ -42,8 +42,7 @@ export default {
     rollback: '版本回退',
     rollbackSelectVersion: '选择要回退到的版本（近 3 个版本）',
     rollbackConfirm: '回退到 {version}',
-    rollbackWarning: '回退即固定旧镜像 tag 并重建容器，数据保留在 data/ 与 *_data 目录中',
-    rollbackRecreateHint: '在宿主机部署目录执行下方命令即可完成回退。',
+    rollbackWarning: '回退将下载所选版本并替换当前程序，完成后需重启服务',
     rollingBack: '正在回退...',
     rollbackComplete: '回退完成',
     rollbackFailed: '回退失败',
@@ -56,9 +55,7 @@ export default {
     deployScript: '脚本部署',
     deployDocker: 'Docker',
     dockerEditCompose: '修改 docker-compose.yml 中的镜像版本',
-    dockerRecreate: '重新创建容器',
-    dockerUpgradeHint: '本 Fork 只分发 Docker 镜像，请在部署目录执行：',
-    copyUpgradeCommand: '复制命令'
+    dockerRecreate: '重新创建容器'
   },
 
   // Recharge / Subscription Page
