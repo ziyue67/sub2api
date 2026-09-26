@@ -62,16 +62,15 @@ export async function getRollbackVersions(): Promise<{ versions: RollbackVersion
 }
 
 /**
- * In-place update/rollback downloads a full release binary from GitHub, which
- * can take several minutes on slow links. The global 30s axios timeout would
- * abort the request mid-download (#4504), so these calls wait as long as the
- * backend allows (15 minutes server-side).
+ * This fork ships Docker images only, so in-place update/rollback is refused by
+ * the backend with an actionable message (IMAGE_UPGRADE_REQUIRED /
+ * ROLLBACK_IMAGE_REQUIRED). The admin UI shows the host-side image commands.
  */
 const UPDATE_REQUEST_TIMEOUT_MS = 15 * 60 * 1000
 
 /**
- * Perform system update
- * Downloads and applies the latest version
+ * Perform system update.
+ * Returns IMAGE_UPGRADE_REQUIRED on release builds: upgrade by moving the image tag.
  */
 export async function performUpdate(): Promise<UpdateResult> {
   const { data } = await apiClient.post<UpdateResult>('/admin/system/update', undefined, {

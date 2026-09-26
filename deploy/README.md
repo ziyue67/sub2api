@@ -21,7 +21,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 | `APPLE_CONTAINER.md` | Apple `container` deployment and operations guide |
 | `.env.example` | Container environment variables template |
 | `DOCKER.md` | Docker Hub documentation |
-| `install.sh` | One-click binary installation script |
+| `install.sh` | One-click Docker installation script (install/upgrade/rollback) |
 | `install-datamanagementd.sh` | datamanagementd 一键安装脚本 |
 | `sub2api.service` | Systemd service unit file |
 | `sub2api-datamanagementd.service` | datamanagementd systemd service unit file |
@@ -404,62 +404,66 @@ GEMINI_OAUTH_CLIENT_SECRET=GOCSPX-your-client-secret
 
 ---
 
-## Binary Installation
+## Docker Installation (only supported path)
 
-For production servers using systemd.
+This fork publishes Docker images only: GitHub Releases carry no `tar.gz` / `zip` archives, and
+`install.sh` installs, upgrades and rolls back by moving the image tag.
 
 ### One-Line Installation
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | sudo bash
 ```
+
+The installer pins the requested release, writes `.env` with generated secrets and starts
+Sub2API, PostgreSQL and Redis with `docker compose up -d` under `/opt/sub2api`.
 
 ### Manual Installation
 
-1. Download the latest release from [GitHub Releases](https://github.com/ziyue67/sub2api/releases)
-2. Extract and copy the binary to `/opt/sub2api/`
-3. Copy `sub2api.service` to `/etc/systemd/system/`
-4. Run:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable sub2api
-   sudo systemctl start sub2api
-   ```
-5. Open the Setup Wizard in your browser to complete configuration
+```bash
+mkdir -p /opt/sub2api && cd /opt/sub2api
+curl -fsSL https://raw.githubusercontent.com/ziyue67/sub2api/v0.2.81/deploy/docker-compose.local.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/ziyue67/sub2api/v0.2.81/deploy/.env.example -o .env
+chmod 600 .env      # set POSTGRES_PASSWORD, JWT_SECRET, TOTP_ENCRYPTION_KEY
+docker compose pull && docker compose up -d
+```
 
 ### Commands
 
 ```bash
-# Install
-sudo ./install.sh
+# Install (latest)
+sudo ./install.sh install
 
-# Upgrade
+# Install or roll back to a specific image tag
+sudo ./install.sh install -v v0.2.81
+sudo ./install.sh rollback v0.2.81
+
+# Upgrade to the latest image
 sudo ./install.sh upgrade
 
-# Uninstall
-sudo ./install.sh uninstall
+# List published versions
+./install.sh list-versions
+
+# Uninstall (keeps data directories; --purge removes them too)
+sudo ./install.sh uninstall -y
 ```
 
 ### Service Management
 
 ```bash
-# Start the service
-sudo systemctl start sub2api
-
-# Stop the service
-sudo systemctl stop sub2api
-
-# Restart the service
-sudo systemctl restart sub2api
+cd /opt/sub2api
 
 # Check status
-sudo systemctl status sub2api
+docker compose ps
 
 # View logs
-sudo journalctl -u sub2api -f
+docker compose logs -f sub2api
 
-# Enable auto-start on boot
-sudo systemctl enable sub2api
+# Restart the application container
+docker compose restart sub2api
+
+# Stop the whole stack
+docker compose down
 ```
 
 ### Codex 292 ticket proxy
@@ -474,13 +478,12 @@ sudo MIHOMO_CODEX_SUBSCRIPTION_URL='https://provider.example/subscription' \
   bash deploy/install-mihomo-codex.sh
 ```
 
-For a fresh or versioned binary install, the same environment variable makes
-`install.sh` configure the sidecar automatically after downloading the
-release:
+For a versioned install, the same environment variable makes `install.sh`
+configure the sidecar automatically:
 
 ```bash
 sudo MIHOMO_CODEX_SUBSCRIPTION_URL='https://provider.example/subscription' \
-  bash deploy/install.sh install -v v2.7.2
+  bash deploy/install.sh install -v v0.2.81
 ```
 
 Without the variable, the installer detects an already active sidecar and
