@@ -15,10 +15,10 @@ import (
 
 const (
 	bpsImageMaxBodyBytes   = 128 << 20
-	bpsImageBudgetBytes    = 512 << 20
+	bpsImageBudgetBytes    = service.DefaultExcelBPSImageBudgetMiB << 20
 	bpsImageBodyMultiplier = 8
 	bpsImageMinBodyBytes   = 1 << 20
-	bpsImageMaxRequests    = 32
+	bpsImageMaxRequests    = service.DefaultExcelBPSImageMaxRequests
 )
 
 type excelBPSImageSettingsReader interface {
@@ -61,6 +61,12 @@ func (b *bpsImageAdmissionBudget) limits() (int64, int) {
 	}
 	if maxRequests == 0 {
 		maxRequests = bpsImageMaxRequests
+	}
+	// Each small request reserves at least 8 MiB. Scale the effective budget
+	// with the request cap so the configured slots remain usable, while
+	// preserving a larger explicitly configured budget. This is not RSS.
+	if minimum := int64(maxRequests) * bpsImageMinBodyBytes * bpsImageBodyMultiplier; minimum > limitBytes {
+		limitBytes = minimum
 	}
 	return limitBytes, maxRequests
 }

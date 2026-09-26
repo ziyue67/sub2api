@@ -20,7 +20,7 @@ func TestSettingsExcelBPSImagesRoundTripAndOmission(t *testing.T) {
 		"excel_bps_image_base_url":       " https://images.example/ ",
 		"excel_bps_image_body_limit_mib": 32,
 		"excel_bps_image_budget_mib":     768,
-		"excel_bps_image_max_requests":   48,
+		"excel_bps_image_max_requests":   512,
 	}, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.True(t, gjson.Get(rec.Body.String(), "data.excel_bps_image_relay_enabled").Bool())
@@ -29,7 +29,7 @@ func TestSettingsExcelBPSImagesRoundTripAndOmission(t *testing.T) {
 	require.Equal(t, "https://images.example", repo.values[service.SettingKeyExcelBPSImageBaseURL])
 	require.Equal(t, "32", repo.values[service.SettingKeyExcelBPSImageBodyLimitMiB])
 	require.Equal(t, "768", repo.values[service.SettingKeyExcelBPSImageBudgetMiB])
-	require.Equal(t, "48", repo.values[service.SettingKeyExcelBPSImageMaxRequests])
+	require.Equal(t, "512", repo.values[service.SettingKeyExcelBPSImageMaxRequests])
 	rec = doUpdateSettings(t, h, map[string]any{"site_name": "keep relay"}, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	rec = httptest.NewRecorder()
@@ -41,7 +41,7 @@ func TestSettingsExcelBPSImagesRoundTripAndOmission(t *testing.T) {
 	require.Equal(t, "https://images.example", gjson.Get(rec.Body.String(), "data.excel_bps_image_base_url").String())
 	require.Equal(t, int64(32), gjson.Get(rec.Body.String(), "data.excel_bps_image_body_limit_mib").Int())
 	require.Equal(t, int64(768), gjson.Get(rec.Body.String(), "data.excel_bps_image_budget_mib").Int())
-	require.Equal(t, int64(48), gjson.Get(rec.Body.String(), "data.excel_bps_image_max_requests").Int())
+	require.Equal(t, int64(512), gjson.Get(rec.Body.String(), "data.excel_bps_image_max_requests").Int())
 	public, err := h.settingService.GetPublicSettings(context.Background())
 	require.NoError(t, err)
 	encoded, err := json.Marshal(public)
@@ -54,6 +54,9 @@ func TestSettingsExcelBPSImagesRoundTripAndOmission(t *testing.T) {
 		rec = doUpdateSettings(t, h, map[string]any{field: 0}, nil)
 		require.Equal(t, http.StatusBadRequest, rec.Code, field)
 	}
+	rec = doUpdateSettings(t, h, map[string]any{"excel_bps_image_max_requests": 513}, nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Equal(t, "512", repo.values[service.SettingKeyExcelBPSImageMaxRequests])
 	require.Equal(t, "32", repo.values[service.SettingKeyExcelBPSImageBodyLimitMiB])
 	rec = doUpdateSettings(t, h, map[string]any{"excel_bps_image_relay_enabled": false}, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

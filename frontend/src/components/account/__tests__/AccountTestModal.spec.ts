@@ -148,6 +148,25 @@ describe('AccountTestModal', () => {
     })
   })
 
+  it('offers the tool roundtrip only for BPS OAuth accounts', async () => {
+    const account = buildAccount()
+    account.extra = { openai_excel_bps: true }
+    const wrapper = mount(AccountTestModal, {
+      props: { show: true, account },
+      global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } }
+    })
+    await flushPromises()
+    expect(wrapper.find('option[value="bps_tools"]').exists()).toBe(true)
+    expect(wrapper.find('option[value="compact"]').exists()).toBe(false)
+    ;(wrapper.vm as any).selectedModelId = 'gpt-5.4'
+    ;(wrapper.vm as any).testMode = 'bps_tools'
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+    const [, options] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(options.body)).toMatchObject({ model_id: 'gpt-5.4', mode: 'bps_tools' })
+    wrapper.unmount()
+  })
+
   it('renders Chat Completions path status from test SSE', async () => {
     const encoder = new TextEncoder()
     const chunks = [

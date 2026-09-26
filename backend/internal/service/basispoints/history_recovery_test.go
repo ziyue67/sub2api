@@ -117,7 +117,7 @@ func TestHistoryRecoveryRejectsIncompleteCalls(t *testing.T) {
 		for key, value := range patch {
 			call[key] = value
 		}
-		if _, err := rebuildNativeHistoryCall(call); err == nil {
+		if _, err := (&Bridge{}).rebuildNativeHistoryCall(call); err == nil {
 			t.Fatalf("invalid call was reconstructed: %+v", patch)
 		}
 	}

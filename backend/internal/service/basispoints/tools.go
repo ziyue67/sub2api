@@ -223,7 +223,7 @@ func isUnsupportedHostedTool(kind string) bool {
 // rebuildNativeHistoryCall uses only the complete call supplied by the client.
 // It does not execute a tool or require that an old tool remain in today's
 // catalog. Cached native items remain authoritative when available.
-func rebuildNativeHistoryCall(item object) (object, error) {
+func (b *Bridge) rebuildNativeHistoryCall(item object) (object, error) {
 	id, name := text(item["call_id"]), text(item["name"])
 	if id == "" || strings.TrimSpace(id) != id || name == "" || strings.TrimSpace(name) != name {
 		return nil, fmt.Errorf("basispoints history recovery requires a complete tool call with nonempty call_id and name")
@@ -263,11 +263,21 @@ func rebuildNativeHistoryCall(item object) (object, error) {
 	if err != nil {
 		return nil, fmt.Errorf("basispoints history tool arguments cannot be serialized")
 	}
-	arguments, err := json.Marshal(object{
+	outer := object{
 		"code": string(code), "summary": "Replay a previously requested client tool",
 		"extended_summary": "The supplied client history contains this tool call; consume its recorded result without repeating it.",
 		"destructive":      false, "references": []any{},
-	})
+	}
+	if info, ok := b.tools[name]; ok && text(item["type"]) == "function_call" && supportsFunctionCodeTransport(name, info.Kind, info.Parameters) {
+		args, _ := envelope["arguments"].(object)
+		if _, hasCode := args["code"].(string); hasCode {
+			outer, err = encodeFunctionCodeTransport(name, args)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	arguments, err := json.Marshal(outer)
 	if err != nil {
 		return nil, fmt.Errorf("basispoints history transport cannot be serialized")
 	}
@@ -309,7 +319,7 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 			if native := b.replay.getForCall(b.scope, id, item); native != nil {
 				item = native
 			} else {
-				native, err := rebuildNativeHistoryCall(item)
+				native, err := b.rebuildNativeHistoryCall(item)
 				if err != nil {
 					return nil, err
 				}
@@ -379,6 +389,10 @@ func (b *Bridge) translateCall(native object) (object, error) {
 		return nil, fmt.Errorf("basispoints returned empty tool transport arguments")
 	}
 	envelope, marked, err := customTransportEnvelope(arguments)
+	rawCustom := marked
+	if !marked && err == nil {
+		envelope, marked, err = b.functionCodeTransportEnvelope(arguments)
+	}
 	if !marked && err == nil {
 		envelope, err = decodeTransportEnvelope(arguments["code"])
 		if err != nil {
@@ -398,7 +412,7 @@ func (b *Bridge) translateCall(native object) (object, error) {
 	if !allowed {
 		return nil, fmt.Errorf("basispoints returned a tool outside the client's catalog")
 	}
-	result, err := b.finishClientToolCall(native, info, envelope, marked)
+	result, err := b.finishClientToolCall(native, info, envelope, rawCustom)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +471,7 @@ func (b *Bridge) translateDirectCatalogCall(native object) (object, error) {
 	// The model bypassed run_officejs, so the bare native name is not a BPS tool.
 	// Cache a transport-wrapped replay so the next turn presents a BPS-known
 	// run_officejs item, matching how absent history is rebuilt.
-	wrapped, err := rebuildNativeHistoryCall(result)
+	wrapped, err := b.rebuildNativeHistoryCall(result)
 	if err != nil {
 		return nil, err
 	}

@@ -1173,6 +1173,13 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 			return
 		}
 	}
+	s.handle429Cooldown(ctx, account, headers, responseBody)
+}
+
+// handle429Cooldown persists the shared quota snapshot and blocks scheduling.
+// Callers that do not retry the rejected request (Excel BPS) enter here directly
+// instead of deferring the cooldown for the Codex same-account retry window.
+func (s *RateLimitService) handle429Cooldown(ctx context.Context, account *Account, headers http.Header, responseBody []byte) {
 	// Spark 影子：限流/熔断状态 100% 由 QueryUsage(/wham/usage body 的 codex_bengalfox)驱动。
 	// /responses 的 429 携带的 x-codex-*/usage_limit_reached 是 global codex 道(plan/spec §8),
 	// 套到影子会把 spark 误耦合到 global 窗口——即便 spark 仍有配额也会被冷却到 global reset,

@@ -62,6 +62,16 @@ func TestAdminServiceBulkUpdateAccounts_ExcelBPSSettings(t *testing.T) {
 			want:  map[string]any{"openai_excel_bps_cache_creation_as_input": false},
 		},
 		{
+			name:  "auto disable only",
+			extra: map[string]any{"openai_excel_bps_auto_disable_on_403": true},
+			want:  map[string]any{"openai_excel_bps_auto_disable_on_403": true},
+		},
+		{
+			name:  "disabled clears auto disable",
+			extra: map[string]any{"openai_excel_bps": false, "openai_excel_bps_auto_disable_on_403": true},
+			want:  map[string]any{"openai_excel_bps": false, "openai_excel_bps_models": nil, "openai_excel_bps_cache_creation_as_input": false, "openai_excel_bps_auto_disable_on_403": false},
+		},
+		{
 			name:  "omitted BPS settings",
 			extra: map[string]any{"unrelated": true},
 			want:  map[string]any{"unrelated": true},
@@ -94,6 +104,8 @@ func TestAdminServiceBulkUpdateAccounts_RejectsInvalidExcelBPSValues(t *testing.
 		{"openai_excel_bps": 1},
 		{"openai_excel_bps_cache_creation_as_input": "false"},
 		{"openai_excel_bps_cache_creation_as_input": nil},
+		{"openai_excel_bps_auto_disable_on_403": "true"},
+		{"openai_excel_bps_auto_disable_on_403": nil},
 		{"openai_excel_bps_models": "gpt-6-astra"},
 		{"openai_excel_bps_models": map[string]any{}},
 		{"openai_excel_bps_models": []any{"gpt-6-astra", 1}},
@@ -133,6 +145,7 @@ func TestAdminServiceBulkUpdateAccounts_RejectsInvalidExcelBPSTargets(t *testing
 				{"openai_excel_bps": false},
 				{"openai_excel_bps_models": nil},
 				{"openai_excel_bps_cache_creation_as_input": true},
+				{"openai_excel_bps_auto_disable_on_403": true},
 			} {
 				repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{
 					{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth},

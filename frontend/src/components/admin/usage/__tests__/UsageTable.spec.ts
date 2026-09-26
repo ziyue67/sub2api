@@ -7,6 +7,7 @@ const ipGeoMocks = vi.hoisted(() => ({
 const appStoreMocks = vi.hoisted(() => ({
   showSuccess: vi.fn(),
   showError: vi.fn(),
+  cachedPublicSettings: undefined as { usage_show_long_context_badge?: boolean } | undefined,
 }))
 
 vi.mock('@/utils/ipGeoLookup', () => ipGeoMocks)
@@ -130,6 +131,7 @@ const baseImageRow = {
 
 describe('admin UsageTable tooltip', () => {
   beforeEach(() => {
+    appStoreMocks.cachedPublicSettings = undefined
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       x: 0,
       y: 0,
@@ -173,6 +175,33 @@ describe('admin UsageTable tooltip', () => {
 
     expect(wrapper.findAll('[data-testid="long-context-billing-marker"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="long-context-billing-marker"]').text()).toBe('x2')
+  })
+
+  it('hides the long-context billing marker when the public setting is disabled', () => {
+    appStoreMocks.cachedPublicSettings = { usage_show_long_context_badge: false }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [
+          {
+            ...baseImageRow,
+            request_id: 'req-long-context-hidden',
+            long_context_billing_applied: true,
+          },
+        ],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.findAll('[data-testid="long-context-billing-marker"]')).toHaveLength(0)
   })
 
   it('keeps the request type badge and adds a separate badge only for native compaction rows', () => {

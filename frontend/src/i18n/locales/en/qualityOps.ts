@@ -63,7 +63,7 @@ export default {
   "selectJudgeGroup": "Select a grading group",
   "selectJudgeModel": "Select or enter a model supported by this group",
   "judgePrompt": "Grading instructions",
-  "defaultJudgePrompt": "Decide whether the candidate answer is semantically consistent with the reference answer. Ignore units, punctuation and wording differences that do not change meaning. Return correct for a matching conclusion, incorrect for a clearly wrong conclusion, and unknown when uncertain or unsupported.",
+  "defaultJudgePrompt": "Compare two values only: reference_answer and candidate_answer. Return correct when the values are numerically identical or semantically equivalent, incorrect when clearly different, and unknown when uncertain. Ignore units, punctuation and wording differences, and never quote or infer the original question.",
   "configureJudge": "Select a grading group and model and enter grading instructions",
   "judgeModelsUnavailable": "Model suggestions are unavailable; enter a model ID supported by the grading group",
   "judgeReason": "Grading reason",

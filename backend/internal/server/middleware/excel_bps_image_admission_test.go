@@ -62,9 +62,13 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 		length   int64
 		encoding string
 		allowed  int
+		settings bpsImageTestSettings
 	}{
-		{"small", 1024, "", 32},
-		{"large", 32 << 20, "", 2},
+		{"default small", 1024, "", 128, bpsImageTestSettings{enabled: true}},
+		{"default large", 32 << 20, "", 4, bpsImageTestSettings{enabled: true}},
+		{"scaled small", 1024, "", 128, bpsImageTestSettings{enabled: true, maxRequests: 128, budgetMiB: 512}},
+		{"scaled large", 32 << 20, "", 4, bpsImageTestSettings{enabled: true, maxRequests: 128, budgetMiB: 512}},
+		{"larger configured budget", 32 << 20, "", 8, bpsImageTestSettings{enabled: true, maxRequests: 128, budgetMiB: 2048}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var reads atomic.Int32
@@ -75,7 +79,7 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 			var once sync.Once
 			var wg sync.WaitGroup
 			t.Cleanup(func() { once.Do(func() { close(release) }); wg.Wait() })
-			r := bpsImageTestRouter(bpsImageTestSettings{enabled: true}, func(c *gin.Context) {
+			r := bpsImageTestRouter(tt.settings, func(c *gin.Context) {
 				n := active.Add(1)
 				for old := peak.Load(); n > old; old = peak.Load() {
 					if peak.CompareAndSwap(old, n) {
@@ -314,7 +318,7 @@ func TestExcelBPSImageAdmissionReleaseIsIdempotent(t *testing.T) {
 }
 
 func TestExcelBPSImageAdmissionReservationResize(t *testing.T) {
-	budget := &bpsImageAdmissionBudget{}
+	budget := &bpsImageAdmissionBudget{limitBytes: 512 << 20, maxRequests: 32}
 	first, ok := budget.acquire(8 << 20)
 	require.True(t, ok)
 	second, ok := budget.acquire(8 << 20)
@@ -331,7 +335,7 @@ func TestExcelBPSImageAdmissionReservationResize(t *testing.T) {
 }
 
 func TestExcelBPSImageAdmissionUnknownBodyStopsBeforeBudgetOverflow(t *testing.T) {
-	budget := &bpsImageAdmissionBudget{}
+	budget := &bpsImageAdmissionBudget{limitBytes: 512 << 20, maxRequests: 32}
 	first, ok := budget.acquire(504 << 20)
 	require.True(t, ok)
 	defer first.release()
@@ -382,4 +386,30 @@ func TestExcelBPSImageAdmissionReleasesAfterCancellation(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/responses", nil))
 	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestExcelBPSImageAdmissionBudgetReconfiguration(t *testing.T) {
+	budget := &bpsImageAdmissionBudget{}
+	budget.configure(512<<20, 512)
+	reservations := make([]*bpsImageReservation, 0, 512)
+	for i := 0; i < 512; i++ {
+		reservation, ok := budget.acquire(8 << 20)
+		require.True(t, ok, "slot %d must be usable", i)
+		reservations = append(reservations, reservation)
+	}
+	_, ok := budget.acquire(8 << 20)
+	require.False(t, ok, "request cap must still reject excess requests")
+	require.False(t, reservations[0].resize(16<<20), "expanded budget must still bound larger bodies")
+	budget.configure(512<<20, 32)
+	_, ok = budget.acquire(8 << 20)
+	require.False(t, ok, "lowering the cap must not admit requests until existing reservations drain")
+	for _, reservation := range reservations {
+		reservation.release()
+	}
+	require.Zero(t, budget.bytes)
+	require.Zero(t, budget.requests)
+	reservation, ok := budget.acquire(512 << 20)
+	require.True(t, ok)
+	require.False(t, reservation.resize(520<<20), "lowered budget must apply after draining")
+	reservation.release()
 }

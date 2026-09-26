@@ -401,6 +401,7 @@ type UpdateSettingsRequest struct {
 	AuthSourceDingTalkPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_dingtalk_platform_quotas"`
 
 	AllowUserViewErrorRequests  *bool   `json:"allow_user_view_error_requests"`
+	UsageShowLongContextBadge   *bool   `json:"usage_show_long_context_badge"`
 	RequestCaptureEnabled       *bool   `json:"request_capture_enabled"`
 	RequestCaptureQuotaMiB      *int64  `json:"request_capture_quota_mib"`
 	RequestCaptureRetentionDays *int    `json:"request_capture_retention_days"`
@@ -539,8 +540,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		response.BadRequest(c, "Image request budget must be 512-2048 MiB")
 		return
 	}
-	if req.ExcelBPSImageMaxRequests != nil && (*req.ExcelBPSImageMaxRequests < 1 || *req.ExcelBPSImageMaxRequests > 128) {
-		response.BadRequest(c, "Image concurrent requests must be 1-128")
+	if req.ExcelBPSImageMaxRequests != nil && (*req.ExcelBPSImageMaxRequests < 1 || *req.ExcelBPSImageMaxRequests > 512) {
+		response.BadRequest(c, "Image concurrent requests must be 1-512")
 		return
 	}
 	auditReq := settingsAuditRequest(req)
@@ -1769,6 +1770,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AllowUserViewErrorRequests
 		}(),
+		UsageShowLongContextBadge: func() bool {
+			if req.UsageShowLongContextBadge != nil {
+				return *req.UsageShowLongContextBadge
+			}
+			return previousSettings.UsageShowLongContextBadge
+		}(),
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
 				return *req.OpsMonitoringEnabled
@@ -2622,6 +2629,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CyberSessionIdentityStrictEnabled: updatedSettings.CyberSessionIdentityStrictEnabled,
 		AccountSchedulingThresholds:       updatedSettings.AccountSchedulingThresholds,
 		AllowUserViewErrorRequests:        updatedSettings.AllowUserViewErrorRequests,
+		UsageShowLongContextBadge:         updatedSettings.UsageShowLongContextBadge,
 		RequestCaptureEnabled:             updatedSettings.RequestCaptureEnabled,
 		RequestCaptureQuotaMiB:            updatedSettings.RequestCaptureQuotaMiB,
 		RequestCaptureRetentionDays:       updatedSettings.RequestCaptureRetentionDays,
