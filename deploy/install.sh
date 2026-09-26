@@ -2,7 +2,7 @@
 #
 # Sub2API Installation Script
 # Sub2API 安装脚本
-# Usage: curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/ziyue67/sub2api/main/deploy/install.sh | bash
 #
 
 set -e
@@ -31,7 +31,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-GITHUB_REPO="${SUB2API_GITHUB_REPO:-Wei-Shaw/sub2api}"
+GITHUB_REPO="${SUB2API_GITHUB_REPO:-ziyue67/sub2api}"
 INSTALL_DIR="/opt/sub2api"
 SERVICE_NAME="sub2api"
 SERVICE_USER="sub2api"
@@ -75,6 +75,7 @@ declare -A MSG_ZH=(
     ["run_as_root"]="请使用 root 权限运行 (使用 sudo)"
     ["detected_platform"]="检测到平台"
     ["unsupported_arch"]="不支持的架构"
+    ["arm64_unavailable"]="本 Fork 的 Release 只提供 linux/amd64 构建，不提供 arm64"
     ["unsupported_os"]="不支持的操作系统"
     ["missing_deps"]="缺少依赖"
     ["install_deps_first"]="请先安装以下依赖"
@@ -200,6 +201,7 @@ declare -A MSG_EN=(
     ["run_as_root"]="Please run as root (use sudo)"
     ["detected_platform"]="Detected platform"
     ["unsupported_arch"]="Unsupported architecture"
+    ["arm64_unavailable"]="This fork publishes linux/amd64 release builds only; arm64 is not provided"
     ["unsupported_os"]="Unsupported OS"
     ["missing_deps"]="Missing dependencies"
     ["install_deps_first"]="Please install them first"
@@ -445,7 +447,10 @@ detect_platform() {
             ARCH="amd64"
             ;;
         aarch64|arm64)
-            ARCH="arm64"
+            # 本 Fork 的 Release 不产出 arm64（见 .goreleaser.yaml 的 goarch）。
+            # 明确报错，避免走到下载阶段才报一个难懂的 404。
+            print_error "$(msg 'arm64_unavailable')"
+            exit 1
             ;;
         *)
             print_error "$(msg 'unsupported_arch'): $ARCH"
@@ -767,7 +772,7 @@ install_service() {
     cat > /etc/systemd/system/sub2api.service << EOF
 [Unit]
 Description=Sub2API - AI API Gateway Platform
-Documentation=https://github.com/Wei-Shaw/sub2api
+Documentation=https://github.com/ziyue67/sub2api
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 
