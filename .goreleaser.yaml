@@ -17,8 +17,6 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
-      - windows
-      - darwin
     goarch:
       - amd64
     ldflags:
@@ -27,22 +25,12 @@ builds:
       - -X main.Date={{.Date}}
       - -X main.BuildType=release
 
-archives:
-  - id: default
-    format: tar.gz
-    name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
-    format_overrides:
-      - goos: windows
-        format: zip
-    files:
-      - LICENSE*
-      - README*
-      - deploy/*
+# 不再发布二进制归档（tar.gz / zip），Release 只保留 Docker 镜像与说明
+archives: []
 
+# 归档已停发，不再产出 checksums.txt
 checksum:
-  name_template: 'checksums.txt'
-  algorithm: sha256
+  disable: true
 
 changelog:
   # 禁用自动 changelog，完全使用 tag 消息
@@ -113,6 +101,8 @@ release:
   draft: false
   prerelease: auto
   name_template: "Sub2API {{.Version}}"
+  # 不再向 Release 上传任何二进制产物
+  skip_upload: true
   # 完全使用 tag 消息作为 release 内容（通过环境变量传入）
   header: |
     > AI API Gateway Platform - 将 AI 订阅配额分发和管理
@@ -136,13 +126,7 @@ release:
     docker pull ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}
     ```
 
-    **One-line install (Linux):**
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}/{{ .Tag }}/deploy/install.sh | sudo bash -s -- install -v {{ .Tag }}
-    ```
-
-    **Manual download:**
-    Download the appropriate archive for your platform from the assets below.
+    本版本起不再发布 `tar.gz` / `zip` 二进制归档与 `checksums.txt`，请使用上方镜像部署。
 
     ## 📚 Documentation
 
