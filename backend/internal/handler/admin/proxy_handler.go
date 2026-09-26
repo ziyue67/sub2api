@@ -86,6 +86,19 @@ func (h *ProxyHandler) List(c *gin.Context) {
 // GET /api/v1/admin/proxies/all
 // Optional query param: with_count=true to include account count per proxy
 func (h *ProxyHandler) GetAll(c *gin.Context) {
+	if _, scoped := service.ObserverGroupIDs(c.Request.Context()); scoped {
+		proxies, err := h.adminService.GetAllProxies(c.Request.Context())
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		choices := make([]gin.H, 0, len(proxies))
+		for _, proxy := range proxies {
+			choices = append(choices, gin.H{"id": proxy.ID, "name": proxy.Name, "protocol": proxy.Protocol, "status": proxy.Status})
+		}
+		response.Success(c, choices)
+		return
+	}
 	withCount := c.Query("with_count") == "true"
 
 	if withCount {

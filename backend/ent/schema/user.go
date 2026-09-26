@@ -43,6 +43,7 @@ func (User) Fields() []ent.Field {
 		field.String("password_hash").
 			MaxLen(255).
 			NotEmpty(),
+		field.JSON("observer_group_ids", []int64{}).Default([]int64{}),
 		field.String("role").
 			MaxLen(20).
 			Default(domain.RoleUser),

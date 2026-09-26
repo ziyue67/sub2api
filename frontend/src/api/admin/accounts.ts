@@ -812,10 +812,12 @@ export async function exportData(options?: {
 
 export async function importData(payload: {
   data: AdminDataPayload
+  group_ids?: number[]
   skip_default_group_bind?: boolean
 }): Promise<AdminDataImportResult> {
   const { data } = await apiClient.post<AdminDataImportResult>('/admin/accounts/data', {
     data: payload.data,
+    group_ids: payload.group_ids,
     skip_default_group_bind: payload.skip_default_group_bind
   })
   return data
@@ -1462,6 +1464,7 @@ export const accountsAPI = {
   syncFromCrs,
   exportData,
   importData,
+  getManagementCapabilities,
   importCodexSession,
   createOpenAICodexPAT,
   getAntigravityDefaultModelMapping,
@@ -1498,3 +1501,8 @@ export const accountsAPI = {
 }
 
 export default accountsAPI
+
+export async function getManagementCapabilities(): Promise<{ web_search_enabled: boolean; account_quota_notify_enabled: boolean }> {
+  const { data } = await apiClient.get('/admin/accounts/management-capabilities')
+  return data
+}

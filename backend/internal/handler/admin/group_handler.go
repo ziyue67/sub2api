@@ -569,6 +569,15 @@ func (h *GroupHandler) GetAll(c *gin.Context) {
 		return
 	}
 
+	if _, scoped := service.ObserverGroupIDs(c.Request.Context()); scoped {
+		visible := make([]service.Group, 0, len(groups))
+		for _, group := range groups {
+			if service.ObserverCanManageGroup(c.Request.Context(), group.ID) {
+				visible = append(visible, group)
+			}
+		}
+		groups = visible
+	}
 	if h.isSimpleMode() {
 		simpleGroups := make([]simpleModeGroupResponse, 0, len(groups))
 		for i := range groups {

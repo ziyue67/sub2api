@@ -250,3 +250,33 @@ func (h *ScheduledTestHandler) ListQualityHistory(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, page)
 }
+
+// ObserverGuard resolves plan IDs to accounts before any plan/result operation.
+func (h *ScheduledTestHandler) ObserverGuard(accounts *AccountHandler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		if _, scoped := service.ObserverGroupIDs(ctx); !scoped || c.Param("id") == "" {
+			c.Next()
+			return
+		}
+		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || id <= 0 {
+			response.BadRequest(c, "invalid plan id")
+			c.Abort()
+			return
+		}
+		plan, err := h.scheduledTestSvc.GetPlan(ctx, id)
+		if err != nil || plan == nil {
+			response.ErrorFrom(c, service.ErrObserverScope)
+			c.Abort()
+			return
+		}
+		account, err := accounts.adminService.GetAccount(ctx, plan.AccountID)
+		if err != nil || !service.ObserverCanManageAccount(ctx, account) {
+			response.ErrorFrom(c, service.ErrObserverScope)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}

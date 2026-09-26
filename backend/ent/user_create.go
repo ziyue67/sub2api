@@ -88,6 +88,12 @@ func (_c *UserCreate) SetPasswordHash(v string) *UserCreate {
 	return _c
 }
 
+// SetObserverGroupIds sets the "observer_group_ids" field.
+func (_c *UserCreate) SetObserverGroupIds(v []int64) *UserCreate {
+	_c.mutation.SetObserverGroupIds(v)
+	return _c
+}
+
 // SetRole sets the "role" field.
 func (_c *UserCreate) SetRole(v string) *UserCreate {
 	_c.mutation.SetRole(v)
@@ -614,6 +620,10 @@ func (_c *UserCreate) defaults() error {
 		v := user.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.ObserverGroupIds(); !ok {
+		v := user.DefaultObserverGroupIds
+		_c.mutation.SetObserverGroupIds(v)
+	}
 	if _, ok := _c.mutation.Role(); !ok {
 		v := user.DefaultRole
 		_c.mutation.SetRole(v)
@@ -700,6 +710,9 @@ func (_c *UserCreate) check() error {
 		if err := user.PasswordHashValidator(v); err != nil {
 			return &ValidationError{Name: "password_hash", err: fmt.Errorf(`ent: validator failed for field "User.password_hash": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.ObserverGroupIds(); !ok {
+		return &ValidationError{Name: "observer_group_ids", err: errors.New(`ent: missing required field "User.observer_group_ids"`)}
 	}
 	if _, ok := _c.mutation.Role(); !ok {
 		return &ValidationError{Name: "role", err: errors.New(`ent: missing required field "User.role"`)}
@@ -812,6 +825,10 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.PasswordHash(); ok {
 		_spec.SetField(user.FieldPasswordHash, field.TypeString, value)
 		_node.PasswordHash = value
+	}
+	if value, ok := _c.mutation.ObserverGroupIds(); ok {
+		_spec.SetField(user.FieldObserverGroupIds, field.TypeJSON, value)
+		_node.ObserverGroupIds = value
 	}
 	if value, ok := _c.mutation.Role(); ok {
 		_spec.SetField(user.FieldRole, field.TypeString, value)
@@ -1208,6 +1225,18 @@ func (u *UserUpsert) SetPasswordHash(v string) *UserUpsert {
 // UpdatePasswordHash sets the "password_hash" field to the value that was provided on create.
 func (u *UserUpsert) UpdatePasswordHash() *UserUpsert {
 	u.SetExcluded(user.FieldPasswordHash)
+	return u
+}
+
+// SetObserverGroupIds sets the "observer_group_ids" field.
+func (u *UserUpsert) SetObserverGroupIds(v []int64) *UserUpsert {
+	u.Set(user.FieldObserverGroupIds, v)
+	return u
+}
+
+// UpdateObserverGroupIds sets the "observer_group_ids" field to the value that was provided on create.
+func (u *UserUpsert) UpdateObserverGroupIds() *UserUpsert {
+	u.SetExcluded(user.FieldObserverGroupIds)
 	return u
 }
 
@@ -1622,6 +1651,20 @@ func (u *UserUpsertOne) SetPasswordHash(v string) *UserUpsertOne {
 func (u *UserUpsertOne) UpdatePasswordHash() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdatePasswordHash()
+	})
+}
+
+// SetObserverGroupIds sets the "observer_group_ids" field.
+func (u *UserUpsertOne) SetObserverGroupIds(v []int64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetObserverGroupIds(v)
+	})
+}
+
+// UpdateObserverGroupIds sets the "observer_group_ids" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateObserverGroupIds() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateObserverGroupIds()
 	})
 }
 
@@ -2253,6 +2296,20 @@ func (u *UserUpsertBulk) SetPasswordHash(v string) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdatePasswordHash() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdatePasswordHash()
+	})
+}
+
+// SetObserverGroupIds sets the "observer_group_ids" field.
+func (u *UserUpsertBulk) SetObserverGroupIds(v []int64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetObserverGroupIds(v)
+	})
+}
+
+// UpdateObserverGroupIds sets the "observer_group_ids" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateObserverGroupIds() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateObserverGroupIds()
 	})
 }
 

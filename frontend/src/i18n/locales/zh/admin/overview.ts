@@ -626,7 +626,11 @@ export default {
       failedToToggle: '更新用户状态失败',
       failedToLoadApiKeys: '加载用户 API 密钥失败',
       deleteConfirm: "确定要删除用户 '{email}' 吗？此操作无法撤销。",
+      observerGroups: '可管理的账号分组',
+      observerGroupsHint: '仅授权账号管理, 不影响用户调用 API 的分组权限. 未选择分组时无账号管理权限. 允许查看和导出账号凭据; 共享账号的操作也会影响其他分组.',
+      observerImportHint: '选择导入目标分组. 观察者导入不包含代理配置, 请使用不含代理的备份文件.',
       roles: {
+        observer: '观察者',
         admin: '管理员',
         user: '用户'
       },

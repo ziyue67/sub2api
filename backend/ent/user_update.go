@@ -10,6 +10,7 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
@@ -91,6 +92,18 @@ func (_u *UserUpdate) SetNillablePasswordHash(v *string) *UserUpdate {
 	if v != nil {
 		_u.SetPasswordHash(*v)
 	}
+	return _u
+}
+
+// SetObserverGroupIds sets the "observer_group_ids" field.
+func (_u *UserUpdate) SetObserverGroupIds(v []int64) *UserUpdate {
+	_u.mutation.SetObserverGroupIds(v)
+	return _u
+}
+
+// AppendObserverGroupIds appends value to the "observer_group_ids" field.
+func (_u *UserUpdate) AppendObserverGroupIds(v []int64) *UserUpdate {
+	_u.mutation.AppendObserverGroupIds(v)
 	return _u
 }
 
@@ -1023,6 +1036,14 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.PasswordHash(); ok {
 		_spec.SetField(user.FieldPasswordHash, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.ObserverGroupIds(); ok {
+		_spec.SetField(user.FieldObserverGroupIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedObserverGroupIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, user.FieldObserverGroupIds, value)
+		})
+	}
 	if value, ok := _u.mutation.Role(); ok {
 		_spec.SetField(user.FieldRole, field.TypeString, value)
 	}
@@ -1784,6 +1805,18 @@ func (_u *UserUpdateOne) SetNillablePasswordHash(v *string) *UserUpdateOne {
 	if v != nil {
 		_u.SetPasswordHash(*v)
 	}
+	return _u
+}
+
+// SetObserverGroupIds sets the "observer_group_ids" field.
+func (_u *UserUpdateOne) SetObserverGroupIds(v []int64) *UserUpdateOne {
+	_u.mutation.SetObserverGroupIds(v)
+	return _u
+}
+
+// AppendObserverGroupIds appends value to the "observer_group_ids" field.
+func (_u *UserUpdateOne) AppendObserverGroupIds(v []int64) *UserUpdateOne {
+	_u.mutation.AppendObserverGroupIds(v)
 	return _u
 }
 
@@ -2745,6 +2778,14 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 	}
 	if value, ok := _u.mutation.PasswordHash(); ok {
 		_spec.SetField(user.FieldPasswordHash, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ObserverGroupIds(); ok {
+		_spec.SetField(user.FieldObserverGroupIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedObserverGroupIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, user.FieldObserverGroupIds, value)
+		})
 	}
 	if value, ok := _u.mutation.Role(); ok {
 		_spec.SetField(user.FieldRole, field.TypeString, value)
