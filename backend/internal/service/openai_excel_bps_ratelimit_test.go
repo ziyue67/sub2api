@@ -227,7 +227,8 @@ func TestExcelBPS429DoesNotChangeCodexQuotaOrScheduling(t *testing.T) {
 }
 
 func TestExcelBPSNon429DoesNotChangeQuotaState(t *testing.T) {
-	for _, status := range []int{400, 401, 403, 500} {
+	// Authentication failures have their own scheduling assertions.
+	for _, status := range []int{400, 403, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: status, Header: excelBPSQuotaHeaders("100", "100"), Body: io.NopCloser(strings.NewReader("{}"))}}
 			svc := openAIClientToolsTestService(upstream)

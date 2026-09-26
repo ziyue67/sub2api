@@ -45,7 +45,8 @@ func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, acc
 	// Release the account's upstream connection slot before starting Responses.
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		s.handleExcelBPSUnauthorized(ctx, account, resp.StatusCode, resp.Header, raw)
 		status := resp.StatusCode
 		if status < 400 || status > 599 {
 			status = http.StatusBadGateway
