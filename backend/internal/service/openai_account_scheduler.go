@@ -110,6 +110,11 @@ type OpenAIAccountScheduleDecision struct {
 	LoadSkew            float64
 	SelectedAccountID   int64
 	SelectedAccountType string
+	// 插件调度能力（openai.account.scheduling.v1）的可观测字段。
+	// 未启用调度插件时全部为零值，既有指标与日志不受影响。
+	PluginNominatedAccountID int64
+	PluginAffinityHit        bool
+	PluginReason             string
 }
 
 type OpenAIAccountSchedulerMetricsSnapshot struct {
@@ -491,6 +496,16 @@ func (s *defaultOpenAIAccountScheduler) Select(
 	if selection != nil && selection.Account != nil {
 		decision.SelectedAccountID = selection.Account.ID
 		decision.SelectedAccountType = selection.Account.Type
+		// 调度插件提名归因：只有提名账号确实被选中时才改写 Layer，
+		// 否则保持 load_balance —— 抢槽失败后宿主自己选了别的账号，
+		// 把这次选号记成插件决策会让指标失真。
+		if mark := selection.pluginScheduling; mark != nil {
+			decision.PluginNominatedAccountID = mark.nominatedAccountID
+			decision.PluginAffinityHit = mark.affinityHit
+			if mark.selected {
+				decision.Layer = pluginSchedulingLayerPlugin
+			}
+		}
 		if req.StickyWeighted {
 			if req.StickyPreviousAccountID > 0 && selection.Account.ID == req.StickyPreviousAccountID {
 				decision.StickyPreviousHit = true
@@ -1841,10 +1856,18 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}
 	}
 
+	// 插件调度提名：在所有硬门槛过滤完成、并发负载已就绪之后询问插件一次。
+	//
+	// 只问一次（而不是每个候选池各问一次）至关重要：
+	//   - 减少请求关键路径上的 RPC 次数；
+	//   - 插件看到的是一份完整、稳定的候选集，亲和表的读写语义才一致。
+	// 提名结果只是一条"提示"，会在各候选池里尝试置顶；置顶不到就自然忽略。
+	nomination := s.resolveSchedulingNomination(ctx, req, filtered, loadMap)
+
 	if req.SubscriptionPriority {
 		subscriptionAccounts, regularAccounts := partitionOpenAIChatGPTSubscriptionAccounts(filtered)
 		if len(subscriptionAccounts) > 0 {
-			attempt := s.trySelectByLoadBalancePool(ctx, req, subscriptionAccounts, loadMap, budget)
+			attempt := s.trySelectByLoadBalancePool(ctx, req, subscriptionAccounts, loadMap, budget, nomination)
 			if attempt.err != nil && (!attempt.noCompactCandidates || len(regularAccounts) <= 0) {
 				return nil, attempt.candidateCount, attempt.topK, attempt.loadSkew, attempt.err
 			}
@@ -1852,7 +1875,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 				return attempt.result, attempt.candidateCount, attempt.topK, attempt.loadSkew, nil
 			}
 			if len(regularAccounts) > 0 {
-				regularAttempt := s.trySelectByLoadBalancePool(ctx, req, regularAccounts, loadMap, budget)
+				regularAttempt := s.trySelectByLoadBalancePool(ctx, req, regularAccounts, loadMap, budget, nomination)
 				if regularAttempt.err != nil && !regularAttempt.noCompactCandidates {
 					return nil, regularAttempt.candidateCount, regularAttempt.topK, regularAttempt.loadSkew, regularAttempt.err
 				}
@@ -1881,7 +1904,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 		}
 	}
 
-	attempt := s.trySelectByLoadBalancePool(ctx, req, filtered, loadMap, budget)
+	attempt := s.trySelectByLoadBalancePool(ctx, req, filtered, loadMap, budget, nomination)
 	if attempt.err != nil {
 		return nil, attempt.candidateCount, attempt.topK, attempt.loadSkew, attempt.err
 	}
@@ -1910,8 +1933,13 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	filtered []*Account,
 	loadMap map[int64]*AccountLoadInfo,
 	budget *openAISelectionProbeBudget,
+	nomination *pluginSchedulingNomination,
 ) openAIAccountLoadSelectionAttempt {
 	plan := s.buildOpenAIAccountLoadPlan(ctx, req, filtered, loadMap)
+	// 插件提名置顶：提名账号若不在本池（例如它属于订阅池而当前在选常规池），
+	// 置顶自然失败并保持原生顺序，不会跨池"捞出"账号 —— 跨池搬运会破坏
+	// 订阅优先等既有语义。
+	applyNominationToPlan(&plan, nomination, filtered)
 	if openAICostOverflowExpanded(req, plan) {
 		budget.enableLimit()
 	}
@@ -1944,6 +1972,7 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 	}
 	if result != nil {
 		attempt.result = result
+		attachNominationMark(result, nomination)
 		return attempt
 	}
 
@@ -1963,6 +1992,7 @@ func (s *defaultOpenAIAccountScheduler) trySelectByLoadBalancePool(
 				}
 				if freshResult != nil {
 					attempt.result = freshResult
+					attachNominationMark(freshResult, nomination)
 					attempt.selectionOrder = freshPlan.selectionOrder
 					attempt.candidateCount = freshPlan.candidateCount
 					attempt.topK = freshPlan.topK

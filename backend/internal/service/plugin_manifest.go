@@ -16,14 +16,35 @@ import (
 
 const (
 	PluginCapabilityOpenAIOAuthOutbound = "openai.oauth.outbound_transport.v1"
-	PluginStateDisabled                 = "disabled"
-	PluginStateStarting                 = "starting"
-	PluginStateEnabled                  = "enabled"
-	PluginStateError                    = "error"
-	PluginStateIncompatible             = "incompatible"
-	PluginSignatureTrusted              = "trusted"
-	PluginSignatureUnsigned             = "unsigned"
+	// PluginCapabilityOpenAIAccountScheduling 让插件参与选号（提名）。
+	// 与出站传输不同，这是一个"只读偏好"能力：插件只能从宿主给定的候选集里
+	// 挑一个排到选择序列首位，不能绕过并发闸门、粘性写入或利润门。
+	PluginCapabilityOpenAIAccountScheduling = "openai.account.scheduling.v1"
+	PluginStateDisabled                     = "disabled"
+	PluginStateStarting                     = "starting"
+	PluginStateEnabled                      = "enabled"
+	PluginStateError                        = "error"
+	PluginStateIncompatible                 = "incompatible"
+	PluginSignatureTrusted                  = "trusted"
+	PluginSignatureUnsigned                 = "unsigned"
 )
+
+// supportedPluginCapabilities 是宿主当前认识的全部能力及其绑定的平台/账号类型。
+//
+// 这是安装期的唯一白名单：清单声明了未知能力会被直接拒绝，而不是"装着但永不生效"——
+// 后者会让管理员以为功能已启用，实际请求仍走旧路径。
+var supportedPluginCapabilities = map[string]PluginCapability{
+	PluginCapabilityOpenAIOAuthOutbound: {
+		ID:          PluginCapabilityOpenAIOAuthOutbound,
+		Platform:    PlatformOpenAI,
+		AccountType: AccountTypeOAuth,
+	},
+	PluginCapabilityOpenAIAccountScheduling: {
+		ID:          PluginCapabilityOpenAIAccountScheduling,
+		Platform:    PlatformOpenAI,
+		AccountType: AccountTypeOAuth,
+	},
+}
 
 var pluginIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)+$`)
 
@@ -169,8 +190,12 @@ func (m PluginManifest) Validate() error {
 		return errors.New("插件必须声明至少一个能力")
 	}
 	for _, capability := range m.Capabilities {
-		if capability.ID != PluginCapabilityOpenAIOAuthOutbound || capability.Platform != PlatformOpenAI || capability.AccountType != AccountTypeOAuth {
-			return fmt.Errorf("初期仅支持能力 %s", PluginCapabilityOpenAIOAuthOutbound)
+		supported, ok := supportedPluginCapabilities[capability.ID]
+		if !ok {
+			return fmt.Errorf("当前宿主不支持能力 %s", capability.ID)
+		}
+		if capability.Platform != supported.Platform || capability.AccountType != supported.AccountType {
+			return fmt.Errorf("能力 %s 只能用于 platform=%s account_type=%s", capability.ID, supported.Platform, supported.AccountType)
 		}
 	}
 	runtimeEntry, ok := m.Runtimes[m.RuntimeKey()]

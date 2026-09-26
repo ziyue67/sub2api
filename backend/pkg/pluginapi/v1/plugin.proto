@@ -11,91 +11,58 @@ service TransportPlugin {
   rpc ApplyConfig(ApplyConfigRequest) returns (ApplyConfigResponse);
   rpc TestConfig(TestConfigRequest) returns (TestConfigResponse);
   rpc Forward(stream ForwardRequest) returns (stream ForwardResponse);
-  // InitHostServices hands the plugin a go-plugin broker stream id it can dial
-  // back to reach the host-provided HostService. It is an optional, generic
-  // lifecycle hook: plugins built against an older contract leave it
-  // Unimplemented and the host simply runs without offering host services.
   rpc InitHostServices(InitHostServicesRequest) returns (InitHostServicesResponse);
+  rpc NominateAccount(NominateAccountRequest) returns (NominateAccountResponse);
 }
 
-// HostService is implemented by the host and dialed by the plugin over the
-// go-plugin broker id delivered via InitHostServices. It exposes generic,
-// capability-neutral facilities that any plugin may use; new facilities are
-// added here as new RPCs without changing the transport contract version.
 service HostService {
   rpc KVGet(KVGetRequest) returns (KVGetResponse);
   rpc KVSet(KVSetRequest) returns (KVSetResponse);
   rpc KVDelete(KVDeleteRequest) returns (KVDeleteResponse);
   rpc KVList(KVListRequest) returns (KVListResponse);
-  // Account directory: enumerate the accounts the plugin is bound to act on
-  // (with full readable metadata) and resolve the outbound identity
-  // (credentials/headers/proxy) the host would attach to a live request. The
-  // host restricts both calls to the account scope the requesting plugin's
-  // declared capabilities cover; a plugin can never widen that scope. Metadata
-  // never carries raw credentials — those are only handed out by
-  // ResolveOutboundIdentity, the dedicated (equally sensitive) credential channel.
   rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
   rpc ResolveOutboundIdentity(ResolveOutboundIdentityRequest) returns (ResolveOutboundIdentityResponse);
 }
 
 message GetInfoRequest {}
-
 message GetInfoResponse {
   string plugin_id = 1;
   string plugin_version = 2;
   uint32 protocol_version = 3;
   uint32 transport_api_version = 4;
   repeated string capabilities = 5;
+  uint32 scheduling_api_version = 6;
 }
 
 message HealthRequest {}
-
 message HealthResponse {
   bool healthy = 1;
   string message = 2;
-  // status_json is an optional plugin-defined JSON blob describing current runtime
-  // state (e.g. a status summary for the config UI). It MUST be produced passively
-  // — reading it must not apply config, reach upstream, or cause side effects — so
-  // the host can expose it via a lightweight, ungated status endpoint. Ignored by
-  // the host's health gating.
   string status_json = 3;
 }
 
-message ValidateConfigRequest {
-  bytes config_json = 1;
-}
-
+message ValidateConfigRequest { bytes config_json = 1; }
 message ValidateConfigResponse {
   bool valid = 1;
   string message = 2;
   bytes normalized_config_json = 3;
 }
 
-message ApplyConfigRequest {
-  bytes config_json = 1;
-}
-
+message ApplyConfigRequest { bytes config_json = 1; }
 message ApplyConfigResponse {
   bool applied = 1;
   string message = 2;
 }
 
-message TestConfigRequest {
-  bytes config_json = 1;
-}
-
+message TestConfigRequest { bytes config_json = 1; }
 message TestConfigResponse {
   bool success = 1;
   string message = 2;
   int64 latency_ms = 3;
-  // status_json is an optional plugin-defined JSON blob surfaced to the config UI
-  // alongside the test result (e.g. a runtime status summary). Ignored by the host.
   string status_json = 4;
 }
 
-message HeaderValues {
-  repeated string values = 1;
-}
+message HeaderValues { repeated string values = 1; }
 
 message ForwardRequestStart {
   string request_id = 1;
@@ -151,118 +118,63 @@ message ForwardResponse {
 }
 
 message InitHostServicesRequest {
-  // host_service_id is the broker stream id the plugin dials to reach HostService.
   uint32 host_service_id = 1;
-  // host_service_api_version lets the plugin reject a host it cannot talk to.
   uint32 host_service_api_version = 2;
 }
 
 message InitHostServicesResponse {
-  // ready is true once the plugin has successfully dialed back the host service.
   bool ready = 1;
   string message = 2;
 }
 
-// KV messages back a namespaced, per-plugin persistent key-value store. The
-// host derives the owning plugin from the runtime that serves the connection,
-// so a plugin can never read or write another plugin's namespace.
 message KVGetRequest {
   string namespace = 1;
   string key = 2;
 }
-
 message KVGetResponse {
   bool found = 1;
   bytes value = 2;
 }
-
 message KVSetRequest {
   string namespace = 1;
   string key = 2;
   bytes value = 3;
-  // ttl_seconds > 0 sets an expiry; 0 stores the entry without expiry.
   int64 ttl_seconds = 4;
 }
-
 message KVSetResponse {}
-
 message KVDeleteRequest {
   string namespace = 1;
   string key = 2;
 }
-
 message KVDeleteResponse {}
-
 message KVListRequest {
   string namespace = 1;
   string key_prefix = 2;
   int32 limit = 3;
 }
-
-message KVListResponse {
-  repeated string keys = 1;
-}
+message KVListResponse { repeated string keys = 1; }
 
 message ListAccountsRequest {
   string platform = 1;
   string account_type = 2;
 }
-
 message ListAccountsResponse {
-  // account_ids is retained for plugins built against host_service_api_version 1.
-  // The host keeps filling it (the ids of the accounts in `accounts`) so those
-  // plugins keep working; new plugins should read `accounts` instead.
   repeated int64 account_ids = 1;
-  // accounts carries the full readable metadata for every account in the
-  // plugin's scope — including active accounts that are currently NOT
-  // schedulable because they are paused (rate-limited / temp-unschedulable /
-  // overloaded). This lets a plugin make its own decisions (e.g. skip paused
-  // accounts) instead of hammering them. (Administratively disabled / expired
-  // accounts are already excluded upstream by the host.) Available when
-  // host_service_api_version >= 2.
   repeated AccountInfo accounts = 2;
 }
 
-// AccountInfo is the host's readable, non-secret view of one account. It never
-// contains credentials (token / refresh_token / cookies); use
-// ResolveOutboundIdentity for those.
-//
-// The typed fields are a small, STABLE decision core. Everything else about the
-// account — including any field added to the account model later — is carried in
-// metadata_json, so new fields reach plugins WITHOUT a contract change, a host
-// mapper edit, or a plugin rebuild. Only a newly added *secret* field would ever
-// require a host change (a one-line denylist entry), which is the safe default.
 message AccountInfo {
   int64  id = 1;
   string platform = 2;
   string account_type = 3;
   string name = 4;
-  // status is the coarse lifecycle state: active / disabled / error / expired.
   string status = 5;
-  // schedulable is the host-authoritative decision (IsSchedulable) — false when
-  // the account is active but paused for ANY reason (rate limit,
-  // temp-unschedulable, overload, expiry auto-pause, quota). This is the primary
-  // signal a plugin should use to skip an account so it stops probing paused ones.
   bool   schedulable = 6;
   bool   is_shadow = 7;
-  // metadata_json is a host-produced JSON object holding the account's readable
-  // field set (status timestamps, rate-limit / overload / temp-unschedulable
-  // windows and reason, last-used, expiry, session window, group ids, priority,
-  // concurrency, quota dimension, extra config, proxy, and any future field).
-  // Keys are the account model's field names. Times are RFC3339 strings (JSON
-  // null when unset). Only two things are withheld: the raw Credentials blob
-  // (the refresh_token — a long-lived secret the outbound-identity RPC does not
-  // hand out; the short-lived access token and proxy URL come from that RPC), and
-  // the Groups/AccountGroups relation graphs (cyclic — group_ids conveys
-  // membership). Plugins read whatever keys they need; the host does not have to
-  // change when the account model gains a field.
   bytes  metadata_json = 20;
 }
 
-message ResolveOutboundIdentityRequest {
-  int64 account_id = 1;
-}
-
+message ResolveOutboundIdentityRequest { int64 account_id = 1; }
 message ResolveOutboundIdentityResponse {
   bool found = 1;
   int64 account_id = 2;
@@ -271,4 +183,57 @@ message ResolveOutboundIdentityResponse {
   string proxy_url = 5;
   string token = 6;
   map<string, HeaderValues> headers = 7;
+}
+
+// ---- Scheduling capability: openai.account.scheduling.v1 ----
+
+// ScheduleCandidate is one host-eligible account the plugin may nominate.
+// The host has already applied every hard gate (status, platform, group,
+// transport, privacy, model capability, quota) before building this list, so
+// every candidate is legal to pick. The plugin only expresses a preference.
+message ScheduleCandidate {
+  int64  account_id = 1;
+  string account_type = 2;
+  string name = 3;
+  int32  priority = 4;
+  // in_flight / max_concurrency come from the host's authoritative counters.
+  int64  in_flight = 5;
+  int64  max_concurrency = 6;
+  int64  waiting_count = 7;
+  double load_rate = 8;
+  double error_rate = 9;
+  double ttft_ms = 10;
+  bool   has_ttft = 11;
+  bool   is_subscription = 12;
+  double upstream_rate = 13;
+  bool   upstream_rate_known = 14;
+}
+
+message NominateAccountRequest {
+  string request_id = 1;
+  string platform = 2;
+  // session_hash is the host's stable per-conversation key (derived from
+  // session-id / conversation-id / prompt_cache_key). This is the affinity key.
+  string session_hash = 3;
+  string previous_response_id = 4;
+  string requested_model = 5;
+  int64  group_id = 6;
+  bool   has_group = 7;
+  int64  sticky_account_id = 8;
+  int64  sticky_previous_account_id = 9;
+  // candidates are the eligible accounts, already ranked by the host.
+  repeated ScheduleCandidate candidates = 10;
+}
+
+message NominateAccountResponse {
+  // handled=false means "host, keep your own ordering" (plugin has no opinion,
+  // capability disabled, or it needs to fail open). The host then behaves
+  // exactly as if no scheduling plugin were installed.
+  bool   handled = 1;
+  // nominated_account_id must be one of the candidate ids. 0 = no preference.
+  int64  nominated_account_id = 2;
+  // reason is a short, non-sensitive tag for observability.
+  string reason = 3;
+  // affinity_hit reports whether the nomination came from a sticky binding.
+  bool   affinity_hit = 4;
 }
