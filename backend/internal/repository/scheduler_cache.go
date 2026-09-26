@@ -1079,6 +1079,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_oauth_passthrough",
 		"openai_excel_bps",
 		"openai_excel_bps_auto_disable_on_403",
+		"openai_excel_bps_mihomo",
 		"openai_excel_bps_models",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",

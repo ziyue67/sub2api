@@ -166,3 +166,43 @@ func TestExcelBPSImageSettingsRejectInvalidUpdatesAtomically(t *testing.T) {
 	require.False(t, runtime.Enabled)
 	require.NotContains(t, err.Error(), "database-private-error")
 }
+
+func TestExcelBPSImageLimitsHotReload(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	ctx := context.Background()
+	repo := &excelBPSImageSettingsRepo{values: map[string]string{
+		SettingKeyExcelBPSImageRelayEnabled: "true", SettingKeyExcelBPSImageBaseURL: "https://images.example",
+	}}
+	settings := NewSettingService(repo, &config.Config{})
+	gateway := &OpenAIGatewayService{settingService: settings}
+	t.Cleanup(func() { require.NoError(t, gateway.CloseExcelBPSImages()) })
+	runtime, err := settings.GetExcelBPSImageRelaySettings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 20, runtime.Limits.MaxImages)
+	relay, err := gateway.excelBPSImageRelay(ctx)
+	require.NoError(t, err)
+	imagePart := `{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRusAAAAASUVORK5CYII="}`
+	raw := []byte(`{"input":[{"role":"user","content":[` + strings.Repeat(imagePart+",", 20) + imagePart + `]}]}`)
+	_, err = relay.Rewrite(raw, "scope")
+	require.ErrorContains(t, err, "at most 20")
+	saved, err := settings.GetAllSettings(ctx)
+	require.NoError(t, err)
+	saved.ExcelBPSImageMaxImages = 100
+	saved.ExcelBPSImageTTLMinutes = 90
+	require.NoError(t, settings.UpdateSettings(ctx, saved))
+	updated, err := gateway.excelBPSImageRelay(ctx)
+	require.NoError(t, err)
+	require.Same(t, relay, updated)
+	_, err = updated.Rewrite(raw, "scope")
+	require.NoError(t, err)
+	runtime, err = settings.GetExcelBPSImageRelaySettings(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 100, runtime.Limits.MaxImages)
+	require.Equal(t, 90, runtime.Limits.TTLMinutes)
+	// A corrupt stored limit must fail closed instead of silently allowing traffic.
+	repo.mu.Lock()
+	repo.values[SettingKeyExcelBPSImageMaxImages] = "0"
+	repo.mu.Unlock()
+	_, err = settings.GetExcelBPSImageRelaySettings(ctx)
+	require.Error(t, err)
+}

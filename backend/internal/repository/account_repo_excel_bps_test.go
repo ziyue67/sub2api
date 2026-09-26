@@ -53,7 +53,7 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 			query := normalizeSQLWhitespace(exec.execQueries[0])
 			expression := "COALESCE(extra, '{}'::jsonb) || $1::jsonb"
 			if tt.name == "disabled removes all BPS settings" {
-				expression = "(" + expression + ") - 'openai_excel_bps' - 'openai_excel_bps_models' - 'openai_excel_bps_cache_creation_as_input' - 'openai_excel_bps_auto_disable_on_403'"
+				expression = "(" + expression + ") - 'openai_excel_bps' - 'openai_excel_bps_models' - 'openai_excel_bps_cache_creation_as_input' - 'openai_excel_bps_auto_disable_on_403' - 'openai_excel_bps_mihomo'"
 			} else {
 				for _, key := range tt.removed {
 					expression = "(" + expression + ") - '" + key + "'"

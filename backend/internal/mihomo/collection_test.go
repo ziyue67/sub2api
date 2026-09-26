@@ -76,10 +76,10 @@ func TestCollectionConfigRejectsUnselectedLanesAndHonorsCountryFilter(t *testing
 	require.NoError(t, json.Unmarshal(data, &cfg))
 	listeners, ok := cfg["listeners"].([]any)
 	require.True(t, ok)
-	require.Len(t, listeners, MaxCollectLanes)
+	require.Len(t, listeners, MaxCollectLanes+1)
 	groups, ok := cfg["proxy-groups"].([]any)
 	require.True(t, ok)
-	for i, l := range listeners {
+	for i, l := range listeners[:MaxCollectLanes] {
 		listener, ok := l.(map[string]any)
 		require.True(t, ok)
 		require.Equal(t, "127.0.0.1", listener["listen"])

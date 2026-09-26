@@ -127,6 +127,27 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if settings.ExcelBPSImageMaxRequests == 0 {
 		settings.ExcelBPSImageMaxRequests = DefaultExcelBPSImageMaxRequests
 	}
+	if settings.ExcelBPSImageMaxImageMiB == 0 {
+		settings.ExcelBPSImageMaxImageMiB = imageRelay.Limits.MaxImageMiB
+	}
+	if settings.ExcelBPSImageMaxImages == 0 {
+		settings.ExcelBPSImageMaxImages = imageRelay.Limits.MaxImages
+	}
+	if settings.ExcelBPSImageMaxTotalMiB == 0 {
+		settings.ExcelBPSImageMaxTotalMiB = imageRelay.Limits.MaxTotalMiB
+	}
+	if settings.ExcelBPSImageStorageMiB == 0 {
+		settings.ExcelBPSImageStorageMiB = imageRelay.Limits.StorageMiB
+	}
+	if settings.ExcelBPSImageStorageEntries == 0 {
+		settings.ExcelBPSImageStorageEntries = imageRelay.Limits.StorageEntries
+	}
+	if settings.ExcelBPSImageTTLMinutes == 0 {
+		settings.ExcelBPSImageTTLMinutes = imageRelay.Limits.TTLMinutes
+	}
+	if err := settings.imageRelayLimits().Validate(); err != nil {
+		return nil, infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_LIMITS", err.Error())
+	}
 	if err := validateExcelBPSImageCapacity(settings.ExcelBPSImageBodyLimitMiB, settings.ExcelBPSImageBudgetMiB, settings.ExcelBPSImageMaxRequests); err != nil {
 		return nil, err
 	}
@@ -662,6 +683,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyExcelBPSImageBodyLimitMiB] = strconv.Itoa(settings.ExcelBPSImageBodyLimitMiB)
 	updates[SettingKeyExcelBPSImageBudgetMiB] = strconv.Itoa(settings.ExcelBPSImageBudgetMiB)
 	updates[SettingKeyExcelBPSImageMaxRequests] = strconv.Itoa(settings.ExcelBPSImageMaxRequests)
+	updates[SettingKeyExcelBPSImageMaxImageMiB] = strconv.Itoa(settings.ExcelBPSImageMaxImageMiB)
+	updates[SettingKeyExcelBPSImageMaxImages] = strconv.Itoa(settings.ExcelBPSImageMaxImages)
+	updates[SettingKeyExcelBPSImageMaxTotalMiB] = strconv.Itoa(settings.ExcelBPSImageMaxTotalMiB)
+	updates[SettingKeyExcelBPSImageStorageMiB] = strconv.Itoa(settings.ExcelBPSImageStorageMiB)
+	updates[SettingKeyExcelBPSImageStorageEntries] = strconv.Itoa(settings.ExcelBPSImageStorageEntries)
+	updates[SettingKeyExcelBPSImageTTLMinutes] = strconv.Itoa(settings.ExcelBPSImageTTLMinutes)
 
 	return updates, nil
 }

@@ -2288,6 +2288,14 @@ func (a *Account) IsExcelBPSEnabled() bool {
 	return enabled
 }
 
+func (a *Account) IsExcelBPSMihomoEnabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra["openai_excel_bps_mihomo"].(bool)
+	return enabled
+}
+
 // IsExcelBPSCacheCreationAsInputEnabled controls local billing and downstream usage.
 // The setting has no effect unless this account uses the Excel/BPS protocol.
 func (a *Account) IsExcelBPSCacheCreationAsInputEnabled() bool {

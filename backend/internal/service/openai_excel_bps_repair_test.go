@@ -154,7 +154,7 @@ func TestExcelBPSToolCorrectionStopsOnHTTPRejection(t *testing.T) {
 func TestExcelBPS429CorrectionDoesNotChangeCodexState(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprint(stream), func(t *testing.T) {
-			first := &excelBPSRepairBody{Reader: strings.NewReader(excelBPSRepairWire(t, "rate_limit", "Run"))}
+			first := &excelBPSRepairBody{Reader: strings.NewReader(excelBPSRepairWire(t, "rate_limit", "Run", "text(42);"))}
 			rejected := &excelBPSRepairBody{Reader: strings.NewReader(`{"error":{"type":"usage_limit_reached","resets_in_seconds":7200,"message":"PRIVATE_UPSTREAM"}}`)}
 			upstream := &httpUpstreamRecorder{responses: []*http.Response{
 				{StatusCode: http.StatusOK, Header: http.Header{}, Body: first},

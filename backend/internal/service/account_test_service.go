@@ -1055,6 +1055,12 @@ func (s *AccountTestService) testExcelBPSAccountConnection(c *gin.Context, accou
 	probe := httptest.NewRecorder()
 	probeCtx, _ := gin.CreateTestContext(probe)
 	probeCtx.Request = c.Request.Clone(c.Request.Context())
+	// Manual one-shot tests have no client conversation. Give them a scoped
+	// identity so enabling the session proxy does not break the test button.
+	// Explicit identities (including load-test sessions) remain unchanged.
+	if scope, _ := resolveOpenAIWSExecutionScope(probeCtx, body, 0); scope == "" {
+		probeCtx.Request.Header.Set("Session-Id", "account-test-"+uuid.NewString())
+	}
 	result, err := s.openaiGatewayService.Forward(probeCtx, probeCtx, account, body)
 	if err != nil {
 		return s.sendErrorAndEnd(c, err.Error())

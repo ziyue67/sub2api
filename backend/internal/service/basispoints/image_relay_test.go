@@ -102,7 +102,7 @@ func TestImageRelayRoundTripAndScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, out, repeated)
 	require.Len(t, r.entries, 1)
-	require.Equal(t, len(data), r.bytes)
+	require.EqualValues(t, len(data), r.bytes)
 	other, err := r.Rewrite(raw, "account:1/key:3/thread:a")
 	require.NoError(t, err)
 	require.NotEqual(t, url, relayTestURL(t, other), "API key scopes must not share capabilities")

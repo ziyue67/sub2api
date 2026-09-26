@@ -90,3 +90,36 @@ func TestSettingsExcelBPSNativeModePersistsWithoutOrigin(t *testing.T) {
 	require.Equal(t, service.ExcelBPSImageModeNative, settings.Mode)
 	require.True(t, settings.Enabled)
 }
+
+func TestSettingsExcelBPSImageLimitsValidationAndPreservation(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
+	values := map[string]any{
+		"excel_bps_image_max_image_mib": 30, "excel_bps_image_max_images": 100,
+		"excel_bps_image_max_total_mib": 64, "excel_bps_image_storage_mib": 2048,
+		"excel_bps_image_storage_entries": 2048, "excel_bps_image_ttl_minutes": 60,
+	}
+	rec := doUpdateSettings(t, h, values, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for k, v := range values {
+		require.EqualValues(t, v, gjson.Get(rec.Body.String(), "data."+k).Int())
+	}
+	// Old clients omit the added fields: do not reset saved limits.
+	rec = doUpdateSettings(t, h, map[string]any{"site_name": "preserve image limits"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for k, v := range values {
+		require.EqualValues(t, v, gjson.Get(rec.Body.String(), "data."+k).Int())
+	}
+	for _, bad := range []map[string]any{
+		{"excel_bps_image_max_images": 0}, {"excel_bps_image_max_images": 4097},
+		{"excel_bps_image_max_image_mib": 129}, {"excel_bps_image_max_total_mib": 20},
+		{"excel_bps_image_storage_mib": 32}, {"excel_bps_image_storage_mib": 16385},
+		{"excel_bps_image_storage_entries": 99}, {"excel_bps_image_storage_entries": 65537},
+		{"excel_bps_image_ttl_minutes": 1441}, {"excel_bps_image_ttl_minutes": -1},
+		{"excel_bps_image_max_images": 1.5},
+	} {
+		rec = doUpdateSettings(t, h, bad, nil)
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		require.Equal(t, "100", repo.values[service.SettingKeyExcelBPSImageMaxImages])
+		require.Equal(t, "64", repo.values[service.SettingKeyExcelBPSImageMaxTotalMiB])
+	}
+}

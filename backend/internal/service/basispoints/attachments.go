@@ -101,7 +101,9 @@ func PrepareNativeImages(raw []byte) (*NativeImages, error) {
 			if len(plan.parts) >= imageRelayMaxRequestImages {
 				return nil, fmt.Errorf("basispoints accepts at most 20 inline images per request")
 			}
-			mimeType, payload, err := relayImagePayload(rawURL)
+			// Native uploads retain their own fixed limit; configurable relay
+			// storage limits apply only to temporary HTTPS image conversion.
+			mimeType, payload, err := relayImagePayload(rawURL, imageRelayMaxImageBytes>>20)
 			if err != nil {
 				return nil, err
 			}

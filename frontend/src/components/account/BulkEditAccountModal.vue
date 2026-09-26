@@ -68,6 +68,14 @@
               <p class="input-hint">{{ t('admin.accounts.openai.excelBPSModelsHint') }}</p>
             </div>
             <p class="text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
+            <div class="mt-3">
+              <label class="flex items-center gap-2">
+                <input v-model="excelBPSMihomo" type="checkbox" data-testid="excel-bps-mihomo"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+                <span class="text-sm">{{ t('admin.accounts.openai.excelBPSMihomo') }}</span>
+              </label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSMihomoDesc') }}</p>
+            </div>
             <div>
               <label class="flex items-center gap-2">
                 <input v-model="excelBPSCacheCreationAsInput" type="checkbox"
@@ -1783,6 +1791,7 @@ const groupIds = ref<number[]>([])
 const excelBPSEnabled = ref(false)
 const excelBPSAllModels = ref(false)
 const excelBPSModels = ref<string[]>(['gpt-6-astra'])
+const excelBPSMihomo = ref(false)
 const excelBPSCacheCreationAsInput = ref(false)
 const openaiPassthroughEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
@@ -2078,6 +2087,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.openai_excel_bps_models = excelBPSEnabled.value && !excelBPSAllModels.value
       ? [...new Set(excelBPSModels.value.map(model => model.trim()).filter(Boolean))]
       : null
+    extra.openai_excel_bps_mihomo = excelBPSEnabled.value && excelBPSMihomo.value
     extra.openai_excel_bps_cache_creation_as_input =
       excelBPSEnabled.value && excelBPSCacheCreationAsInput.value
   }
@@ -2521,6 +2531,7 @@ watch(
       excelBPSEnabled.value = false
       excelBPSAllModels.value = false
       excelBPSModels.value = ['gpt-6-astra']
+      excelBPSMihomo.value = false
       excelBPSCacheCreationAsInput.value = false
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false

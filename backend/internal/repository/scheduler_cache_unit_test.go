@@ -1186,13 +1186,14 @@ func TestBuildSchedulerMetadataAccount_KeepsRPMFieldsForRPMGate(t *testing.T) {
 func TestBuildSchedulerMetadataAccount_KeepsExcelBPSAutoDisable(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		account := service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Extra: map[string]any{
-			"openai_excel_bps": true, "openai_excel_bps_auto_disable_on_403": enabled,
+			"openai_excel_bps": true, "openai_excel_bps_auto_disable_on_403": enabled, "openai_excel_bps_mihomo": enabled,
 		}}
 		payload, err := json.Marshal(buildSchedulerMetadataAccount(account))
 		require.NoError(t, err)
 		var restored service.Account
 		require.NoError(t, json.Unmarshal(payload, &restored))
 		require.Equal(t, enabled, restored.IsExcelBPSAutoDisableOn403Enabled())
+		require.Equal(t, enabled, restored.IsExcelBPSMihomoEnabled())
 	}
 }
 

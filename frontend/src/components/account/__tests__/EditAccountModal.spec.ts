@@ -332,6 +332,32 @@ describe('EditAccountModal', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it('persists the BPS session proxy toggle and clears it when BPS is disabled', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, unrelated: 'preserve' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get<HTMLInputElement>('[data-testid="excel-bps-mihomo"]')
+    expect(toggle.element.checked).toBe(false)
+    await toggle.setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra.openai_excel_bps_mihomo).toBe(true)
+    expect(extra.unrelated).toBe('preserve')
+    wrapper.unmount()
+    const restored = mountModal({ ...account, extra })
+    expect(restored.get<HTMLInputElement>('[data-testid="excel-bps-mihomo"]').element.checked).toBe(true)
+    await restored.get('[data-testid="excel-bps-toggle"]').trigger('click')
+    expect(restored.find('[data-testid="excel-bps-mihomo"]').exists()).toBe(false)
+    await restored.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.openai_excel_bps_mihomo).toBeUndefined()
+    restored.unmount()
+  })
+
   it('saves and restores Excel BPS independently of existing OAuth settings', async () => {
     const account = buildAccount()
     account.type = 'oauth'
