@@ -119,7 +119,7 @@ func (s *OpenAIGatewayService) huntCodexHarvestTicket(ctx context.Context, accou
 			logger.L().Info("openai_codex_ticket harvested", zap.Int64("account_id", account.ID), zap.String("model", model), zap.Int("attempts", attempts))
 			return
 		}
-		if result.Kind == "account_error" || result.Kind == "rate_limited" || attempt.sidecar == nil {
+		if result.Terminal || result.Kind == "account_error" || result.Kind == "rate_limited" || attempt.sidecar == nil {
 			break
 		}
 		if s.codexHarvest != nil {

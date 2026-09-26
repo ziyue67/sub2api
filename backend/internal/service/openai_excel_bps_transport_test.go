@@ -308,7 +308,8 @@ func TestExcelBPSTransportAndStreamFailureAreServerErrors(t *testing.T) {
 				upstream.err = nil
 				upstream.resp = &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\",\"status\":\"in_progress\"}}\n\n"))}
 			}
-			svc := openAIClientToolsTestService(upstream)
+			svc := openAIClientToolsTestService(nil)
+			svc.httpUpstream = upstream
 			body := []byte("{\"model\":\"gpt-6-astra\",\"stream\":true,\"input\":\"test\"}")
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
@@ -325,6 +326,43 @@ func TestExcelBPSTransportAndStreamFailureAreServerErrors(t *testing.T) {
 				require.Equal(t, 502, rec.Code)
 				require.Contains(t, rec.Body.String(), "basispoints_transport_error")
 			}
+		})
+	}
+}
+
+func TestExcelBPSAttachmentLeaseCannotChangeExitOrReleaseOwner(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			lease := &bpsTestLease{}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			account := excelAccount()
+			account.Extra["openai_excel_bps_mihomo"] = true
+			calls := 0
+			upstream := &bpsTestUpstream{send: func(r *http.Request, proxy string) (*http.Response, error) {
+				calls++
+				require.Equal(t, "http://127.0.0.1:19007", proxy)
+				if fail {
+					httptrace.ContextClientTrace(r.Context()).GetConn("bps.openai.com:443")
+					return nil, errors.New("dial failed")
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+			}}
+			svc := openAIClientToolsTestService(nil)
+			svc.httpUpstream = upstream
+			resp, borrowed, _, err := svc.doExcelBPSRequest(context.Background(), c, account, "scope", []byte("{}"), "token", "account", pinnedExcelBPSAcquire("http://127.0.0.1:19007", lease))
+			if fail {
+				require.Error(t, err)
+				require.Equal(t, 1, lease.failures)
+			} else {
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+				borrowed.Release()
+			}
+			require.Equal(t, 1, calls)
+			require.Zero(t, lease.releases)
+			lease.Release()
+			require.Equal(t, 1, lease.releases)
 		})
 	}
 }

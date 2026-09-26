@@ -197,3 +197,22 @@ func recordExcelBPSTransportFailure(ctx context.Context, c *gin.Context, account
 		zap.Int("proxy_port", port), zap.String("session_hash", sessionHash),
 		zap.Int("attempt", attempt), zap.Bool("retry_before_send", retry))
 }
+
+// Attachment requests own their lease through upload, generation and correction.
+// A borrowed lease reports health but cannot release the caller's ownership.
+type excelBPSBorrowedLease struct{ excelBPSLease }
+
+func (excelBPSBorrowedLease) Release() {}
+func pinnedExcelBPSAcquire(proxy string, lease excelBPSLease) excelBPSAcquire {
+	return func(ctx context.Context, _ string, excluded ...string) (string, excelBPSLease, error) {
+		if err := ctx.Err(); err != nil {
+			return "", nil, err
+		}
+		// An attachment has already been sent on this exit. Never move this request
+		// to another node, even when the later Responses request was not sent.
+		if len(excluded) != 0 {
+			return "", nil, errExcelBPSProxyUnavailable
+		}
+		return proxy, excelBPSBorrowedLease{lease}, nil
+	}
+}

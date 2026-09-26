@@ -7412,7 +7412,7 @@
                 </p>
               </div>
               <h4 class="mt-6 input-label">{{ t('admin.settings.features.excelBpsImages.requestLimitsTitle') }}</h4>
-              <div class="mt-5 grid gap-4 sm:grid-cols-3">
+              <div class="mt-5 grid gap-4 sm:grid-cols-4">
                 <div class="space-y-1">
                   <label for="excel-bps-image-body-limit" class="input-label">{{ t('admin.settings.features.excelBpsImages.bodyLimit') }}</label>
                   <input id="excel-bps-image-body-limit" v-model.number="form.excel_bps_image_body_limit_mib" class="input" type="number" min="1" max="128" step="1" required />
@@ -7425,14 +7425,17 @@
                   <label for="excel-bps-image-max-requests" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxRequests') }}</label>
                   <input id="excel-bps-image-max-requests" v-model.number="form.excel_bps_image_max_requests" class="input" type="number" min="1" max="512" step="1" required />
                 </div>
+                <div class="space-y-1">
+                  <label for="excel-bps-image-max-images" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxImages') }}</label>
+                  <input id="excel-bps-image-max-images" v-model.number="form.excel_bps_image_max_images" class="input" type="number" min="1" max="4096" step="1" required />
+                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 4096 }) }}</p>
+                </div>
               </div>
               <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.settings.features.excelBpsImages.budgetHint') }}
               </p>
-              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-              </p>
               <p v-if="form.excel_bps_image_mode === 'native'" class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.settings.features.excelBpsImages.nativeRetentionHint') }}
+                {{ t('admin.settings.features.excelBpsImages.nativeRetentionHint', { maxImages: form.excel_bps_image_max_images }) }}
               </p>
               <template v-if="form.excel_bps_image_mode === 'relay'">
                 <h4 class="mt-6 input-label">{{ t('admin.settings.features.excelBpsImages.imageLimitsTitle') }}</h4>
@@ -7441,11 +7444,6 @@
                     <label for="excel-bps-image-max-image-mib" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxImageMiB') }}</label>
                     <input id="excel-bps-image-max-image-mib" v-model.number="form.excel_bps_image_max_image_mib" class="input" type="number" min="1" max="128" step="1" required />
                     <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 128 }) }}</p>
-                  </div>
-                  <div class="space-y-1">
-                    <label for="excel-bps-image-max-images" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxImages') }}</label>
-                    <input id="excel-bps-image-max-images" v-model.number="form.excel_bps_image_max_images" class="input" type="number" min="1" max="4096" step="1" required />
-                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 4096 }) }}</p>
                   </div>
                   <div class="space-y-1">
                     <label for="excel-bps-image-max-total-mib" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxTotalMiB') }}</label>

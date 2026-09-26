@@ -27,6 +27,7 @@ type codexHarvestProbeResult struct {
 	Shape      openAICodexTicketShape
 	Kind       string
 	Sent       bool
+	Terminal   bool
 	Cookies    []string
 }
 
@@ -109,6 +110,9 @@ func (s *OpenAIGatewayService) executeCodexHarvestProbe(ctx context.Context, acc
 	}
 	result = s.requestCodexHarvestProbe(attempt, account, token, model, proxy, reserve, sessionID)
 	result.Shape, result.Kind = classifyCodexHarvestProbe(ctx, account, s.openAICodexTicketConfig(), result)
+	if openAICodexTicketTargetLength(account, s.openAICodexTicketConfig()) == 780 {
+		result.Terminal = codex780TerminalFailure(result)
+	}
 	return result
 }
 

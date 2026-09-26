@@ -176,7 +176,7 @@ func TestImageRelayDisabledAndHTTPSPassthrough(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, raw, out)
 	_, _, err = Prepare(out, "scope", nil)
-	require.ErrorContains(t, err, "HTTPS image URL")
+	require.ErrorContains(t, err, "image support is disabled")
 	r, err := newTestImageRelay(t, "https://images.example")
 	require.NoError(t, err)
 	raw = []byte(`{ "model":"gpt-6-astra", "input":[{"role":"user","content":[{"type":"input_image","image_url":"https://cdn.example/image.png?sig=a%2Fb"}]}] }`)
@@ -263,6 +263,24 @@ func TestImageRelayBatchValidationAndLimitsAreAtomic(t *testing.T) {
 	_, err = r.Rewrite(raw, "scope")
 	require.ErrorContains(t, err, "at most 20")
 	require.Empty(t, r.entries)
+	limited, err := newTestImageRelay(t, "https://images.example")
+	require.NoError(t, err)
+	limits := DefaultImageRelayLimits()
+	limits.MaxImages = 1
+	require.NoError(t, limited.Configure("https://images.example", limits))
+	_, err = limited.Rewrite(relayTestRequest(t, relayTestPNG(t)), "scope")
+	require.NoError(t, err)
+	entriesBeforeLimit := len(limited.entries)
+	parts = make([]any, 2)
+	for i := range parts {
+		parts[i] = part
+	}
+	item["content"] = parts
+	raw, err = json.Marshal(source)
+	require.NoError(t, err)
+	_, err = limited.Rewrite(raw, "scope")
+	require.ErrorContains(t, err, "at most 1")
+	require.Len(t, limited.entries, entriesBeforeLimit)
 	r.bytes = imageRelayMaxBytes
 	_, err = r.Rewrite(relayTestRequest(t, relayTestPNG(t)), "scope")
 	require.ErrorIs(t, err, ErrImageRelayFull)

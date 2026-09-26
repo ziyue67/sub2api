@@ -25,10 +25,15 @@ var codex780GatewayRE = regexp.MustCompile(`(?:^|[.])(?:chat\.)?gateway\.(unifie
 
 var codex780TargetRE = regexp.MustCompile(`^(?:chat\.gateway\.)?(unified-[0-9]{1,5})(?:\.api\.openai\.com)?$`)
 
+var codex780GatewayAliasRE = regexp.MustCompile("^(?:unified[-_.]?)?([0-9]{1,5})$")
+
 func normalizeCodex780Gateway(target string) string {
 	target = strings.ToLower(strings.TrimSpace(target))
 	if target == "*" || target == "any" {
 		return "any"
+	}
+	if match := codex780GatewayAliasRE.FindStringSubmatch(target); len(match) == 2 {
+		return "unified-" + match[1]
 	}
 	if match := codex780TargetRE.FindStringSubmatch(target); len(match) == 2 {
 		return match[1]
@@ -132,6 +137,10 @@ func readCodex780Created(body io.Reader, model string) error {
 	for scanner.Scan() {
 		line := strings.TrimPrefix(scanner.Text(), "\ufeff")
 		if line == "" {
+			raw := []byte(strings.Join(data, "\n"))
+			if err := codex780EventError(raw, eventName); err != nil {
+				return err
+			}
 			var event struct {
 				Type     string `json:"type"`
 				Response struct {
@@ -139,10 +148,7 @@ func readCodex780Created(body io.Reader, model string) error {
 					Model string `json:"model"`
 				} `json:"response"`
 			}
-			if json.Unmarshal([]byte(strings.Join(data, "\n")), &event) == nil {
-				if event.Type == "error" || event.Type == "response.failed" {
-					return &codexMintError{kind: "response_incomplete_or_error", detail: "mint error event"}
-				}
+			if json.Unmarshal(raw, &event) == nil {
 				if event.Type == "response.created" {
 					if (eventName != "" && eventName != event.Type) || strings.TrimSpace(event.Response.ID) == "" || event.Response.Model != model {
 						return &codexMintError{kind: "model_mismatch", detail: "mint model declaration mismatch"}
@@ -180,7 +186,7 @@ func (s *OpenAIGatewayService) requestCodex780Probe(ctx context.Context, account
 	}
 	target := controls.TargetGateway
 	if target == "" {
-		target = "unified-95"
+		target = "unified-88"
 	}
 	out.Gateway = target
 	out.Transport = "sse"
@@ -204,14 +210,23 @@ func (s *OpenAIGatewayService) requestCodex780Probe(ctx context.Context, account
 		out.Err = errors.New("account identity unavailable")
 		return
 	}
-	// An expired ticket may still carry an unexpired pair; only reuse validated target routes.
-	var seed []string
-	if ticket := s.lookupOpenAICodexTicket(account, model); ticket != nil {
-		seed, _, _ = codex780Route(ticket.HarvestCookies, target, time.Now())
-		if len(seed) > 0 {
-			req.Header.Set("Cookie", strings.Join(seed, "; "))
+	// Keep a target route even when no acceptable ticket was returned. Models
+	// share routes only within the same account, credentials and protocol.
+	protocol := controls.Transport
+	if protocol == "" {
+		protocol = "sse"
+	}
+	key := codex780RouteKey(account, token, req.Header.Get("Chatgpt-Account-Id"), target, protocol)
+	seed, cached := s.codex780Routes.get(key, time.Now())
+	if !cached {
+		if ticket := s.lookupOpenAICodexTicket(account, model); ticket != nil && !ticket.Revoked {
+			seed, _, _ = codex780Route(ticket.HarvestCookies, target, time.Now())
 		}
 	}
+	if len(seed) > 0 {
+		req.Header.Set("Cookie", strings.Join(seed, "; "))
+	}
+	defer func() { s.codex780Routes.update(key, target, seed, out, time.Now()) }()
 	if ctx.Err() != nil || (reserve != nil && !reserve()) {
 		out.Err = errors.New("mint request no longer admitted")
 		return
@@ -253,25 +268,39 @@ func (s *OpenAIGatewayService) requestCodex780Probe(ctx context.Context, account
 		return
 	}
 	out.State = extractOpenAICodexTurnState(resp.Header)
-	incoming := responseCookiePairs(resp)
-	// Any partial rotation invalidates the seed; never combine old and new pair halves.
-	routeChanged := false
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name == "__cflb" || cookie.Name == "__oailb" {
-			routeChanged = true
-		}
+	modelErr := readCodex780Created(resp.Body, model)
+	out.Cookies, err = codex780ResponseRoute(resp, seed, target, time.Now())
+	var eventErr *codexMintError
+	if errors.As(modelErr, &eventErr) && (eventErr.terminal || eventErr.kind == "rate_limited") {
+		out.Err = modelErr // Error-only responses need not issue a route pair.
+		return
 	}
-	if !routeChanged {
-		incoming = seed
-	}
-	out.Cookies, _, err = codex780Route(incoming, target, time.Now())
 	if err != nil {
 		out.Err = err
 		return
 	}
 	out.Gateway = codex780CookieGateway(out.Cookies)
-	out.Err = readCodex780Created(resp.Body, model)
+	out.Err = modelErr
 	return
+}
+
+func codex780ResponseRoute(resp *http.Response, seed []string, target string, now time.Time) ([]string, error) {
+	var incoming []string
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name != "__cflb" && cookie.Name != "__oailb" {
+			continue
+		}
+		if cookie.Value == "" || cookie.MaxAge < 0 || (cookie.MaxAge == 0 && !cookie.Expires.IsZero() && !now.Before(cookie.Expires)) {
+			return nil, mintRouteError("route_cookie_deleted")
+		}
+		incoming = append(incoming, cookie.Name+"="+cookie.Value)
+	}
+	if len(incoming) == 0 {
+		incoming = seed
+	}
+	// A changed pair must be complete; never combine old and new halves.
+	clean, _, err := codex780Route(incoming, target, now)
+	return clean, err
 }
 
 func splitCodex780SSELine(data []byte, atEOF bool) (int, []byte, error) {

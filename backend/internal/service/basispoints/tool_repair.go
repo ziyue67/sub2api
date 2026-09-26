@@ -75,6 +75,10 @@ func (b *Bridge) translateCompleted(ctx context.Context, response object, repair
 	if validation == nil {
 		return b.translateResponse(response)
 	}
+	var schemaError toolArgumentsSchemaError
+	if errors.As(validation, &schemaError) {
+		return validation
+	}
 	original, eligible := repairableTools(response)
 	if repair == nil || !eligible || b.structured != nil {
 		return validation
@@ -155,7 +159,7 @@ func (b *Bridge) restoreRawToolPayloads(original, corrected []object) ([]object,
 		}
 		args := transportArguments(corrected[i])
 		summary := text(args["summary"])
-		if (!strings.HasPrefix(summary, customTransportPrefix) && !strings.HasPrefix(summary, functionCodeTransportPrefix)) || args["code"] == code {
+		if (!strings.HasPrefix(summary, customTransportPrefix) && !strings.HasPrefix(summary, functionCodeTransportPrefix) && !strings.HasPrefix(summary, functionCmdTransportPrefix)) || args["code"] == code {
 			continue
 		}
 		boundArgs := make(object, len(args))
@@ -219,7 +223,11 @@ func (b *Bridge) preservesToolOperations(original, corrected []object) bool {
 			}
 		} else {
 			var payload object
-			if decode([]byte(text(after["arguments"])), &payload) != nil || payload["code"] != code {
+			field := "code"
+			if strings.HasPrefix(text(transportArguments(corrected[i])["summary"]), functionCmdTransportPrefix) {
+				field = "cmd"
+			}
+			if decode([]byte(text(after["arguments"])), &payload) != nil || payload[field] != code {
 				return false
 			}
 		}
@@ -237,7 +245,7 @@ func transportArguments(native object) object {
 }
 
 func transportTarget(args object) string {
-	for _, prefix := range []string{customTransportPrefix, functionCodeTransportPrefix} {
+	for _, prefix := range []string{customTransportPrefix, functionCodeTransportPrefix, functionCmdTransportPrefix} {
 		if summary := text(args["summary"]); strings.HasPrefix(summary, prefix) {
 			return strings.TrimPrefix(summary, prefix)
 		}

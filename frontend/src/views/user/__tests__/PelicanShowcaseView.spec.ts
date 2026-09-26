@@ -168,6 +168,9 @@ describe('PelicanShowcaseView', () => {
     const dialog = wrapper.get('[data-testid="showcase-preview"]')
     expect(dialog.get('iframe').attributes('srcdoc')).toContain('data-item="200"')
     expect(dialog.get('iframe').attributes('sandbox')).toBe('allow-scripts')
+    expect(dialog.get('[data-testid="showcase-preview-fit"]').attributes('aria-pressed')).toBe('true')
+    await dialog.get('[data-testid="showcase-preview-actual"]').trigger('click')
+    expect(dialog.get('[data-testid="showcase-preview-actual"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.find('[data-testid="showcase-remove"]').exists()).toBe(false)
     wrapper.unmount()
 

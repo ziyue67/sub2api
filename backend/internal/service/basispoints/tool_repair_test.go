@@ -411,3 +411,32 @@ func TestToolRepairReaderRejectsIncompleteOrMissingTools(t *testing.T) {
 		})
 	}
 }
+
+func TestToolRepairBindsOriginalRawCommand(t *testing.T) {
+	source := testSource()
+	source["tools"] = []any{functionCmdTestTool("exec_command")}
+	cache := new(ReplayCache)
+	_, bridge := mustPrepare(t, source, "cmd-repair", cache)
+	original := "printf '%s\\n' \"literal $value\"\n"
+	initial := repairResponse("initial", 3, 1, repairCall("bad", "Run command", original))
+	attempts := 0
+	body := bridge.StreamWithToolRepair(context.Background(), io.NopCloser(strings.NewReader(sse(object{"type": "response.completed", "response": initial}))), func(context.Context, object, error) (object, error) {
+		attempts++
+		fixed := functionCmdTestNative(t, "exec_command", "rewritten command", "{\"description\":\"Run command\"}")
+		return repairResponse("fixed", 2, 1, fixed), nil
+	})
+	events := repairEvents(t, body)
+	require.Equal(t, 1, attempts)
+	var final object
+	for _, event := range events {
+		if event["type"] == "response.completed" {
+			final = repairValue[object](t, event["response"])
+		}
+	}
+	require.NotNil(t, final)
+	output := repairValue[[]any](t, final["output"])
+	call := repairValue[object](t, output[0])
+	require.Equal(t, original, functionCmdTestArguments(t, call)["cmd"])
+	cached := cache.get("cmd-repair", "call_code")
+	require.Equal(t, original, transportArguments(cached)["code"])
+}

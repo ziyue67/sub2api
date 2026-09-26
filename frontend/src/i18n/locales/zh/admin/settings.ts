@@ -19,7 +19,7 @@ export default {
           modeRelay: '临时 HTTPS 中转（默认）',
           modeNative: 'BPS 原生附件上传',
           nativeHint: '直接通过选中账号的 OAuth 和代理上传至 BPS，无需公网图片域名。上传失败会终止当前请求。',
-          nativeRetentionHint: '支持 PNG、JPEG、GIF 和 WebP；单张 20 MiB，每请求最多 20 张、合计 32 MiB。本机不落盘，仅缓存附件 ID（每进程最多 512 条，30 分钟到期）。缓存按账号、凭据、API Key 和会话隔离；没有会话标识时不跨请求复用。图片上传至上游后的保存期限由上游决定。',
+          nativeRetentionHint: '支持 PNG、JPEG、GIF 和 WebP；单张 20 MiB，每请求最多 {maxImages} 张、合计 32 MiB。本机不落盘，仅缓存附件 ID（每进程最多 512 条，30 分钟到期）。缓存按账号、凭据、API Key 和会话隔离；没有会话标识时不跨请求复用。图片上传至上游后的保存期限由上游决定。',
           title: 'Excel / BPS 图片支持',
           description: '为 base64 图片和工具截图选择临时 HTTPS 中转或 BPS 原生附件上传。',
           enabled: '启用图片支持',

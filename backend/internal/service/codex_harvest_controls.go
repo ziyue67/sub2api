@@ -170,7 +170,7 @@ func normalizeCodexHarvestControls(v *CodexHarvestControls) {
 		v.Transport = "sse"
 	}
 	if v.TargetGateway == "" {
-		v.TargetGateway = "unified-95"
+		v.TargetGateway = "unified-88"
 	}
 	if v.Speed.RefreshBeforeSeconds <= 0 {
 		v.Speed.RefreshBeforeSeconds = 600

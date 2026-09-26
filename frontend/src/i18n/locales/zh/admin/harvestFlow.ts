@@ -4,7 +4,7 @@ export default {
     edgeLabel: '边缘 IP（可选）',
     edgeHint: '指定公网 IP 直拨，Host、TLS SNI 和证书校验仍使用 chatgpt.com；留空走 DNS。边缘 IP 与 Cookie 目标网关分别校验。',
     gatewayLabel: '目标路由网关',
-    gatewayHint: '填 any 接受任意有效网关，或指定 unified-123 / 完整 host。记录本次实际网关；历史糖果通过不代表当前账号或当前请求必然通过。',
+    gatewayHint: '默认 unified-88，也支持 88、unified_88 或完整 host；填 any 接受任意有效网关。模型声明不匹配时保留已验收路由，Cookie 按自身有效期复用；网关与模型声明不代表能力验证。',
     shapeValidationIncomplete: '票体 {length}/{blocks} 长度与块数符合目标，但完整验收未通过；原因见打票探测',
     nativeHint: '服务器原生采票，沿用采票代理，无需云函数。780 是格式长度，票龄最多 240 秒；网关与模型声明不代表能力验证。采票协议须与业务上游协议一致，切换后旧协议票不复用。',
     title: '打票全流程',

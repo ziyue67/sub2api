@@ -138,12 +138,14 @@
       :show="preview !== null"
       :title="previewTitle"
       width="full"
+      content-class="h-[90dvh]"
+      body-class="flex min-h-0 flex-col !overflow-hidden"
       close-on-click-outside
       @close="closePreview"
     >
-      <div v-if="preview" class="space-y-3" data-testid="showcase-preview">
+      <div v-if="preview" class="flex min-h-0 flex-1 flex-col gap-3" data-testid="showcase-preview">
         <!-- Chips instead of "·" separators, so a wrapped line never starts with a dot on phones. -->
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+        <div class="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2 text-xs text-gray-500 dark:text-gray-400">
           <span class="inline-flex items-center rounded-md px-1.5 py-0.5 font-medium" :class="platformBadgeLightClass(preview.group.platform)">
             {{ preview.group.name }}
           </span>
@@ -152,14 +154,26 @@
             {{ previewEffort }}
           </span>
           <span class="tabular-nums">{{ pelicanDurationLabel(t, preview.item.latency_ms) }}</span>
+          <div role="group" :aria-label="t('pelicanShowcase.previewSizing')" class="ml-auto flex shrink-0 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-900/60">
+            <button
+              v-for="mode in (['fit', 'actual'] as const)"
+              :key="mode"
+              type="button"
+              class="rounded-md px-2.5 py-1.5 font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
+              :class="previewMode === mode ? 'bg-white text-gray-900 shadow-sm dark:bg-dark-700 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'"
+              :aria-pressed="previewMode === mode"
+              :data-testid="`showcase-preview-${mode}`"
+              @click="previewMode = mode"
+            >
+              {{ t(mode === 'fit' ? 'pelicanShowcase.fitArtwork' : 'pelicanShowcase.actualSize') }}
+            </button>
+          </div>
         </div>
-        <div class="h-[65vh] min-h-[320px] overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-dark-700">
-          <iframe
+        <div class="min-h-0 flex-1 overflow-hidden rounded-xl border border-gray-200 bg-gray-100 dark:border-dark-700 dark:bg-dark-900" data-testid="showcase-preview-stage">
+          <PelicanArtworkPreview
             v-if="previewBody?.status === 'ready'"
-            :srcdoc="previewBody.html"
-            class="h-full w-full border-0"
-            sandbox="allow-scripts"
-            referrerpolicy="no-referrer"
+            :html="previewBody.html"
+            :mode="previewMode"
             :title="previewTitle"
           />
           <div v-else class="flex h-full items-center justify-center p-6 text-sm text-gray-500">
@@ -168,7 +182,7 @@
             <span v-else class="text-red-500">{{ t('pelicanShowcase.itemLoadError') }}</span>
           </div>
         </div>
-        <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('pelicanShowcase.sandboxNote') }}</p>
+        <p class="shrink-0 text-xs text-gray-400 dark:text-gray-500">{{ t('pelicanShowcase.sandboxNote') }}</p>
       </div>
       <template #footer>
         <div class="flex w-full items-center justify-between gap-3">
@@ -209,6 +223,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
+import PelicanArtworkPreview from '@/components/user/pelican/PelicanArtworkPreview.vue'
 import PelicanShowcaseCard from '@/components/user/pelican/PelicanShowcaseCard.vue'
 import {
   pelicanDurationLabel,
@@ -247,6 +262,7 @@ const activeGroup = ref<TabKey>('all')
 const pageSizes = reactive<Record<number, number>>({})
 const bodies = reactive<Record<number, PelicanBody>>({})
 const preview = ref<{ group: PelicanShowcaseGroup; item: PelicanShowcaseItem } | null>(null)
+const previewMode = ref<'fit' | 'actual'>('fit')
 const confirmingRemove = ref(false)
 const removing = ref(false)
 
@@ -346,6 +362,7 @@ async function load() {
 }
 
 function openPreview(group: PelicanShowcaseGroup, item: PelicanShowcaseItem) {
+  previewMode.value = 'fit'
   preview.value = { group, item }
   requestBody(item.id)
 }

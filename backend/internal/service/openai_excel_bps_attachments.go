@@ -17,7 +17,7 @@ func (e *excelBPSAttachmentError) Error() string {
 	return fmt.Sprintf("excel BPS attachment returned HTTP %d", e.status)
 }
 
-func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, account *Account, token, accountID string, img basispoints.InlineAttachment) (string, error) {
+func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, account *Account, token, accountID, proxyURL string, img basispoints.InlineAttachment) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	ctx = WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileLongStream))
@@ -38,10 +38,6 @@ func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, acc
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Encoding", "identity")
 	req.ContentLength = length
-	proxyURL := ""
-	if account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		return "", fmt.Errorf("excel BPS attachment connection failed")

@@ -47,6 +47,8 @@ func TestHarvestControlsPersistAndRetainLastValidOnError(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, saved)
 	require.False(t, v.NodeMemoryEnabled)
+	require.Equal(t, "unified-88", v.TargetGateway)
+	v.TargetGateway = "unified-95" // Existing administrator choices survive restart.
 	v.NodeMemoryEnabled = true
 	v.Speed = CodexHarvestSpeedPresets()["slow"]
 	require.NoError(t, s.SaveControls(context.Background(), v))

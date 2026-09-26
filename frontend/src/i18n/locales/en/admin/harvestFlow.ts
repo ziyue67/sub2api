@@ -4,7 +4,7 @@ export default {
     edgeLabel: 'Edge IP (optional)',
     edgeHint: 'Dial this public IP while keeping chatgpt.com Host, TLS SNI and certificate verification. Leave empty for DNS. Edge IP and Cookie gateway are separate selections.',
     gatewayLabel: 'Target routing gateway',
-    gatewayHint: 'Use any for any valid gateway, or specify unified-123 / a full host. Tickets record the actual gateway; past candy checks do not prove the current account or request will pass.',
+    gatewayHint: 'Defaults to unified-88; accepts 88, unified_88 or a full host. Use any for any valid gateway. Valid routes survive model mismatches until cookie expiry; gateway and model declarations do not prove capability.',
     shapeValidationIncomplete: 'Ticket {length}/{blocks} matches the target length and block count, but full validation did not pass; see probe details',
     nativeHint: 'Native server minting through the existing harvest proxy; no cloud function. 780 is a format length, with a maximum ticket age of 240 seconds. Gateway and model declarations do not prove capability. Mint transport must match the upstream request transport; switching discards tickets from the previous transport.',
     title: 'Ticket Harvest Flow',

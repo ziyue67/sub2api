@@ -62,7 +62,7 @@ func TestCodex780CreatedBoundedAndStrict(t *testing.T) {
 func TestCodex780NativeProbe(t *testing.T) {
 	account := ticketTestAccount(1)
 	s := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{OpenAICodexTicket: config.OpenAICodexTicketConfig{TargetLength: 780}}}}
-	pair := mint780Pair(time.Now().Add(time.Hour), "unified-95")
+	pair := mint780Pair(time.Now().Add(time.Hour), "unified-88")
 	s.httpUpstream = &harvestProxyUpstream{do: func(req *http.Request, proxy string) (*http.Response, error) {
 		require.Equal(t, "socks5://127.0.0.1:1080", proxy)
 		require.Equal(t, "session", req.Header.Get("session-id"))
@@ -85,7 +85,7 @@ func TestCodex780ProtocolIsolationAndRouteDeletion(t *testing.T) {
 	s := ticketTestService(t, cfg, nil)
 	now := time.Now()
 	state := mint780State(now)
-	ticket := &openAICodexTicket{AccountID: 1, Model: "gpt-6-astra", State: state, Length: 780, Transport: "sse", Gateway: "unified-95", IssuedAt: now, ExpiresAt: now.Add(240 * time.Second), HarvestCookies: mint780Pair(now.Add(time.Hour), "unified-95"), HarvestSessionID: "mint-session"}
+	ticket := &openAICodexTicket{AccountID: 1, Model: "gpt-6-astra", State: state, Length: 780, Transport: "sse", Gateway: "unified-88", IssuedAt: now, ExpiresAt: now.Add(240 * time.Second), HarvestCookies: mint780Pair(now.Add(time.Hour), "unified-88"), HarvestSessionID: "mint-session"}
 	s.openaiCodexTickets.Store(openAICodexTicketKey(1, "gpt-6-astra"), ticket)
 	h := http.Header{}
 	require.NoError(t, s.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", h))

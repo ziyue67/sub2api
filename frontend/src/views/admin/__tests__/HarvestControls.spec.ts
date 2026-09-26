@@ -60,6 +60,19 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
 describe('Harvest controls draft and request ordering', () => {
+  it('defaults to unified-88 without overwriting a saved gateway', async () => {
+    wrapper = mount(HarvestControlsPanel)
+    await flushPromises()
+    expect(input(wrapper, 'target-gateway').value).toBe('unified-88')
+    expect(api.save).not.toHaveBeenCalled()
+    const data = snapshot()
+    data.settings.target_gateway = 'unified-95'
+    api.getControls.mockResolvedValue(data)
+    await wrapper.setProps({ refreshKey: 'saved-gateway' })
+    await flushPromises()
+    expect(input(wrapper, 'target-gateway').value).toBe('unified-95')
+    expect(api.save).not.toHaveBeenCalled()
+  })
   it.each(['any', 'chat.gateway.unified-123.api.openai.com'])('saves gateway policy %s', async target => {
     api.save.mockImplementation(async settings => settings)
     wrapper = mount(HarvestControlsPanel)

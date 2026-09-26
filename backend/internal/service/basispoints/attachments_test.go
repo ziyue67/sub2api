@@ -103,6 +103,8 @@ func TestNativeImagesValidateAllBeforeUpload(t *testing.T) {
 	// 20 occurrences remain legal; invalid detail and mixed references fail locally.
 	_, err := PrepareNativeImages(nativeTestRequest(t, strings.Fields(strings.Repeat(url+" ", 20))...))
 	require.NoError(t, err)
+	_, err = PrepareNativeImagesWithLimit(nativeTestRequest(t, url, url), 1)
+	require.ErrorContains(t, err, "at most 1")
 	raw := nativeTestRequest(t, url)
 	_, err = PrepareNativeImages(bytes.ReplaceAll(raw, []byte("original"), []byte("invalid")))
 	require.Error(t, err)

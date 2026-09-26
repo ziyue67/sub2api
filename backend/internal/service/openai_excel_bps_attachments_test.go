@@ -243,3 +243,26 @@ func nativeGatewayParts(t *testing.T, v map[string]any) []any {
 	require.True(t, ok)
 	return parts
 }
+
+func TestExcelBPSAttachmentUsesResolvedSessionProxy(t *testing.T) {
+	body, _ := nativeGatewayBody(t)
+	images, err := basispoints.PrepareNativeImages(body)
+	require.NoError(t, err)
+	svc := openAIClientToolsTestService(nil)
+	account := excelAccount()
+	account.Proxy = &Proxy{Protocol: "http", Host: "account-proxy.example", Port: 8080}
+	const selected = "http://127.0.0.1:19007"
+	calls := 0
+	svc.httpUpstream = &nativeAttachmentUpstream{do: func(req *http.Request, proxy string, id int64, concurrency int) (*http.Response, error) {
+		calls++
+		require.Equal(t, selected, proxy)
+		require.Equal(t, account.ID, id)
+		require.Equal(t, basispoints.AttachmentsURL, req.URL.String())
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{\"openai_file_id\":\"file-selected-proxy\"}"))}, nil
+	}}
+	_, err = images.Upload(context.Background(), new(basispoints.AttachmentCache), "", func(ctx context.Context, img basispoints.InlineAttachment) (string, error) {
+		return svc.uploadExcelBPSAttachment(ctx, account, "test-token", "test-account", selected, img)
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+}

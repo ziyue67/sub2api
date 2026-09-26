@@ -95,7 +95,7 @@ func (s *OpenAIGatewayService) runParallelHarvest(ctx context.Context, req Manua
 					case <-round.Done():
 						return
 					}
-					if result.Kind == "account_error" || result.Kind == "rate_limited" || result.Kind == "success" {
+					if result.Terminal || result.Kind == "account_error" || result.Kind == "rate_limited" || result.Kind == "success" {
 						return
 					}
 					if waitManualHarvest(round, req.ProbeIntervalSeconds) != nil {
@@ -107,8 +107,9 @@ func (s *OpenAIGatewayService) runParallelHarvest(ctx context.Context, req Manua
 		go func() { wg.Wait(); close(results) }()
 		won := false
 		stop := false
+		rejected := false
 		for out := range results {
-			if won || stop || ctx.Err() != nil {
+			if won || stop || rejected || ctx.Err() != nil {
 				continue
 			}
 			r := out.result
@@ -147,6 +148,10 @@ func (s *OpenAIGatewayService) runParallelHarvest(ctx context.Context, req Manua
 					cooldown = fallback
 				}
 				s.openaiCodexTicketProbeCooldown.Store(openAICodexTicketKey(account.ID, model), time.Now().Add(cooldown))
+			}
+			if r.Terminal && !stop {
+				rejected = true
+				cancel()
 			}
 			emit(event)
 		}

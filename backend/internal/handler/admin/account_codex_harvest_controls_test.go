@@ -83,7 +83,7 @@ func TestHarvestControlsAdminValidationAndPersistence(t *testing.T) {
 	var stored service.CodexHarvestControls
 	require.NoError(t, json.Unmarshal([]byte(settings.raw), &stored))
 	v.Transport = "sse"
-	v.TargetGateway = "unified-95"
+	v.TargetGateway = "unified-88"
 	require.Equal(t, v, stored)
 	settings.fail = true
 	require.Equal(t, 503, harvestAdminRequest(r, "PUT", "/controls", string(body)).Code)

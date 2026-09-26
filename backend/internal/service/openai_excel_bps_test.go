@@ -259,7 +259,8 @@ func TestExcelBPSMihomoFailsClosed(t *testing.T) {
 			svc := openAIClientToolsTestService(upstream)
 			account := excelAccount()
 			account.Extra["openai_excel_bps_mihomo"] = true
-			body := []byte(`{"model":"gpt-6-astra","input":"test"}`)
+			body, _ := nativeGatewayBody(t)
+			enableNativeAttachments(svc)
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest("POST", "/v1/responses", bytes.NewReader(body))
