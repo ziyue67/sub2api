@@ -96,8 +96,11 @@ assert_unsafe_invocation_rejected url-option -s --url \
 # Every installer release API request must use the scoped helper.
 test "$(grep -c 'github_api_curl .*https://api.github.com/' "$ROOT_DIR/deploy/install.sh")" -eq 3
 
-# Asset and checksum downloads must continue to call curl directly.
-grep -Fq 'curl -sL "$download_url"' "$ROOT_DIR/deploy/install.sh"
-grep -Fq 'curl -sL "$checksum_url"' "$ROOT_DIR/deploy/install.sh"
+# The Docker-only installer must not download release archives or checksums anymore.
+if grep -Fq 'releases/download' "$ROOT_DIR/deploy/install.sh"; then
+    echo "installer still downloads release assets" >&2
+    exit 1
+fi
+grep -Fq 'docker pull "${IMAGE_REPO}:${tag}"' "$ROOT_DIR/deploy/install.sh"
 
 echo "install GitHub token checks passed"
