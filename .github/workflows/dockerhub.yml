@@ -1,5 +1,17 @@
 name: GitHub Container Registry
 
+# 职责：把 main 的当前提交发布为**滚动镜像**（main / main-<sha>），
+# 并额外提供当前 VERSION 的 amd64 镜像（<VERSION>-amd64）。
+#
+# ⚠️ 本工作流**不写** latest / 0.2 / 0 / <VERSION>：这些标签由 release.yml（GoReleaser）独占。
+#    release.yml 推的是 amd64 + arm64 多架构清单，而本工作流只构建 amd64；
+#    两边都写同一标签时，每次 main push 都会把 latest 从多架构**降级成单架构**，
+#    arm64 用户 `docker pull ...:latest` 会直接失败（no matching manifest）。
+#    需要 main 分支的镜像请用 :main 或 :main-<sha>。
+#
+# ⚠️ sync-fork-release.yml 以本工作流的完成事件（workflow_run）作为触发条件，
+#    不要删除或重命名本工作流。
+
 on:
   push:
     branches:
@@ -19,6 +31,10 @@ jobs:
       - name: Read version
         id: version
         run: echo "value=$(tr -d '[:space:]' < backend/cmd/server/VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve short sha
+        id: sha
+        run: echo "value=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -47,9 +63,9 @@ jobs:
             COMMIT=${{ github.sha }}
             NODE_MAX_OLD_SPACE_SIZE=4096
           tags: |
-            ghcr.io/ziyue67/sub2api:latest
-            ghcr.io/ziyue67/sub2api:${{ steps.version.outputs.value }}
+            ghcr.io/ziyue67/sub2api:main
+            ghcr.io/ziyue67/sub2api:main-${{ steps.sha.outputs.value }}
             ghcr.io/ziyue67/sub2api:${{ steps.version.outputs.value }}-amd64
-            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:latest
-            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:${{ steps.version.outputs.value }}
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:main
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:main-${{ steps.sha.outputs.value }}
             docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:${{ steps.version.outputs.value }}-amd64
