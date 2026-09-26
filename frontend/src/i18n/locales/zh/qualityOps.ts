@@ -63,7 +63,7 @@ export default {
   "selectJudgeGroup": "请选择判题分组",
   "selectJudgeModel": "选择或输入该分组支持的模型",
   "judgePrompt": "判题提示词",
-  "defaultJudgePrompt": "判断候选答案是否在语义上符合参考答案。忽略不影响含义的单位、标点和措辞差异，关注最终结论及题目要求。明确符合返回 correct，明确不符合返回 incorrect；无法确定或依据不足时返回 unknown。",
+  "defaultJudgePrompt": "只比较两个值：reference_answer（参考值）与 candidate_answer（候选值）。数值相同或语义等价返回 correct，明确不同返回 incorrect，无法确定返回 unknown。忽略单位、标点和措辞差异，不要引用或推测题目内容。",
   "configureJudge": "请选择判题分组、模型并填写判题提示词",
   "judgeModelsUnavailable": "暂时无法加载模型候选，可直接输入判题分组支持的模型 ID",
   "judgeReason": "判题理由",

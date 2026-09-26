@@ -414,6 +414,75 @@ describe('EditAccountModal', () => {
     }
   })
 
+  it('saves, restores and clears the BPS auto-disable option', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, unrelated: 'preserve' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const selector = '[data-testid="excel-bps-auto-disable-on-403"]'
+    expect(wrapper.get<HTMLInputElement>(selector).element.checked).toBe(false)
+    await wrapper.get(selector).setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const savedExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(savedExtra.openai_excel_bps_auto_disable_on_403).toBe(true)
+    expect(savedExtra.openai_excel_bps).toBe(true)
+    expect(savedExtra.unrelated).toBe('preserve')
+
+    await wrapper.setProps({ account: { ...account, extra: savedExtra } })
+    expect(wrapper.get<HTMLInputElement>(selector).element.checked).toBe(true)
+    await wrapper.get(selector).setValue(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const clearedExtra = updateAccountMock.mock.calls[1]?.[1]?.extra
+    expect(clearedExtra.openai_excel_bps_auto_disable_on_403).toBeUndefined()
+    expect(clearedExtra.openai_excel_bps).toBe(true)
+    expect(clearedExtra.unrelated).toBe('preserve')
+    wrapper.unmount()
+  })
+
+  it('clears the auto-disable option when manually turning off BPS', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, openai_excel_bps_auto_disable_on_403: true }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="excel-bps-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="excel-bps-auto-disable-on-403"]').exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra.openai_excel_bps).toBeUndefined()
+    expect(extra.openai_excel_bps_auto_disable_on_403).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('restores the opt-in after automatic disable and resets it for another account', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: false, openai_excel_bps_auto_disable_on_403: true }
+    const wrapper = mountModal(account)
+    const selector = '[data-testid="excel-bps-auto-disable-on-403"]'
+    expect(wrapper.find(selector).exists()).toBe(false)
+    await wrapper.get('[data-testid="excel-bps-toggle"]').trigger('click')
+    expect(wrapper.get<HTMLInputElement>(selector).element.checked).toBe(true)
+    await wrapper.setProps({ account: { ...account, id: 2, extra: { openai_excel_bps: true } } })
+    expect(wrapper.get<HTMLInputElement>(selector).element.checked).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('hides the auto-disable option for API keys and shadow accounts', () => {
+    for (const account of [buildAccount(), buildOpenAISparkShadowAccount()]) {
+      account.extra = { openai_excel_bps: true, openai_excel_bps_auto_disable_on_403: true }
+      const wrapper = mountModal(account)
+      expect(wrapper.find('[data-testid="excel-bps-auto-disable-on-403"]').exists()).toBe(false)
+      wrapper.unmount()
+    }
+  })
+
   it('defaults new BPS settings to Astra only', async () => {
     const account = buildAccount()
     account.type = 'oauth'

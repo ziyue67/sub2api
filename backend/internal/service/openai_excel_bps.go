@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
@@ -23,6 +24,28 @@ import (
 )
 
 var excelBPSReplay basispoints.ReplayCache
+
+func (s *OpenAIGatewayService) disableExcelBPSOn403(ctx context.Context, account *Account) bool {
+	if !account.IsExcelBPSAutoDisableOn403Enabled() {
+		return false
+	}
+	repo, ok := s.accountRepo.(AccountExcelBPSRepository)
+	if !ok {
+		return false
+	}
+	stateCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	changed, err := repo.DisableExcelBPSOn403(stateCtx, account)
+	if err != nil {
+		// Do not log upstream bodies, credentials or database query arguments.
+		logger.LegacyPrintf("service.openai_excel_bps", "auto-disable failed: account_id=%d error_type=%T", account.ID, err)
+		return false
+	}
+	if changed {
+		logger.LegacyPrintf("service.openai_excel_bps", "automatically disabled Excel BPS after upstream HTTP 403: account_id=%d", account.ID)
+	}
+	return changed
+}
 
 func (s *OpenAIGatewayService) excelBPSImageRelay(ctx context.Context) (*basispoints.ImageRelay, error) {
 	settings, err := s.settingService.GetExcelBPSImageRelaySettings(ctx)
@@ -182,6 +205,11 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+		if resp.StatusCode == http.StatusTooManyRequests && s.rateLimitService != nil {
+			stateCtx, cancel := openAIAccountStateContext(ctx)
+			s.rateLimitService.handle429Cooldown(stateCtx, account, resp.Header, raw)
+			cancel()
+		}
 		// Preserve the original rejection for Ops without exposing it to clients.
 		// BPS errors can echo request fields, so redact before storing diagnostics.
 		upstreamMessage := fmt.Sprintf("Excel BPS returned HTTP %d", resp.StatusCode)
@@ -209,8 +237,18 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		if code == "basispoints_model_access_changed" {
 			return fail(resp.StatusCode, code, "This model is not available on the account's Excel BPS endpoint")
 		}
-		return fail(resp.StatusCode, "basispoints_upstream_error", "Excel BPS rejected this request; account scheduling was not changed")
+		message := "Excel BPS rejected this request; account scheduling was not changed"
+		if resp.StatusCode == http.StatusTooManyRequests {
+			message = "Excel BPS rate limit exceeded; request was not replayed"
+		}
+		if resp.StatusCode == http.StatusForbidden && s.disableExcelBPSOn403(ctx, account) {
+			message = "Excel BPS rejected this request; Excel BPS was automatically disabled for this account; request was not replayed"
+		}
+		return fail(resp.StatusCode, "basispoints_upstream_error", message)
 	}
+	// BPS and Codex share quota. Refresh at the HTTP boundary even if the client
+	// disconnects or a later stream/protocol error prevents normal completion.
+	s.UpdateCodexUsageSnapshotFromHeaders(ctx, account.ID, resp.Header)
 	converted := bridge.Stream(resp.Body)
 	defer func() { _ = converted.Close() }()
 	// The bridge sees the body after group policy mapping. Keep the original

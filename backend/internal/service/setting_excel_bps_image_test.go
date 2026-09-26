@@ -92,13 +92,13 @@ func TestExcelBPSImageSettingsPersistAndApplyImmediately(t *testing.T) {
 	require.Equal(t, 48, runtime.MaxRequests)
 	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{
 		ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example",
-		ExcelBPSImageBodyLimitMiB: 128, ExcelBPSImageBudgetMiB: 1024, ExcelBPSImageMaxRequests: 128,
+		ExcelBPSImageBodyLimitMiB: 128, ExcelBPSImageBudgetMiB: 1024, ExcelBPSImageMaxRequests: 512,
 	}))
 	runtime, err = settings.GetExcelBPSImageRelaySettings(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 128, runtime.BodyLimitMiB)
 	require.Equal(t, 1024, runtime.BudgetMiB)
-	require.Equal(t, 128, runtime.MaxRequests)
+	require.Equal(t, 512, runtime.MaxRequests)
 	relay, err = gateway.excelBPSImageRelay(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, relay)
@@ -138,7 +138,7 @@ func TestExcelBPSImageSettingsRejectInvalidUpdatesAtomically(t *testing.T) {
 	settings := NewSettingService(repo, &config.Config{})
 	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example"}))
 	for _, limits := range []struct{ body, budget, requests int }{
-		{129, 2048, 32}, {64, 511, 32}, {64, 2049, 32}, {64, 512, 129}, {128, 512, 32},
+		{129, 2048, 32}, {64, 511, 32}, {64, 2049, 32}, {64, 512, 513}, {128, 512, 32},
 	} {
 		err := settings.UpdateSettings(ctx, &SystemSettings{
 			ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example",

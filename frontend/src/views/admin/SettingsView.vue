@@ -6549,6 +6549,22 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+
+            <!-- Long context billing badge visibility -->
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.long_context_badge.label') }}
+                </label>
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.long_context_badge.description') }}
+                </p>
+              </div>
+              <label class="toggle">
+                <input v-model="form.usage_show_long_context_badge" type="checkbox" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
           </div>
         </div>
         </div>
@@ -7396,7 +7412,7 @@
                 </div>
                 <div class="space-y-1">
                   <label for="excel-bps-image-max-requests" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxRequests') }}</label>
-                  <input id="excel-bps-image-max-requests" v-model.number="form.excel_bps_image_max_requests" class="input" type="number" min="1" max="128" step="1" required />
+                  <input id="excel-bps-image-max-requests" v-model.number="form.excel_bps_image_max_requests" class="input" type="number" min="1" max="512" step="1" required />
                 </div>
               </div>
               <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
@@ -10378,14 +10394,16 @@ const form = reactive<SettingsForm>({
   affiliate_enabled: false,
   // Allow user view error requests
   allow_user_view_error_requests: false,
+  // 使用详情中长上下文计费 x2 徽标展示（默认开启）
+  usage_show_long_context_badge: true,
   request_capture_enabled: false,
   request_capture_quota_mib: 1024,
   request_capture_retention_days: 7,
   excel_bps_image_relay_enabled: false,
   excel_bps_image_base_url: '',
   excel_bps_image_body_limit_mib: 64,
-  excel_bps_image_budget_mib: 512,
-  excel_bps_image_max_requests: 32,
+  excel_bps_image_budget_mib: 1024,
+  excel_bps_image_max_requests: 128,
 });
 
 // 人机验证 UI 状态：单卡片「总开关 + 服务商单选」，落库仍是三个独立
@@ -11701,7 +11719,7 @@ async function saveSettings() {
     if (
       !Number.isInteger(form.excel_bps_image_body_limit_mib) || form.excel_bps_image_body_limit_mib < 1 || form.excel_bps_image_body_limit_mib > 128 ||
       !Number.isInteger(form.excel_bps_image_budget_mib) || form.excel_bps_image_budget_mib < 512 || form.excel_bps_image_budget_mib > 2048 || form.excel_bps_image_budget_mib < form.excel_bps_image_body_limit_mib * 8 ||
-      !Number.isInteger(form.excel_bps_image_max_requests) || form.excel_bps_image_max_requests < 1 || form.excel_bps_image_max_requests > 128
+      !Number.isInteger(form.excel_bps_image_max_requests) || form.excel_bps_image_max_requests < 1 || form.excel_bps_image_max_requests > 512
     ) {
       appStore.showError(t('admin.settings.features.excelBpsImages.invalidCapacity'));
       return;
@@ -12203,6 +12221,7 @@ async function saveSettings() {
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
       allow_user_view_error_requests: form.allow_user_view_error_requests,
+      usage_show_long_context_badge: form.usage_show_long_context_badge,
       request_capture_enabled: form.request_capture_enabled,
       request_capture_quota_mib: form.request_capture_quota_mib,
       request_capture_retention_days: form.request_capture_retention_days,

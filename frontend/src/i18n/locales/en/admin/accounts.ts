@@ -689,6 +689,8 @@ export default {
         oauthPassthrough: 'Auto passthrough (auth only)',
         excelBPS: 'Excel / BPS protocol',
         excelBPSCacheCreationAsInput: 'Bill cache creation as regular input',
+        excelBPSAutoDisableOn403: 'Automatically disable BPS on a 403 error',
+        excelBPSAutoDisableOn403Desc: 'Disabled by default. Turn off this account’s Excel / BPS protocol when the BPS upstream returns HTTP 403 mapped to basispoints_upstream_error. The account stays enabled and the current request is not retried. Model access errors do not trigger this option, and a 403 does not confirm a ban.',
         excelBPSCacheCreationAsInputDesc: 'Disabled by default. Bill BPS cache creation tokens as regular input and report zero cache creation usage downstream. Total input and cache reads stay unchanged. This does not disable upstream caching.',
         excelBPSDesc: 'Forward Responses through Excel using this account’s existing ChatGPT OAuth credentials. No GitHub login or sidecar. Disable to restore Codex routing.',
         excelBPSAllModels: 'Enable for all models (legacy behavior)',
@@ -812,6 +814,7 @@ export default {
         testMode: 'Test mode',
         testModeDefault: 'Default request',
         testModeCompact: 'Compact probe',
+        testModeBPSTools: 'BPS tool roundtrip (up to 3 upstream requests)',
         modelRestrictionDisabledByPassthrough: 'Automatic passthrough is enabled: model whitelist/mapping will not take effect.',
       },
       grok: {

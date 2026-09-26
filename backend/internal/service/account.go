@@ -2258,6 +2258,15 @@ func (a *Account) IsExcelBPSCacheCreationAsInputEnabled() bool {
 	return enabled
 }
 
+// IsExcelBPSAutoDisableOn403Enabled opts into disabling BPS after a generic 403.
+func (a *Account) IsExcelBPSAutoDisableOn403Enabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra["openai_excel_bps_auto_disable_on_403"].(bool)
+	return enabled
+}
+
 // isExcelBPSAllModelsEnabled preserves legacy account-wide routing. An explicit
 // list, including an empty or malformed list, never enables BPS for all models.
 func (a *Account) isExcelBPSAllModelsEnabled() bool {

@@ -791,3 +791,8 @@ const AdminAPIKeyPrefix = "admin-"
 // SettingKeyAllowUserViewErrorRequests controls whether end users can view
 // their own failed requests on the usage page. Default false (opt-in).
 const SettingKeyAllowUserViewErrorRequests = "allow_user_view_error_requests"
+
+// SettingKeyUsageShowLongContextBadge controls whether the long-context
+// billing "x2" badge is shown next to the cost in usage tables. Default
+// true (opt-out).
+const SettingKeyUsageShowLongContextBadge = "usage_show_long_context_badge"

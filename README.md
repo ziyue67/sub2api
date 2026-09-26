@@ -174,6 +174,10 @@ Please read the following carefully before using this project:
 
 Sub2API is an AI API gateway platform designed to distribute and manage API quotas from AI product subscriptions. Users can access upstream AI services through platform-generated API Keys, while the platform handles authentication, billing, load balancing, and request forwarding.
 
+## 快速开始
+
+新人部署、官方版替换、Excel / BPS 配置、780 / 292 打票边界和“降智”运维步骤，请阅读[新人入门文档](docs/新人入门.md)。
+
 ## Features
 
 - **Multi-Account Management** - Support multiple upstream account types (OAuth, API Key)

@@ -31,11 +31,16 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 		{
 			name:    "disabled removes all BPS settings",
 			extra:   map[string]any{"openai_excel_bps": false},
-			removed: []string{"openai_excel_bps", "openai_excel_bps_models", "openai_excel_bps_cache_creation_as_input"},
+			removed: []string{"openai_excel_bps", "openai_excel_bps_models", "openai_excel_bps_cache_creation_as_input", "openai_excel_bps_auto_disable_on_403"},
 		},
 		{
 			name:  "unrelated changes preserve BPS settings",
 			extra: map[string]any{"openai_passthrough": true},
+		},
+		{
+			name:    "auto disable false removes opt-in",
+			extra:   map[string]any{"openai_excel_bps_auto_disable_on_403": false},
+			removed: []string{"openai_excel_bps_auto_disable_on_403"},
 		},
 	}
 	for _, tt := range tests {
@@ -48,7 +53,7 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 			query := normalizeSQLWhitespace(exec.execQueries[0])
 			expression := "COALESCE(extra, '{}'::jsonb) || $1::jsonb"
 			if tt.name == "disabled removes all BPS settings" {
-				expression = "(" + expression + ") - 'openai_excel_bps' - 'openai_excel_bps_models' - 'openai_excel_bps_cache_creation_as_input'"
+				expression = "(" + expression + ") - 'openai_excel_bps' - 'openai_excel_bps_models' - 'openai_excel_bps_cache_creation_as_input' - 'openai_excel_bps_auto_disable_on_403'"
 			} else {
 				for _, key := range tt.removed {
 					expression = "(" + expression + ") - '" + key + "'"
