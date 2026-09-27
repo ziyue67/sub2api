@@ -1,0 +1,25 @@
+{
+  "date": "2026-09-27",
+  "backend": {
+    "pull_request": 143,
+    "branch": "feat/mihomo-management-backend",
+    "commit": "bccf25bdd3a694c0abc072b3c7b563bb87de66b2",
+    "api_document": "docs/design/mihomo-backend-api.md"
+  },
+  "frontend": {
+    "pull_request": 142,
+    "base_branch": "feat/mihomo-management-backend",
+    "backend_changes": false
+  },
+  "optional_extensions": {
+    "bps_warm_pool": {
+      "pull_request": 133,
+      "required": false,
+      "missing_fields_behavior": "Hide warm pool cards; do not probe or synthesize readiness."
+    }
+  },
+  "previous_snapshot": {
+    "commit": "73f5604951773b644faea1429d2078ae5cbaa941",
+    "note": "Original BPS snapshot and subscription-priority regression remain in history for separate BPS review; not part of the aligned frontend diff."
+  }
+}

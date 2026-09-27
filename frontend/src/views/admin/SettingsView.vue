@@ -4670,7 +4670,7 @@
                       <span>{{ t("admin.settings.gatewayForwarding.codexTicketProxyMihomoEndpoint") }}</span>
                       <code class="rounded bg-white/70 px-1.5 py-0.5 font-mono text-xs dark:bg-dark-800/70">{{ CODEX_TICKET_MIHOMO_PROXY_URL }}</code>
                     </div>
-                    <MihomoSettings @ready="selectMihomoHarvestProxy" />
+                    <MihomoProxySelector @ready="selectMihomoHarvestProxy" />
                   </div>
                   <p
                     v-else-if="codexTicketProxyMode === 'ip_pool'"
@@ -9411,7 +9411,7 @@ import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import EmailBroadcastDialog from "@/components/admin/email-broadcasts/EmailBroadcastDialog.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
-import MihomoSettings from "@/views/admin/settings/MihomoSettings.vue";
+import MihomoProxySelector from "@/views/admin/settings/MihomoProxySelector.vue";
 import PelicanShowcaseSettings from "@/views/admin/settings/PelicanShowcaseSettings.vue";
 import {
   defaultPelicanShowcaseConfig,

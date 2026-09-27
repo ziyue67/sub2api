@@ -1856,6 +1856,15 @@
         </div>
         <div v-if="excelBPSEnabled" class="mt-3">
           <label class="flex items-center gap-2">
+            <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox"
+              data-testid="excel-bps-ignore-encrypted-content"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
+          </label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContentDesc') }}</p>
+        </div>
+        <div v-if="excelBPSEnabled" class="mt-3">
+          <label class="flex items-center gap-2">
             <input v-model="excelBPSAutoDisableOn403" type="checkbox"
               data-testid="excel-bps-auto-disable-on-403"
               class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
@@ -3972,6 +3981,7 @@ const excelBPSCacheCreationAsInput = ref(false)
 const excelBPSAutoDisableOn403 = ref(false)
 const excelBPSOmitUnsupportedTools = ref(false)
 const excelBPSIgnoreImages = ref(false)
+const excelBPSIgnoreEncryptedContent = ref(false)
 const excelBPSAutoMoveOn403 = ref(false)
 const excelBPS403TargetGroupID = ref<number | string>('')
 const excelBPS403GroupOptions = computed(() => [
@@ -4477,6 +4487,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   excelBPSAutoDisableOn403.value = false
   excelBPSOmitUnsupportedTools.value = false
   excelBPSIgnoreImages.value = false
+  excelBPSIgnoreEncryptedContent.value = false
   excelBPSAutoMoveOn403.value = false
   excelBPS403TargetGroupID.value = ''
   copilotSDKEnabled.value = false
@@ -4511,6 +4522,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     excelBPSAutoDisableOn403.value = newAccount.type === 'oauth' && extra?.openai_excel_bps_auto_disable_on_403 === true
     excelBPSOmitUnsupportedTools.value = excelBPSEnabled.value && extra?.openai_excel_bps_omit_unsupported_tools === true
     excelBPSIgnoreImages.value = excelBPSEnabled.value && extra?.openai_excel_bps_ignore_images === true
+    excelBPSIgnoreEncryptedContent.value = excelBPSEnabled.value && extra?.openai_excel_bps_ignore_encrypted_content === true
     excelBPSAutoMoveOn403.value = newAccount.type === 'oauth' && extra?.openai_excel_bps_auto_move_on_403 === true
     const targetGroupID = extra?.openai_excel_bps_403_target_group_id
     excelBPS403TargetGroupID.value = typeof targetGroupID === 'number' && Number.isSafeInteger(targetGroupID) && targetGroupID >= 0 ? targetGroupID : ''
@@ -6097,6 +6109,11 @@ const handleSubmit = async () => {
         newExtra.openai_excel_bps_ignore_images = true
       } else {
         delete newExtra.openai_excel_bps_ignore_images
+      }
+      if (newExtra.openai_excel_bps === true && excelBPSIgnoreEncryptedContent.value) {
+        newExtra.openai_excel_bps_ignore_encrypted_content = true
+      } else {
+        delete newExtra.openai_excel_bps_ignore_encrypted_content
       }
       if (newExtra.openai_excel_bps === true && excelBPSAutoDisableOn403.value) {
         newExtra.openai_excel_bps_auto_disable_on_403 = true

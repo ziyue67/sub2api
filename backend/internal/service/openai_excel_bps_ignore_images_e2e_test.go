@@ -44,9 +44,17 @@ func TestExcelBPSIgnoreImagesHTTPFlow(t *testing.T) {
 		{"type":"custom_tool_call_output","call_id":"call_custom","output":[{"type":"input_image","file_id":"file-PRIVATE_IMAGE"},{"type":"input_text","text":"custom result"}]},
 		{"type":"custom_tool_call","call_id":"call_custom_only","name":"capture","input":"capture only"},
 		{"type":"custom_tool_call_output","call_id":"call_custom_only","output":[{"type":"input_image","image_url":"data:image/png;base64,PRIVATE_IMAGE"}]},
+		{"type":"function_call","call_id":"call_view_image","name":"view_image","arguments":"{\"path\":\"/tmp/screenshot.png\"}"},
+		{"type":"function_call_output","call_id":"call_view_image","output":[{"type":"input_text","text":"Image successfully loaded"},{"type":"input_image","image_url":"data:image/png;base64,PRIVATE_IMAGE"}]},
+		{"type":"function_call","call_id":"call_view_image_empty","name":"view_image","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_view_image_empty","output":[{"type":"input_text","text":""},{"type":"input_image","image_url":"data:image/png;base64,PRIVATE_IMAGE"}]},
+		{"type":"function_call","call_id":"call_view_image_whitespace","name":"view_image","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_view_image_whitespace","output":[{"type":"input_text","text":" \n\t"},{"type":"input_image","image_url":"data:image/png;base64,PRIVATE_IMAGE"}]},
+		{"type":"function_call","call_id":"call_text_only","name":"inspect","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_text_only","output":[{"type":"input_text","text":"text-only result"}]},
 		{"role":"user","content":"continue using text; data:image is literal text"}
 	]`
-	const tools = `[{"type":"function","name":"inspect","parameters":{"type":"object"}},{"type":"custom","name":"capture"}]`
+	const tools = `[{"type":"function","name":"inspect","parameters":{"type":"object"}},{"type":"custom","name":"capture"},{"type":"function","name":"view_image","parameters":{"type":"object"}}]`
 
 	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
 		for _, stream := range []bool{false, true} {
@@ -121,7 +129,7 @@ func TestExcelBPSIgnoreImagesHTTPFlow(t *testing.T) {
 					require.Len(t, forwarded, 1)
 					wire := <-forwarded
 					require.NotContains(t, string(wire), "PRIVATE_IMAGE")
-					for _, text := range []string{"before screenshot", "after screenshot", "function result", "custom result", "continue using text; data:image is literal text", "opaque-argument", "9007199254740993"} {
+					for _, text := range []string{"before screenshot", "after screenshot", "function result", "custom result", "Image successfully loaded", "text-only result", "continue using text; data:image is literal text", "opaque-argument", "9007199254740993"} {
 						require.Contains(t, string(wire), text)
 					}
 					calls, results, omitted := 0, 0, 0
@@ -131,20 +139,38 @@ func TestExcelBPSIgnoreImagesHTTPFlow(t *testing.T) {
 							calls++
 						case "function_call_output":
 							results++
-							require.Contains(t, []string{"call_function", "call_function_only", "call_custom", "call_custom_only"}, item.Get("call_id").String())
+							callID := item.Get("call_id").String()
+							require.Contains(t, []string{"call_function", "call_function_only", "call_custom", "call_custom_only", "call_view_image", "call_view_image_empty", "call_view_image_whitespace", "call_text_only"}, callID)
+							if callID == "call_text_only" {
+								require.Len(t, item.Get("output").Array(), 1)
+								require.Equal(t, "text-only result", item.Get("output.0.text").String())
+							} else {
+								require.Contains(t, item.Get("output").Raw, "Image input is unavailable", "call_id=%s", callID)
+							}
 						}
 						for _, field := range []string{"content", "output"} {
 							for _, part := range item.Get(field).Array() {
 								require.NotEqual(t, "input_image", part.Get("type").String())
-								if strings.Contains(part.Get("text").String(), "Image omitted") {
+								if strings.Contains(part.Get("text").String(), "Image input is unavailable") {
+									require.Equal(t, "input_text", part.Get("type").String())
+									require.Contains(t, part.Get("text").String(), "image support is disabled")
+									require.Contains(t, part.Get("text").String(), "cannot see this image")
+									require.Contains(t, part.Get("text").String(), "Do not retry view_image")
 									omitted++
 								}
 							}
 						}
 					}
-					require.Equal(t, 4, calls)
+					require.Equal(t, 8, calls)
 					require.Equal(t, calls, results)
-					require.Equal(t, 3, omitted)
+					require.Equal(t, 9, omitted, "every removed image must remain visible as an unavailable notice")
+					for _, item := range gjson.GetBytes(wire, "input").Array() {
+						if item.Get("content.0.text").String() == "before screenshot" {
+							require.Len(t, item.Get("content").Array(), 3)
+							require.Contains(t, item.Get("content.1.text").String(), "Image input is unavailable")
+							require.Equal(t, "after screenshot", item.Get("content.2.text").String())
+						}
+					}
 				}
 
 				// Re-enabling either image mode restores validation even with opt-in.

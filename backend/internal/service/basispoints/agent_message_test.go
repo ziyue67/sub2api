@@ -112,7 +112,9 @@ func TestCollaborationPlaintextStreamsAndReplays(t *testing.T) {
 				child["input"] = []any{childMessage}
 				prepared, _ := mustPrepare(t, child, "account/key/child", new(ReplayCache))
 				childItems := mustTestValue[[]any](t, prepared["input"])
-				if !reflect.DeepEqual(childItems[len(childItems)-1], childMessage) {
+				lowered := mustTestValue[object](t, childItems[len(childItems)-1])
+				content := mustTestValue[[]any](t, lowered["content"])
+				if lowered["type"] != "message" || lowered["role"] != "user" || len(lowered) != 3 || len(content) != 2 || !reflect.DeepEqual(content[1:], childMessage["content"]) {
 					t.Fatal("child task changed")
 				}
 

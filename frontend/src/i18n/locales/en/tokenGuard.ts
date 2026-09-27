@@ -34,6 +34,7 @@ export default {
   "runNow": "Run now",
   "running": "Running…",
   "runDone": "Probe finished: probed {probed}, healthy {healthy}, re-login {repaired}, state fixed {state_fixed}",
+  "runCanceled": "Probe canceled",
   "accounts": "Guarded accounts",
   "events": "Guard log",
   "status": "Runtime",

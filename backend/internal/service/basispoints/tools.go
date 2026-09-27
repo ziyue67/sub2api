@@ -244,7 +244,7 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 				entry["parameters"] = item["input_schema"]
 			}
 		}
-		definition := fingerprint(item)
+		definition := toolDefinitionFingerprint(item)
 		if previous, exists := b.tools[key]; exists {
 			if previous.Definition != definition || previous.Namespace != namespace || previous.Name != name {
 				return nil, fmt.Errorf("conflicting duplicate Basispoints client tool %q", key)
@@ -263,6 +263,42 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 		catalog = append(catalog, entry)
 	}
 	return catalog, nil
+}
+
+// Tool descriptions and discovery state can change as Codex replays or lazily
+// loads its catalog. They do not change how a call is decoded. Keep the first
+// declaration (the explicit/inherited catalog precedes historical additions),
+// but compare its call contract rather than rejecting annotation-only changes.
+// Unknown fields remain part of the signature so new execution constraints
+// cannot silently disappear.
+func toolDefinitionFingerprint(item object) string {
+	definition := make(object, len(item))
+	function := text(item["type"]) == "function"
+	for field, value := range item {
+		switch field {
+		case "description", "defer_loading":
+			continue
+		case "parameters", "inputSchema", "input_schema":
+			if function {
+				continue
+			}
+		}
+		definition[field] = value
+	}
+	if function {
+		// Match collectTools' existing schema alias precedence exactly.
+		parameters := item["parameters"]
+		if parameters == nil {
+			parameters = item["inputSchema"]
+		}
+		if parameters == nil {
+			parameters = item["input_schema"]
+		}
+		if parameters != nil {
+			definition["parameters"] = parameters
+		}
+	}
+	return fingerprint(definition)
 }
 
 // Hosted capabilities cannot be relayed as client function calls. Ignore known
@@ -372,6 +408,7 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 	seenCalls := make(map[string]bool)
 	var trigger any
 	for index, raw := range input {
+		var toolImages object
 		item, ok := raw.(object)
 		if !ok {
 			return nil, fmt.Errorf("invalid Basispoints input item")
@@ -427,13 +464,22 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 				itemID = "fc_" + fingerprint(itemID)
 			}
 			item["id"] = itemID
+			toolImages = separateToolImages(item)
 		case "configuration_update":
 			return nil, fmt.Errorf("basispoints does not support configuration_update; start a new request with the desired effort")
 		}
 		if err := b.validateHistoryContent(item["content"], index, "content"); err != nil {
 			return nil, err
 		}
+		var err error
+		item, err = normalizeHistoryMessage(item, index)
+		if err != nil {
+			return nil, err
+		}
 		result = append(result, item)
+		if toolImages != nil {
+			result = append(result, toolImages)
+		}
 	}
 	if trigger != nil {
 		result = append(result, trigger)

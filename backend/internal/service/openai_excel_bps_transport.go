@@ -9,11 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/mihomo"
@@ -66,12 +64,11 @@ func (s *OpenAIGatewayService) excelBPSAcquireFor(account *Account) excelBPSAcqu
 	return acquireExcelBPSProxy
 }
 
-// Membership is pushed on demand with a short TTL: the pool machinery keeps its
-// own health state, so this only has to reflect admin proxy CRUD reasonably fast.
+// The background warm worker refreshes IP-management membership with a short
+// TTL. Requests only consume the shared pool and never query the proxy database.
 const excelBPSIPPoolRefreshTTL = 15 * time.Second
 
 func (s *OpenAIGatewayService) acquireExcelBPSIPPoolProxy(ctx context.Context, scope string, excluded ...string) (string, excelBPSLease, error) {
-	s.refreshExcelBPSIPPool(ctx)
 	acquire := mihomo.AcquireBPSStaticLease
 	if strings.HasPrefix(scope, "transient:") {
 		acquire = mihomo.AcquireBPSStaticTransientLease
@@ -117,24 +114,12 @@ func (s *OpenAIGatewayService) refreshExcelBPSIPPool(ctx context.Context) {
 // Missing trace is not evidence of safety. Standard net/http emits GetConn
 // before dialing and GotConn before handing a connection to request writing.
 // Keep evidence for the whole attempt, including any internal reconnects.
-type excelBPSWriteEvidence struct {
-	started      atomic.Bool
-	handedToHTTP atomic.Bool
-}
+type excelBPSWriteEvidence struct{ transportdiag.Trace }
 
 func (e *excelBPSWriteEvidence) request(req *http.Request) *http.Request {
-	mark := func() { e.handedToHTTP.Store(true) }
-	trace := &httptrace.ClientTrace{
-		GetConn:              func(string) { e.started.Store(true) },
-		GotConn:              func(httptrace.GotConnInfo) { mark() },
-		WroteHeaderField:     func(string, []string) { mark() },
-		WroteHeaders:         mark,
-		WroteRequest:         func(httptrace.WroteRequestInfo) { mark() },
-		GotFirstResponseByte: mark,
-	}
-	req = req.Clone(httptrace.WithClientTrace(req.Context(), trace))
+	req = e.Request(req)
 	if req.Body != nil {
-		req.Body = &excelBPSTrackedBody{ReadCloser: req.Body, mark: mark}
+		req.Body = &excelBPSTrackedBody{ReadCloser: req.Body, mark: e.MarkBodyRead}
 	}
 	if getBody := req.GetBody; getBody != nil {
 		req.GetBody = func() (io.ReadCloser, error) {
@@ -142,13 +127,12 @@ func (e *excelBPSWriteEvidence) request(req *http.Request) *http.Request {
 			if err != nil {
 				return nil, err
 			}
-			return &excelBPSTrackedBody{ReadCloser: body, mark: mark}, nil
+			return &excelBPSTrackedBody{ReadCloser: body, mark: e.MarkBodyRead}, nil
 		}
 	}
 	return req
 }
-
-func (e *excelBPSWriteEvidence) unsent() bool { return e.started.Load() && !e.handedToHTTP.Load() }
+func (e *excelBPSWriteEvidence) unsent() bool { return e.DefinitelyUnsent() }
 
 type excelBPSTrackedBody struct {
 	io.ReadCloser
@@ -213,7 +197,7 @@ func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Con
 			}
 			lease.Release()
 		}
-		recordExcelBPSTransportFailure(ctx, c, account, scope, proxy, err, "transport", attempt, retry)
+		recordExcelBPSTransportFailure(ctx, c, account, scope, proxy, err, "transport", attempt, retry, evidence)
 		if !retry {
 			return nil, nil, proxy, err
 		}
@@ -234,7 +218,12 @@ func excelBPSLocalProxyPort(proxy string) int {
 	return port
 }
 
-func recordExcelBPSTransportFailure(ctx context.Context, c *gin.Context, account *Account, scope, proxy string, err error, stage string, attempt int, retry bool) {
+func recordExcelBPSTransportFailure(ctx context.Context, c *gin.Context, account *Account, scope, proxy string, err error, stage string, attempt int, retry bool, evidence ...*excelBPSWriteEvidence) {
+	if isExcelBPSClientCancellation(c, err) {
+		logger.FromContext(ctx).Info("excel_bps.client_canceled",
+			zap.Int64("account_id", account.ID), zap.String("stage", stage))
+		return
+	}
 	kind := transportdiag.Classify(err)
 	if errors.Is(err, errExcelBPSProxyUnavailable) {
 		kind = "proxy_unavailable"
@@ -248,6 +237,9 @@ func recordExcelBPSTransportFailure(ctx context.Context, c *gin.Context, account
 	diagnostics := map[string]any{
 		"error_kind": kind, "error_type": fmt.Sprintf("%T", err),
 		"proxy_port": port, "session_hash": sessionHash, "attempt": attempt, "retry_before_send": retry,
+	}
+	if len(evidence) > 0 && evidence[0] != nil {
+		diagnostics["transport"] = evidence[0].Snapshot()
 	}
 	var acquisition *mihomo.BPSAcquireError
 	if errors.As(err, &acquisition) {
@@ -270,7 +262,7 @@ func recordExcelBPSTransportFailure(ctx context.Context, c *gin.Context, account
 		zap.String("error_kind", kind), zap.String("error_type", fmt.Sprintf("%T", err)),
 		zap.Int("proxy_port", port), zap.String("session_hash", sessionHash),
 		zap.Int("attempt", attempt), zap.Bool("retry_before_send", retry),
-		zap.Any("acquisition_reason", diagnostics["acquisition_reason"]), zap.Any("candidates_checked", diagnostics["candidates_checked"]))
+		zap.Any("transport", diagnostics["transport"]), zap.Any("acquisition_reason", diagnostics["acquisition_reason"]), zap.Any("candidates_checked", diagnostics["candidates_checked"]))
 }
 
 // Attachment requests own their lease through upload, generation and correction.

@@ -2,6 +2,7 @@ package mihomo
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -100,4 +101,17 @@ func TestDynamicProxyFourFormatsAndProtocols(t *testing.T) {
 	require.Equal(t, "p@ss:word", p.Password)
 	_, _, err = parseDynamicProxy("host:1234:other:5678")
 	require.ErrorContains(t, err, "ambiguous")
+}
+
+func TestDynamicProxyNormalizationHasNoCountCap(t *testing.T) {
+	raw := make([]string, 5000)
+	for i := range raw {
+		raw[i] = fmt.Sprintf("http://fixture-%d:test-password@localhost:1080", i)
+	}
+	normalized, err := normalizeDynamicProxies(append(raw, raw[0]))
+	require.NoError(t, err)
+	require.Len(t, normalized, len(raw))
+	nodes, _, err := dynamicProxyNodes(normalized)
+	require.NoError(t, err)
+	require.Len(t, nodes, len(raw))
 }

@@ -2300,6 +2300,19 @@ func (a *Account) IsExcelBPSIgnoreImagesEnabled() bool {
 	return enabled
 }
 
+const ExcelBPSIgnoreEncryptedContentKey = "openai_excel_bps_ignore_encrypted_content"
+
+// IsExcelBPSIgnoreEncryptedContentEnabled opts into replacing ciphertext that
+// BPS cannot forward, such as sub-agent messages in an old Codex conversation,
+// with an omission notice instead of rejecting the whole request.
+func (a *Account) IsExcelBPSIgnoreEncryptedContentEnabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra[ExcelBPSIgnoreEncryptedContentKey].(bool)
+	return enabled
+}
+
 func (a *Account) IsExcelBPSMihomoEnabled() bool {
 	if !a.IsExcelBPSEnabled() {
 		return false

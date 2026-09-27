@@ -67,10 +67,9 @@ func TestExcelBPSToolFallbackPolicy(t *testing.T) {
 					c.Header("X-Codex2API-Basispoints-Bypass", "stale-attempt")
 					c.Header("X-Codex2API-Upstream", "codex")
 					_, err = svc.Forward(ctx, c, account, body)
-					native := !omit && tc.nativeReason != ""
 					choice, _ := tc.choice.(string)
 					forced := tc.choice != nil && choice != "auto" && choice != "none"
-					if !native && forced {
+					if forced {
 						require.Error(t, err)
 						require.Equal(t, http.StatusBadRequest, rec.Code)
 						require.Contains(t, rec.Body.String(), "basispoints supports tool_choice auto or none only")
@@ -80,37 +79,21 @@ func TestExcelBPSToolFallbackPolicy(t *testing.T) {
 						require.NoError(t, err)
 						require.Equal(t, http.StatusOK, rec.Code)
 						require.Len(t, upstream.requests, 1)
-						if native {
-							require.Equal(t, "/backend-api/codex/responses", upstream.lastReq.URL.Path)
-							require.Equal(t, "codex", rec.Header().Get("X-Codex2API-Upstream"))
-							require.Equal(t, tc.nativeReason, rec.Header().Get("X-Codex2API-Basispoints-Bypass"))
+						require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+						require.Equal(t, "/basispoints/api/responses", GetActualOpenAIUpstreamEndpoint(c))
+						if choice != "none" {
+							require.Contains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints: "+fmt.Sprint(tc.tool["type"]))
+							require.Contains(t, string(upstream.lastBody), "Do not claim to have used them")
+							require.Contains(t, string(upstream.lastBody), "lookup_client")
 						} else {
-							require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
-							require.Equal(t, "/basispoints/api/responses", GetActualOpenAIUpstreamEndpoint(c))
-							if choice != "none" {
-								require.Contains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints: "+fmt.Sprint(tc.tool["type"]))
-								require.Contains(t, string(upstream.lastBody), "Do not claim to have used them")
-								require.Contains(t, string(upstream.lastBody), "lookup_client")
-							} else {
-								require.NotContains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints")
-								require.NotContains(t, string(upstream.lastBody), "lookup_client")
-							}
+							require.NotContains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints")
+							require.NotContains(t, string(upstream.lastBody), "lookup_client")
 						}
 					}
 					entries := logs.FilterMessage("excel_bps.native_fallback").All()
-					if native {
-						require.Len(t, entries, 1)
-						require.Equal(t, tc.nativeReason, entries[0].ContextMap()["reason"])
-						require.Equal(t, "req-policy", entries[0].ContextMap()["request_id"])
-						require.Equal(t, account.ID, entries[0].ContextMap()["account_id"])
-						fields := fmt.Sprint(entries[0].ContextMap())
-						require.NotContains(t, fields, "private-user-prompt")
-						require.NotContains(t, fields, "test-token")
-					} else {
-						require.Empty(t, entries)
-						require.Empty(t, rec.Header().Get("X-Codex2API-Basispoints-Bypass"))
-						require.Empty(t, rec.Header().Get("X-Codex2API-Upstream"))
-					}
+					require.Empty(t, entries)
+					require.Empty(t, rec.Header().Get("X-Codex2API-Basispoints-Bypass"))
+					require.Empty(t, rec.Header().Get("X-Codex2API-Upstream"))
 				})
 			}
 		}

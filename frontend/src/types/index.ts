@@ -1453,6 +1453,8 @@ export interface WindowStats {
   cost: number // Account cost (account multiplier)
   standard_cost?: number
   user_cost?: number
+  lifetime_tokens?: number // All-time totals (no time filter)
+  lifetime_cost?: number
 }
 
 export interface UsageProgress {

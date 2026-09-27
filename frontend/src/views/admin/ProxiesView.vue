@@ -1,7 +1,16 @@
 <template>
   <AppLayout>
     <TablePageLayout>
-      <template #filters>
+      <template #actions>
+        <div class="flex flex-wrap gap-2" role="group" :aria-label="t('admin.proxies.managementSections')">
+          <button v-for="tab in managementTabs" :key="tab.key" type="button"
+            class="btn" :class="activeManagementTab === tab.key ? 'btn-primary' : 'btn-secondary'"
+            :aria-pressed="activeManagementTab === tab.key" @click="selectManagementTab(tab.key)">
+            {{ t(tab.label) }}
+          </button>
+        </div>
+      </template>
+      <template v-if="activeManagementTab === 'proxies'" #filters>
         <div class="flex flex-wrap items-center gap-3">
           <!-- Left: Search + Filters -->
           <div class="relative w-full sm:w-64">
@@ -88,7 +97,10 @@
       </template>
 
       <template #table>
-        <div ref="proxyTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div v-if="activeManagementTab !== 'proxies'" class="min-h-0 flex-1 overflow-y-auto p-4">
+          <MihomoSettings :section="activeManagementTab" />
+        </div>
+        <div v-show="activeManagementTab === 'proxies'" ref="proxyTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
           :columns="columns"
           :data="proxies"
@@ -354,7 +366,7 @@
         </div>
       </template>
 
-      <template #pagination>
+      <template v-if="activeManagementTab === 'proxies'" #pagination>
         <Pagination
           v-if="pagination.total > 0"
           :page="pagination.page"
@@ -966,7 +978,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import MihomoSettings from './settings/MihomoSettings.vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -991,6 +1005,26 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatDateTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 
+const route = useRoute()
+const router = useRouter()
+const managementTabs = [
+  { key: 'proxies', label: 'admin.proxies.proxyList' },
+  { key: 'subscriptions', label: 'admin.proxies.subscriptions' },
+  { key: 'dynamic', label: 'admin.proxies.dynamicProxies' },
+  { key: 'nodes', label: 'admin.proxies.nodes' },
+  { key: 'kernel', label: 'admin.proxies.kernelRules' }
+] as const
+type ManagementTab = typeof managementTabs[number]['key']
+function tabFromHash(hash?: string): ManagementTab {
+  if (hash === '#mihomo') return 'subscriptions'
+  return managementTabs.find(tab => '#' + tab.key === hash)?.key || 'proxies'
+}
+const activeManagementTab = ref<ManagementTab>(tabFromHash(route?.hash))
+watch(() => route?.hash, hash => { activeManagementTab.value = tabFromHash(hash) })
+function selectManagementTab(tab: ManagementTab) {
+  activeManagementTab.value = tab
+  if (router) void router.replace({ hash: tab === 'proxies' ? '' : '#' + tab })
+}
 const { t } = useI18n()
 const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()

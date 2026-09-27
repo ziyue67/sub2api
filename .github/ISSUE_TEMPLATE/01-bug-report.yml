@@ -1,0 +1,174 @@
+name: Bug 反馈
+description: 报告可观察到的异常，提供复现步骤、运行环境和脱敏证据。
+title: '[Bug] '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        一份报告聚焦一个可独立验收的问题。先阅读 [贡献指南](https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md)。
+        暂时无法复现也可以报告：写明已观察到什么、缺少什么证据，不要编造步骤或根因。未知项写“未知”，不适用项写“不适用”。
+        **公开内容不得包含 API Key、Authorization、Cookie、OAuth 导出、ticket/state、代理密码、订阅密钥、真实用户数据或完整业务对话。** 附件和截图也要检查；安全漏洞或凭据泄露按贡献指南中的私密报告说明处理。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue；如有相关记录，会说明本次新增的证据或差异。
+          required: true
+        - label: 我已检查正文、日志、截图和附件，移除了凭据及个人或业务敏感信息。
+          required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题现象
+      description: 谁在什么操作或请求路径下遇到了什么异常？保留原始错误文字，暂不把推测写成根因。
+      placeholder: 例如：流式请求已开始输出，随后客户端提示流中断；后台请求明细耗时显示为空。
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: 运行版本与构建来源
+      description: 填实际运行的版本。源码 checkout 的 SHA 不一定等于运行二进制的 SHA；无法核实请注明。不要只写 latest。
+      placeholder: |
+        Sub2API 版本：
+        来源：本 fork Release / 容器镜像 / 自编译 / PR 试用 / 其他
+        Release tag、镜像 tag + digest，或实际构建 SHA：
+        自编译/试用构建的基线、PR 和本地改动（如有）：
+        最近正常版本与首次发现异常的版本（如已知）：
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 部署、客户端与相关配置
+      description: 只填与问题相关的部分；没有管理员权限时说明能看到的范围。代理填写类型和路径，不填写含密码或密钥的 URL。
+      placeholder: |
+        部署方式、操作系统/架构：
+        客户端/SDK/插件名称与版本；页面问题另填浏览器版本：
+        请求端点、模型原名/映射名、stream 开关（如适用）：
+        平台、账号类型、实际通道（原 Codex / Excel BPS / 其他 / 未确认）：
+        网络路径：客户端 → CDN/反代 → Sub2API → 业务代理/上游
+        相关开关、超时、并发配置；Mihomo/采集代理（如适用）：
+        配置记录时间与时区；是否为故障发生时的配置：
+    validations:
+      required: true
+  - type: dropdown
+    id: reproduction_status
+    attributes:
+      label: 复现情况
+      options:
+        - 可以稳定复现
+        - 偶发，已有部分触发条件
+        - 仅有历史故障记录，尚未复现
+        - 仅发现代码或测试疑点，尚未观察到运行异常
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 前置条件与最小复现步骤
+      description: 从可准备的初始状态写起，说明每一步操作、输入及观察位置。历史故障写原操作与当前复现障碍；无需为了填表重放付费请求。
+      placeholder: |
+        前置条件：账号类型、分组、相关开关、会话是否已有历史等。
+        1. 准备……
+        2. 使用……客户端/命令，输入……
+        3. 在……位置观察到……
+        复现次数 / 尝试次数：
+        尚不能复现的部分及原因（如有）：
+    validations:
+      required: true
+  - type: textarea
+    id: minimal_sample
+    attributes:
+      label: 脱敏最小样例（请求、配置或测试）
+      description: 可贴可复制的命令、JSON、配置片段或离线测试。保留字段类型、顺序及 ID 对应关系；仅修改无关数据。页面问题可提供测试数据和操作录像。没有样例可说明缺什么。
+      placeholder: |
+        在此粘贴最小请求/配置/测试，使用虚构数据和占位符。
+        工具冲突：保留冲突定义及 schema，不要提前改名/去重。
+        长上下文：给出大小、轮数和构造方法，不上传完整业务对话。
+        说明已删除哪些字段、删减后是否仍复现。
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 什么结果才算正常？可引用文档、协议约定或已验证的旧版本行为。
+      placeholder: 输入/操作相同的情况下，应当……
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 写明错误原文、响应内容或页面状态。流式请求分别描述 HTTP 状态、是否收到首字节/事件及最终业务错误。
+      placeholder: |
+        客户端看到：
+        Sub2API 页面或日志看到：
+        HTTP 状态 / 最终业务状态（如适用）：
+        流开始与结束事件、是否由客户端取消（已知才填）：
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 时间、关联记录与证据范围
+      description: 请求问题优先给出带时区的时间和可公开的完整 request ID。若 ID 需隐藏，用一致别名关联，并说明维护者暂不能据此检索。无日志或无权限时说明；不要猜测状态码、耗时或失败比例。
+      placeholder: |
+        发生时间/时间范围（含日期、时区）：
+        request ID（或一致别名）；其他关联 ID 的类型与来源：
+        证据来源：客户端 / 请求明细 / 访问日志 / 错误日志 / 其他
+        客户端 HTTP 状态 / 网关 HTTP 状态 / 上游状态（分开填写）：
+        duration_ms / latency_ms / 首字节耗时：值、单位和来源；缺失写缺失
+        日志抽样范围：总共多少条，本次实际核对多少条，是否含重试
+        无法获取的证据及原因：
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志与截图（可选）
+      description: 贴与同一请求相关的少量上下文，保留时间、事件名、错误码和关联关系。用代码块贴文本，截图作为补充；不要上传整份日志、数据库、HAR 或账号导出。
+  - type: textarea
+    id: impact
+    attributes:
+      label: 频率与影响范围
+      description: 区分单次请求、某类模型/账号/客户端与全站问题；统计要带时间窗口和分母，只有样本时明确说明。
+      placeholder: |
+        频率 / 样本数 / 时间窗口：
+        受影响的功能、客户端或请求类型：
+        是否存在可用绕行方式及代价：
+    validations:
+      required: true
+  - type: textarea
+    id: investigation
+    attributes:
+      label: 已做对照、待验证推测与关联 Issue（可选）
+      description: 每项写操作、保持不变的条件和结果。区分“未测”“未复现”和“已排除”；相同报错不自动代表相同根因。
+      placeholder: |
+        已验证：
+        尚未验证 / 无法进行的对照：
+        根因猜测及其依据（可留空）：
+        相关 Issue / PR 与关系：相同症状 / 已确认同因 / 部分重叠
+  - type: textarea
+    id: agent_name
+    attributes:
+      label: Agent 名称与参与范围
+      description: 所有 Issue 均须填写，包括仅用 Agent 分析问题或润色正文的情况。多个 Agent（含子 Agent）逐一列出；纯人工编写填“未使用 Agent，参与范围：无”。
+      placeholder: 工具名称及参与的问题分析、代码、测试或正文撰写工作。
+    validations:
+      required: true
+  - type: textarea
+    id: agent_model
+    attributes:
+      label: 模型名称
+      description: 填写实际使用的完整模型名称或模型 ID；多个模型逐一对应 Agent 列出。纯人工编写填“不适用”，无法获取填“未知”并说明原因。
+    validations:
+      required: true
+  - type: textarea
+    id: agent_reasoning
+    attributes:
+      label: 推理强度
+      description: 填写实际配置值；未手动设置填“默认（未手动设置）”，工具不提供该设置填“不适用（工具未提供）”，无法获取填“未知”并说明原因。纯人工编写填“不适用”；多个模型逐一列出。
+    validations:
+      required: true

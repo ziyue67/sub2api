@@ -86,6 +86,19 @@ export interface TokenGuardStats {
   started_at: number
 }
 
+export interface TokenGuardJob {
+  id: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled' | string
+  manual: boolean
+  started_at: string | null
+  finished_at: string | null
+  total: number
+  completed: number
+  stats: TokenGuardStats
+  error?: string
+  cancel_requested?: boolean
+}
+
 export interface TokenGuardStatus {
   config: TokenGuardConfig
   accounts: TokenGuardAccountState[]
@@ -95,6 +108,7 @@ export interface TokenGuardStatus {
     last_run: string | null
     last_message: string
     stats: TokenGuardStats
+    job?: TokenGuardJob | null
   }
 }
 
@@ -108,6 +122,18 @@ export async function saveTokenGuardConfig(config: TokenGuardConfig): Promise<To
 
 export async function runTokenGuard(): Promise<TokenGuardStats> {
   return (await apiClient.post('/admin/account-ops/token-guard/run')).data
+}
+
+export async function startTokenGuardRun(): Promise<TokenGuardJob> {
+  return (await apiClient.post('/admin/account-ops/token-guard/run/start')).data
+}
+
+export async function getTokenGuardJob(jobId: string): Promise<TokenGuardJob> {
+  return (await apiClient.get(`/admin/account-ops/token-guard/jobs/${jobId}`)).data
+}
+
+export async function cancelTokenGuardJob(jobId: string): Promise<TokenGuardJob> {
+  return (await apiClient.post(`/admin/account-ops/token-guard/jobs/${jobId}/cancel`)).data
 }
 
 export async function reloginTokenGuardAccount(accountId: number): Promise<{ account_id: number; action: string }> {

@@ -22,7 +22,7 @@
       <p v-if="notice" role="status" class="success-banner">{{ notice }}</p>
 
       <section class="summary-grid">
-        <article class="summary-card"><span>{{ t('tokenGuard.statsProbed') }}</span><strong>{{ remote?.runtime.stats.probed ?? 0 }}</strong><small>{{ t('tokenGuard.interval') }} {{ draft?.interval_seconds ?? 0 }}s</small></article>
+        <article class="summary-card"><span>{{ t('tokenGuard.statsProbed') }}</span><strong>{{ remote?.runtime.stats.probed ?? 0 }}</strong><small>{{ remote?.runtime.job?.status === 'running' ? `${remote.runtime.job.completed}/${remote.runtime.job.total}` : `${t('tokenGuard.interval')} ${draft?.interval_seconds ?? 0}s` }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.statsBad') }}</span><strong>{{ badCount }}</strong><small>{{ t('tokenGuard.failStreak') }} ≥ {{ draft?.fail_streak_threshold ?? 1 }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.statsRepaired') }}</span><strong>{{ remote?.runtime.stats.repaired ?? 0 }}</strong><small>{{ t('tokenGuard.stateFixed') }} {{ remote?.runtime.stats.state_fixed ?? 0 }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.lastRun') }}</span><strong class="text-base">{{ remote?.runtime.last_run ? date(remote.runtime.last_run) : t('tokenGuard.never') }}</strong><small>{{ remote?.runtime.last_message || '-' }}</small></article>
@@ -145,7 +145,7 @@ import {
   formatTokenGuardReloginText,
   parseTokenGuardReloginText,
   reloginTokenGuardAccount,
-  runTokenGuard,
+  startTokenGuardRun,
   saveTokenGuardConfig,
   type TokenGuardConfig,
   type TokenGuardEvent,
@@ -289,8 +289,24 @@ async function run() {
   if (running.value) return
   running.value = true; error.value = ''; notice.value = ''
   try {
-    const stats = await runTokenGuard()
+    const job = await startTokenGuardRun()
     if (!alive) return
+    let current = job
+    while (alive && (current.status === 'pending' || current.status === 'running')) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      await load(true)
+      const polled = remote.value?.runtime.job
+      if (polled?.id === job.id) current = polled
+    }
+    if (!alive) return
+    if (current.status === 'failed') {
+      throw new Error(current.error || t('qualityOps.error'))
+    }
+    if (current.status === 'canceled') {
+      notice.value = t('tokenGuard.runCanceled')
+      return
+    }
+    const stats = current.stats
     notice.value = t('tokenGuard.runDone', { probed: stats.probed, healthy: stats.healthy, repaired: stats.repaired, state_fixed: stats.state_fixed })
     await load(true)
   } catch (e) {
