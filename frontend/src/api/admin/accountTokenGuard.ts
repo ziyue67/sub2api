@@ -6,6 +6,26 @@ export interface TokenGuardReloginAccount {
   mfa_secret: string
 }
 
+export function parseTokenGuardReloginText(raw: string): TokenGuardReloginAccount[] {
+  return raw
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const [email = '', password = '', mfa = ''] = line.includes('----')
+        ? line.split('----', 3)
+        : line.split(',')
+      return { email: email.trim(), password: password.trim(), mfa_secret: mfa.trim() }
+    })
+    .filter(item => item.email && item.password)
+}
+
+export function formatTokenGuardReloginText(accounts: TokenGuardReloginAccount[] | undefined): string {
+  return (accounts ?? [])
+    .map(item => `${item.email}----${item.password}----${item.mfa_secret}`)
+    .join('\n')
+}
+
 export interface TokenGuardConfig {
   enabled: boolean
   group_ids: number[]

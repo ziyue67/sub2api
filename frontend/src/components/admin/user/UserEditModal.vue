@@ -38,6 +38,22 @@
         />
       </div>
       <ObserverGroupSelector v-if="form.role === 'observer'" v-model="form.observer_group_ids" />
+      <fieldset v-if="promotingObserver" class="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-dark-600" data-test="observer-setup">
+        <legend class="px-1 text-sm font-medium">{{ t('admin.users.observerSetup.title') }}</legend>
+        <label class="flex items-start gap-2 text-sm">
+          <input v-model="observerSetup.create_dedicated_group" :disabled="authStore.isSimpleMode" type="checkbox" class="mt-1" data-test="observer-create-group" />
+          <span>{{ t('admin.users.observerSetup.createGroup') }}<span class="input-hint block">{{ t(authStore.isSimpleMode ? 'admin.users.observerSetup.simpleModeHint' : 'admin.users.observerSetup.createGroupHint') }}</span></span>
+        </label>
+        <label class="flex items-start gap-2 text-sm">
+          <input v-model="observerSetup.revoke_public_groups" type="checkbox" class="mt-1" data-test="observer-revoke-public" />
+          <span>{{ t('admin.users.observerSetup.revokePublic') }}<span class="input-hint block">{{ t('admin.users.observerSetup.revokePublicHint') }}</span></span>
+        </label>
+        <label class="flex items-start gap-2 text-sm">
+          <input v-model="observerSetup.grant_resources" type="checkbox" class="mt-1" data-test="observer-grant-resources" />
+          <span>{{ t('admin.users.observerSetup.grantResources') }}<span class="input-hint block">{{ t('admin.users.observerSetup.grantResourcesHint') }}</span></span>
+        </label>
+        <p class="input-hint">{{ t('admin.users.observerSetup.onceHint') }}</p>
+      </fieldset>
       <div>
         <label class="input-label">{{ t('admin.users.notes') }}</label>
         <textarea v-model="form.notes" rows="3" class="input"></textarea>
@@ -87,9 +103,10 @@
 import { computed, ref, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { useClipboard } from '@/composables/useClipboard'
 import { adminAPI } from '@/api/admin'
-import type { AdminUser, UserAttributeValuesMap } from '@/types'
+import type { AdminUser, ObserverSetupOptions, UpdateUserRequest, UserAttributeValuesMap } from '@/types'
 import ObserverGroupSelector from './ObserverGroupSelector.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -101,8 +118,13 @@ import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 const props = defineProps<{ show: boolean, user: AdminUser | null }>()
 const emit = defineEmits(['close', 'success'])
 const { t } = useI18n(); const appStore = useAppStore(); const { copyToClipboard } = useClipboard()
+const authStore = useAuthStore()
 
 const submitting = ref(false); const passwordCopied = ref(false)
+const observerSetup = reactive<ObserverSetupOptions>({ create_dedicated_group: false, revoke_public_groups: false, grant_resources: false })
+const observerPromotionSaved = ref(false)
+const promotingObserver = computed(() => !!props.user && props.user.role !== 'observer' && form.role === 'observer' && !observerPromotionSaved.value)
+const resetObserverSetup = () => Object.assign(observerSetup, { create_dedicated_group: false, revoke_public_groups: false, grant_resources: false })
 const roleOptions = computed(() => [
   { value: 'user', label: t('admin.users.roles.user') },
   { value: 'observer', label: t('admin.users.roles.observer') },
@@ -121,11 +143,15 @@ const form = reactive({
 })
 
 watch(() => props.user, (u) => {
+  resetObserverSetup()
+  observerPromotionSaved.value = false
   if (u) {
     Object.assign(form, { email: u.email, password: '', username: u.username || '', notes: u.notes || '', role: u.role || 'user', observer_group_ids: [...(u.observer_group_ids || [])], concurrency: u.concurrency, rpm_limit: u.rpm_limit ?? 0, customAttributes: {} })
     passwordCopied.value = false
   }
 }, { immediate: true })
+watch(() => props.show, () => { resetObserverSetup(); observerPromotionSaved.value = false })
+watch(() => form.role, () => resetObserverSetup())
 
 const generatePassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*'
@@ -140,7 +166,7 @@ const copyPassword = async () => {
 const stepUp = useStepUp()
 
 const handleUpdateUser = async () => {
-  if (!props.user) return
+  if (!props.user || submitting.value) return
   if (!form.email.trim()) {
     appStore.showError(t('admin.users.emailRequired'))
     return
@@ -150,13 +176,24 @@ const handleUpdateUser = async () => {
     appStore.showError(t('admin.users.concurrencyNonNegative'))
     return
   }
+  if (promotingObserver.value && observerSetup.create_dedicated_group && !form.username.trim()) {
+    appStore.showError(t('admin.users.observerSetup.usernameRequired'))
+    return
+  }
   const userId = props.user.id
   submitting.value = true
   try {
-    const data: any = { email: form.email, username: form.username, notes: form.notes, role: form.role, observer_group_ids: form.observer_group_ids, concurrency: form.concurrency, rpm_limit: form.rpm_limit }
+    const data: UpdateUserRequest = { email: form.email, username: form.username, notes: form.notes, role: form.role, observer_group_ids: form.observer_group_ids, concurrency: form.concurrency, rpm_limit: form.rpm_limit }
+    if (promotingObserver.value && Object.values(observerSetup).some(Boolean)) data.observer_setup = { ...observerSetup }
     if (form.password.trim()) data.password = form.password.trim()
     // 提升为管理员属敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 验证并重试
-    await stepUp.run(() => adminAPI.users.update(userId, data))
+    const updated = await stepUp.run(() => adminAPI.users.update(userId, data))
+    // Attribute updates use a separate request. Keep committed group grants and
+    // concurrency if that request fails and the administrator retries the form.
+    form.observer_group_ids = [...(updated.observer_group_ids ?? form.observer_group_ids)]
+    form.concurrency = updated.concurrency ?? form.concurrency
+    if (form.role === 'observer') observerPromotionSaved.value = true
+    resetObserverSetup()
     if (Object.keys(form.customAttributes).length > 0) await adminAPI.userAttributes.updateUserAttributeValues(userId, form.customAttributes)
     appStore.showSuccess(t('admin.users.userUpdated'))
     emit('success'); emit('close')

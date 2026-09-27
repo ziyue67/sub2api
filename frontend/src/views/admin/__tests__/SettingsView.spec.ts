@@ -1122,6 +1122,54 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
+  it("saves the IP management pool as the harvest proxy and restores the static address when leaving it", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_codex_ticket_harvest_proxy_url: "http://user:***@old.example.com:8080",
+      openai_codex_ticket_harvest_proxy_configured: true,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .get<HTMLInputElement>('input[name="codex-ticket-proxy-mode"][value="ip_pool"]')
+      .setValue(true);
+    expect(wrapper.find("#codex-ticket-harvest-proxy").exists()).toBe(false);
+    expect(wrapper.find('[data-testid="codex-ticket-proxy-ip-pool-hint"]').exists()).toBe(true);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      openai_codex_ticket_harvest_proxy_url: "ippool://active",
+      openai_codex_ticket_use_saved_static_proxy: false,
+    }));
+
+    await wrapper
+      .get<HTMLInputElement>('input[name="codex-ticket-proxy-mode"][value="static"]')
+      .setValue(true);
+    expect(wrapper.get<HTMLInputElement>("#codex-ticket-harvest-proxy").element.value)
+      .toBe("http://user:***@old.example.com:8080");
+    wrapper.unmount();
+  });
+
+  it("restores the IP management pool mode from saved settings", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_codex_ticket_harvest_proxy_url: "ippool://active",
+      openai_codex_ticket_harvest_proxy_configured: true,
+      openai_codex_ticket_static_proxy_url: "http://user:***@saved.example.com:8080",
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.get<HTMLInputElement>('input[name="codex-ticket-proxy-mode"][value="ip_pool"]').element.checked)
+      .toBe(true);
+    await wrapper
+      .get<HTMLInputElement>('input[name="codex-ticket-proxy-mode"][value="static"]')
+      .setValue(true);
+    expect(wrapper.get<HTMLInputElement>("#codex-ticket-harvest-proxy").element.value)
+      .toBe("http://user:***@saved.example.com:8080");
+    wrapper.unmount();
+  });
+
   it("loads and saves the open button visibility for each custom menu", async () => {
     const menuItems = [
       { id: "docs", label: "Docs", url: "https://example.com/docs", icon_svg: "", visibility: "user", sort_order: 0 },

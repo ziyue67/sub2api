@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -55,4 +56,19 @@ func TestExcelBPSManualTestSuppliesProxySessionIdentity(t *testing.T) {
 	require.NotContains(t, err.Error(), "basispoints_session_required")
 	require.Nil(t, upstream.lastReq)
 	require.Empty(t, c.Request.Header.Get("Session-Id"), "test must not mutate the inbound request")
+}
+
+func TestExcelBPSBackgroundTestHandlesNilHeader(t *testing.T) {
+	upstream := &httpUpstreamRecorder{}
+	svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream)}
+	account := excelAccount()
+	account.Extra["openai_excel_bps_mihomo"] = true
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = &http.Request{}
+	require.NotPanics(t, func() {
+		err := svc.testExcelBPSAccountConnection(c, account, "gpt-6-astra", "Reply OK")
+		require.ErrorContains(t, err, "basispoints_proxy_unavailable")
+	})
+	require.Nil(t, c.Request.Header, "the inbound request must remain unchanged")
+	require.Nil(t, upstream.lastReq)
 }

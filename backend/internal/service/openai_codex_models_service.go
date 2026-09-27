@@ -187,13 +187,13 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 		return nil
 	}
 
+	visible, catalog, err := loadCodexGroupCatalogAccounts(ctx, s.accountRepo, group.ID)
+	if err != nil {
+		return fmt.Errorf("load group configured Codex capabilities: %w", err)
+	}
 	var configuredModels []string
 	if !group.CodexModelsManifestConfig.Enabled {
-		var err error
-		configuredModels, err = s.groupConfiguredCodexModelIDs(ctx, group)
-		if err != nil {
-			return fmt.Errorf("load group configured Codex models: %w", err)
-		}
+		configuredModels = openAIConfiguredCodexModelIDsForGroup(visible, group)
 	}
 	body, changed, err := mergeConfiguredCodexModelsManifest(
 		manifest.Body,
@@ -211,6 +211,11 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 		}
 		changed = true
 	}
+	body, restricted, err := restrictExcelBPSCodexModelsManifest(body, catalog, group)
+	if err != nil {
+		return fmt.Errorf("restrict group BPS capabilities: %w", err)
+	}
+	changed = changed || restricted
 	if changed {
 		manifest.Body = body
 		manifest.ETag = codexModelsManifestBodyETag(body)
@@ -220,17 +225,6 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 		manifest.NotModified = true
 	}
 	return nil
-}
-
-func (s *OpenAIGatewayService) groupConfiguredCodexModelIDs(ctx context.Context, group *Group) ([]string, error) {
-	if group == nil {
-		return nil, nil
-	}
-	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, group.ID)
-	if err != nil {
-		return nil, err
-	}
-	return openAIConfiguredCodexModelIDsForGroup(accounts, group), nil
 }
 
 // loadCodexGroupCatalogAccounts separates picker membership from capability
@@ -965,7 +959,14 @@ func buildCodexModelsManifestForAccounts(
 			modelMetadata[modelID] = metadata
 		}
 	}
-	return buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
+	body, err := buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
+	if err != nil || effectivePlatform != PlatformOpenAI {
+		return body, err
+	}
+	// Conflicting aliases can intentionally omit synced metadata. Do not let
+	// the bundled Astra defaults reintroduce v2 for a possible BPS route.
+	body, _, err = restrictExcelBPSCodexModelsManifest(body, accounts, group)
+	return body, err
 }
 
 func buildCodexModelsManifest(

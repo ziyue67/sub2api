@@ -17,6 +17,7 @@ const ResponsesURL = "https://bps.openai.com/basispoints/api/responses"
 type object = map[string]any
 
 type Bridge struct {
+	nativeToolImages map[string]bool
 	RequestedEffort  string
 	Effort           string
 	Warnings         []string
@@ -76,6 +77,10 @@ func message(role, content string) object {
 
 // Prepare preserves the requested model and uses a whitelist for the Excel wire body.
 func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, error) {
+	return prepare(raw, scope, replay, nil)
+}
+
+func prepare(raw []byte, scope string, replay *ReplayCache, nativeToolImages map[string]bool) ([]byte, *Bridge, error) {
 	var source object
 	if err := decode(raw, &source); err != nil || source == nil {
 		return nil, nil, fmt.Errorf("invalid Basispoints request JSON")
@@ -102,7 +107,7 @@ func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, er
 	if err != nil {
 		return nil, nil, err
 	}
-	b := &Bridge{RequestedEffort: requested, Effort: effort, tools: make(map[string]tool), unsupportedTools: make(map[string]bool), structured: structured, replay: replay, scope: scope}
+	b := &Bridge{nativeToolImages: nativeToolImages, RequestedEffort: requested, Effort: effort, tools: make(map[string]tool), unsupportedTools: make(map[string]bool), structured: structured, replay: replay, scope: scope}
 	choice := source["tool_choice"]
 	if choice != nil && text(choice) != "auto" && text(choice) != "none" {
 		return nil, nil, fmt.Errorf("basispoints supports tool_choice auto or none only")

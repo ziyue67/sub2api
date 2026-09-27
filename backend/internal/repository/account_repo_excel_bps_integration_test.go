@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -109,6 +110,11 @@ func TestDisableExcelBPSOn403ConcurrentAndCache(t *testing.T) {
 	after, err := repo.GetByID(ctx, account.ID)
 	require.NoError(t, err)
 	require.False(t, after.IsExcelBPSEnabled())
+	disabledAt, ok := after.Extra[service.ExcelBPS403DisabledAtKey].(string)
+	require.True(t, ok, "the automatic shutdown records when it happened")
+	parsed, err := time.Parse(time.RFC3339, disabledAt)
+	require.NoError(t, err)
+	require.WithinDuration(t, time.Now(), parsed, time.Minute)
 	require.Len(t, cache.setAccounts, 1)
 	require.False(t, cache.setAccounts[0].IsExcelBPSEnabled())
 	require.True(t, before.IsExcelBPSEnabled(), "shared request snapshot must remain unchanged")
@@ -121,4 +127,51 @@ func TestDisableExcelBPSOn403ConcurrentAndCache(t *testing.T) {
 			require.Equal(t, value, after.Extra[key], key)
 		}
 	}
+}
+
+func TestExcelBPS403MarkerLifecycle(t *testing.T) {
+	tx := testEntTx(t)
+	ctx := dbent.NewTxContext(context.Background(), tx)
+	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
+	account := mustCreateAccount(t, tx.Client(), newExcelBPSAutoDisableAccount())
+	load := func() *service.Account {
+		t.Helper()
+		loaded, err := repo.GetByID(ctx, account.ID)
+		require.NoError(t, err)
+		return loaded
+	}
+	disable := func() any {
+		t.Helper()
+		changed, err := repo.DisableExcelBPSOn403(ctx, load())
+		require.NoError(t, err)
+		require.True(t, changed)
+		marker := load().Extra[service.ExcelBPS403DisabledAtKey]
+		require.IsType(t, "", marker)
+		return marker
+	}
+
+	marker := disable()
+	// An ordinary edit keeps the recorded time, even when it echoes another value.
+	edited := load()
+	edited.Name = "bps-marker-renamed"
+	edited.Extra[service.ExcelBPS403DisabledAtKey] = "2000-01-01T00:00:00Z"
+	require.NoError(t, repo.Update(ctx, edited))
+	require.Equal(t, "bps-marker-renamed", load().Name)
+	require.Equal(t, marker, load().Extra[service.ExcelBPS403DisabledAtKey])
+
+	// Turning the protocol back on acknowledges the 403.
+	enabled := load()
+	enabled.Extra["openai_excel_bps"] = true
+	require.NoError(t, repo.Update(ctx, enabled))
+	require.NotContains(t, enabled.Extra, service.ExcelBPS403DisabledAtKey, "the saved account returned to the caller")
+	require.NotContains(t, load().Extra, service.ExcelBPS403DisabledAtKey)
+
+	// Bulk edits follow the same rule.
+	marker = disable()
+	_, err := repo.BulkUpdate(ctx, []int64{account.ID}, service.AccountBulkUpdate{Extra: map[string]any{"openai_passthrough": false}})
+	require.NoError(t, err)
+	require.Equal(t, marker, load().Extra[service.ExcelBPS403DisabledAtKey])
+	_, err = repo.BulkUpdate(ctx, []int64{account.ID}, service.AccountBulkUpdate{Extra: map[string]any{"openai_excel_bps": true}})
+	require.NoError(t, err)
+	require.NotContains(t, load().Extra, service.ExcelBPS403DisabledAtKey)
 }

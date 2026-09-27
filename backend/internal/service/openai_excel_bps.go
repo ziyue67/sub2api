@@ -225,6 +225,12 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if err != nil {
 		return fail(503, "basispoints_image_settings_unavailable", "Excel BPS image settings are unavailable")
 	}
+	if !imageSettings.Enabled && account.IsExcelBPSIgnoreImagesEnabled() {
+		body, err = basispoints.StripInputImages(body)
+		if err != nil {
+			return fail(400, "basispoints_request_invalid", err.Error())
+		}
+	}
 	var images *basispoints.NativeImages
 	if imageSettings.Enabled && imageSettings.Mode == ExcelBPSImageModeNative {
 		images, err = basispoints.PrepareNativeImagesWithLimit(body, imageSettings.Limits.MaxImages)
@@ -255,7 +261,13 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if identity != "" {
 		replay, catalog = &excelBPSReplay, &excelBPSCatalog
 	}
-	upstreamBody, bridge, err := basispoints.PrepareWithCatalog(body, scope, replay, catalog)
+	var upstreamBody []byte
+	var bridge *basispoints.Bridge
+	if images != nil {
+		upstreamBody, bridge, err = images.PrepareWithCatalog(scope, replay, catalog)
+	} else {
+		upstreamBody, bridge, err = basispoints.PrepareWithCatalog(body, scope, replay, catalog)
+	}
 	if err != nil {
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
@@ -267,14 +279,16 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if accountID == "" {
 		return fail(400, "basispoints_account_id_missing", "Excel BPS requires chatgpt_account_id")
 	}
-	requestAcquire := acquireExcelBPSProxy
+	requestAcquire := s.excelBPSAcquireFor(account)
 	attachmentProxy := ""
 	if account.Proxy != nil {
 		attachmentProxy = account.Proxy.URL()
 	}
 	if images != nil && images.HasImages() && account.IsExcelBPSMihomoEnabled() {
 		var lease excelBPSLease
-		attachmentProxy, lease, err = acquireExcelBPSProxy(ctx, scope)
+		// Pin the attachment upload and the Responses request to the same exit,
+		// whichever pool the account chose.
+		attachmentProxy, lease, err = requestAcquire(ctx, scope)
 		if err != nil {
 			return fail(503, "basispoints_proxy_unavailable", "No healthy BPS session proxy is available; retry later")
 		}
@@ -329,7 +343,44 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if lease != nil {
 		defer lease.Release()
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	if resp.StatusCode == http.StatusBadRequest {
+		// Read and close before retrying: the HTTP body owns the account's
+		// concurrency slot. Keep the proxy lease for the exact same exit.
+		const maxRejectionBytes = 512 << 10
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxRejectionBytes+1))
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+		if retryBody, retry := prepareExcelBPSInvalidEncryptedRetry(upstreamBody, raw); retry && readErr == nil && len(raw) <= maxRejectionBytes && ctx.Err() == nil {
+			retryReq, retryErr := newExcelBPSRequest(requestCtx, retryBody, token, accountID)
+			if retryErr != nil {
+				return fail(502, "basispoints_transport_error", "Excel BPS recovery request could not be prepared")
+			}
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+				ProxyID: opsUpstreamProxyID(account), ProxyName: opsUpstreamProxyName(account),
+				UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+				UpstreamURL: basispoints.ResponsesURL, Kind: "invalid_encrypted_content_retry",
+				Message: "Excel BPS rejected encrypted reasoning; retrying once without opaque reasoning on the same route",
+			})
+			logger.LegacyPrintf("service.openai_excel_bps", "retrying invalid encrypted reasoning once: account_id=%d", account.ID)
+			c.Set("excel_bps_upstream_attempt", c.GetInt("excel_bps_upstream_attempt")+1)
+			// Do not re-enter proxy acquisition or transport retries after sending.
+			resp, err = s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
+			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(sent).Milliseconds())
+			if err != nil {
+				if lease != nil && ctx.Err() == nil {
+					lease.ReportFailure()
+				}
+				return fail(502, "basispoints_transport_error", "Excel BPS recovery connection failed; request was not replayed again")
+			}
+			upstreamBody = retryBody
+		}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if lease != nil && resp.StatusCode >= 500 && ctx.Err() == nil {
 			lease.ReportUpstreamFailure()
@@ -370,6 +421,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		message := "Excel BPS rejected this request; account scheduling was not changed"
 		errorCode := "basispoints_upstream_error"
+		if resp.StatusCode == http.StatusBadRequest && isExcelBPSInvalidEncryptedContent(raw) {
+			errorCode = "invalid_encrypted_content"
+			message = "Excel BPS could not verify encrypted conversation state; resend the original plaintext history or start a new conversation"
+		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			errorCode = "basispoints_rate_limited"
 			message = "Excel BPS rate limit exceeded; Codex account scheduling was not changed"

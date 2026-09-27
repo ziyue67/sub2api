@@ -127,6 +127,12 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 }
 
 func (s *ScheduledTestRunnerService) runOnePlan(ctx context.Context, plan *ScheduledTestPlan) {
+	// Background plans do not run under the HTTP recovery middleware.
+	defer func() {
+		if recover() != nil {
+			logger.LegacyPrintf("service.scheduled_test_runner", "scheduled plan=%d account=%d panicked", plan.ID, plan.AccountID)
+		}
+	}()
 	if plan.PelicanConfig != nil {
 		s.runPelicanPlan(ctx, plan)
 		return

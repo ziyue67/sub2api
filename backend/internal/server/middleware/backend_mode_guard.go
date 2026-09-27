@@ -18,12 +18,25 @@ func BackendModeUserGuard(settingService *service.SettingService) gin.HandlerFun
 			return
 		}
 		role, _ := GetUserRoleFromContext(c)
-		if role == "admin" {
+		if role == service.RoleAdmin || (role == service.RoleObserver && observerOwnUsageRoute(c)) {
 			c.Next()
 			return
 		}
 		response.Forbidden(c, "Backend mode is active. User self-service is disabled.")
 		c.Abort()
+	}
+}
+
+// Grant only the read-only own-usage surface in backend mode.
+func observerOwnUsageRoute(c *gin.Context) bool {
+	if c.Request.Method != "GET" {
+		return false
+	}
+	switch c.FullPath() {
+	case "/api/v1/usage", "/api/v1/usage/:id", "/api/v1/usage/:id/timing", "/api/v1/usage/stats", "/api/v1/usage/filter-options", "/api/v1/usage/errors", "/api/v1/usage/errors/:id", "/api/v1/usage/dashboard/models", "/api/v1/usage/dashboard/snapshot-v2":
+		return true
+	default:
+		return false
 	}
 }
 

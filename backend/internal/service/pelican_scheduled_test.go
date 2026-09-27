@@ -166,3 +166,79 @@ func TestLegacyCandyPlanRejectsWrongAnswer(t *testing.T) {
 	require.Empty(t, intelligenceTestOutputError(cfg, "21"))
 	require.False(t, isBuiltinCandyPlan(&PelicanTestConfig{Prompt: "custom question"}))
 }
+
+func TestPelicanScheduleContainsSampleFailures(t *testing.T) {
+	for _, failure := range []string{"panic", "nil_result", "error"} {
+		t.Run(failure, func(t *testing.T) {
+			plans := &pelicanPlanRepo{}
+			results := &pelicanResults{}
+			runner := &ScheduledTestRunnerService{planRepo: plans, scheduledSvc: NewScheduledTestService(plans, results)}
+			var mu sync.Mutex
+			calls := 0
+			runner.runPelican = func(context.Context, int64, string, *PelicanTestConfig) (*ScheduledTestResult, error) {
+				mu.Lock()
+				calls++
+				current := calls
+				mu.Unlock()
+				if current == 1 {
+					switch failure {
+					case "panic":
+						panic("PRIVATE_REQUEST_DATA")
+					case "nil_result":
+						return nil, nil
+					case "error":
+						return nil, errors.New("upstream unavailable")
+					}
+				}
+				return &ScheduledTestResult{Status: "success", ResponseText: "<html>ok</html>"}, nil
+			}
+			runner.runOnePlan(context.Background(), pelicanPlan())
+			require.True(t, plans.finished, "failure must not leave the plan lease unfinished")
+			require.Len(t, results.results, 2)
+			statuses := []string{}
+			for _, result := range results.results {
+				require.NotNil(t, result)
+				statuses = append(statuses, result.Status)
+				require.NotContains(t, result.ErrorMessage, "PRIVATE_REQUEST_DATA")
+				if result.Status == "failed" {
+					require.NotEmpty(t, result.ErrorMessage)
+					require.Empty(t, result.ResponseText)
+					require.False(t, result.FinishedAt.Before(result.StartedAt))
+				}
+			}
+			require.ElementsMatch(t, []string{"failed", "success"}, statuses)
+			plans.claimed = false
+			runner.runOnePlan(context.Background(), pelicanPlan())
+			require.Len(t, results.results, 4, "later scheduled runs remain usable")
+		})
+	}
+}
+
+func TestPelicanSampleContainsJudgePanic(t *testing.T) {
+	plan := pelicanPlan()
+	plan.PelicanConfig.Quality = &QualityPolicy{}
+	runner := &ScheduledTestRunnerService{
+		runPelican: func(context.Context, int64, string, *PelicanTestConfig) (*ScheduledTestResult, error) {
+			return &ScheduledTestResult{Status: "success", ResponseText: "PRIVATE_ANSWER", StartedAt: time.Now()}, nil
+		},
+		judgeQuality: func(context.Context, int64, *PelicanTestConfig, string) *QualityJudgment {
+			panic("PRIVATE_JUDGE_DATA")
+		},
+	}
+	result := runner.runPelicanSample(context.Background(), plan)
+	require.Equal(t, "failed", result.Status)
+	require.Contains(t, result.ErrorMessage, "scheduled_test_panic")
+	require.NotContains(t, result.ErrorMessage, "PRIVATE")
+	require.Empty(t, result.ResponseText)
+	require.Nil(t, result.QualityJudgment)
+}
+
+type panickingPelicanPlanRepo struct{ ScheduledTestPlanRepository }
+
+func (*panickingPelicanPlanRepo) ClaimPelican(context.Context, *ScheduledTestPlan, time.Time, time.Time, time.Time) (bool, error) {
+	panic("PRIVATE_DATABASE_DIAGNOSTIC")
+}
+func TestScheduledPlanContainsInfrastructurePanic(t *testing.T) {
+	runner := &ScheduledTestRunnerService{planRepo: &panickingPelicanPlanRepo{}}
+	require.NotPanics(t, func() { runner.runOnePlan(context.Background(), pelicanPlan()) })
+}

@@ -77,6 +77,35 @@ func TestSettingsCodexTicketRestoresStaticProxyAfterKernel(t *testing.T) {
 	require.Equal(t, original, repo.values[key])
 }
 
+func TestSettingsCodexTicketIPPoolRoundTripKeepsStaticProxy(t *testing.T) {
+	key := service.SettingKeyOpenAICodexTicketHarvestProxyURL
+	original := "http://user:secret@residential.example:8080"
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{key: original})
+	rec := doUpdateSettings(t, h, map[string]any{key: service.OpenAICodexTicketHarvestIPPoolURL}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, service.OpenAICodexTicketHarvestIPPoolURL, repo.values[key])
+	require.Equal(t, original, repo.values[service.SettingKeyOpenAICodexTicketStaticProxyURL])
+	require.Contains(t, rec.Body.String(), `"openai_codex_ticket_harvest_proxy_url":"ippool://active"`)
+	require.Equal(t, service.OpenAICodexTicketHarvestIPPoolURL, h.settingService.GetOpenAICodexTicketHarvestProxyURL(context.Background()))
+
+	// Saving again in pool mode must not turn the sentinel into the static memory.
+	rec = doUpdateSettings(t, h, map[string]any{key: service.OpenAICodexTicketHarvestIPPoolURL}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, original, repo.values[service.SettingKeyOpenAICodexTicketStaticProxyURL])
+
+	get := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(get)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
+	h.GetSettings(c)
+	require.Equal(t, http.StatusOK, get.Code)
+	require.Contains(t, get.Body.String(), `"openai_codex_ticket_harvest_proxy_url":"ippool://active"`)
+	require.NotContains(t, get.Body.String(), ":secret@")
+
+	rec = doUpdateSettings(t, h, map[string]any{key: service.MaskProxyURL(original), "openai_codex_ticket_use_saved_static_proxy": true}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, original, repo.values[key])
+}
+
 func TestSettingsCodexTicketStrategyRoundTrip(t *testing.T) {
 	key := service.SettingKeyOpenAICodexTicketStrategy
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})

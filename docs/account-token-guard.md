@@ -19,11 +19,11 @@
 | 字段 | 说明 |
 | --- | --- |
 | 启用守护 | 关闭后不做任何巡检与修复 |
-| 守护分组 ID | 留空表示全部 OpenAI OAuth 账号；可填多个分组 |
+| 守护分组 | 留空表示全部 OpenAI OAuth 账号；页面通过下拉菜单支持多选分组 |
 | 巡检间隔 / 超时 / 并发 / 每轮上限 | 站点测活较慢时用「每轮上限」控制单轮规模，未覆盖账号下一轮优先 |
 | 测活接口 / 测活模型 | 默认指向参考服务 session.ameng2027.xyz 与 gpt-6-astra，可替换 | `POST {probe_endpoint}`，请求体 `{"access_token": "...", "model": "..."}`，按 NDJSON 返回 `{"type":"result","payload":{...}}` |
 | 测活 / 重登 额外请求头 | 每行一个 `Header-Name: value`；值里可用 `{{uuid}}` 生成每次请求唯一的随机串；接口协议要求由配置提供，代码不内置任何第三方标识 |
-| 自动重登 / 重登接口 / 重登凭据 | `POST {relogin_endpoint}`，请求体 `{"action":"start","email":"...","auth_mode":"password_2fa","password":"...","mfa_secret":"..."}`，返回 `credential` 对象 |
+| 自动重登 / 重登接口 / 重登凭据 | 页面每行使用 `账号----密码----2FA`（兼容旧逗号格式）；接口请求体为 `{"action":"start","email":"...","auth_mode":"password_2fa","password":"...","mfa_secret":"..."}`，返回 `credential` 对象 |
 | 修复后恢复调度 | 修复成功后重新打开账号调度 |
 | Bark Key / 推送开关 | 可选，修复成功或失败时推送通知 |
 

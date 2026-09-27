@@ -14,6 +14,8 @@ const authStore = vi.hoisted(() => ({
   checkAuth: vi.fn(),
   isAuthenticated: true,
   isAdmin: false,
+  isObserver: false,
+  canManageAccounts: false,
   isSimpleMode: false,
   hasPendingAuthSession: false,
 }))
@@ -98,6 +100,8 @@ function runGuard(meta: Record<string, unknown>, path: string) {
       fullPath: path,
       name: 'FeatureRoute',
       params: {},
+      // The guard reads affiliate codes from to.query; keep the stub shape in sync.
+      query: {},
       meta: { requiresAuth: true, ...meta },
     },
     {},
@@ -114,10 +118,33 @@ describe('feature route guard', () => {
   beforeEach(() => {
     authStore.isAuthenticated = true
     authStore.isAdmin = false
+    authStore.isObserver = false
+    appStore.backendModeEnabled = false
     authStore.isSimpleMode = false
     appStore.publicSettingsLoaded = false
     appStore.cachedPublicSettings = null
     appStore.fetchPublicSettings.mockReset()
+  })
+
+  it('allows observers own usage in backend mode without opening other user or admin pages', async () => {
+    appStore.backendModeEnabled = true
+    authStore.isObserver = true
+    for (const simple of [false, true]) {
+      authStore.isSimpleMode = simple
+      const own = runGuard({}, '/usage')
+      await own.navigation
+      expect(own.next).toHaveBeenCalledWith()
+    }
+    const admin = runGuard({ requiresAdmin: true }, '/admin/usage')
+    await admin.navigation
+    expect(admin.next).toHaveBeenCalledWith('/dashboard')
+    const other = runGuard({}, '/keys')
+    await other.navigation
+    expect(other.next).toHaveBeenCalledWith('/login')
+    authStore.isObserver = false
+    const user = runGuard({}, '/usage')
+    await user.navigation
+    expect(user.next).toHaveBeenCalledWith('/login')
   })
 
   it('waits for the first public-settings request before deciding payment access', async () => {

@@ -5,7 +5,7 @@
       <!-- Left: filters (allowed to wrap to multiple rows) -->
       <div class="flex flex-1 flex-wrap items-end gap-4">
         <!-- User Search -->
-        <div ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
+        <div v-if="!observerMode" ref="userSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[240px]">
           <label class="input-label">{{ t('admin.usage.userFilter') }}</label>
           <input
             v-model="userKeyword"
@@ -50,8 +50,8 @@
             type="text"
             class="input pr-8 disabled:cursor-not-allowed disabled:opacity-60"
             :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
-            :disabled="!filters.user_id"
-            :title="!filters.user_id ? t('admin.usage.selectUserBeforeApiKey') : undefined"
+            :disabled="!observerMode && !filters.user_id"
+            :title="!observerMode && !filters.user_id ? t('admin.usage.selectUserBeforeApiKey') : undefined"
             @input="debounceApiKeySearch"
             @focus="onApiKeyFocus"
           />
@@ -78,6 +78,43 @@
             >
               <span class="truncate">{{ k.name || `#${k.id}` }}</span>
               <span class="ml-2 text-xs text-gray-400">#{{ k.id }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Account Filter -->
+        <div ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
+          <label class="input-label">{{ t('admin.usage.account') }}</label>
+          <input
+            v-model="accountKeyword"
+            type="text"
+            class="input pr-8"
+            :placeholder="t('admin.usage.searchAccountPlaceholder')"
+            @input="debounceAccountSearch"
+            @focus="showAccountDropdown = true"
+          />
+          <button
+            v-if="filters.account_id"
+            type="button"
+            @click="clearAccount"
+            class="absolute right-2 top-9 text-gray-400"
+            aria-label="Clear account filter"
+          >
+            ✕
+          </button>
+          <div
+            v-if="showAccountDropdown && (accountResults.length > 0 || accountKeyword)"
+            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
+          >
+            <button
+              v-for="a in accountResults"
+              :key="a.id"
+              type="button"
+              @click="selectAccount(a)"
+              class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
+            >
+              <span class="truncate">{{ a.name }}</span>
+              <span class="ml-2 text-xs text-gray-400">#{{ a.id }}</span>
             </button>
           </div>
         </div>
@@ -154,7 +191,7 @@
         </button>
         <slot name="after-reset" />
         <template v-if="mode === 'usage'">
-          <button type="button" @click="$emit('cleanup')" class="btn btn-danger">
+          <button v-if="!observerMode" type="button" @click="$emit('cleanup')" class="btn btn-danger">
             {{ t('admin.usage.cleanup.button') }}
           </button>
           <button type="button" @click="$emit('export')" :disabled="exporting" class="btn btn-primary">
@@ -167,12 +204,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, toRef, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, toRef, watch, computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { observerUsageAPI, type UsageFilterOption } from '@/api/observerUsage'
+import { observerUsageContext } from './observerUsageContext'
 import { adminAPI } from '@/api/admin'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
-import type { SimpleApiKey, SimpleUser } from '@/api/admin/usage'
+import type { SimpleUser } from '@/api/admin/usage'
 
 type ModelValue = Record<string, any>
 
@@ -210,10 +249,12 @@ const emit = defineEmits([
 ])
 
 const { t } = useI18n()
+const observerMode = inject(observerUsageContext, false)
 const filters = toRef(props, 'modelValue')
 
 const userSearchRef = ref<HTMLElement | null>(null)
 const apiKeySearchRef = ref<HTMLElement | null>(null)
+const accountSearchRef = ref<HTMLElement | null>(null)
 
 const userKeyword = ref('')
 const userResults = ref<SimpleUser[]>([])
@@ -222,9 +263,18 @@ let userSearchTimeout: ReturnType<typeof setTimeout> | null = null
 let userSearchSequence = 0
 
 const apiKeyKeyword = ref('')
-const apiKeyResults = ref<SimpleApiKey[]>([])
+const apiKeyResults = ref<UsageFilterOption[]>([])
 const showApiKeyDropdown = ref(false)
 let apiKeySearchTimeout: ReturnType<typeof setTimeout> | null = null
+
+interface SimpleAccount {
+  id: number
+  name: string
+}
+const accountKeyword = ref('')
+const accountResults = ref<SimpleAccount[]>([])
+const showAccountDropdown = ref(false)
+let accountSearchTimeout: ReturnType<typeof setTimeout> | null = null
 
 
 const modelOptions = computed<SelectOption[]>(() => [
@@ -302,6 +352,7 @@ const clearPendingUserSearch = () => {
 }
 
 const debounceUserSearch = () => {
+  if (observerMode) return
   clearPendingUserSearch()
   const query = userKeyword.value.trim()
   if (!query) {
@@ -327,17 +378,18 @@ const debounceUserSearch = () => {
 
 const debounceApiKeySearch = () => {
   if (apiKeySearchTimeout) clearTimeout(apiKeySearchTimeout)
-  if (!filters.value.user_id) {
+  // Admins must pick a user before searching API keys; observers only ever see
+  // their own choices, so the search runs without a user_id.
+  if (!observerMode && !filters.value.user_id) {
     apiKeyResults.value = []
     showApiKeyDropdown.value = false
     return
   }
   apiKeySearchTimeout = setTimeout(async () => {
     try {
-      apiKeyResults.value = await adminAPI.usage.searchApiKeys(
-        filters.value.user_id,
-        apiKeyKeyword.value || ''
-      )
+      apiKeyResults.value = observerMode
+        ? await observerUsageAPI.filterOptions('api_key', apiKeyKeyword.value || '')
+        : await adminAPI.usage.searchApiKeys(filters.value.user_id, apiKeyKeyword.value || '')
     } catch {
       apiKeyResults.value = []
     }
@@ -345,6 +397,7 @@ const debounceApiKeySearch = () => {
 }
 
 const selectUser = async (u: SimpleUser) => {
+  if (observerMode) return
   clearPendingUserSearch()
   userKeyword.value = u.email || String(u.id)
   showUserDropdown.value = false
@@ -364,7 +417,7 @@ const clearUser = () => {
   emitChange()
 }
 
-const selectApiKey = (k: SimpleApiKey) => {
+const selectApiKey = (k: UsageFilterOption) => {
   apiKeyKeyword.value = k.name || String(k.id)
   showApiKeyDropdown.value = false
   filters.value.api_key_id = k.id
@@ -383,11 +436,43 @@ const onClearApiKey = () => {
   emitChange()
 }
 
+const selectAccount = (a: SimpleAccount) => {
+  filters.value.account_id = a.id
+  accountKeyword.value = a.name
+  showAccountDropdown.value = false
+  emitChange()
+}
+
+const clearAccount = () => {
+  filters.value.account_id = undefined
+  accountKeyword.value = ''
+  accountResults.value = []
+  showAccountDropdown.value = false
+}
+
 const clearPendingApiKeySearch = () => {
   if (apiKeySearchTimeout) {
     clearTimeout(apiKeySearchTimeout)
     apiKeySearchTimeout = null
   }
+}
+
+const debounceAccountSearch = () => {
+  if (accountSearchTimeout) clearTimeout(accountSearchTimeout)
+  accountSearchTimeout = setTimeout(async () => {
+    if (!accountKeyword.value) {
+      accountResults.value = []
+      return
+    }
+    try {
+      const res = observerMode
+        ? { items: await observerUsageAPI.filterOptions('account', accountKeyword.value) }
+        : await adminAPI.accounts.list(1, 20, { search: accountKeyword.value })
+      accountResults.value = res.items.map((a) => ({ id: a.id, name: a.name }))
+    } catch {
+      accountResults.value = []
+    }
+  }, 300)
 }
 
 
@@ -406,9 +491,11 @@ const onDocumentClick = (e: MouseEvent) => {
 
   const clickedInsideUser = userSearchRef.value?.contains(target) ?? false
   const clickedInsideApiKey = apiKeySearchRef.value?.contains(target) ?? false
+  const clickedInsideAccount = accountSearchRef.value?.contains(target) ?? false
 
   if (!clickedInsideUser) showUserDropdown.value = false
   if (!clickedInsideApiKey) showApiKeyDropdown.value = false
+  if (!clickedInsideAccount) showAccountDropdown.value = false
 }
 
 watch(
@@ -450,11 +537,23 @@ watch(
   }
 )
 
+watch(
+  () => filters.value.account_id,
+  (accountId) => {
+    if (!accountId) {
+      accountKeyword.value = ''
+      accountResults.value = []
+    }
+  }
+)
+
 
 onMounted(async () => {
   document.addEventListener('click', onDocumentClick)
   try {
-    const gs = await adminAPI.groups.list(1, 1000)
+    const gs = observerMode
+      ? { items: await observerUsageAPI.filterOptions('group') }
+      : await adminAPI.groups.list(1, 1000)
     groupOptions.value.push(...gs.items.map((g: any) => ({ value: g.id, label: g.name })))
   } catch {
     // Ignore filter option loading errors (page still usable)

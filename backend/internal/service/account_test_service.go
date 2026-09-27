@@ -167,6 +167,7 @@ type AccountTestService struct {
 	openaiGatewayService      *OpenAIGatewayService
 	bpsProbeMu                sync.Mutex
 	bpsProbeAccounts          map[int64]struct{}
+	stateProbeAccounts        sync.Map
 	agentIdentityTaskMu       sync.Mutex
 	agentIdentityWS           agentIdentityWSConnectionInvalidator
 	// grokWSDialer is optional; realtime account tests use the default OpenAI-style
@@ -1055,6 +1056,9 @@ func (s *AccountTestService) testExcelBPSAccountConnection(c *gin.Context, accou
 	probe := httptest.NewRecorder()
 	probeCtx, _ := gin.CreateTestContext(probe)
 	probeCtx.Request = c.Request.Clone(c.Request.Context())
+	if probeCtx.Request.Header == nil {
+		probeCtx.Request.Header = make(http.Header)
+	}
 	// Manual one-shot tests have no client conversation. Give them a scoped
 	// identity so enabling the session proxy does not break the test button.
 	// Explicit identities (including load-test sessions) remain unchanged.
@@ -3456,7 +3460,7 @@ func (s *AccountTestService) RunTestBackgroundDetailed(ctx context.Context, acco
 
 	w := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(w)
-	ginCtx.Request = (&http.Request{}).WithContext(ctx)
+	ginCtx.Request = (&http.Request{Header: make(http.Header)}).WithContext(ctx)
 	timingWriter := &accountTestTimingWriter{ResponseWriter: ginCtx.Writer, startedAt: startedAt}
 	ginCtx.Writer = timingWriter
 

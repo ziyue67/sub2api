@@ -80,10 +80,10 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 	if groupIn != nil && groupIn.DynamicRateMarkup == 0 {
 		groupIn.DynamicRateMarkup = service.DefaultDynamicRateMarkup
 	}
-	if err := createGroupRecord(ctx, r.client, groupIn); err != nil {
+	if err := createGroupRecord(ctx, clientFromContext(ctx, r.client), groupIn); err != nil {
 		return err
 	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
+	if err := enqueueSchedulerOutbox(ctx, txAwareSQLExecutor(ctx, r.sql, r.client), service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group create failed: group=%d err=%v", groupIn.ID, err)
 	}
 	return nil

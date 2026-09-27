@@ -225,7 +225,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, inject } from 'vue'
+import { observerUsageAPI } from '@/api/observerUsage'
+import { observerUsageContext } from '@/components/admin/usage/observerUsageContext'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -246,6 +248,8 @@ interface Emits {
   (e: 'back'): void
 }
 
+const observerMode = inject(observerUsageContext, false)
+
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
@@ -255,7 +259,7 @@ const appStore = useAppStore()
 const loading = ref(false)
 const detail = ref<OpsErrorDetail | null>(null)
 
-const showUpstreamList = computed(() => props.errorType === 'request')
+const showUpstreamList = computed(() => !observerMode && props.errorType === 'request')
 
 const requestId = computed(() => detail.value?.request_id || detail.value?.client_request_id || '')
 
@@ -355,6 +359,7 @@ function toggleUpstreamDetail(id: number) {
 }
 
 async function fetchCorrelatedUpstreamErrors(requestErrorId: number) {
+  if (observerMode) return
   correlatedUpstreamLoading.value = true
   try {
     const res = await opsAPI.listRequestErrorUpstreamErrors(
@@ -393,7 +398,7 @@ async function fetchDetail(id: number) {
   loading.value = true
   try {
     const kind = props.errorType || (detail.value?.phase === 'upstream' ? 'upstream' : 'request')
-    const d = kind === 'upstream' ? await opsAPI.getUpstreamErrorDetail(id) : await opsAPI.getRequestErrorDetail(id)
+    const d = observerMode ? await observerUsageAPI.getErrorDetail(id) : kind === 'upstream' ? await opsAPI.getUpstreamErrorDetail(id) : await opsAPI.getRequestErrorDetail(id)
     detail.value = d
   } catch (err: any) {
     detail.value = null
@@ -413,7 +418,7 @@ watch(
     if (typeof id === 'number' && id > 0) {
       expandedUpstreamDetailIds.value = new Set()
       fetchDetail(id)
-      if (props.errorType === 'request') {
+      if (!observerMode && props.errorType === 'request') {
         fetchCorrelatedUpstreamErrors(id)
       } else {
         correlatedUpstream.value = []

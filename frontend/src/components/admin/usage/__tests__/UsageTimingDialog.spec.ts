@@ -1,8 +1,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import UsageTimingDialog from '../UsageTimingDialog.vue'
+import { observerUsageContext } from '../observerUsageContext'
 import type { AdminUsageLog } from '@/types'
-const mocks = vi.hoisted(() => ({ get: vi.fn() }))
+const mocks = vi.hoisted(() => ({ get: vi.fn(), own: vi.fn() }))
+vi.mock('@/api/observerUsage', () => ({ observerUsageAPI: { getTiming: mocks.own } }))
 vi.mock('@/api/admin/usageTiming', () => ({ getUsageTiming: mocks.get }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/utils/format', () => ({ formatDateTime: (s: string) => s }))
@@ -61,4 +63,14 @@ describe('Usage timing details', () => {
     wrapper.unmount()
   })
 
+})
+
+it('loads observer timings only from the own-usage endpoint', async () => {
+  vi.clearAllMocks()
+  mocks.own.mockResolvedValue({ traces: [], retention_days: 30 })
+  const wrapper = mount(UsageTimingDialog, { props: { record: row(42) }, global: { ...options.global, provide: { [observerUsageContext as symbol]: true } } })
+  await flushPromises()
+  expect(mocks.own).toHaveBeenCalledWith(42, expect.anything())
+  expect(mocks.get).not.toHaveBeenCalled()
+  wrapper.unmount()
 })

@@ -30,6 +30,9 @@ func (s *OpenAIGatewayService) executeParallelHarvest(ctx context.Context, req M
 	if s.codexTicketChatHeld(account.ID) {
 		return errors.New("account is in an active conversation")
 	}
+	if s.openAICodexTicketHarvestIPPoolEnabled(ctx) {
+		return errors.New("parallel collection requires the managed Mihomo proxy; the IP pool harvests on a single lane")
+	}
 	collection, err := mihomo.BeginCollection(ctx, s.openAICodexTicketHarvestProxyURLContext(ctx))
 	if err != nil {
 		return err

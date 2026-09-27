@@ -188,3 +188,59 @@ func TestExcelBPS429CorrectionDoesNotChangeCodexState(t *testing.T) {
 		})
 	}
 }
+
+func TestExcelBPSMixedToolCorrectionKeepsOriginalOperation(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprint(stream), func(t *testing.T) {
+			wire := func(corrected bool) string {
+				summary, code, id := "Run client tool", "text(42);", "initial"
+				command := "pwd"
+				if corrected {
+					summary, id, command = "codex2api.custom/functions.exec", "corrected", "changed command"
+				}
+				raw := excelBPSRepairWire(t, id, summary, code)
+				var event map[string]any
+				require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(strings.SplitN(raw, "data: ", 2)[1])), &event))
+				response, ok := event["response"].(map[string]any)
+				require.True(t, ok)
+				output, ok := response["output"].([]any)
+				require.True(t, ok)
+				envelope, err := json.Marshal(map[string]any{"name": "shell", "arguments": map[string]any{"cmd": command}})
+				require.NoError(t, err)
+				args, err := json.Marshal(map[string]any{"code": string(envelope), "summary": "Inspect directory", "extended_summary": "Inspect current directory", "references": []any{}, "destructive": false})
+				require.NoError(t, err)
+				response["output"] = append(output, map[string]any{"type": "function_call", "name": "run_officejs", "id": "fc_shell_" + id, "call_id": "shell_" + id, "arguments": string(args)})
+				encoded, err := json.Marshal(event)
+				require.NoError(t, err)
+				return "event: response.completed\ndata: " + string(encoded) + "\n\n"
+			}
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{
+				{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(wire(false)))},
+				{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(wire(true)))},
+			}}
+			svc := openAIClientToolsTestService(upstream)
+			body := []byte(fmt.Sprintf("{\"model\":\"gpt-5.5\",\"stream\":%t,\"input\":\"inspect\",\"tools\":[{\"type\":\"function\",\"name\":\"shell\",\"parameters\":{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"}}}},{\"type\":\"namespace\",\"name\":\"functions\",\"tools\":[{\"type\":\"custom\",\"name\":\"exec\"}]}]}", stream))
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			account := excelAccount()
+			account.Credentials["model_mapping"] = map[string]any{"gpt-5.5": "gpt-5.6-sol"}
+			result, err := svc.Forward(context.Background(), c, account, body)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Len(t, upstream.requests, 2)
+			require.Equal(t, 20, result.Usage.InputTokens)
+			require.Contains(t, rec.Body.String(), "pwd")
+			require.Contains(t, rec.Body.String(), "text(42);")
+			require.NotContains(t, rec.Body.String(), "changed command")
+			require.NotContains(t, rec.Body.String(), "response.failed")
+			for _, sent := range upstream.bodies {
+				require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(sent, "model").String())
+			}
+			if stream {
+				require.Equal(t, 2, strings.Count(rec.Body.String(), "event: response.output_item.added"))
+				require.Equal(t, 1, strings.Count(rec.Body.String(), "event: response.completed"))
+			}
+		})
+	}
+}

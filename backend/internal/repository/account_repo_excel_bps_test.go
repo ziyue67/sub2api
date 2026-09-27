@@ -16,17 +16,24 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 		removed []string
 	}{
 		{
+			name:    "re-enabling clears 403 marker",
+			extra:   map[string]any{"openai_excel_bps": true},
+			removed: []string{service.ExcelBPS403DisabledAtKey},
+		},
+		{
 			name:    "all models removes scope key",
 			extra:   map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": nil, "openai_excel_bps_cache_creation_as_input": false},
-			removed: []string{"openai_excel_bps_models", "openai_excel_bps_cache_creation_as_input"},
+			removed: []string{service.ExcelBPS403DisabledAtKey, "openai_excel_bps_models", "openai_excel_bps_cache_creation_as_input"},
 		},
 		{
-			name:  "empty scope remains explicit",
-			extra: map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": []string{}, "openai_excel_bps_cache_creation_as_input": true},
+			name:    "empty scope remains explicit",
+			extra:   map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": []string{}, "openai_excel_bps_cache_creation_as_input": true},
+			removed: []string{service.ExcelBPS403DisabledAtKey},
 		},
 		{
-			name:  "selected scope remains explicit",
-			extra: map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": []string{"gpt-6-astra"}},
+			name:    "selected scope remains explicit",
+			extra:   map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": []string{"gpt-6-astra"}},
+			removed: []string{service.ExcelBPS403DisabledAtKey},
 		},
 		{
 			name:    "disabled removes all BPS settings",

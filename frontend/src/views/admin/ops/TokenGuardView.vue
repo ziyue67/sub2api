@@ -35,7 +35,16 @@
             <fieldset :disabled="saving">
               <label class="enable-row"><span><strong>{{ t('tokenGuard.enabled') }}</strong><small>{{ t('tokenGuard.enabledHint') }}</small></span><input v-model="draft.enabled" type="checkbox" role="switch" :aria-label="t('tokenGuard.enabled')" /></label>
               <label class="field-label">{{ t('tokenGuard.groupIds') }}</label>
-              <input v-model="groupIdsText" class="input w-full" placeholder="1, 2" />
+              <Select
+                v-model="selectedGroupIds"
+                multiple
+                searchable
+                :options="groupOptions"
+                :placeholder="t('tokenGuard.allGroups')"
+                :aria-label="t('tokenGuard.groupIds')"
+                :disabled="groupsLoading"
+              />
+              <p v-if="groupsLoadError" class="field-hint text-amber-600 dark:text-amber-400">{{ t('tokenGuard.groupsLoadError') }}</p>
               <p class="field-hint">{{ t('tokenGuard.groupIdsHint') }}</p>
 
               <div class="grid-2">
@@ -61,7 +70,7 @@
               <label class="kind-option"><input v-model="draft.restore_schedulable" type="checkbox" /><span><strong>{{ t('tokenGuard.restoreSchedulable') }}</strong><small>{{ t('tokenGuard.scopeNote') }}</small></span></label>
 
               <label class="field-label">{{ t('tokenGuard.reloginAccounts') }}</label>
-              <textarea v-model="reloginText" rows="7" class="input w-full font-mono text-xs" placeholder="user@example.com,password,JBSWY3DPEHPK3PXP"></textarea>
+              <textarea v-model="reloginText" rows="7" class="input w-full font-mono text-xs" placeholder="user@example.com----password----JBSWY3DPEHPK3PXP"></textarea>
               <p class="field-hint">{{ t('tokenGuard.reloginAccountsHint') }}</p>
 
               <div class="grid-2">
@@ -128,8 +137,13 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import Icon from '@/components/icons/Icon.vue'
+import Select from '@/components/common/Select.vue'
+import { groupsAPI } from '@/api/admin/groups'
+import type { AdminGroup, SelectOption } from '@/types'
 import {
   getTokenGuardStatus,
+  formatTokenGuardReloginText,
+  parseTokenGuardReloginText,
   reloginTokenGuardAccount,
   runTokenGuard,
   saveTokenGuardConfig,
@@ -141,18 +155,42 @@ import {
 const { t } = useI18n()
 const remote = ref<TokenGuardStatus | null>(null)
 const draft = ref<TokenGuardConfig | null>(null)
-const groupIdsText = ref('')
 const reloginText = ref('')
 const probeHeadersText = ref('')
 const reloginHeadersText = ref('')
 const loading = ref(false), saving = ref(false), running = ref(false), reloginBusy = ref(0)
 const error = ref(''), notice = ref('')
+const groups = ref<AdminGroup[]>([])
+const groupsLoading = ref(false)
+const groupsLoadError = ref(false)
 let timer: ReturnType<typeof setInterval> | undefined
 let alive = true
 
 const accounts = computed(() => remote.value?.accounts ?? [])
 const events = computed<TokenGuardEvent[]>(() => remote.value?.events ?? [])
 const badCount = computed(() => accounts.value.filter(item => item.probe_state === 'auth' || item.account_status === 'error').length)
+const selectedGroupIds = computed<number[]>({
+  get: () => draft.value?.group_ids ?? [],
+  set: (value) => {
+    if (draft.value) {
+      draft.value = {
+        ...draft.value,
+        group_ids: [...new Set(value.map(Number).filter(id => Number.isInteger(id) && id > 0))]
+      }
+    }
+  }
+})
+const groupOptions = computed<SelectOption[]>(() => {
+  const known = groups.value.map(group => ({
+    value: group.id,
+    label: `${group.name} (#${group.id})`
+  }))
+  const knownIds = new Set(groups.value.map(group => group.id))
+  const missing = selectedGroupIds.value
+    .filter(id => !knownIds.has(id))
+    .map(id => ({ value: id, label: `#${id}` }))
+  return [...missing, ...known]
+})
 const dirty = computed(() => {
   if (!draft.value || !remote.value) return false
   return JSON.stringify(collect()) !== JSON.stringify(normalize(remote.value.config))
@@ -164,12 +202,7 @@ const date = (value: string) => {
   return Number.isNaN(parsed.getTime()) ? value : `${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`
 }
 const message = (e: unknown) => (e as { message?: string })?.message || t('qualityOps.error')
-const parseGroupIds = (raw: string) => raw.split(/[,\s;]+/).map(value => Number(value.trim())).filter(value => Number.isFinite(value) && value > 0)
-const parseRelogin = (raw: string) => raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
-  const [email = '', password = '', mfa = ''] = line.split(',')
-  return { email: email.trim(), password: password.trim(), mfa_secret: mfa.trim() }
-}).filter(item => item.email && item.password)
-const reloginTextOf = (config: TokenGuardConfig | null) => (config?.relogin_accounts ?? []).map(item => `${item.email},${item.password},${item.mfa_secret}`).join('\n')
+const reloginTextOf = (config: TokenGuardConfig | null) => formatTokenGuardReloginText(config?.relogin_accounts)
 const parseHeaders = (raw: string) => raw.split(/\r?\n/).reduce<Record<string, string>>((acc, line) => {
   const index = line.indexOf(':')
   if (index > 0) {
@@ -180,8 +213,6 @@ const parseHeaders = (raw: string) => raw.split(/\r?\n/).reduce<Record<string, s
   return acc
 }, {})
 const headersTextOf = (headers: Record<string, string> | undefined) => Object.entries(headers ?? {}).map(([name, value]) => `${name}: ${value}`).join('\n')
-const groupTextOf = (config: TokenGuardConfig | null) => (config?.group_ids ?? []).join(', ')
-
 function normalize(config: TokenGuardConfig): TokenGuardConfig {
   return {
     ...config,
@@ -194,7 +225,7 @@ function normalize(config: TokenGuardConfig): TokenGuardConfig {
 
 function collect(): TokenGuardConfig {
   const base = draft.value!
-  return normalize({ ...base, group_ids: parseGroupIds(groupIdsText.value), relogin_accounts: parseRelogin(reloginText.value),
+  return normalize({ ...base, group_ids: base.group_ids, relogin_accounts: parseTokenGuardReloginText(reloginText.value),
     probe_headers: parseHeaders(probeHeadersText.value), relogin_headers: parseHeaders(reloginHeadersText.value) })
 }
 
@@ -212,7 +243,6 @@ async function load(silent = false) {
     remote.value = status
     if (!preserveDraft) {
       draft.value = { ...status.config }
-      groupIdsText.value = groupTextOf(status.config)
       reloginText.value = reloginTextOf(status.config)
       probeHeadersText.value = headersTextOf(status.config.probe_headers)
       reloginHeadersText.value = headersTextOf(status.config.relogin_headers)
@@ -224,6 +254,18 @@ async function load(silent = false) {
   }
 }
 
+async function loadGroups() {
+  groupsLoading.value = true
+  groupsLoadError.value = false
+  try {
+    groups.value = await groupsAPI.getAll('openai')
+  } catch {
+    groupsLoadError.value = true
+  } finally {
+    groupsLoading.value = false
+  }
+}
+
 async function save() {
   if (!draft.value || saving.value) return
   saving.value = true; error.value = ''; notice.value = ''
@@ -231,7 +273,6 @@ async function save() {
     const saved = await saveTokenGuardConfig(collect())
     if (!alive) return
     draft.value = { ...saved }
-    groupIdsText.value = groupTextOf(saved)
     reloginText.value = reloginTextOf(saved)
     probeHeadersText.value = headersTextOf(saved.probe_headers)
     reloginHeadersText.value = headersTextOf(saved.relogin_headers)
@@ -276,6 +317,7 @@ async function relogin(item: { account_id: number }) {
 
 onMounted(() => {
   void load()
+  void loadGroups()
   timer = setInterval(() => { if (document.visibilityState === 'visible') void load(true) }, 30_000)
 })
 onBeforeUnmount(() => { alive = false; if (timer) clearInterval(timer) })

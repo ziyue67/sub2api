@@ -276,7 +276,7 @@ func (s *OpenAIGatewayService) loadCodexTicketDirectedSidecar(ctx context.Contex
 	dataDir := os.Getenv("DATA_DIR")
 	seen := map[string]bool{}
 	var last error
-	for _, candidate := range []string{proxyURL, s.openAICodexTicketHarvestProxyURLContext(ctx)} {
+	for _, candidate := range []string{proxyURL, s.openAICodexTicketHarvestFixedProxyURL(ctx)} {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" || seen[candidate] {
 			continue
@@ -309,7 +309,7 @@ func (s *OpenAIGatewayService) codexTicketPinsEgressFromHeader(ctx context.Conte
 	return strings.TrimSpace(ticket.HarvestProxyURL) != "" ||
 		strings.TrimSpace(ticket.HarvestNodeID) != "" ||
 		strings.TrimSpace(ticket.HarvestNodeName) != "" ||
-		s.openAICodexTicketHarvestProxyURLContext(ctx) != ""
+		s.openAICodexTicketHarvestFixedProxyURL(ctx) != ""
 }
 
 func (s *OpenAIGatewayService) pinCodexTicketEgress(req *http.Request, account *Account, proxyURL string) (string, func(), error) {
@@ -332,7 +332,7 @@ func (s *OpenAIGatewayService) pinCodexTicketEgressFromHeader(ctx context.Contex
 	}
 	pinned := strings.TrimSpace(ticket.HarvestProxyURL)
 	if pinned == "" {
-		pinned = s.openAICodexTicketHarvestProxyURLContext(ctx)
+		pinned = s.openAICodexTicketHarvestFixedProxyURL(ctx)
 	}
 	if pinned == "" {
 		return proxyURL, noop, nil

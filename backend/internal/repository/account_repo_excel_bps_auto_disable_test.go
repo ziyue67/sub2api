@@ -2,9 +2,12 @@ package repository
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
+	"time"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
@@ -13,6 +16,18 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+// recentUTCTimestampArg matches the RFC 3339 disable time written with the switch.
+type recentUTCTimestampArg struct{}
+
+func (recentUTCTimestampArg) Match(value driver.Value) bool {
+	text, ok := value.(string)
+	if !ok || !strings.HasSuffix(text, "Z") {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, text)
+	return err == nil && !at.After(time.Now()) && time.Since(at) < time.Minute
+}
 
 func TestDisableExcelBPSOn403AtomicWrite(t *testing.T) {
 	for _, tc := range []struct {
@@ -41,13 +56,13 @@ func TestDisableExcelBPSOn403AtomicWrite(t *testing.T) {
 				begin.WillReturnError(failure)
 			} else {
 				query := `(?s)` + regexp.QuoteMeta("UPDATE accounts") + `.*` +
-					regexp.QuoteMeta("SET extra = jsonb_set(extra, '{openai_excel_bps}', 'false'::jsonb), updated_at = NOW()") + `.*` +
+					regexp.QuoteMeta("SET extra = jsonb_set(extra, '{openai_excel_bps}', 'false'::jsonb) || jsonb_build_object('openai_excel_bps_403_disabled_at', $3::text), updated_at = NOW()") + `.*` +
 					regexp.QuoteMeta("WHERE id = $1 AND deleted_at IS NULL AND parent_account_id IS NULL") + `.*` +
 					regexp.QuoteMeta("AND platform = 'openai' AND type = 'oauth'") + `.*` +
 					regexp.QuoteMeta("AND credentials = $2::jsonb") + `.*` +
 					regexp.QuoteMeta("AND extra -> 'openai_excel_bps' = 'true'::jsonb") + `.*` +
 					regexp.QuoteMeta("AND extra -> 'openai_excel_bps_auto_disable_on_403' = 'true'::jsonb")
-				update := mock.ExpectExec(query).WithArgs(int64(27), `{"access_token":"test-token"}`)
+				update := mock.ExpectExec(query).WithArgs(int64(27), `{"access_token":"test-token"}`, recentUTCTimestampArg{})
 				switch tc.failure {
 				case "update":
 					update.WillReturnError(failure)
