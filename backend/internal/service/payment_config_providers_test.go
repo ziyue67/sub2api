@@ -130,8 +130,14 @@ func TestValidateEasyPayCustomMethods(t *testing.T) {
 		},
 		{
 			name:           "upstream type allows periods",
-			config:         map[string]string{"customMethods": `[{"type":"usdt_trc20","upstreamType":"usdt.trc20"}]`},
+			config:         map[string]string{"customMethods": `[{"type":"usdt_trc20","upstreamType":"usdt.trc20","exchangeRate":6.5}]`},
 			supportedTypes: "alipay,wxpay,usdt_trc20",
+		},
+		{
+			name:           "exchange rate must be positive",
+			config:         map[string]string{"customMethods": `[{"type":"usdt_trc20","upstreamType":"usdt.trc20","exchangeRate":0}]`},
+			supportedTypes: "alipay,wxpay,usdt_trc20",
+			wantErr:        "customMethods exchangeRate must be greater than zero",
 		},
 		{
 			name:           "custom type still rejects periods",

@@ -25,6 +25,7 @@ export interface EasyPayCustomMethod {
   type: string
   upstreamType: string
   displayName: string
+  exchangeRate?: string | number
 }
 
 /** Callback URL paths for a provider. */
@@ -195,6 +196,7 @@ export function parseEasyPayCustomMethods(raw: string | undefined): EasyPayCusto
         type: String(item?.type || '').trim(),
         upstreamType: String(item?.upstreamType || '').trim(),
         displayName: String(item?.displayName || '').trim(),
+        ...(item?.exchangeRate == null ? {} : { exchangeRate: String(item.exchangeRate).trim() }),
       }))
       .filter(item => item.type && item.upstreamType)
   } catch {
@@ -204,11 +206,18 @@ export function parseEasyPayCustomMethods(raw: string | undefined): EasyPayCusto
 
 export function serializeEasyPayCustomMethods(methods: EasyPayCustomMethod[]): string {
   const clean = methods
-    .map(method => ({
-      type: method.type.trim(),
-      upstreamType: method.upstreamType.trim(),
-      displayName: method.displayName.trim(),
-    }))
+    .map(method => {
+      const exchangeRateText = String(method.exchangeRate ?? '').trim()
+      const exchangeRate = Number(exchangeRateText)
+      return {
+        type: method.type.trim(),
+        upstreamType: method.upstreamType.trim(),
+        displayName: method.displayName.trim(),
+        ...(exchangeRateText && Number.isFinite(exchangeRate) && exchangeRate > 0
+          ? { exchangeRate }
+          : {}),
+      }
+    })
     .filter(method => method.type && method.upstreamType)
   return clean.length ? JSON.stringify(clean) : ''
 }

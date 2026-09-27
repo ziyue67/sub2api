@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -227,9 +228,10 @@ var easyPayCustomMethodCodePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
 var easyPayUpstreamMethodCodePattern = regexp.MustCompile(`^[a-z0-9_.-]+$`)
 
 type easyPayCustomMethodConfig struct {
-	Type         string `json:"type"`
-	UpstreamType string `json:"upstreamType"`
-	DisplayName  string `json:"displayName"`
+	Type         string   `json:"type"`
+	UpstreamType string   `json:"upstreamType"`
+	DisplayName  string   `json:"displayName"`
+	ExchangeRate *float64 `json:"exchangeRate,omitempty"`
 }
 
 func validateEasyPayCustomMethods(config map[string]string, supportedTypes string) error {
@@ -259,6 +261,9 @@ func validateEasyPayCustomMethods(config map[string]string, supportedTypes strin
 		}
 		if easyPayCustomMethodTypeConflictsWithBuiltin(method.Type) {
 			return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods type cannot start with alipay or wxpay")
+		}
+		if method.ExchangeRate != nil && (*method.ExchangeRate <= 0 || math.IsNaN(*method.ExchangeRate) || math.IsInf(*method.ExchangeRate, 0)) {
+			return infraerrors.BadRequest("VALIDATION_ERROR", "customMethods exchangeRate must be greater than zero")
 		}
 		if _, exists := customTypes[method.Type]; exists {
 			return infraerrors.BadRequest("VALIDATION_ERROR", "duplicate customMethods type")

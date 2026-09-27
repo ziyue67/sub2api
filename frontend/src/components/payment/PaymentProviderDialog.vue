@@ -88,7 +88,7 @@
           <div
             v-for="(method, index) in easyPayCustomMethods"
             :key="index"
-            class="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2"
+            class="grid grid-cols-1 items-end gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_8rem_auto]"
           >
             <div>
               <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.customMethodType') }}</label>
@@ -101,6 +101,18 @@
             <div>
               <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.customMethodDisplayName') }}</label>
               <input v-model="method.displayName" type="text" class="input mt-0.5" :placeholder="t('admin.settings.payment.customMethodDisplayNamePlaceholder')" />
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.customMethodExchangeRate') }}</label>
+              <input
+                v-model="method.exchangeRate"
+                type="number"
+                min="0"
+                step="0.0001"
+                inputmode="decimal"
+                class="input mt-0.5"
+                :placeholder="t('admin.settings.payment.customMethodExchangeRatePlaceholder')"
+              />
             </div>
             <button
               type="button"
@@ -572,8 +584,9 @@ function normalizedEasyPayCustomMethods(): EasyPayCustomMethod[] {
       type: normalizeEasyPayCustomMethodCode(method.type),
       upstreamType: normalizeEasyPayCustomMethodCode(method.upstreamType),
       displayName: method.displayName.trim(),
+      exchangeRate: String(method.exchangeRate ?? '').trim(),
     }))
-    .filter(method => method.type || method.upstreamType || method.displayName)
+    .filter(method => method.type || method.upstreamType || method.displayName || method.exchangeRate)
 }
 
 function normalizeEasyPayCustomMethodCode(value: string): string {
@@ -581,7 +594,7 @@ function normalizeEasyPayCustomMethodCode(value: string): string {
 }
 
 function addEasyPayCustomMethod() {
-  easyPayCustomMethods.push({ type: '', upstreamType: '', displayName: '' })
+  easyPayCustomMethods.push({ type: '', upstreamType: '', displayName: '', exchangeRate: '' })
 }
 
 function removeEasyPayCustomMethod(index: number) {
@@ -751,7 +764,7 @@ function syncEasyPayCustomMethods(): string[] {
 function validateEasyPayCustomMethods(): string | null {
   const seen = new Set<string>()
   for (const method of normalizedEasyPayCustomMethods()) {
-    const hasAnyValue = Boolean(method.type || method.upstreamType || method.displayName)
+    const hasAnyValue = Boolean(method.type || method.upstreamType || method.displayName || method.exchangeRate)
     if (!hasAnyValue) continue
     if (!method.type || !method.upstreamType) {
       return t('admin.settings.payment.validationEasyPayCustomMethodRequired')
@@ -767,6 +780,12 @@ function validateEasyPayCustomMethods(): string | null {
     }
     if (method.type.startsWith('alipay') || method.type.startsWith('wxpay')) {
       return t('admin.settings.payment.validationEasyPayCustomMethodPrefixReserved')
+    }
+    if (method.exchangeRate) {
+      const rate = Number(method.exchangeRate)
+      if (!Number.isFinite(rate) || rate <= 0) {
+        return t('admin.settings.payment.validationEasyPayCustomMethodExchangeRateInvalid')
+      }
     }
     if (seen.has(method.type)) {
       return t('admin.settings.payment.validationEasyPayCustomMethodDuplicate')

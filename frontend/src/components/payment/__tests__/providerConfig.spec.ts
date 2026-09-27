@@ -61,10 +61,10 @@ describe('PROVIDER_CONFIG_FIELDS.stripe', () => {
 describe('EasyPay custom methods config', () => {
   it('parses customMethods from the JSON string stored in provider config', () => {
     expect(parseEasyPayCustomMethods(
-      '[{"type":"ldc","upstreamType":"epay","displayName":"LDC"},{"type":"usdt_trc20","upstreamType":"usdt","displayName":"USDT-TRC20"}]',
+      '[{"type":"ldc","upstreamType":"epay","displayName":"LDC"},{"type":"usdt_trc20","upstreamType":"usdt","displayName":"USDT-TRC20","exchangeRate":6.5}]',
     )).toEqual([
       { type: 'ldc', upstreamType: 'epay', displayName: 'LDC' },
-      { type: 'usdt_trc20', upstreamType: 'usdt', displayName: 'USDT-TRC20' },
+      { type: 'usdt_trc20', upstreamType: 'usdt', displayName: 'USDT-TRC20', exchangeRate: '6.5' },
     ])
   })
 
@@ -72,8 +72,8 @@ describe('EasyPay custom methods config', () => {
     expect(serializeEasyPayCustomMethods([
       { type: 'ldc', upstreamType: 'epay', displayName: 'LDC' },
       { type: '  ', upstreamType: 'ignored', displayName: 'Ignored' },
-      { type: 'usdt_trc20', upstreamType: 'usdt', displayName: '' },
-    ])).toBe('[{"type":"ldc","upstreamType":"epay","displayName":"LDC"},{"type":"usdt_trc20","upstreamType":"usdt","displayName":""}]')
+      { type: 'usdt_trc20', upstreamType: 'usdt', displayName: '', exchangeRate: '6.5' },
+    ])).toBe('[{"type":"ldc","upstreamType":"epay","displayName":"LDC"},{"type":"usdt_trc20","upstreamType":"usdt","displayName":"","exchangeRate":6.5}]')
   })
 
   it('returns an empty string for invalid or empty custom methods', () => {

@@ -41,9 +41,10 @@ type EasyPay struct {
 }
 
 type easyPayCustomMethod struct {
-	Type         string `json:"type"`
-	UpstreamType string `json:"upstreamType"`
-	DisplayName  string `json:"displayName"`
+	Type         string  `json:"type"`
+	UpstreamType string  `json:"upstreamType"`
+	DisplayName  string  `json:"displayName"`
+	ExchangeRate float64 `json:"exchangeRate,omitempty"`
 }
 
 // NewEasyPay creates a new EasyPay provider.
