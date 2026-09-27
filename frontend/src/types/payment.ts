@@ -44,6 +44,8 @@ export interface PaymentConfig {
 export interface MethodLimit {
   currency?: string
   display_name?: string
+  /** Display-only recharge conversion: paying 1 unit credits this many balance units. */
+  exchange_rate?: number
   daily_limit: number
   daily_used: number
   daily_remaining: number

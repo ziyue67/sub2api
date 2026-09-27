@@ -64,6 +64,13 @@
                 :selected="selectedMethod"
                 @select="selectedMethod = $event"
               />
+              <p
+                v-if="selectedRechargeRate > 0"
+                data-testid="recharge-exchange-rate"
+                class="mt-3 border-t border-gray-200 pt-3 text-xs font-medium text-gray-500 dark:border-dark-600 dark:text-gray-400"
+              >
+                {{ t('payment.rechargeExchangeRate', { rate: formattedSelectedRechargeRate }) }}
+              </p>
             </div>
             <div v-if="validAmount > 0" class="card p-6">
               <div class="space-y-2 text-sm">
@@ -83,9 +90,6 @@
                   <span class="text-gray-500 dark:text-gray-400">{{ t('payment.creditedBalance') }}</span>
                   <span class="text-gray-900 dark:text-white">${{ creditedAmount.toFixed(2) }}</span>
                 </div>
-                <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
-                </p>
               </div>
             </div>
             <button :class="['btn w-full py-3 text-base font-medium', paymentButtonClass]" :disabled="!canSubmit || submitting" @click="handleSubmitRecharge">
@@ -585,6 +589,12 @@ const globalMaxAmount = computed(() => {
 // Selected method's limits (for validation and error messages)
 const selectedLimit = computed(() => visibleMethods.value[selectedMethod.value])
 const selectedCurrency = computed(() => normalizePaymentCurrency(selectedLimit.value?.currency))
+const selectedRechargeRate = computed(() => {
+  const methodRate = Number(selectedLimit.value?.exchange_rate)
+  if (Number.isFinite(methodRate) && methodRate > 0) return methodRate
+  return balanceRechargeMultiplier.value
+})
+const formattedSelectedRechargeRate = computed(() => Number(selectedRechargeRate.value.toFixed(4)).toString())
 const localeCode = computed(() => {
   const raw = i18n.locale as unknown
   if (typeof raw === 'string') return raw

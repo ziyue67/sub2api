@@ -4,6 +4,7 @@ import PaymentView from '../PaymentView.vue'
 import { PAYMENT_RECOVERY_STORAGE_KEY } from '@/components/payment/paymentFlow'
 import { formatPaymentAmount } from '@/components/payment/currency'
 import AmountInput from '@/components/payment/AmountInput.vue'
+import PaymentMethodSelector from '@/components/payment/PaymentMethodSelector.vue'
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
@@ -375,7 +376,7 @@ describe('PaymentView subscription plan grid', () => {
 })
 
 describe('PaymentView recharge rate preview', () => {
-  it('uses the selected payment method currency in both locale templates', async () => {
+  it('uses the global recharge multiplier when the selected method has no override', async () => {
     translate.mockClear()
     routeState.path = '/purchase'
     routeState.query = {}
@@ -402,12 +403,47 @@ describe('PaymentView recharge rate preview', () => {
     wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 10)
     await flushPromises()
 
-    expect(translate).toHaveBeenCalledWith('payment.rechargeRatePreview', {
-      currency: 'USD',
-      usd: '0.50',
+    expect(translate).toHaveBeenCalledWith('payment.rechargeExchangeRate', {
+      rate: '0.5',
     })
-    expect(en.payment.rechargeRatePreview).toBe('Current rate: 1 {currency} = {usd} USD')
-    expect(zh.payment.rechargeRatePreview).toBe('当前倍率：1 {currency} = {usd} USD')
+    expect(en.payment.rechargeExchangeRate).toBe('Current rate: 1:{rate}')
+    expect(zh.payment.rechargeExchangeRate).toBe('当前汇率：1:{rate}')
+  })
+
+  it('switches to the selected EasyPay method exchange rate', async () => {
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      methods: {
+        alipay: {
+          ...checkoutInfoFixture().data.methods.wxpay,
+          currency: 'CNY',
+        },
+        usdt_trc20: {
+          ...checkoutInfoFixture().data.methods.wxpay,
+          display_name: 'USDT (TRC20)',
+          exchange_rate: 6.5,
+          currency: 'CNY',
+        },
+      },
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="recharge-exchange-rate"]').text()).toBe('payment.rechargeExchangeRate')
+    expect(translate).toHaveBeenCalledWith('payment.rechargeExchangeRate', { rate: '1' })
+
+    wrapper.getComponent(PaymentMethodSelector).vm.$emit('select', 'usdt_trc20')
+    await flushPromises()
+
+    expect(translate).toHaveBeenCalledWith('payment.rechargeExchangeRate', { rate: '6.5' })
   })
 })
 

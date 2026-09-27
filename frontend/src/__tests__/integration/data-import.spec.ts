@@ -14,6 +14,12 @@ vi.mock('@/stores/app', () => ({
   })
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    isObserver: false
+  })
+}))
+
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
@@ -22,11 +28,15 @@ vi.mock('@/api/admin', () => ({
   }
 }))
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
-    t: (key: string) => key
-  })
-}))
+vi.mock('vue-i18n', async importOriginal => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return {
+    ...actual,
+    useI18n: () => ({
+      t: (key: string) => key
+    })
+  }
+})
 
 const mountModal = () =>
   mount(ImportDataModal, {

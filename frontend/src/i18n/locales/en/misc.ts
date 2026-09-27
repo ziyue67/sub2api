@@ -398,6 +398,7 @@ export default {
     amountTooHigh: 'Maximum amount is {max}',
     amountNoMethod: 'No payment method available for this amount',
     rechargeRatePreview: 'Current rate: 1 {currency} = {usd} USD',
+    rechargeExchangeRate: 'Current rate: 1:{rate}',
     refundReason: 'Refund Reason',
     refundReasonPlaceholder: 'Please describe your refund reason',
     stripeLoadFailed: 'Failed to load payment component. Please refresh and try again.',

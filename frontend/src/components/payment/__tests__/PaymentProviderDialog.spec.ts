@@ -218,20 +218,22 @@ describe('PaymentProviderDialog payment guide', () => {
     const ldcTypeInput = customTypeInputs[0]
     const upstreamTypeInput = customTypeInputs[1]
     const displayNameInput = inputs.find(input => (input.element as HTMLInputElement).placeholder === '信用卡')
-    if (!ldcTypeInput || !upstreamTypeInput || !displayNameInput) {
+    const exchangeRateInput = wrapper.find('input[inputmode="decimal"]')
+    if (!ldcTypeInput || !upstreamTypeInput || !displayNameInput || !exchangeRateInput) {
       throw new Error('custom method inputs not found')
     }
 
     await ldcTypeInput.setValue('ldc')
     await upstreamTypeInput.setValue(upstreamType)
     await displayNameInput.setValue('LDC')
+    await exchangeRateInput.setValue('6.5')
     await wrapper.find('form').trigger('submit.prevent')
 
     const payload = wrapper.emitted('save')?.[0]?.[0] as {
       config: Record<string, string>
       supported_types: string[]
     }
-    expect(JSON.parse(payload.config.customMethods)).toEqual([{ type: 'ldc', upstreamType, displayName: 'LDC' }])
+    expect(JSON.parse(payload.config.customMethods)).toEqual([{ type: 'ldc', upstreamType, displayName: 'LDC', exchangeRate: 6.5 }])
     expect(payload.supported_types).toEqual(['alipay', 'wxpay', 'ldc'])
   })
 

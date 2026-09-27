@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -262,7 +264,7 @@ func TestGetAvailableMethodLimitsIncludesEasyPayCustomMethodDisplayName(t *testi
 	_, err := client.PaymentProviderInstance.Create().
 		SetProviderKey(payment.TypeEasyPay).
 		SetName("EasyPay Custom").
-		SetConfig(`{"customMethods":"[{\"type\":\"ldc\",\"upstreamType\":\"ldc\",\"displayName\":\"LDC Pay\"}]"}`).
+		SetConfig(`{"customMethods":"[{\"type\":\"ldc\",\"upstreamType\":\"ldc\",\"displayName\":\"LDC Pay\",\"exchangeRate\":6.5}]"}`).
 		SetSupportedTypes("alipay,wxpay,ldc").
 		SetEnabled(true).
 		Save(ctx)
@@ -275,6 +277,34 @@ func TestGetAvailableMethodLimitsIncludesEasyPayCustomMethodDisplayName(t *testi
 	limits, ok := resp.Methods["ldc"]
 	require.True(t, ok, "expected custom EasyPay method limits to be visible")
 	require.Equal(t, "LDC Pay", limits.DisplayName)
+	require.Equal(t, 6.5, limits.ExchangeRate)
+}
+
+func TestGetAvailableMethodLimitsOmitsConflictingEasyPayCustomMethodExchangeRate(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+
+	for i, rate := range []float64{6.5, 7} {
+		methods := fmt.Sprintf(`[{"type":"usdt_trc20","upstreamType":"usdt.trc20","displayName":"USDT (TRC20)","exchangeRate":%v}]`, rate)
+		config, err := json.Marshal(map[string]string{"customMethods": methods})
+		require.NoError(t, err)
+		_, err = client.PaymentProviderInstance.Create().
+			SetProviderKey(payment.TypeEasyPay).
+			SetName(fmt.Sprintf("EasyPay USDT %d", i)).
+			SetConfig(string(config)).
+			SetSupportedTypes("usdt_trc20").
+			SetEnabled(true).
+			Save(ctx)
+		require.NoError(t, err)
+	}
+
+	svc := &PaymentConfigService{entClient: client}
+	resp, err := svc.GetAvailableMethodLimits(ctx)
+	require.NoError(t, err)
+
+	limits, ok := resp.Methods["usdt_trc20"]
+	require.True(t, ok)
+	require.Zero(t, limits.ExchangeRate)
 }
 
 func TestPcComputeGlobalRange(t *testing.T) {
