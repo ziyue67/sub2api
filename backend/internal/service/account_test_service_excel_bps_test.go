@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -71,4 +73,20 @@ func TestExcelBPSBackgroundTestHandlesNilHeader(t *testing.T) {
 	})
 	require.Nil(t, c.Request.Header, "the inbound request must remain unchanged")
 	require.Nil(t, upstream.lastReq)
+}
+
+func TestExcelBPSManualTestReportsRateLimit(t *testing.T) {
+	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"30"}},
+		Body: io.NopCloser(strings.NewReader(`{"error":{"message":"PRIVATE_UPSTREAM"}}`))}}
+	svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream)}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest("POST", "/api/v1/admin/accounts/300/test", nil)
+
+	err := svc.testExcelBPSAccountConnection(c, excelAccount(), "gpt-6-astra", "Reply OK")
+
+	// A single-account test shows the rate limit instead of a failover signal.
+	require.EqualError(t, err, excelBPSRateLimitedClientMessage)
+	require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")
+	require.Len(t, upstream.requests, 1)
 }

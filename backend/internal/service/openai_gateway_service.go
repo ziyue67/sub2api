@@ -459,6 +459,7 @@ type OpenAIGatewayService struct {
 	excelBPSAttachments    basispoints.AttachmentCache
 	excelBPSIPPoolMu       sync.Mutex
 	excelBPSIPPoolSyncedAt time.Time
+	excelBPSCooldownUntil  sync.Map // key: int64(accountID), value: time.Time
 	harvestIPPoolMu        sync.Mutex
 	harvestIPPoolExits     []harvestIPPoolExit
 	harvestIPPoolSyncedAt  time.Time

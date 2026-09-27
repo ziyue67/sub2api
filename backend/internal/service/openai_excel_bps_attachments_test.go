@@ -168,9 +168,15 @@ func TestExcelBPSNativeUploadFailureStopsWithoutQuotaWrite(t *testing.T) {
 			account := excelAccount()
 			_, err := svc.Forward(context.Background(), c, account, body)
 			require.Error(t, err)
-			require.Equal(t, tc.want, rec.Code)
+			if tc.status == http.StatusTooManyRequests {
+				// Nothing was generated, so another account may take the request.
+				requireExcelBPSRateLimitFailover(t, err, c)
+			} else {
+				require.Equal(t, tc.want, rec.Code)
+				require.True(t, IsResponseCommitted(c))
+			}
+			require.Equal(t, tc.status == http.StatusTooManyRequests, svc.isExcelBPSCoolingDown(account, "gpt-6-astra"))
 			require.Equal(t, 1, calls)
-			require.True(t, IsResponseCommitted(c))
 			require.NotContains(t, rec.Body.String(), "PRIVATE")
 			require.NotContains(t, err.Error(), "PRIVATE")
 			requireNoExcelBPSQuotaWrite(t, repo)
@@ -178,9 +184,6 @@ func TestExcelBPSNativeUploadFailureStopsWithoutQuotaWrite(t *testing.T) {
 			require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 			if !tc.transport {
 				require.True(t, closed.closed)
-			}
-			if tc.status == 429 {
-				require.Contains(t, rec.Body.String(), "basispoints_rate_limited")
 			}
 		})
 	}

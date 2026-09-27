@@ -214,6 +214,8 @@ type AccountTokenGuardService struct {
 	jobMu     sync.Mutex
 	job       *AccountTokenGuardJob
 	rootCtx   context.Context
+	loginMu   sync.Mutex
+	logins    map[string]*OpenAITwoFALoginJob
 
 	lastRun     time.Time
 	lastMessage string
@@ -547,6 +549,7 @@ func (s *AccountTokenGuardService) Start() {
 }
 
 func (s *AccountTokenGuardService) Stop() {
+	s.clearTwoFALogins()
 	s.lifecycle.Lock()
 	if s.cancel == nil {
 		s.lifecycle.Unlock()

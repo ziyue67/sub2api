@@ -1051,3 +1051,27 @@ func buildCodexImportTestJWT(t *testing.T, exp time.Time, extraClaims map[string
 	}
 	return base64.RawURLEncoding.EncodeToString(headerBytes) + "." + base64.RawURLEncoding.EncodeToString(claimBytes) + "."
 }
+
+func TestImportCodexSessionsSkipExistingPreservesAccount(t *testing.T) {
+	svc := newCodexImportMemoryAdminService(nil)
+	h := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	entries := []codexImportEntry{{Index: 1, Value: buildCodexRefreshImportValue(t, "workspace-1", "user-1", "refresh-new")}}
+	req := CodexSessionImportRequest{SkipDefaultGroupBind: boolPtr(true), UpdateExisting: boolPtr(false), SkipExisting: true}
+	first, err := h.importCodexSessions(context.Background(), req, entries)
+	if err != nil || first.Created != 1 {
+		t.Fatal("initial import did not create an account")
+	}
+	second, err := h.importCodexSessions(context.Background(), req, entries)
+	if err != nil || second.Skipped != 1 || second.Created != 0 || second.Updated != 0 || second.Failed != 0 {
+		t.Fatalf("repeat import counts = created:%d updated:%d skipped:%d failed:%d", second.Created, second.Updated, second.Skipped, second.Failed)
+	}
+	if len(svc.createdAccounts) != 1 || len(svc.updatedAccounts) != 0 {
+		t.Fatal("repeat import modified an account")
+	}
+	// Existing callers can still intentionally create duplicates by omitting skip_existing.
+	req.SkipExisting = false
+	third, err := h.importCodexSessions(context.Background(), req, entries)
+	if err != nil || third.Created != 1 {
+		t.Fatal("legacy create-only behavior changed")
+	}
+}

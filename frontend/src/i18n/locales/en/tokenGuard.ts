@@ -1,4 +1,27 @@
 export default {
+  "twoFA": {
+  "title": "2FA login and import",
+  "label": "Initial login with email, password and 2FA",
+  "hint": "One email----password----2FA per line (commas also supported), up to 100 entries. Uses the saved Credential Guard relogin endpoint and headers, even when inspection is off. Passwords and 2FA secrets are used only for this login and are not saved to accounts or guard settings.",
+  "settings": "View relogin service settings",
+  "credentials": "Login credentials",
+  "placeholder": "email----password----2FA secret",
+  "nameHint": "Leave the name empty to use the email; otherwise it is used as a prefix. Click Next to enter login credentials.",
+  "invalid": "Enter 1–100 complete email, password and 2FA entries, one per line with no duplicate emails.",
+  "start": "Log in and import",
+  "retry": "Continue unfinished entries",
+  "stop": "Stop further logins",
+  "reset": "Import another batch",
+  "states": {
+    "pending": "Pending",
+    "login": "Logging in…",
+    "importing": "Importing…",
+    "created": "Imported",
+    "skipped": "Account exists, skipped",
+    "failed": "Login incomplete; retry or check credentials and service",
+    "importFailed": "Logged in, import failed; retry import"
+  }
+},
   "title": "Credential Guard",
   "description": "Probes access tokens for accounts in the selected groups, re-logs in expired credentials, and restores scheduling for accounts stuck in the error state.",
   "enabled": "Enable credential guard",
