@@ -1,13 +1,13 @@
 name: GitHub Container Registry
 
-# 职责：把 main 的当前提交发布为**滚动镜像**（main / main-<sha>），
-# 并额外提供当前 VERSION 的 amd64 镜像（<VERSION>-amd64）。
+# 职责：把 main 的当前提交发布为镜像。**标签规则固定如下，不要再改**：
+#   latest / <VERSION> / <VERSION>-amd64
+# 不发布：main、main-<sha>（分支标签），也不发布裸 amd64。
+# 每次推送都会先清理历史遗留的 main / main-<sha> / amd64 标签再重新打标。
 #
-# ⚠️ 本工作流**不写** latest / 0.2 / 0 / <VERSION>：这些标签由 release.yml（GoReleaser）独占。
-#    release.yml 推的是 amd64 + arm64 多架构清单，而本工作流只构建 amd64；
-#    两边都写同一标签时，每次 main push 都会把 latest 从多架构**降级成单架构**，
-#    arm64 用户 `docker pull ...:latest` 会直接失败（no matching manifest）。
-#    需要 main 分支的镜像请用 :main 或 :main-<sha>。
+# 说明：本 Fork 只发布 linux/amd64 单架构（见 .goreleaser.yaml 的 goarch），
+# 因此这里写 latest / <VERSION> 不会出现「多架构清单被降级」的问题；
+# release.yml（GoReleaser）仍会发布自己的 <VERSION>-amd64 镜像与清单，两者内容同源。
 #
 # ⚠️ sync-fork-release.yml 以本工作流的完成事件（workflow_run）作为触发条件，
 #    不要删除或重命名本工作流。
@@ -32,10 +32,6 @@ jobs:
         id: version
         run: echo "value=$(tr -d '[:space:]' < backend/cmd/server/VERSION)" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve short sha
-        id: sha
-        run: echo "value=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -52,6 +48,37 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Prune legacy main tags
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          echo "== GHCR: 删除带 main/main-<sha> 的旧版本 =="
+          ids=$(gh api --paginate "/users/$owner/packages/container/sub2api/versions"             --jq '.[] | select((.metadata.container.tags // []) | any(. == "main" or startswith("main-") or . == "amd64" or startswith("test-plugin-scheduling"))) | .id' 2>/dev/null || true)
+          for id in $ids; do
+            echo "delete GHCR version $id"
+            gh api --method DELETE "/users/$owner/packages/container/sub2api/versions/$id" >/dev/null 2>&1 || true
+          done
+
+          echo "== Docker Hub: 删除 main/main-<sha> 标签 =="
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            jwt=$(curl -s -X POST -H 'Content-Type: application/json' \
+              -d "{\"username\":\"$DOCKERHUB_USERNAME\",\"password\":\"$DOCKERHUB_TOKEN\"}" \
+              https://hub.docker.com/v2/users/login/ | python3 -c 'import sys,json;print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)
+            if [ -n "$jwt" ]; then
+              for t in $(curl -s "https://hub.docker.com/v2/repositories/$DOCKERHUB_USERNAME/sub2api/tags?page_size=100" \
+                | python3 -c 'import sys,json;d=json.load(sys.stdin);print("\n".join(r["name"] for r in d.get("results",[]) if r["name"] in ("main","amd64") or r["name"].startswith("main-") or r["name"].startswith("test-plugin-scheduling")))' 2>/dev/null || true); do
+                echo "delete DockerHub tag $t"
+                curl -s -X DELETE -H "Authorization: JWT $jwt" \
+                  "https://hub.docker.com/v2/repositories/$DOCKERHUB_USERNAME/sub2api/tags/$t/" >/dev/null || true
+              done
+            fi
+          fi
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -63,9 +90,9 @@ jobs:
             COMMIT=${{ github.sha }}
             NODE_MAX_OLD_SPACE_SIZE=4096
           tags: |
-            ghcr.io/ziyue67/sub2api:main
-            ghcr.io/ziyue67/sub2api:main-${{ steps.sha.outputs.value }}
+            ghcr.io/ziyue67/sub2api:latest
+            ghcr.io/ziyue67/sub2api:${{ steps.version.outputs.value }}
             ghcr.io/ziyue67/sub2api:${{ steps.version.outputs.value }}-amd64
-            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:main
-            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:main-${{ steps.sha.outputs.value }}
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:latest
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:${{ steps.version.outputs.value }}
             docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:${{ steps.version.outputs.value }}-amd64
