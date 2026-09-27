@@ -42,6 +42,12 @@ export default {
 
     // Proxies
     proxies: {
+      managementSections: 'Proxy management sections',
+      proxyList: 'Static proxies / IP pool',
+      subscriptions: 'Subscriptions',
+      dynamicProxies: 'Dynamic proxies',
+      nodes: 'Nodes',
+      kernelRules: 'Kernel and rules',
       title: 'Proxy Management',
       description: 'Manage proxy servers for accounts',
       createProxy: 'Create Proxy',

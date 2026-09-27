@@ -111,6 +111,8 @@ type OpsInsertErrorLogInput struct {
 	// It is set by OpsService.RecordError before persisting.
 	UpstreamErrorsJSON *string
 
+	// DurationMs is measured before enqueueing, excluding async logging time.
+	DurationMs         *int64
 	AuthLatencyMs      *int64
 	RoutingLatencyMs   *int64
 	UpstreamLatencyMs  *int64

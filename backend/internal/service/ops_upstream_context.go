@@ -23,6 +23,7 @@ const (
 	OpsUpstreamModelKey        = "ops_upstream_model"
 
 	// Optional stage latencies (milliseconds) for troubleshooting and alerting.
+	OpsRequestDurationMsKey  = "ops_request_duration_ms"
 	OpsAuthLatencyMsKey      = "ops_auth_latency_ms"
 	OpsRoutingLatencyMsKey   = "ops_routing_latency_ms"
 	OpsUpstreamLatencyMsKey  = "ops_upstream_latency_ms"
@@ -165,13 +166,30 @@ type OpsStreamError struct {
 	UpstreamErrors  []*OpsUpstreamErrorEvent
 	// RequestScoped 表示该带内失败是请求级结果（如上游内容策略截停），与本请求此前的
 	// 上游尝试无关：分类不受上游错误上下文影响、不快照也不落库上游归因、不继承透传规则的
-	// skip_monitoring，按业务限制计，落库状态取 IntendedStatus 以便进入错误列表。
+	// skip_monitoring，按业务限制计（客户端取消除外），落库状态取 IntendedStatus 以便进入错误列表。
 	RequestScoped bool
 	// NonStream 表示带内信号来自非流式 2xx 响应体，落库 stream=false。
 	NonStream bool
 }
 
 const maxOpsStreamErrorsPerRequest = 64
+
+// OpsClientCanceledCode is a request outcome, not an upstream rejection.
+const OpsClientCanceledCode = "client_canceled"
+
+// MarkOpsClientCancellation records a logical 499 without writing to a closed
+// connection. Existing ignore-context-canceled settings still apply. Keeping it
+// request-scoped prevents earlier upstream attempts from changing its owner.
+func MarkOpsClientCancellation(c *gin.Context, stream bool) {
+	MarkOpsStreamErrorValue(c, OpsStreamError{
+		ErrType:        OpsClientCanceledCode,
+		Code:           OpsClientCanceledCode,
+		Message:        "Client disconnected: context canceled",
+		IntendedStatus: 499,
+		RequestScoped:  true,
+		NonStream:      !stream,
+	})
+}
 
 // BeginOpsStreamTurn scopes first-wins deduplication to one WebSocket turn.
 func BeginOpsStreamTurn(c *gin.Context, turn int) {

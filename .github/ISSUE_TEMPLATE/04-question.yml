@@ -1,0 +1,71 @@
+name: 使用与配置问题
+description: 不确定是否为 Bug 时，提供目标、环境、操作过程与具体疑问。
+title: '[Question] '
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        已有明确异常时优先使用 Bug 表单。使用问题可先查 [新人入门](https://github.com/ranxi2001/sub2api/blob/production/docs/新人入门.md) 和 [贡献指南](https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md)。
+        不要粘贴 Token、Cookie、OAuth 导出、ticket/state、含密钥的订阅 URL、完整配置或私人数据。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已查阅相关文档并搜索 Issue，检查了正文与附件的脱敏。
+          required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: 想完成的操作与具体疑问
+      description: 说明希望达到的结果，以及需要确认的具体行为或配置含义。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 版本与相关环境
+      description: 填实际运行版本/构建来源、部署方式、客户端版本和相关账号类型；未知或不适用可注明。
+      placeholder: |
+        Sub2API 版本与构建来源：
+        部署方式 / 系统 / 架构：
+        客户端与版本：
+        相关通道、模型、配置和网络路径（脱敏）：
+    validations:
+      required: true
+  - type: textarea
+    id: attempts
+    attributes:
+      label: 已查资料、操作步骤与结果
+      description: 给出文档链接、具体命令或页面操作、预期与实际结果。出现错误时保留原文、带时区的时间和可公开的 request ID。未尝试的步骤请注明。
+      placeholder: |
+        参考资料：
+        1. ……
+        2. ……
+        预期结果：
+        实际结果 / 脱敏错误：
+    validations:
+      required: true
+  - type: textarea
+    id: agent_name
+    attributes:
+      label: Agent 名称与参与范围
+      description: 所有 Issue 均须填写，包括仅用 Agent 分析问题或润色正文的情况。多个 Agent（含子 Agent）逐一列出；纯人工编写填“未使用 Agent，参与范围：无”。
+      placeholder: 工具名称及参与的问题分析、代码、测试或正文撰写工作。
+    validations:
+      required: true
+  - type: textarea
+    id: agent_model
+    attributes:
+      label: 模型名称
+      description: 填写实际使用的完整模型名称或模型 ID；多个模型逐一对应 Agent 列出。纯人工编写填“不适用”，无法获取填“未知”并说明原因。
+    validations:
+      required: true
+  - type: textarea
+    id: agent_reasoning
+    attributes:
+      label: 推理强度
+      description: 填写实际配置值；未手动设置填“默认（未手动设置）”，工具不提供该设置填“不适用（工具未提供）”，无法获取填“未知”并说明原因。纯人工编写填“不适用”；多个模型逐一列出。
+    validations:
+      required: true

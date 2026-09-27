@@ -34,6 +34,7 @@ export default {
   "runNow": "立即巡检",
   "running": "正在巡检…",
   "runDone": "巡检完成：探测 {probed}，正常 {healthy}，已重登 {repaired}，状态自愈 {state_fixed}",
+  "runCanceled": "巡检已取消",
   "accounts": "守护账号",
   "events": "巡检日志",
   "status": "运行状态",

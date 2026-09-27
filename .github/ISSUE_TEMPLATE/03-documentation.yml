@@ -1,0 +1,74 @@
+name: 文档问题
+description: 报告步骤缺失、命令失效、链接错误或说明不清。
+title: '[Docs] '
+labels: [documentation]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        贴出文档链接和具体小节，让其他人能沿着相同步骤核对。命令输出、配置和截图需要脱敏。
+        参考 [贡献指南](https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md)。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索相关 Issue，并检查正文与附件不含凭据或敏感信息。
+          required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: 文档位置与适用版本
+      description: 提供 URL/文件路径、小节标题或短引文；代码仓库链接尽量固定到 commit。
+      placeholder: |
+        文档链接、路径和小节：
+        文档版本/分支/SHA（如可确认）：
+        实际使用的 Sub2API 版本及部署方式（如适用）：
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 按文档执行的过程与问题
+      description: 命令问题给出工作目录、前置条件、执行顺序、退出码与脱敏错误；文字或链接问题写明具体歧义/错误。
+      placeholder: |
+        前置条件：
+        执行/阅读步骤：
+        实际结果：
+        预期结果：
+    validations:
+      required: true
+  - type: textarea
+    id: correction
+    attributes:
+      label: 建议补充或修正的内容
+      description: 可以写期望解释清楚的问题，不要求先给出正确答案。
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: 已验证的替代步骤或参考资料（可选）
+      description: 写明实际执行的命令及结果；仅为猜测的修正请标记为未验证。
+  - type: textarea
+    id: agent_name
+    attributes:
+      label: Agent 名称与参与范围
+      description: 所有 Issue 均须填写，包括仅用 Agent 分析问题或润色正文的情况。多个 Agent（含子 Agent）逐一列出；纯人工编写填“未使用 Agent，参与范围：无”。
+      placeholder: 工具名称及参与的问题分析、代码、测试或正文撰写工作。
+    validations:
+      required: true
+  - type: textarea
+    id: agent_model
+    attributes:
+      label: 模型名称
+      description: 填写实际使用的完整模型名称或模型 ID；多个模型逐一对应 Agent 列出。纯人工编写填“不适用”，无法获取填“未知”并说明原因。
+    validations:
+      required: true
+  - type: textarea
+    id: agent_reasoning
+    attributes:
+      label: 推理强度
+      description: 填写实际配置值；未手动设置填“默认（未手动设置）”，工具不提供该设置填“不适用（工具未提供）”，无法获取填“未知”并说明原因。纯人工编写填“不适用”；多个模型逐一列出。
+    validations:
+      required: true

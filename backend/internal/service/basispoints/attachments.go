@@ -89,7 +89,7 @@ func PrepareNativeImagesWithLimit(raw []byte, maxImages int) (*NativeImages, err
 		item, _ := entry.(map[string]any)
 		field := ""
 		switch text(item["type"]) {
-		case "", "message":
+		case "", "message", "agent_message":
 			field = "content"
 		case "function_call_output", "custom_tool_call_output":
 			field = "output"

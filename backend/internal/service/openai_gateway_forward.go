@@ -87,13 +87,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("bps probe path is unavailable")
 	}
 	if account.IsExcelBPSEnabledForModel(modelForBPS) {
-		reason := account.excelBPSNativeFallbackReason(body)
-		if reason == "" {
-			return s.forwardExcelBPS(ctx, c, account, body, startTime)
-		}
-		c.Header("X-Codex2API-Upstream", "codex")
-		c.Header("X-Codex2API-Basispoints-Bypass", reason)
-		recordExcelBPSNativeFallback(ctx, account, reason)
+		return s.forwardExcelBPS(ctx, c, account, body, startTime)
 	}
 
 	if account.IsOpenAIOAuthLike() {

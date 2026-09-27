@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 贡献指南与复现要求
+    url: https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md
+    about: 查看问题分类、最小复现、脱敏方式、开发验证和 PR 提交流程。
+  - name: 部署与使用入门
+    url: https://github.com/ranxi2001/sub2api/blob/production/docs/新人入门.md
+    about: 查看部署、客户端接入和常见配置说明。
+  - name: 安全漏洞与凭据泄露
+    url: https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md#安全漏洞私密报告
+    about: 查看私密报告方式；不要在公开 Issue、附件或群消息中提交漏洞利用细节和凭据。

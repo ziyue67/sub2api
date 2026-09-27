@@ -60,14 +60,38 @@
       <p v-if="store.groupsError" role="alert" class="editor-error">{{ store.groupsError }} <button class="underline" @click="store.refreshGroups">{{ t('qualityOps.retry') }}</button></p>
             <form id="quality-rule-form" class="quality-editor space-y-5" @submit.prevent="save"><fieldset :disabled="busy" class="space-y-5">
 
-        <div v-if="!editing" class="space-y-2">
-          <label for="quality-account-search" class="block text-sm">{{ t('qualityOps.accounts') }}</label>
-          <div class="flex gap-2"><input id="quality-account-search" v-model="search" class="input" :placeholder="t('qualityOps.search')" @keydown.enter.prevent="searchAccounts(1)" /><button type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="searchAccounts(1)">{{ t('qualityOps.search') }}</button></div>
-          <p v-if="accountsLoading" role="status" class="text-sm text-gray-500">{{ t('qualityOps.loading') }}</p>
-          <div class="grid max-h-44 gap-2 overflow-auto rounded border p-3 sm:grid-cols-2 dark:border-dark-600">
-            <label v-for="account in accounts" :key="account.id" class="flex items-center gap-2 text-sm"><input v-model="selectedAccounts" type="checkbox" :value="account.id" :disabled="plans.some(p => p.account_id === account.id)" />{{ account.name }} <span class="text-gray-500">#{{ account.id }}</span></label>
+        <div v-if="!editing" class="space-y-3">
+          <label for="quality-account-search" class="block text-sm font-medium">{{ t('qualityOps.accounts') }}</label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="space-y-1 text-sm"><span>{{ t('qualityOps.accountGroup') }}</span>
+              <select v-model="accountGroup" class="input" data-testid="quality-account-group" @change="searchAccounts(1)">
+                <option value="">{{ t('qualityOps.allAccountGroups') }}</option>
+                <option value="ungrouped">{{ t('qualityOps.ungroupedAccounts') }}</option>
+                <option v-for="group in groups" :key="group.id" :value="String(group.id)">{{ group.name }} #{{ group.id }}</option>
+              </select>
+            </label>
+            <label class="space-y-1 text-sm"><span>{{ t('qualityOps.accountType') }}</span>
+              <select v-model="accountType" class="input" data-testid="quality-account-type" @change="searchAccounts(1)">
+                <option value="">{{ t('qualityOps.allAccountTypes') }}</option>
+                <option value="oauth">{{ t('qualityOps.oauthAccounts') }}</option>
+                <option value="apikey">{{ t('qualityOps.apiKeyAccounts') }}</option>
+              </select>
+            </label>
           </div>
-          <div class="flex items-center gap-3 text-sm"><button type="button" :disabled="accountPage <= 1" @click="searchAccounts(accountPage - 1)">←</button><span>{{ accountPage }} / {{ accountPages }}</span><button type="button" :disabled="accountPage >= accountPages" @click="searchAccounts(accountPage + 1)">→</button><span>{{ t('qualityOps.selected', { count: selectedAccounts.length }) }}</span></div>
+          <div class="flex gap-2"><input id="quality-account-search" v-model="search" class="input min-w-0" :placeholder="t('qualityOps.search')" @keydown.enter.prevent="searchAccounts(1)" /><button type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="searchAccounts(1)">{{ t('qualityOps.search') }}</button></div>
+          <div class="flex flex-wrap items-center gap-3 text-sm">
+            <button type="button" class="text-primary-600 disabled:opacity-50" data-testid="quality-select-page" :disabled="accountsLoading || selectingAccounts || !selectableAccounts.length" @click="selectCurrentPage">{{ t('qualityOps.selectAccountPage') }}</button>
+            <button type="button" class="text-primary-600 disabled:opacity-50" data-testid="quality-select-all" :disabled="accountsLoading || selectingAccounts || !accounts.length" @click="selectMatchingAccounts">{{ t(selectingAccounts ? 'qualityOps.selectingAccounts' : 'qualityOps.selectMatchingAccounts') }}</button>
+            <button type="button" class="text-gray-500 disabled:opacity-50" data-testid="quality-clear-selection" :disabled="!selectedAccounts.length && !selectingAccounts" @click="clearAccountSelection">{{ t('qualityOps.clearAccountSelection') }}</button>
+          </div>
+          <p class="text-xs text-gray-500">{{ t('qualityOps.accountSelectionHint') }}</p>
+          <p v-if="accountsError" role="alert" class="text-sm text-red-600">{{ accountsError }}</p>
+          <p v-if="accountsLoading" role="status" class="text-sm text-gray-500">{{ t('qualityOps.loading') }}</p>
+          <div class="grid max-h-52 gap-2 overflow-auto rounded border p-3 sm:grid-cols-2 dark:border-dark-600" :aria-busy="accountsLoading || selectingAccounts">
+            <label v-for="account in accounts" :key="account.id" class="flex items-center gap-2 text-sm"><input v-model="selectedAccounts" type="checkbox" :value="account.id" :disabled="selectingAccounts || existingAccountIds.has(account.id)" /><span class="min-w-0 break-all">{{ account.name }} <span class="text-gray-500">#{{ account.id }}</span><span v-if="existingAccountIds.has(account.id)" class="ml-1 text-xs text-gray-500">{{ t('qualityOps.accountHasRule') }}</span></span></label>
+            <p v-if="!accountsLoading && !accounts.length" class="text-sm text-gray-500 sm:col-span-2">{{ t('qualityOps.noMatchingAccounts') }}</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3 text-sm"><button type="button" :aria-label="t('qualityOps.previousAccountPage')" :disabled="accountsLoading || selectingAccounts || accountPage <= 1" @click="searchAccounts(accountPage - 1)">←</button><span>{{ accountPage }} / {{ accountPages }}</span><button type="button" :aria-label="t('qualityOps.nextAccountPage')" :disabled="accountsLoading || selectingAccounts || accountPage >= accountPages" @click="searchAccounts(accountPage + 1)">→</button><span aria-live="polite">{{ t('qualityOps.selected', { count: selectedAccounts.length }) }}</span></div>
         </div>
         <div class="space-y-2">
           <label class="block space-y-1"><span>{{ t('qualityOps.questionKind') }}</span><select v-model="form.pelican_config.question_kind" class="input" data-testid="quality-question-kind" @change="selectQuestionKind"><option value="candy">{{ t('qualityOps.questionCandy') }}</option><option :value="STATE_PROBE_QUESTION">{{ t('qualityOps.questionStateProbe') }}</option></select></label>
@@ -114,7 +138,7 @@
         <p class="text-sm text-gray-500">{{ t('qualityOps.restoreHelp') }}</p>
         <label class="flex items-center gap-2"><input v-model="form.enabled" type="checkbox" />{{ t('qualityOps.enabled') }}</label>
       </fieldset></form>
-      <template #footer><div class="editor-footer"><button v-if="editing" type="button" class="delete-rule" :disabled="busy" @click="deleteTarget = plans.find(p => p.id === editing) || null">{{ t('qualityOps.delete') }}</button><span class="flex-1" /><button class="btn btn-secondary" :disabled="busy" @click="closeForm">{{ t('qualityOps.cancel') }}</button><button form="quality-rule-form" type="submit" class="btn btn-primary" :disabled="busy || (!editing && !selectedAccounts.length)">{{ busy ? t('qualityOps.saving') : t('qualityOps.save') }}</button></div></template>
+      <template #footer><div class="editor-footer"><button v-if="editing" type="button" class="delete-rule" :disabled="busy" @click="deleteTarget = plans.find(p => p.id === editing) || null">{{ t('qualityOps.delete') }}</button><span class="flex-1" /><button class="btn btn-secondary" :disabled="busy" @click="closeForm">{{ t('qualityOps.cancel') }}</button><button form="quality-rule-form" type="submit" class="btn btn-primary" :disabled="busy || selectingAccounts || (!editing && !selectedAccounts.length)">{{ busy ? t('qualityOps.saving') : t('qualityOps.save') }}</button></div></template>
     </BaseDialog>
     <BaseDialog :show="!!historyPlan" :title="detailOperation ? t('qualityOps.roundDetail') : t('qualityOps.history')" placement="right" width="extra-wide" close-on-click-outside @close="closeDetails">
       <template v-if="historyPlan">
@@ -175,8 +199,22 @@ const accountNames = computed(() => {
 })
 const accounts = ref<AccountListItem[]>([]), accountsLoading = ref(false)
 const search = ref(''), accountPage = ref(1), accountPages = ref(1)
+const accountGroup = ref(''), accountType = ref(''), accountsError = ref(''), selectingAccounts = ref(false)
+const existingAccountIds = computed(() => new Set(plans.value.map(plan => plan.account_id)))
+const selectableAccounts = computed(() => accounts.value.filter(account => !existingAccountIds.value.has(account.id)))
+let accountSelectionRequest = 0
+const accountFilters = () => ({ search: search.value.trim(), group: accountGroup.value || undefined, type: accountType.value || undefined, lite: 'true', sort_by: 'id', sort_order: 'asc' as const })
+function invalidateAccountRequests() {
+  accountRequest++; accountSelectionRequest++
+  accountsLoading.value = selectingAccounts.value = false
+  accounts.value = []; accountPage.value = accountPages.value = 1; accountsError.value = ''
+}
+watch([search, accountGroup, accountType], invalidateAccountRequests, { flush: 'sync' })
+function showAccountPicker() { return showForm.value && !editing.value }
+
 const selectedAccounts = ref<number[]>([]), editing = ref<number | null>(null)
 const busy = ref(false), error = ref(''), notice = ref(''), showForm = ref(false)
+watch(showAccountPicker, (show) => { if (!show) invalidateAccountRequests() }, { flush: 'sync' })
 const pending = ref<Record<number, string>>({}), deleteTarget = ref<ScheduledTestPlan | null>(null), deleting = ref(false)
 const discardPrompt = ref(false), initialForm = ref('')
 const judgeModels = ref<string[]>([])
@@ -273,16 +311,46 @@ async function load() { await store.refresh() }
 async function refreshOperations() { await store.refreshOperations() }
 async function moreOperations() { await store.refreshOperations(true) }
 async function searchAccounts(page = 1) {
+  accountSelectionRequest++; selectingAccounts.value = false
   const request = ++accountRequest
-  accountsLoading.value = true
+  accountsLoading.value = true; accountsError.value = ''; accounts.value = []
   try {
-    const data = await accountsAPI.list(page, 50, { search: search.value, lite: 'true' })
+    const data = await accountsAPI.list(page, 50, accountFilters())
     if (!alive || request !== accountRequest) return
     accounts.value = data.items; accountPage.value = page; accountPages.value = Math.max(1, Math.ceil(data.total / 50))
-  } catch (e) { if (alive && request === accountRequest) error.value = message(e) }
+  } catch (e) { if (alive && request === accountRequest) accountsError.value = message(e) }
   finally { if (request === accountRequest) accountsLoading.value = false }
 }
-function newPlan() { closeDetails(); error.value = ''; editing.value = null; form.value = defaults(); selectedAccounts.value = []; search.value = ''; showForm.value = true; initialForm.value = formSnapshot(); void searchAccounts(); if (!groups.value.length) void store.refreshGroups() }
+function selectCurrentPage() {
+  if (accountsLoading.value || selectingAccounts.value) return
+  selectedAccounts.value = [...new Set([...selectedAccounts.value, ...selectableAccounts.value.map(account => account.id)])]
+}
+function clearAccountSelection() {
+  accountSelectionRequest++; selectingAccounts.value = false; selectedAccounts.value = []
+}
+async function selectMatchingAccounts() {
+  if (accountsLoading.value || selectingAccounts.value || busy.value) return
+  const request = ++accountSelectionRequest, filters = accountFilters()
+  selectingAccounts.value = true; accountsError.value = ''
+  const ids = new Set<number>()
+  try {
+    // Collect every matching page before changing selection so a failed page never leaves a partial batch.
+    for (let page = 1, pages = 1; page <= pages; page++) {
+      const data = await accountsAPI.list(page, 50, filters)
+      if (!alive || request !== accountSelectionRequest) return
+      pages = Math.max(1, Math.ceil(data.total / 50))
+      for (const account of data.items) ids.add(account.id)
+    }
+    selectedAccounts.value = [...new Set([...selectedAccounts.value, ...ids])].filter(id => !existingAccountIds.value.has(id))
+  } catch (e) { if (alive && request === accountSelectionRequest) accountsError.value = message(e) }
+  finally { if (request === accountSelectionRequest) selectingAccounts.value = false }
+}
+function newPlan() {
+  closeDetails(); invalidateAccountRequests(); error.value = ''; editing.value = null; form.value = defaults()
+  selectedAccounts.value = []; search.value = ''; accountGroup.value = ''; accountType.value = ''
+  showForm.value = true; initialForm.value = formSnapshot(); void searchAccounts()
+  if (!groups.value.length) void store.refreshGroups()
+}
 function edit(plan: ScheduledTestPlan) {
   closeDetails(); error.value = ''; editing.value = plan.id; selectedAccounts.value = []
   form.value = { ...defaults(), model_id: plan.model_id, cron_expression: plan.cron_expression, enabled: plan.enabled, max_results: plan.max_results, pelican_config: { ...defaults().pelican_config, ...JSON.parse(JSON.stringify(plan.pelican_config || {})) } }
@@ -309,7 +377,7 @@ function payload() {
     quality: { expected_answer: '', action, remove_group_ids: [...remove_group_ids], auto_restore } } }
 }
 async function save() {
-  if (busy.value) return
+  if (busy.value || selectingAccounts.value) return
   busy.value = true; error.value = ''; notice.value = ''
   const scope = identity()
   let changed = false
@@ -408,7 +476,7 @@ onMounted(() => {
   void load()
   poll = setInterval(() => { if (document.visibilityState === 'visible' && !refreshing.value) { void store.refreshRules(); void store.refreshOperations() } }, 30_000)
 })
-onBeforeUnmount(() => { alive = false; detailRequest++; answerRequest++; accountRequest++; judgeModelsRequest++; if (poll) clearInterval(poll); loadedAnswers.clear() })
+onBeforeUnmount(() => { alive = false; accountSelectionRequest++; detailRequest++; answerRequest++; accountRequest++; judgeModelsRequest++; if (poll) clearInterval(poll); loadedAnswers.clear() })
 </script>
 
 <style scoped>

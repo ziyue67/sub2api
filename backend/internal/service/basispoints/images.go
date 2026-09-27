@@ -7,7 +7,11 @@ import (
 	"strings"
 )
 
-// StripInputImages removes image parts from expanded message/tool history before
+const imageInputUnavailableMessage = "[Image input is unavailable because Excel / BPS image support is disabled. " +
+	"The model cannot see this image. Do not retry view_image or other image-reading tools while image support is disabled. " +
+	"Continue using the available text and explain this limitation if the task requires the image.]"
+
+// StripInputImages replaces image parts with explicit unavailable notices before
 // validation or attachment handling. Do not traverse tool arguments, schemas or
 // text: image-shaped application data there is not a Responses image input.
 func StripInputImages(raw []byte) ([]byte, error) {
@@ -21,7 +25,7 @@ func StripInputImages(raw []byte) ([]byte, error) {
 		item, _ := rawItem.(object)
 		field := "content"
 		switch text(item["type"]) {
-		case "", "message":
+		case "", "message", "agent_message":
 		case "function_call_output", "custom_tool_call_output":
 			field = "output"
 		default:
@@ -31,24 +35,16 @@ func StripInputImages(raw []byte) ([]byte, error) {
 		if !ok {
 			continue
 		}
-		kept := make([]any, 0, len(parts))
-		for _, rawPart := range parts {
+		for i, rawPart := range parts {
 			part, _ := rawPart.(object)
-			if text(part["type"]) != "input_image" {
-				kept = append(kept, rawPart)
+			if text(part["type"]) == "input_image" {
+				// Mixed outputs also need a notice: view_image may include only
+				// metadata or blank text beside the image. Silently dropping it
+				// makes the result look empty or successful and invites retries.
+				parts[i] = object{"type": "input_text", "text": imageInputUnavailableMessage}
+				changed = true
 			}
 		}
-		if len(kept) == len(parts) {
-			continue
-		}
-		// Preserve image-only messages and tool results with a truthful marker.
-		// Empty content can be rejected upstream; dropping a tool result breaks
-		// its call_id pairing and prevents the conversation from continuing.
-		if len(kept) == 0 {
-			kept = append(kept, object{"type": "input_text", "text": "[Image omitted because Excel / BPS image support is disabled.]"})
-		}
-		item[field] = kept
-		changed = true
 	}
 	if !changed {
 		return raw, nil

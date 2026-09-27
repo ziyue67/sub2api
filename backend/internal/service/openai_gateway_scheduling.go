@@ -993,6 +993,19 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
+	// A stale sticky binding must not bypass BPS after it is enabled on the
+	// requested model. Clear it and let normal selection choose an eligible BPS
+	// account instead of silently forwarding this turn to /v1/responses.
+	if platform == PlatformOpenAI && strings.TrimSpace(requestedModel) != "" && !account.IsExcelBPSEnabledForModel(requestedModel) {
+		if candidates, listErr := s.listSchedulableAccountsForRequest(ctx, groupID, platform, requestedModel, requireCompact, excludedIDs); listErr == nil {
+			for i := range candidates {
+				if candidates[i].ID != account.ID && candidates[i].IsExcelBPSEnabledForModel(requestedModel) {
+					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+					return nil
+				}
+			}
+		}
+	}
 	if groupID != nil && s.needsUpstreamChannelRestrictionCheck(ctx, groupID) &&
 		s.isUpstreamModelRestrictedByChannel(ctx, *groupID, account, requestedModel, requireCompact) {
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1075,8 +1088,16 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	if preferLowUpstreamRate {
 		rateOrder = newOpenAILegacyUpstreamRateOrder(eligible, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))
 	}
+	bpsPreferred := strings.TrimSpace(requestedModel) != ""
 	sort.SliceStable(eligible, func(i, j int) bool {
 		a, b := eligible[i], eligible[j]
+		if bpsPreferred {
+			aBPS := a.IsExcelBPSEnabledForModel(requestedModel)
+			bBPS := b.IsExcelBPSEnabledForModel(requestedModel)
+			if aBPS != bBPS {
+				return aBPS
+			}
+		}
 		if requireCompact && compactTiers[a.ID] != compactTiers[b.ID] {
 			return compactTiers[a.ID] > compactTiers[b.ID]
 		}

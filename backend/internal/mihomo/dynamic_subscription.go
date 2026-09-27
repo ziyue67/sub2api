@@ -13,8 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const maxDynamicProxies = 256
-
 // dynamicProxy is kept private so credentials cannot accidentally escape in a
 // status DTO or an error value.
 type dynamicProxy struct {
@@ -26,9 +24,6 @@ type dynamicProxy struct {
 }
 
 func normalizeDynamicProxies(raw []string) ([]string, error) {
-	if len(raw) > maxDynamicProxies {
-		return nil, fmt.Errorf("at most %d dynamic proxies", maxDynamicProxies)
-	}
 	result := make([]string, 0, len(raw))
 	seen := make(map[string]struct{}, len(raw))
 	for index, value := range raw {

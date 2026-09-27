@@ -1,0 +1,87 @@
+name: 功能建议
+description: 说明使用场景、现有障碍和可以验收的预期行为。
+title: '[Feature] '
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先描述要解决的问题，再讨论实现方案。大改动建议先在这里确认范围。
+        参考 [贡献指南](https://github.com/ranxi2001/sub2api/blob/production/CONTRIBUTING.md)，不要提交凭据、真实用户数据或生产配置。
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有功能、文档和 Issue，并检查了内容脱敏。
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与现有问题
+      description: 谁在什么流程中遇到什么障碍？填写当前版本、相关模块、规模或频率，未知可注明。
+      placeholder: 作为……，在……版本执行……时，当前需要……，导致……
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议行为与本次范围
+      description: 描述用户可观察的输入、操作和输出；有 UI、接口或配置变化时说明默认行为。实现思路可选。
+      placeholder: |
+        希望新增/改变的行为：
+        最小可用范围：
+        暂不涉及的场景（如有）：
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收场景
+      description: 写出可验证的条件、操作和结果；至少提供一个正常场景，相关时补充失败、权限或边界场景。
+      placeholder: |
+        - 给定……，执行……，应看到……
+        - 当……不可用/无权限时，应……
+        - 未开启新配置时，原有……行为应……
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 现有替代方案与限制（可选）
+      description: 已尝试的配置、脚本、客户端绕行方式及其不足；可链接相关 Issue 或其他实现，并说明差异。
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: 兼容性与运行成本（可选）
+      description: 说明可能影响的旧配置、API、数据库、权限、隐私、并发、计费或资源开销；未知就写待评估。不要只写“无影响”而不说明依据。
+  - type: checkboxes
+    id: participation
+    attributes:
+      label: 可参与的工作（可选，不是受理条件）
+      options:
+        - label: 我可以补充使用场景或脱敏样例。
+        - label: 我可以帮助测试。
+        - label: 我有意提交 PR。
+  - type: textarea
+    id: agent_name
+    attributes:
+      label: Agent 名称与参与范围
+      description: 所有 Issue 均须填写，包括仅用 Agent 分析问题或润色正文的情况。多个 Agent（含子 Agent）逐一列出；纯人工编写填“未使用 Agent，参与范围：无”。
+      placeholder: 工具名称及参与的问题分析、代码、测试或正文撰写工作。
+    validations:
+      required: true
+  - type: textarea
+    id: agent_model
+    attributes:
+      label: 模型名称
+      description: 填写实际使用的完整模型名称或模型 ID；多个模型逐一对应 Agent 列出。纯人工编写填“不适用”，无法获取填“未知”并说明原因。
+    validations:
+      required: true
+  - type: textarea
+    id: agent_reasoning
+    attributes:
+      label: 推理强度
+      description: 填写实际配置值；未手动设置填“默认（未手动设置）”，工具不提供该设置填“不适用（工具未提供）”，无法获取填“未知”并说明原因。纯人工编写填“不适用”；多个模型逐一列出。
+    validations:
+      required: true

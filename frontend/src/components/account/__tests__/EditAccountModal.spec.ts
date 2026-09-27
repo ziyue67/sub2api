@@ -556,6 +556,35 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
+  it('saves, restores and clears the BPS encrypted-content option', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, unrelated: 'preserve' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const selector = '[data-testid="excel-bps-ignore-encrypted-content"]'
+    expect(wrapper.get<HTMLInputElement>(selector).element.checked).toBe(false)
+    await wrapper.get(selector).setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const savedExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(savedExtra.openai_excel_bps_ignore_encrypted_content).toBe(true)
+    expect(savedExtra.unrelated).toBe('preserve')
+
+    await wrapper.setProps({ account: { ...account, extra: savedExtra } })
+    expect(wrapper.get<HTMLInputElement>(selector).element.checked).toBe(true)
+    await wrapper.get('[data-testid="excel-bps-toggle"]').trigger('click')
+    expect(wrapper.find(selector).exists()).toBe(false)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const clearedExtra = updateAccountMock.mock.calls[1]?.[1]?.extra
+    expect(clearedExtra.openai_excel_bps).toBeUndefined()
+    expect(clearedExtra.openai_excel_bps_ignore_encrypted_content).toBeUndefined()
+    expect(clearedExtra.unrelated).toBe('preserve')
+    wrapper.unmount()
+  })
+
   it('clears the auto-disable option when manually turning off BPS', async () => {
     const account = buildAccount()
     account.type = 'oauth'
