@@ -104,27 +104,131 @@ func (m *Manager) acquireBPSSession(scope string, now time.Time) (string, func()
 }
 
 func (m *Manager) acquireBPSSessionExcluding(scope string, now time.Time, excluded map[string]bool) (string, func(), error) {
+	return m.acquireBPSPreferredSession(scope, now, excluded, "")
+}
+
+func (m *Manager) acquireBPSPreferredSession(scope string, now time.Time, excluded map[string]bool, preferred string) (string, func(), error) {
 	digest := sha256.Sum256([]byte(scope))
 	key := hex.EncodeToString(digest[:])
 	m.bpsMu.Lock()
 	defer m.bpsMu.Unlock()
-	m.mu.Lock()
-	snapshot := m.saved
-	ready := m.state.Running && !m.closed
-	// Copy only eligible identities while protected; saved maps may be replaced.
+	eligible, err := m.bpsEligibleNodesLocked(now, excluded)
+	if err != nil {
+		return "", nil, err
+	}
+	loads, activeLoads := m.bpsSessionLoadsLocked(now)
+	binding := m.bpsSessions[key]
+	if binding != nil && (!eligible[binding.node] || binding.failed) {
+		// Keep in-flight requests on their original exit. Rebind only after
+		// the last response closes; late reports cannot poison a new binding.
+		if binding.active > 0 {
+			return "", nil, bpsSelectionError("session_draining", "bound BPS node unavailable while requests are active")
+		}
+		delete(m.bpsSessions, key)
+		binding = nil
+	}
+	if preferred != "" && !eligible[preferred] {
+		return "", nil, bpsSelectionError("no_eligible_nodes", "selected BPS proxy is no longer eligible")
+	}
+	if preferred != "" && binding != nil && binding.active == 0 && binding.node != preferred {
+		delete(m.bpsSessions, key)
+		binding = nil
+	}
+	if binding == nil {
+		if len(m.bpsSessions) >= bpsMaxSessions {
+			return "", nil, bpsSelectionError("session_capacity", "BPS session capacity exceeded")
+		}
+		node := ""
+		bestScore := -1.0
+		for id := range eligible {
+			if preferred != "" && id != preferred {
+				// Re-rank already verified exits under the binding lock. A stale
+				// candidate snapshot must not pile concurrent sessions onto one
+				// winner when another immediately usable exit has lower load.
+				if !now.Before(m.bpsHealthAtLocked(id, now).verifiedUntil) {
+					continue
+				}
+			}
+			if m.bpsStaticMode {
+				if _, ok := m.bpsStatic[id]; !ok {
+					continue
+				}
+			} else if _, ok := m.bpsPorts[id]; !ok {
+				continue
+			}
+			score := m.bpsQualityScoreLocked(id, activeLoads[id], loads[id], now)
+			if node == "" || score > bestScore || (score == bestScore && id < node) {
+				node, bestScore = id, score
+			}
+		}
+		if node == "" {
+			return "", nil, bpsSelectionError("no_eligible_nodes", "no eligible BPS proxy nodes")
+		}
+		binding = &bpsSession{node: node, generation: m.bpsHealthAtLocked(node, now).generation}
+		m.bpsSessions[key] = binding
+	}
+	target := ""
+	if m.bpsStaticMode {
+		staticURL, ok := m.bpsStatic[binding.node]
+		if !ok {
+			return "", nil, bpsSelectionError("listener_unavailable", "bound BPS proxy unavailable")
+		}
+		target = staticURL
+	} else {
+		port, ok := m.bpsPorts[binding.node]
+		if !ok {
+			return "", nil, bpsSelectionError("listener_unavailable", "bound BPS listener unavailable")
+		}
+		target = fmt.Sprintf("http://127.0.0.1:%d", port)
+	}
+	binding.active++
+	binding.lastUsed = now
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			m.bpsMu.Lock()
+			defer m.bpsMu.Unlock()
+			binding.active--
+			binding.lastUsed = time.Now()
+		})
+	}
+	return target, release, nil
+}
+
+// Both callers hold bpsMu; policy and ranking share the same snapshot rules.
+func (m *Manager) bpsEligibleNodesLocked(now time.Time, excluded map[string]bool) (map[string]bool, error) {
 	eligible := make(map[string]bool)
-	for _, n := range snapshot.Nodes {
-		name, _ := n["name"].(string)
-		id := harvestDigest(n)
-		m.bpsHealthAtLocked(id, now)
-		if bpsEligible(snapshot, name) && !excluded[id] && !m.bpsCoolingLocked(id, now) {
-			eligible[id] = true
+	if m.bpsStaticMode {
+		// Static pool: membership is pushed from the admin proxy list; no kernel,
+		// country filter or listener requirement. Cooldown gating is shared.
+		for id := range m.bpsStatic {
+			m.bpsHealthAtLocked(id, now)
+			if !excluded[id] && !m.bpsCoolingLocked(id, now) {
+				eligible[id] = true
+			}
+		}
+	} else {
+		m.mu.Lock()
+		snapshot := m.saved
+		ready := m.state.Running && !m.closed
+		// Copy only eligible identities while protected; saved maps may be replaced.
+		for _, n := range snapshot.Nodes {
+			name, _ := n["name"].(string)
+			id := harvestDigest(n)
+			m.bpsHealthAtLocked(id, now)
+			if bpsEligible(snapshot, name) && !excluded[id] && !m.bpsCoolingLocked(id, now) {
+				eligible[id] = true
+			}
+		}
+		m.mu.Unlock()
+		if !ready {
+			return nil, bpsSelectionError("manager_unavailable", "managed Mihomo is not running")
 		}
 	}
-	m.mu.Unlock()
-	if !ready {
-		return "", nil, errors.New("managed Mihomo is not running")
-	}
+	return eligible, nil
+}
+
+func (m *Manager) bpsSessionLoadsLocked(now time.Time) (map[string]int, map[string]int) {
 	if m.bpsSessions == nil {
 		m.bpsSessions = make(map[string]*bpsSession)
 	}
@@ -140,51 +244,5 @@ func (m *Manager) acquireBPSSessionExcluding(scope string, now time.Time, exclud
 		loads[b.node]++
 		activeLoads[b.node] += b.active
 	}
-	binding := m.bpsSessions[key]
-	if binding != nil && (!eligible[binding.node] || binding.failed) {
-		// Keep in-flight requests on their original exit. Rebind only after
-		// the last response closes; late reports cannot poison a new binding.
-		if binding.active > 0 {
-			return "", nil, errors.New("bound BPS node unavailable while requests are active")
-		}
-		delete(m.bpsSessions, key)
-		binding = nil
-	}
-	if binding == nil {
-		if len(m.bpsSessions) >= bpsMaxSessions {
-			return "", nil, errors.New("BPS session capacity exceeded")
-		}
-		node := ""
-		bestScore := -1.0
-		for id := range eligible {
-			if _, ok := m.bpsPorts[id]; !ok {
-				continue
-			}
-			score := m.bpsQualityScoreLocked(id, activeLoads[id], loads[id], now)
-			if node == "" || score > bestScore || (score == bestScore && id < node) {
-				node, bestScore = id, score
-			}
-		}
-		if node == "" {
-			return "", nil, errors.New("no eligible BPS proxy nodes")
-		}
-		binding = &bpsSession{node: node, generation: m.bpsHealthAtLocked(node, now).generation}
-		m.bpsSessions[key] = binding
-	}
-	port, ok := m.bpsPorts[binding.node]
-	if !ok {
-		return "", nil, errors.New("bound BPS listener unavailable")
-	}
-	binding.active++
-	binding.lastUsed = now
-	var once sync.Once
-	release := func() {
-		once.Do(func() {
-			m.bpsMu.Lock()
-			defer m.bpsMu.Unlock()
-			binding.active--
-			binding.lastUsed = time.Now()
-		})
-	}
-	return fmt.Sprintf("http://127.0.0.1:%d", port), release, nil
+	return loads, activeLoads
 }

@@ -627,6 +627,18 @@ export default {
       failedToLoadApiKeys: '加载用户 API 密钥失败',
       deleteConfirm: "确定要删除用户 '{email}' 吗？此操作无法撤销。",
       observerGroups: '可管理的账号分组',
+      observerSetup: {
+        title: '转为观察者时同步执行',
+        createGroup: '创建以该用户名称命名的专属分组',
+        createGroupHint: '固定为 OpenAI 平台, 倍率为 1. 自动授予该分组的账号管理和 API 使用权限. 同名分组已存在时提交失败.',
+        simpleModeHint: '简易模式不支持专属分组, 此选项不可用.',
+        revokePublic: '取消该用户使用其他公开分组的权限',
+        revokePublicHint: '限制公开普通分组及其已有 API Key. 保留专属分组授权和已购订阅; 账号管理分组不受此选项影响.',
+        grantResources: '增加 99999 余额额度和 1000 并发',
+        grantResourcesHint: '余额累加 99999, 并发在表单值基础上增加 1000. 并发为 0 时保持无限制. 变更记录在余额/并发历史中.',
+        onceHint: '默认不勾选. 仅在本次从其他角色改为观察者时执行, 后续编辑不会重复执行.',
+        usernameRequired: '创建专属分组前请填写用户名'
+      },
       observerGroupsHint: '仅授权账号管理, 不影响用户调用 API 的分组权限. 未选择分组时无账号管理权限. 允许查看和导出账号凭据; 共享账号的操作也会影响其他分组.',
       observerImportHint: '选择导入目标分组. 观察者导入不包含代理配置, 请使用不含代理的备份文件.',
       roles: {

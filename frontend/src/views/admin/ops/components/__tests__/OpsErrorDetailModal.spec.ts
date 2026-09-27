@@ -1,12 +1,15 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import OpsErrorDetailModal from '../OpsErrorDetailModal.vue'
+import { observerUsageContext } from '@/components/admin/usage/observerUsageContext'
 
 const mocks = vi.hoisted(() => ({
   getRequestErrorDetail: vi.fn(),
+  own: vi.fn(),
   listRequestErrorUpstreamErrors: vi.fn()
 }))
 
+vi.mock('@/api/observerUsage', () => ({ observerUsageAPI: { getErrorDetail: mocks.own } }))
 vi.mock('@/api/admin/ops', () => ({
   opsAPI: {
     getRequestErrorDetail: mocks.getRequestErrorDetail,
@@ -76,4 +79,18 @@ describe('OpsErrorDetailModal', () => {
     expect(wrapper.findAll('pre')).toHaveLength(2)
     expect(wrapper.text()).not.toContain('admin.ops.errorDetail.payloads.upstream_detail')
   })
+})
+
+it('loads only the owned observer error and never requests correlated admin details', async () => {
+  vi.clearAllMocks()
+  mocks.own.mockResolvedValue({ id: 42, status_code: 502, message: 'own error' })
+  const wrapper = shallowMount(OpsErrorDetailModal, {
+    props: { show: true, errorId: 42, errorType: 'request' },
+    global: { provide: { [observerUsageContext as symbol]: true } },
+  })
+  await flushPromises()
+  expect(mocks.own).toHaveBeenCalledWith(42)
+  expect(mocks.getRequestErrorDetail).not.toHaveBeenCalled()
+  expect(mocks.listRequestErrorUpstreamErrors).not.toHaveBeenCalled()
+  wrapper.unmount()
 })

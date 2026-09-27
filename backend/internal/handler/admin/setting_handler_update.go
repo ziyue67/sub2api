@@ -1976,7 +1976,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			return next
 		}(),
 		OpenAICodexTicketStaticProxyURL: func() string {
-			if old := previousSettings.OpenAICodexTicketHarvestProxyURL; old != "" && old != "http://127.0.0.1:3101" {
+			if old := previousSettings.OpenAICodexTicketHarvestProxyURL; old != "" && old != "http://127.0.0.1:3101" && old != service.OpenAICodexTicketHarvestIPPoolURL {
 				return old
 			}
 			return previousSettings.OpenAICodexTicketStaticProxyURL

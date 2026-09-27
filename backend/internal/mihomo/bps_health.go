@@ -23,7 +23,11 @@ const (
 	bpsStreamMaxCooldown   = 30 * time.Minute
 	bpsStreamFailureWindow = 30 * time.Minute
 	bpsProbeTimeout        = 5 * time.Second
-	bpsMaxCandidateProbes  = 3
+	// Reserve time for other candidates within the 15-second acquisition budget.
+	bpsCandidateTimeout   = 4 * time.Second
+	bpsRetryCooldown      = 15 * time.Second
+	bpsMaxCandidateProbes = 32
+	bpsProbeParallelism   = 4
 )
 
 type bpsNodeHealth struct {
@@ -68,6 +72,9 @@ func (l *BPSLease) ReportFailure() {
 		h.modelQuality.observe(false, now)
 		h.connectQuality.observe(false, now)
 		l.manager.bpsFailureLocked(l.node, now)
+		if until := now.Add(bpsRetryCooldown); until.After(h.retryAfter) {
+			h.retryAfter = until
+		}
 	})
 }
 
@@ -108,7 +115,7 @@ func acquireBPSLeaseScoped(ctx context.Context, scope string, transient bool, ex
 	}
 	m := managedManager()
 	if m == nil {
-		return nil, errors.New("managed Mihomo is not running")
+		return nil, bpsSelectionError("manager_unavailable", "managed Mihomo is not running")
 	}
 	excluded := make(map[string]bool)
 	m.bpsMu.Lock()
@@ -145,87 +152,23 @@ func (m *Manager) acquireScopedBPSLease(ctx context.Context, scope string, trans
 	return lease, err
 }
 
-func (m *Manager) acquireBPSLease(ctx context.Context, scope string, excluded map[string]bool) (*BPSLease, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	digest := sha256.Sum256([]byte(scope))
-	key := hex.EncodeToString(digest[:])
-	m.bpsMu.Lock()
-	previousNode := ""
-	if binding := m.bpsSessions[key]; binding != nil {
-		previousNode = binding.node
-	}
-	m.bpsMu.Unlock()
-
-	if excluded == nil {
-		excluded = make(map[string]bool)
-	}
-	for attempt := 0; attempt < bpsMaxCandidateProbes; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		proxy, release, err := m.acquireBPSSessionExcluding(scope, time.Now(), excluded)
-		if err != nil {
-			return nil, err
-		}
-		m.bpsMu.Lock()
-		var node string
-		for id, port := range m.bpsPorts {
-			if proxy == fmt.Sprintf("http://127.0.0.1:%d", port) {
-				node = id
-				break
-			}
-		}
-		generation := m.bpsHealthAtLocked(node, time.Now()).generation
-		m.bpsMu.Unlock()
-		lease := &BPSLease{ProxyURL: proxy, manager: m, node: node, generation: generation, release: release}
-		if err := m.checkBPSHealth(ctx, node, proxy); err == nil && m.bpsNodeStillEligible(node, generation) {
-			if previousNode != "" && previousNode != node {
-				logger.FromContext(ctx).Info("excel_bps.proxy_rebound",
-					zap.String("session_hash", key[:16]),
-					zap.String("previous_node_hash", previousNode[:min(16, len(previousNode))]),
-					zap.String("node_hash", node[:min(16, len(node))]), zap.String("local_proxy", proxy))
-			}
-			if previousNode != node {
-				m.bpsMu.Lock()
-				health := m.bpsHealthLocked(node)
-				now := time.Now()
-				modelRate, connectRate := health.modelQuality.rate(now), health.connectQuality.rate(now)
-				_, modelSamples := health.modelQuality.decayed(now)
-				_, connectSamples := health.connectQuality.decayed(now)
-				source := "subscription"
-				if m.bpsDynamic[node] {
-					source = "dynamic"
-				}
-				m.bpsMu.Unlock()
-				logger.FromContext(ctx).Info("excel_bps.proxy_selected",
-					zap.String("proxy_source", source), zap.Uint64("observation_generation", generation),
-					zap.String("session_hash", key[:16]), zap.String("node_hash", node[:min(16, len(node))]),
-					zap.String("local_proxy", proxy), zap.Float64("request_success_rate", modelRate),
-					zap.Float64("connectivity_rate", connectRate), zap.Float64("request_samples", modelSamples),
-					zap.Float64("connectivity_samples", connectSamples))
-			}
-			return lease, nil
-		}
-		release()
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		excluded[node] = true
-	}
-	return nil, errors.New("BPS proxy reachability checks exhausted")
-}
-
 // Recheck policy after network I/O: an administrator may change the pool or
 // country filter while the probe is running.
 func (m *Manager) bpsNodeStillEligible(node string, generation uint64) bool {
 	m.bpsMu.Lock()
 	defer m.bpsMu.Unlock()
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	now := time.Now()
 	h := m.bpsHealthAtLocked(node, now)
-	if m.closed || !m.state.Running || h.generation != generation || !now.Before(h.verifiedUntil) || m.bpsCoolingLocked(node, now) {
+	if h.generation != generation || !now.Before(h.verifiedUntil) || m.bpsCoolingLocked(node, now) {
+		return false
+	}
+	if m.bpsStaticMode {
+		_, ok := m.bpsStatic[node]
+		return ok
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || !m.state.Running {
 		return false
 	}
 	for _, n := range m.saved.Nodes {
@@ -295,8 +238,13 @@ func (m *Manager) bpsStreamFailureLocked(node string, now time.Time) {
 // Single-flight by node: hundreds of sessions must not launch hundreds of
 // probes. No manager locks are held during I/O. Cancellation is not node failure.
 func (m *Manager) checkBPSHealth(ctx context.Context, node, proxy string) error {
+	// A candidate's deadline is a proxy failure; the caller's cancellation is
+	// not. Keep both contexts so a slow node cannot consume the whole request
+	// budget or escape health feedback by exhausting its own probe budget.
+	candidateCtx, cancelCandidate := context.WithTimeout(ctx, bpsCandidateTimeout)
+	defer cancelCandidate()
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := candidateCtx.Err(); err != nil {
 			return err
 		}
 		m.bpsMu.Lock()
@@ -313,8 +261,8 @@ func (m *Manager) checkBPSHealth(ctx context.Context, node, proxy string) error 
 		if pending := h.probing; pending != nil {
 			m.bpsMu.Unlock()
 			select {
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-candidateCtx.Done():
+				return candidateCtx.Err()
 			case <-pending:
 				continue
 			}
@@ -327,7 +275,11 @@ func (m *Manager) checkBPSHealth(ctx context.Context, node, proxy string) error 
 
 		probe := m.bpsProbe
 		if probe == nil {
-			probe = probeBPSHTTPS
+			if m.bpsStaticMode {
+				probe = probeBPSStaticHTTPS
+			} else {
+				probe = probeBPSHTTPS
+			}
 		}
 		successes, failures := 0, 0
 		probeResults := make([]bool, 0, 3)
@@ -339,8 +291,11 @@ func (m *Manager) checkBPSHealth(ctx context.Context, node, proxy string) error 
 		// Confirm a first probe failure before cooldown; recovery always requires
 		// two consecutive successes. Three network calls is the hard upper bound.
 		for n := 0; n < 3; n++ {
-			probeCtx, cancel := context.WithTimeout(ctx, bpsProbeTimeout)
+			probeCtx, cancel := context.WithTimeout(candidateCtx, bpsProbeTimeout)
 			probeErr = probe(probeCtx, proxy)
+			if probeErr == nil {
+				probeErr = probeCtx.Err()
+			}
 			cancel()
 			if ctx.Err() != nil {
 				break
@@ -348,12 +303,9 @@ func (m *Manager) checkBPSHealth(ctx context.Context, node, proxy string) error 
 			probeResults = append(probeResults, probeErr == nil)
 			if probeErr != nil {
 				failures++
-				logger.FromContext(ctx).Warn("excel_bps.proxy_probe_failed",
-					zap.String("node_hash", node[:min(16, len(node))]), zap.String("local_proxy", proxy), zap.String("error_kind", transportdiag.Classify(probeErr)),
-					zap.String("error_type", fmt.Sprintf("%T", probeErr)))
 				successes = 0
 				needed = 2
-				if failures >= 2 || recovering {
+				if failures >= 2 || recovering || candidateCtx.Err() != nil {
 					break
 				}
 			} else {
@@ -385,6 +337,11 @@ func (m *Manager) checkBPSHealth(ctx context.Context, node, proxy string) error 
 				if failures == 0 {
 					m.bpsFailureLocked(node, time.Now())
 				}
+				// Even a single budget-exhausting probe gets a short quarantine.
+				// Confirmed/repeated failures retain their longer existing cooldown.
+				if until := time.Now().Add(bpsRetryCooldown); until.After(h.retryAfter) {
+					h.retryAfter = until
+				}
 			}
 		}
 		close(pending)
@@ -396,6 +353,11 @@ func (m *Manager) checkBPSHealth(ctx context.Context, node, proxy string) error 
 			return errors.New("BPS node failed during reachability check")
 		}
 		if probeErr != nil || successes < needed {
+			// One summary per failed candidate, not one warning per confirmation.
+			logger.FromContext(ctx).Warn("excel_bps.proxy_probe_failed",
+				zap.String("node_hash", node[:min(16, len(node))]), zap.String("local_proxy", bpsProxyLogValue(m, proxy)),
+				zap.String("error_kind", transportdiag.Classify(probeErr)), zap.String("error_type", fmt.Sprintf("%T", probeErr)),
+				zap.Int("probe_attempts", len(probeResults)), zap.Bool("candidate_budget_exhausted", candidateCtx.Err() != nil))
 			return errors.New("BPS proxy HTTPS reachability failed")
 		}
 		return nil
@@ -438,4 +400,35 @@ func probeBPSHTTPSClient(ctx context.Context, client *http.Client) error {
 		return errors.New("BPS proxy probe HTTP unavailable")
 	}
 	return nil
+}
+
+func (m *Manager) logBPSLeaseSelected(ctx context.Context, key, previousNode string, lease *BPSLease) {
+	node, proxy, generation := lease.node, lease.ProxyURL, lease.generation
+	if previousNode != "" && previousNode != node {
+		logger.FromContext(ctx).Info("excel_bps.proxy_rebound",
+			zap.String("session_hash", key[:16]),
+			zap.String("previous_node_hash", previousNode[:min(16, len(previousNode))]),
+			zap.String("node_hash", node[:min(16, len(node))]), zap.String("local_proxy", bpsProxyLogValue(m, proxy)))
+	}
+	if previousNode != node {
+		m.bpsMu.Lock()
+		health := m.bpsHealthLocked(node)
+		now := time.Now()
+		modelRate, connectRate := health.modelQuality.rate(now), health.connectQuality.rate(now)
+		_, modelSamples := health.modelQuality.decayed(now)
+		_, connectSamples := health.connectQuality.decayed(now)
+		source := "subscription"
+		if m.bpsStaticMode {
+			source = "ip_pool"
+		} else if m.bpsDynamic[node] {
+			source = "dynamic"
+		}
+		m.bpsMu.Unlock()
+		logger.FromContext(ctx).Info("excel_bps.proxy_selected",
+			zap.String("proxy_source", source), zap.Uint64("observation_generation", generation),
+			zap.String("session_hash", key[:16]), zap.String("node_hash", node[:min(16, len(node))]),
+			zap.String("local_proxy", bpsProxyLogValue(m, proxy)), zap.Float64("request_success_rate", modelRate),
+			zap.Float64("connectivity_rate", connectRate), zap.Float64("request_samples", modelSamples),
+			zap.Float64("connectivity_samples", connectSamples))
+	}
 }

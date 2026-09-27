@@ -259,3 +259,30 @@ func (s *stubUserRepo) DisableTotp(ctx context.Context, userID int64) error {
 func (s *stubUserRepo) GetByIDIncludeDeleted(ctx context.Context, id int64) (*service.User, error) {
 	panic("unexpected GetByIDIncludeDeleted call")
 }
+
+func TestAdminAuthRejectsObserverUsageAndCleanup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := &config.Config{JWT: config.JWTConfig{Secret: "observer-usage-test", ExpireHour: 1}}
+	auth := service.NewAuthService(nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	observer := &service.User{ID: 42, Email: "observer@test.com", Role: service.RoleObserver, Status: service.StatusActive}
+	repo := &stubUserRepo{getByID: func(context.Context, int64) (*service.User, error) { return observer, nil }}
+	token, err := auth.GenerateToken(context.Background(), observer)
+	require.NoError(t, err)
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/admin/usage"},
+		{http.MethodGet, "/api/v1/admin/dashboard/models"},
+		{http.MethodGet, "/api/v1/admin/ops/errors"},
+		{http.MethodPost, "/api/v1/admin/usage/cleanup-tasks"},
+	} {
+		router := gin.New()
+		router.Use(gin.HandlerFunc(NewAdminAuthMiddleware(auth, service.NewUserService(repo, nil, nil, nil), nil, nil)))
+		called := false
+		router.Handle(route.method, route.path, func(c *gin.Context) { called = true; c.Status(200) })
+		req := httptest.NewRequest(route.method, route.path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.Equal(t, http.StatusForbidden, w.Code, route.path)
+		require.False(t, called)
+	}
+}

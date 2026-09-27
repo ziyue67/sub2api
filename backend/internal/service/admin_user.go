@@ -211,9 +211,20 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		}
 	}
 
+	originalCtx := ctx
+	ctx, setupTx, err := s.beginObserverSetup(ctx, id, input)
+	if err != nil {
+		return nil, err
+	}
+	if setupTx != nil {
+		defer func() { _ = setupTx.Rollback() }()
+	}
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if setupTx != nil && user.Role == RoleObserver {
+		return nil, infraerrors.Conflict("OBSERVER_SETUP_ALREADY_APPLIED", "Observer setup can only run when changing a non-observer user to observer")
 	}
 
 	// Protect admin users: cannot disable admin accounts
@@ -305,9 +316,47 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		user.RestrictPublicGroups = *input.RestrictPublicGroups
 		fields.RestrictPublicGroups = true
 	}
+	var dedicatedGroupID int64
+	if setupTx != nil {
+		dedicatedGroupID, err = s.applyObserverSetup(ctx, user, &fields, input.ObserverSetup)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if err := s.userRepo.Update(ctx, user, fields); err != nil {
 		return nil, err
+	}
+	concurrencyDiff := user.Concurrency - oldConcurrency
+	if setupTx != nil {
+		if input.ObserverSetup.GrantResources {
+			change, err := s.userRepo.AdjustBalance(ctx, user.ID, observerSetupBalanceGrant)
+			if err != nil {
+				return nil, err
+			}
+			user.Balance = change.New
+			if err := s.recordObserverAdjustment(ctx, user.ID, input.ActorAdminID, AdjustmentTypeAdminBalance, observerSetupBalanceGrant); err != nil {
+				return nil, err
+			}
+		}
+		if concurrencyDiff != 0 {
+			if err := s.recordObserverAdjustment(ctx, user.ID, input.ActorAdminID, AdjustmentTypeAdminConcurrency, float64(concurrencyDiff)); err != nil {
+				return nil, err
+			}
+		}
+		if err := setupTx.Commit(); err != nil {
+			return nil, err
+		}
+		ctx = originalCtx
+		logger.LegacyPrintf("service.admin", "audit: observer setup actor_admin_id=%d target_user_id=%d dedicated_group_id=%d revoke_public_groups=%t grant_resources=%t",
+			input.ActorAdminID, user.ID, dedicatedGroupID, input.ObserverSetup.RevokePublicGroups, input.ObserverSetup.GrantResources)
+		if input.ObserverSetup.GrantResources && s.billingCacheService != nil {
+			cacheCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if err := s.billingCacheService.InvalidateUserBalance(cacheCtx, user.ID); err != nil {
+				logger.LegacyPrintf("service.admin", "invalidate observer balance cache failed: user_id=%d err=%v", user.ID, err)
+			}
+		}
 	}
 
 	// 角色变更属权限敏感操作，落审计日志（含操作者），便于事后追溯。
@@ -331,8 +380,7 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		}
 	}
 
-	concurrencyDiff := user.Concurrency - oldConcurrency
-	if concurrencyDiff != 0 {
+	if concurrencyDiff != 0 && setupTx == nil {
 		code, err := GenerateRedeemCode()
 		if err != nil {
 			logger.LegacyPrintf("service.admin", "failed to generate adjustment redeem code: %v", err)

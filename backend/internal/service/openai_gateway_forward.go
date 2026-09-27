@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
-	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"io"
 	"net/http"
 	"net/url"
@@ -42,6 +41,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	ctx = WithSelectedAccountProxyLane(ctx, account)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	// A failed account attempt must not leave a bypass reason on a later BPS response.
+	c.Writer.Header().Del("X-Codex2API-Basispoints-Bypass")
+	c.Writer.Header().Del("X-Codex2API-Upstream")
 	if shouldForwardOpenAIResponsesViaChatCompletions(account, body) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
@@ -81,16 +83,27 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	modelForBPS := gjson.GetBytes(body, "model").String()
 	if c.GetBool(bpsAccountProbeRequiredContextKey) &&
-		(!account.IsExcelBPSEnabledForModel(modelForBPS) || basispoints.NativeFallbackReason(body) != "") {
+		(!account.IsExcelBPSEnabledForModel(modelForBPS) || account.excelBPSNativeFallbackReason(body) != "") {
 		return nil, errors.New("bps probe path is unavailable")
 	}
 	if account.IsExcelBPSEnabledForModel(modelForBPS) {
-		reason := basispoints.NativeFallbackReason(body)
+		reason := account.excelBPSNativeFallbackReason(body)
 		if reason == "" {
 			return s.forwardExcelBPS(ctx, c, account, body, startTime)
 		}
 		c.Header("X-Codex2API-Upstream", "codex")
 		c.Header("X-Codex2API-Basispoints-Bypass", reason)
+		recordExcelBPSNativeFallback(ctx, account, reason)
+	}
+
+	if account.IsOpenAIOAuthLike() {
+		stripped, changed, stripErr := stripOpenAICodexUnsupportedWebSearchFields(body)
+		if stripErr != nil {
+			return nil, fmt.Errorf("strip unsupported Codex web search fields: %w", stripErr)
+		}
+		if changed {
+			body = stripped
+		}
 	}
 
 	// The SDK adapter owns Lite declarations, custom tools, replay item IDs,

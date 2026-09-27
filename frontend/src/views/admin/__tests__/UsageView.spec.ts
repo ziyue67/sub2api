@@ -27,6 +27,12 @@ const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, listE
   }
 })
 
+const own = vi.hoisted(() => ({
+  list: vi.fn(), getStats: vi.fn(), getModelStats: vi.fn(), getSnapshotV2: vi.fn(), listErrors: vi.fn(),
+  settings: { allow_user_view_error_requests: true },
+}))
+vi.mock('@/api/observerUsage', () => ({ observerUsageAPI: own }))
+
 const messages: Record<string, string> = {
   'admin.dashboard.timeRange': 'Time Range',
   'admin.dashboard.day': 'Day',
@@ -84,6 +90,7 @@ vi.mock('@/api/admin/ops', () => ({
 
 vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
+    cachedPublicSettings: own.settings,
     showError: vi.fn(),
     showWarning: vi.fn(),
     showSuccess: vi.fn(),
@@ -619,4 +626,72 @@ describe('admin UsageView model audit export', () => {
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
 		expect(saveAs).toHaveBeenCalledTimes(1)
 	})
+})
+
+
+describe('observer own usage view', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    Object.keys(routeQuery).forEach(key => delete routeQuery[key])
+    own.settings.allow_user_view_error_requests = true
+    own.list.mockResolvedValue({ items: [], total: 0 })
+    own.getStats.mockResolvedValue({ total_requests: 2, total_account_cost: 3 })
+    own.getModelStats.mockResolvedValue({ models: [] })
+    own.getSnapshotV2.mockResolvedValue({ trend: [], groups: [] })
+    own.listErrors.mockResolvedValue({ items: [], total: 0 })
+  })
+  afterEach(() => { vi.useRealTimers() })
+  const mountObserver = () => mount(UsageView, {
+    props: { observerMode: true },
+    global: { stubs: {
+      AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
+      UsageTable: UsageTableStub, UsageExportProgress: true, UsageCleanupDialog: true,
+      UserBalanceHistoryModal: true, Pagination: true, Select: true, DateRangePicker: true,
+      Icon: true, TokenUsageTrend: true, ModelDistributionChart: true, GroupDistributionChart: true,
+      EndpointDistributionChart: true, UserTokenRanking: true, OpsErrorLogTable: true, OpsErrorDetailModal: true,
+    } },
+  })
+  it('uses own APIs for filters, charts and export, without admin actions', async () => {
+    routeQuery.user_id = '999'
+    const wrapper = mountObserver()
+    await vi.advanceTimersByTimeAsync(150)
+    await flushPromises()
+    expect(own.list).toHaveBeenCalledWith(expect.objectContaining({ user_id: undefined }), expect.anything())
+    expect(own.getStats).toHaveBeenCalled()
+    expect(own.getModelStats).toHaveBeenCalled()
+    expect(own.getSnapshotV2).toHaveBeenCalled()
+    expect(wrapper.find('usage-cleanup-dialog-stub').exists()).toBe(false)
+    expect(wrapper.find('user-balance-history-modal-stub').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('usage.tabs.ranking')
+    for (const name of ['model-distribution-chart-stub', 'group-distribution-chart-stub', 'endpoint-distribution-chart-stub']) {
+      expect(wrapper.findComponent(name).props('enableBreakdown')).toBe(false)
+    }
+    await wrapper.find('.user-click').trigger('click')
+    const filter = wrapper.findComponent(UsageFiltersStub)
+    filter.vm.$emit('update:modelValue', { account_id: 7, group_id: 8, api_key_id: 9, model: 'gpt', start_date: '2026-09-01', end_date: '2026-09-02' })
+    filter.vm.$emit('change')
+    await flushPromises()
+    expect(own.list).toHaveBeenLastCalledWith(expect.objectContaining({ account_id: 7, group_id: 8, api_key_id: 9 }), expect.anything())
+    filter.vm.$emit('cleanup')
+    filter.vm.$emit('export')
+    await flushPromises()
+    expect(own.list).toHaveBeenLastCalledWith(expect.objectContaining({ page_size: 100, exact_total: true, account_id: 7 }), expect.anything())
+    expect(saveAs).toHaveBeenCalled()
+    const errorTab = wrapper.findAll('[data-testid="usage-detail-tab"]').find(tab => tab.text() === 'usage.tabs.errors')!
+    await errorTab.trigger('click')
+    await flushPromises()
+    expect(own.listErrors).toHaveBeenCalledWith(expect.objectContaining({ start_date: '2026-09-01', account_id: 7, group_id: 8 }))
+    for (const fn of [list, exportList, getStats, getModelStats, getSnapshotV2, getById, listErrorLogs]) expect(fn).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+  it('honors the user error visibility switch', async () => {
+    own.settings.allow_user_view_error_requests = false
+    const wrapper = mountObserver()
+    await vi.advanceTimersByTimeAsync(150)
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="usage-detail-tab"]')).toHaveLength(1)
+    expect(own.listErrors).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 })

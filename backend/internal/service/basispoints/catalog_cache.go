@@ -94,15 +94,19 @@ func (c *CatalogCache) commit(scope string, expected uint64, raw []byte) bool {
 }
 
 func PrepareWithCatalog(raw []byte, scope string, replay *ReplayCache, cache *CatalogCache) ([]byte, *Bridge, error) {
+	return prepareWithCatalog(raw, scope, replay, cache, nil)
+}
+
+func prepareWithCatalog(raw []byte, scope string, replay *ReplayCache, cache *CatalogCache, nativeToolImages map[string]bool) ([]byte, *Bridge, error) {
 	if cache == nil || scope == "" {
-		return Prepare(raw, scope, replay)
+		return prepare(raw, scope, replay, nativeToolImages)
 	}
 	var source object
 	if decode(raw, &source) != nil || source == nil {
 		return nil, nil, fmt.Errorf("invalid Basispoints request JSON")
 	}
 	if text(source["tool_choice"]) == "none" {
-		return Prepare(raw, scope, replay)
+		return prepare(raw, scope, replay, nativeToolImages)
 	}
 	_, explicit := source["tools"]
 	for attempt := 0; attempt < 8; attempt++ {
@@ -122,7 +126,7 @@ func PrepareWithCatalog(raw []byte, scope string, replay *ReplayCache, cache *Ca
 		if err != nil {
 			return nil, nil, err
 		}
-		body, b, err := Prepare(encoded, scope, replay)
+		body, b, err := prepare(encoded, scope, replay, nativeToolImages)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -188,5 +192,5 @@ func (b *Bridge) Reprepare(raw []byte) ([]byte, *Bridge, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return Prepare(encoded, b.scope, b.replay)
+	return prepare(encoded, b.scope, b.replay, b.nativeToolImages)
 }

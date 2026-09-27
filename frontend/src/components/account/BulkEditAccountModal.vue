@@ -70,6 +70,24 @@
             <p class="text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
             <div class="mt-3">
               <label class="flex items-center gap-2">
+                <input v-model="excelBPSOmitUnsupportedTools" type="checkbox"
+                  data-testid="bulk-excel-bps-omit-unsupported-tools"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+                <span class="text-sm">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedTools') }}</span>
+              </label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedToolsDesc') }}</p>
+            </div>
+            <div class="mt-3">
+              <label class="flex items-center gap-2">
+                <input v-model="excelBPSIgnoreImages" type="checkbox"
+                  data-testid="bulk-excel-bps-ignore-images"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+                <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreImages') }}</span>
+              </label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSIgnoreImagesDesc') }}</p>
+            </div>
+            <div class="mt-3">
+              <label class="flex items-center gap-2">
                 <input v-model="excelBPSAutoDisableOn403" type="checkbox"
                   data-testid="bulk-excel-bps-auto-disable-on-403"
                   class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
@@ -99,6 +117,26 @@
                 <span class="text-sm">{{ t('admin.accounts.openai.excelBPSMihomo') }}</span>
               </label>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSMihomoDesc') }}</p>
+              <div v-if="excelBPSMihomo" class="mt-2 flex flex-wrap items-center gap-4" role="radiogroup"
+                :aria-label="t('admin.accounts.openai.excelBPSProxySource')">
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSProxySource') }}</span>
+                <label class="flex items-center gap-1.5 text-sm">
+                  <input v-model="excelBPSProxySource" type="radio" value="mihomo"
+                    data-testid="bulk-excel-bps-proxy-source-mihomo"
+                    class="h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+                  {{ t('admin.accounts.openai.excelBPSProxySourceMihomo') }}
+                </label>
+                <label class="flex items-center gap-1.5 text-sm">
+                  <input v-model="excelBPSProxySource" type="radio" value="ip_pool"
+                    data-testid="bulk-excel-bps-proxy-source-ip-pool"
+                    class="h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+                  {{ t('admin.accounts.openai.excelBPSProxySourceIPPool') }}
+                </label>
+              </div>
+              <p v-if="excelBPSMihomo && excelBPSProxySource === 'ip_pool'"
+                class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.openai.excelBPSProxySourceIPPoolDesc') }}
+              </p>
             </div>
             <div>
               <label class="flex items-center gap-2">
@@ -1819,8 +1857,11 @@ const excelBPSEnabled = ref(false)
 const excelBPSAllModels = ref(false)
 const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const excelBPSMihomo = ref(false)
+const excelBPSProxySource = ref<'mihomo' | 'ip_pool'>('mihomo')
 const excelBPSCacheCreationAsInput = ref(false)
 const excelBPSAutoDisableOn403 = ref(false)
+const excelBPSOmitUnsupportedTools = ref(false)
+const excelBPSIgnoreImages = ref(false)
 const excelBPSAutoMoveOn403 = ref(false)
 const excelBPS403TargetGroupID = ref<number | string>('')
 const excelBPS403GroupOptions = computed(() => [
@@ -2125,9 +2166,14 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
       ? [...new Set(excelBPSModels.value.map(model => model.trim()).filter(Boolean))]
       : null
     extra.openai_excel_bps_mihomo = excelBPSEnabled.value && excelBPSMihomo.value
+    extra.openai_excel_bps_proxy_source = excelBPSEnabled.value && excelBPSMihomo.value
+      ? excelBPSProxySource.value
+      : 'mihomo'
     extra.openai_excel_bps_cache_creation_as_input =
       excelBPSEnabled.value && excelBPSCacheCreationAsInput.value
     extra.openai_excel_bps_auto_disable_on_403 = excelBPSEnabled.value && excelBPSAutoDisableOn403.value
+    extra.openai_excel_bps_omit_unsupported_tools = excelBPSEnabled.value && excelBPSOmitUnsupportedTools.value
+    extra.openai_excel_bps_ignore_images = excelBPSEnabled.value && excelBPSIgnoreImages.value
     extra.openai_excel_bps_auto_move_on_403 = excelBPSEnabled.value && excelBPSAutoMoveOn403.value
     extra.openai_excel_bps_403_target_group_id = excelBPSEnabled.value && excelBPSAutoMoveOn403.value
       ? Number(excelBPS403TargetGroupID.value)
@@ -2583,8 +2629,11 @@ watch(
       excelBPSAllModels.value = false
       excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
       excelBPSMihomo.value = false
+      excelBPSProxySource.value = 'mihomo'
       excelBPSCacheCreationAsInput.value = false
       excelBPSAutoDisableOn403.value = false
+      excelBPSOmitUnsupportedTools.value = false
+      excelBPSIgnoreImages.value = false
       excelBPSAutoMoveOn403.value = false
       excelBPS403TargetGroupID.value = ''
       openaiPassthroughEnabled.value = false

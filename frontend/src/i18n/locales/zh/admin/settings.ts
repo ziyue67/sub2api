@@ -634,6 +634,9 @@ export default {
         codexTicketProxyMode: '打票出口类型',
         codexTicketProxyModeMihomo: 'Mihomo/VPN 内核',
         codexTicketProxyModeStatic: '静态住宅代理',
+        codexTicketProxyModeIPPool: 'IP 管理代理池',
+        codexTicketProxyIPPoolHint:
+          '使用「IP 管理」里全部启用且未过期的代理轮换打票，某个出口失败会换下一个；每张门票记住出票时的出口，后续对话固定走同一出口。代理增删或启停约 15 秒内生效。并行多路采集仍需 Mihomo 内核。',
         codexTicketProxyMihomoEndpoint: '内核本地出口',
         codexTicketProxyMihomoSelected: '已选择 Mihomo 打票代理，请点击“保存设置”后生效。',
         codexTicketProxyMihomoHint:

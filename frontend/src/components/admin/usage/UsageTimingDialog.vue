@@ -60,7 +60,7 @@
   </BaseDialog>
 </template>
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { inject, computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { AdminUsageLog } from '@/types'
@@ -68,6 +68,9 @@ import { formatDateTime } from '@/utils/format'
 import { formatUsageOutputTps } from '@/utils/usageTps'
 import { timingHealth, stageScale, TIMING_TEXT, TIMING_SURFACE, TIMING_BAR, type TimingHealth, type TimingScale } from '@/utils/requestTimingHealth'
 import { getUsageTiming, type RequestTiming, type TimingAttempt, type TimingSpan } from '@/api/admin/usageTiming'
+import { observerUsageAPI } from '@/api/observerUsage'
+import { observerUsageContext } from './observerUsageContext'
+const observerMode = inject(observerUsageContext, false)
 const props = defineProps<{ record: AdminUsageLog | null }>()
 defineEmits<{ close: [] }>()
 const { t } = useI18n()
@@ -160,7 +163,7 @@ async function load() {
   traces.value = []; selected.value = 0; error.value = false
   if (!props.record) { loading.value = false; return }
   loading.value = true
-  try { const data = await getUsageTiming(props.record.id, current.signal); if (controller === current) { traces.value = data.traces; retention.value = data.retention_days } }
+  try { const data = await (observerMode ? observerUsageAPI.getTiming : getUsageTiming)(props.record.id, current.signal); if (controller === current) { traces.value = data.traces; retention.value = data.retention_days } }
   catch { if (!current.signal.aborted && controller === current) error.value = true }
   finally { if (controller === current) loading.value = false }
 }

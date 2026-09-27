@@ -342,7 +342,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/usage',
     name: 'Usage',
-    component: () => import('@/views/user/UsageView.vue'),
+    component: () => import('@/views/user/UsageEntryView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -1155,9 +1155,9 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
-  // Backend mode: admins get full access; observers may use only account management.
+  // Backend mode: admins get full access; observers may use account management and their own usage.
   if (appStore.backendModeEnabled) {
-    if (authStore.isAuthenticated && (authStore.isAdmin || (authStore.isObserver && to.meta.requiresAccountManagement))) {
+    if (authStore.isAuthenticated && (authStore.isAdmin || (authStore.isObserver && (to.meta.requiresAccountManagement || to.path === '/usage')))) {
       next()
       return
     }

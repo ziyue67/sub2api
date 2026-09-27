@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 import UsageFilters from '../UsageFilters.vue'
+import { observerUsageContext } from '../observerUsageContext'
 
 // --- i18n messages (only what UsageFilters needs) ---
 const messages: Record<string, string> = {
@@ -11,6 +12,8 @@ const messages: Record<string, string> = {
   'admin.usage.selectUserBeforeApiKey': 'Select a user first',
   'usage.apiKeyFilter': 'API Key',
   'admin.usage.searchApiKeyPlaceholder': 'Search API key...',
+  'admin.usage.account': 'Account',
+  'admin.usage.searchAccountPlaceholder': 'Search account...',
   'usage.model': 'Model',
   'admin.usage.allModels': 'All Models',
   'usage.type': 'Type',
@@ -58,6 +61,7 @@ const mockSearchUsers = vi.fn()
 const mockSearchApiKeys = vi.fn().mockResolvedValue([])
 const mockGroupsList = vi.fn().mockResolvedValue({ items: [] })
 const mockGetModelStats = vi.fn().mockResolvedValue({ models: [] })
+const mockAccountsList = vi.fn().mockResolvedValue({ items: [] })
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
@@ -66,9 +70,13 @@ vi.mock('@/api/admin', () => ({
       searchApiKeys: (...args: any[]) => mockSearchApiKeys(...args),
     },
     groups: { list: (...args: any[]) => mockGroupsList(...args) },
+    accounts: { list: (...args: any[]) => mockAccountsList(...args) },
     dashboard: { getModelStats: (...args: any[]) => mockGetModelStats(...args) },
   },
 }))
+
+const ownOptions = vi.fn().mockResolvedValue([])
+vi.mock('@/api/observerUsage', () => ({ observerUsageAPI: { filterOptions: (...args: any[]) => ownOptions(...args) } }))
 
 // Default props helper
 const defaultFilters = () => ({
@@ -285,7 +293,7 @@ describe('UsageFilters — ranking filters', () => {
 
     expect(wrapper.find('input[placeholder="Search user..."]').exists()).toBe(true)
     expect(wrapper.find('input[placeholder="Search API key..."]').exists()).toBe(true)
-    expect(wrapper.find('input[placeholder="Search account..."]').exists()).toBe(false)
+    expect(wrapper.find('input[placeholder="Search account..."]').exists()).toBe(true)
   })
 })
 
@@ -357,5 +365,32 @@ describe('UsageFilters — native compaction filter', () => {
 
     expect(filters.native_compaction_v2).toBe(true)
     expect(wrapper.emitted('change')).toBeTruthy()
+  })
+})
+
+
+describe('observer usage filters', () => {
+  it('keeps export, hides user search and cleanup, and only searches own choices', async () => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    const wrapper = mount(UsageFilters, {
+      props: { modelValue: defaultFilters(), exporting: false, startDate: '', endDate: '' },
+      global: { provide: { [observerUsageContext as symbol]: true }, stubs: { Select: true } },
+    })
+    await flushPromises()
+    expect(ownOptions).toHaveBeenCalledWith('group')
+    expect(wrapper.find('input[placeholder="Search user..."]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Cleanup')
+    const exportButton = wrapper.findAll('button').find(button => button.text() === 'Export')!
+    await exportButton.trigger('click')
+    expect(wrapper.emitted('export')).toHaveLength(1)
+    await wrapper.find('input[placeholder="Search API key..."]').setValue('my-key')
+    await wrapper.find('input[placeholder="Search account..."]').setValue('my-account')
+    await vi.advanceTimersByTimeAsync(350)
+    expect(ownOptions).toHaveBeenCalledWith('api_key', 'my-key')
+    expect(ownOptions).toHaveBeenCalledWith('account', 'my-account')
+    for (const fn of [mockSearchUsers, mockSearchApiKeys, mockGroupsList, mockAccountsList]) expect(fn).not.toHaveBeenCalled()
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 })

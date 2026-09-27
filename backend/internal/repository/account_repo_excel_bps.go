@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -47,15 +48,17 @@ func (r *accountRepository) disableExcelBPSOn403InTx(ctx context.Context, accoun
 		return false, err
 	}
 	client := clientFromContext(ctx, r.client)
+	// The marker is written with the switch so the account list can flag the
+	// suspected Excel ban until an admin turns the protocol back on.
 	result, err := client.ExecContext(ctx, `
 UPDATE accounts
-SET extra = jsonb_set(extra, '{openai_excel_bps}', 'false'::jsonb), updated_at = NOW()
+SET extra = jsonb_set(extra, '{openai_excel_bps}', 'false'::jsonb) || jsonb_build_object('openai_excel_bps_403_disabled_at', $3::text), updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL AND parent_account_id IS NULL
   AND platform = 'openai' AND type = 'oauth'
   AND credentials = $2::jsonb
   AND extra -> 'openai_excel_bps' = 'true'::jsonb
   AND extra -> 'openai_excel_bps_auto_disable_on_403' = 'true'::jsonb`,
-		account.ID, string(credentials))
+		account.ID, string(credentials), time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return false, err
 	}

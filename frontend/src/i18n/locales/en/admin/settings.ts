@@ -641,6 +641,9 @@ export default {
         codexTicketProxyMode: "Ticket exit type",
         codexTicketProxyModeMihomo: "Mihomo/VPN kernel",
         codexTicketProxyModeStatic: "Static residential proxy",
+        codexTicketProxyModeIPPool: "IP management pool",
+        codexTicketProxyIPPoolHint:
+          "Rotates ticket harvesting across every active, unexpired proxy in IP management and moves to the next exit on failure. Each ticket remembers the exit it was harvested on, and later conversations stay on that exit. Proxy changes apply within about 15 seconds. Parallel multi-lane collection still requires the Mihomo kernel.",
         codexTicketProxyMihomoEndpoint: "Kernel local endpoint",
         codexTicketProxyMihomoSelected: 'Mihomo selected for ticket harvesting. Click "Save Settings" to apply.',
         codexTicketProxyMihomoHint:

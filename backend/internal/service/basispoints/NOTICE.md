@@ -44,3 +44,31 @@ at 6c611b2562a7a316184b0ec3b27473ab6e767e6e, for the multipart attachments
 endpoint and openai_file_id response field. The uploader and metadata cache
 are implemented in this package using Sub2API's existing image validation and
 account transport; no plugin runtime or deployment configuration is imported.
+
+## 2026-09-27 native tool screenshot correction
+
+The attachment implementation entered the owner fork in PR #102; PR #99
+subsequently integrated protocol completion. The image relay is tracked in PR #66.
+
+Behavioral correction reference: zhu961212/sub2api-oai-basispoints commit
+586dc42dccbed2d685ad35d8e1a0c96a2aea173c, internal/attachments/README.md
+and the associated tool image and detail tests. Its protocol investigation
+distinguishes user-message file_id attachments from inline image_url tool
+screenshots, with nullish detail defaulting to auto. This correction is
+independently implemented using the existing native image validation and
+request-scoped bridge; no source files were copied. The cited official
+frontend asset could not be fetched from this development environment, and
+no authenticated upstream visual acceptance test is claimed.
+
+## 2026-09-26 OAuth encrypted-history recovery
+
+Reviewed JaxsonWang/cpa-plugin-oai-basispoints v0.1.18, commit
+11df6f8855847ec1957b0d2f4271a9cd9b13cfe1 (MIT), including its v0.1.17
+capability rollback: a native model's multi-agent v2 metadata does not establish
+that the BPS relay can handle encrypted agent messages. Sub2API independently
+limits these declarations by OAuth account, mapped model and group route,
+retaining native/API-key capabilities and its existing plaintext tool bridge.
+No source or plugin ABI was copied. The bounded HTTP 400 reasoning recovery
+uses Sub2API's existing OAuth recovery approach and is not claimed as a feature
+of that reference release. Its v0.1.18 incremental-streaming changes do not
+justify replaying an already delivered stream.

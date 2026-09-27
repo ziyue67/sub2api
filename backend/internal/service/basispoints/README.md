@@ -22,6 +22,11 @@ the final response locally. This does not provide upstream constrained decoding.
 
 # Tool history and input boundaries
 
+- OAuth models routed through BPS do not advertise native encrypted multi-agent
+  capabilities. Apply this limit to generated, fetched and pinned group catalogs
+  by the actual mapped route, and recalculate the client ETag. Plaintext client
+  tools remain available; refresh the catalog and start a new conversation to
+  leave an old client-side v2 override or encrypted history behind.
 - Rebuild complete CUSTOM calls using their current catalog's exact
   `codex2api.custom/NAME` marker and raw input. Preserve cached native calls
   verbatim. Retain unavailable historical tools as recorded history; never
@@ -32,6 +37,13 @@ the final response locally. This does not provide upstream constrained decoding.
 - Reject encrypted message parts with an `encrypted_content` diagnostic and
   input path. Do not reinterpret ciphertext as plaintext. Top-level encrypted
   reasoning items retain their existing handling.
+- The OAuth gateway retries once when HTTP 400 specifically rejects encrypted
+  content and the prepared history can recover by removing opaque reasoning
+  items only. It keeps the same account, model, effort, proxy, attachments and
+  conversation metadata, and closes the rejected response before retrying.
+  It never drops encrypted messages, tool results or compaction context. A
+  second rejection returns `invalid_encrypted_content` with plaintext-history
+  recovery guidance; ordinary 400s and transport failures do not use this retry.
 - Preserve `detail: original` on HTTPS images and inline images rewritten by
   the relay. Let the upstream model validate its supported detail levels; do
   not silently downgrade the requested detail.

@@ -189,7 +189,7 @@ func (s *AccountTestService) runQualityJudgeRequest(ctx context.Context, account
 	defer cancel()
 	w := &pelicanRecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
 	c, _ := gin.CreateTestContext(w)
-	c.Request = (&http.Request{}).WithContext(ctx)
+	c.Request = (&http.Request{Header: make(http.Header)}).WithContext(ctx)
 	if err := s.TestPelicanAccountConnection(c, accountID, model, prompt, "medium"); err != nil {
 		return "", err
 	}

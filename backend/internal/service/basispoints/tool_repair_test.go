@@ -274,7 +274,7 @@ func TestToolRepairRestoresOriginalRawPayload(t *testing.T) {
 }
 
 func TestToolRepairRejectsChangedBatchAndOperations(t *testing.T) {
-	for _, change := range []string{"extra_tool", "text_only", "unmarked_raw_code", "valid_operation", "valid_custom_operation", "explicit_target", "oversized_raw_code"} {
+	for _, change := range []string{"extra_tool", "text_only", "unmarked_raw_code", "changed_target", "explicit_target", "oversized_raw_code"} {
 		t.Run(change, func(t *testing.T) {
 			cache := new(ReplayCache)
 			_, bridge := repairBridge(t, cache)
@@ -288,12 +288,9 @@ func TestToolRepairRejectsChangedBatchAndOperations(t *testing.T) {
 				corrected = nil
 			case "unmarked_raw_code":
 				corrected = []any{nativeCall(object{"name": "functions.exec", "input": "text(2)"})}
-			case "valid_operation":
+			case "changed_target":
 				original = append(original, nativeCall(object{"name": "shell", "arguments": object{"cmd": "pwd"}}))
-				corrected = append(corrected, nativeCall(object{"name": "shell", "arguments": object{"cmd": "ls"}}))
-			case "valid_custom_operation":
-				original = append(original, repairCall("valid", customTransportPrefix+"functions.exec", "text(1)"))
-				corrected = append(corrected, repairCall("fixed_valid", customTransportPrefix+"functions.exec", "text(2)"))
+				corrected = append(corrected, repairCall("changed_target", customTransportPrefix+"functions.exec", "text(1)"))
 			case "explicit_target":
 				original = []any{nativeCall(object{"name": "shell", "arguments": 42})}
 			case "oversized_raw_code":
@@ -439,4 +436,54 @@ func TestToolRepairBindsOriginalRawCommand(t *testing.T) {
 	require.Equal(t, original, functionCmdTestArguments(t, call)["cmd"])
 	cached := cache.get("cmd-repair", "call_code")
 	require.Equal(t, original, transportArguments(cached)["code"])
+}
+
+func TestToolRepairPreservesAlreadyValidOperations(t *testing.T) {
+	for _, kind := range []string{"function", "custom"} {
+		t.Run(kind, func(t *testing.T) {
+			cache := new(ReplayCache)
+			_, bridge := repairBridge(t, cache)
+			valid := nativeCall(object{"name": "shell", "arguments": object{"cmd": "pwd", "workdir": "/original"}})
+			changed := nativeCall(object{"name": "shell", "arguments": object{"cmd": "rm changed", "workdir": "/changed"}})
+			if kind == "custom" {
+				valid = repairCall("valid", customTransportPrefix+"functions.exec", "text('original')")
+				changed = repairCall("changed", customTransportPrefix+"functions.exec", "text('changed')")
+			}
+			changed["id"], changed["call_id"] = "fc_changed", "changed"
+			initial := repairResponse("resp_original", 10, 2, valid, repairCall("bad", "Run", "text(42)"))
+			corrected := repairResponse("resp_correction", 20, 3, changed, repairCall("fixed", customTransportPrefix+"functions.exec", "text(42)"))
+			before, err := json.Marshal(corrected)
+			require.NoError(t, err)
+			calls := 0
+			body := bridge.StreamWithToolRepair(context.Background(), io.NopCloser(strings.NewReader(sse(object{"type": "response.completed", "response": initial}))), func(context.Context, object, error) (object, error) {
+				calls++
+				return corrected, nil
+			})
+			events := repairEvents(t, body)
+			last := events[len(events)-1]
+			require.Equal(t, "response.completed", last["type"])
+			require.Equal(t, 1, calls)
+			response := repairValue[object](t, last["response"])
+			require.Equal(t, "resp_original", response["id"])
+			output := repairValue[[]any](t, response["output"])
+			require.Len(t, output, 2)
+			first := repairValue[object](t, output[0])
+			if kind == "custom" {
+				require.Equal(t, "text('original')", first["input"])
+			} else {
+				require.JSONEq(t, "{\"cmd\":\"pwd\",\"workdir\":\"/original\"}", text(first["arguments"]))
+			}
+			cached := cache.get("repair-scope", "changed")
+			require.NotNil(t, cached)
+			check := *bridge
+			check.replay = nil
+			replayed, err := check.translateCall(cached)
+			require.NoError(t, err)
+			require.Equal(t, historyCallFingerprint(first), historyCallFingerprint(replayed))
+			after, err := json.Marshal(corrected)
+			require.NoError(t, err)
+			require.JSONEq(t, string(before), string(after), "keep native continuation history immutable")
+			require.Equal(t, json.Number("30"), repairValue[object](t, response["usage"])["input_tokens"])
+		})
+	}
 }

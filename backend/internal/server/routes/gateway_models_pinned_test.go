@@ -20,11 +20,26 @@ import (
 
 type pinnedModelsRoutesRepository struct {
 	service.AccountRepository
-	account service.Account
+	account         service.Account
+	routingAccounts []service.Account
 }
 
 func (r *pinnedModelsRoutesRepository) ListByGroup(context.Context, int64) ([]service.Account, error) {
 	return []service.Account{r.account}, nil
+}
+
+func (r *pinnedModelsRoutesRepository) ListSchedulableByGroupID(context.Context, int64) ([]service.Account, error) {
+	if r.routingAccounts != nil {
+		return append([]service.Account(nil), r.routingAccounts...), nil
+	}
+	return []service.Account{r.account}, nil
+}
+
+func (r *pinnedModelsRoutesRepository) ListModelAvailabilityCandidates(ctx context.Context, groupID *int64, _ []string, _ bool) ([]service.Account, error) {
+	if groupID == nil {
+		return nil, nil
+	}
+	return r.ListSchedulableByGroupID(ctx, *groupID)
 }
 
 type pinnedModelsRoutesUpstream struct {
@@ -37,7 +52,7 @@ func (u *pinnedModelsRoutesUpstream) Do(req *http.Request, _ string, _ int64, _ 
 	body := `{"data":[{"id":"ordinary-upstream-model"}]}`
 	if req.URL.Query().Has("client_version") {
 		u.codexCalls.Add(1)
-		body = `{"models":[{"slug":"gpt-5.5"}]}`
+		body = `{"models":[{"slug":"gpt-5.5","multi_agent_version":"v2","multi_agent_reasoning_effort":"xhigh"}]}`
 	} else {
 		u.ordinaryCalls.Add(1)
 	}
@@ -82,13 +97,38 @@ func TestGatewayRoutesPinnedModelsDispatchesOrdinaryAndCodexRequests(t *testing.
 		require.Len(t, response.Data, 1)
 		require.Equal(t, "ordinary-upstream-model", response.Data[0].ID)
 	}
+	var nativeETag string
 	for _, path := range []string{"/v1/models?client_version=" + service.CodexCanonicalClientVersion(), "/models?client_version=" + service.CodexCanonicalClientVersion(), "/backend-api/codex/models"} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		require.Equal(t, http.StatusOK, w.Code, "%s: %s", path, w.Body.String())
 		require.Contains(t, w.Body.String(), `"slug":"gpt-5.5"`)
 		require.NotContains(t, w.Body.String(), `"data"`)
+		require.Contains(t, w.Body.String(), `"multi_agent_version":"v2"`)
+		nativeETag = w.Header().Get("ETag")
 	}
+	// Discovery can stay pinned to an API-key account while inference routes
+	// through OAuth/BPS. The final catalog must reflect that group route, even
+	// when the native upstream manifest is already cached.
+	repo.routingAccounts = []service.Account{repo.account, {
+		ID: 8, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+		Status: service.StatusActive, Schedulable: true,
+		Credentials: map[string]any{"model_mapping": map[string]any{"gpt-5.5": "gpt-5.6-sol"}},
+		Extra:       map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": []string{"gpt-5.6-sol"}},
+	}}
+	request := httptest.NewRequest(http.MethodGet, "/backend-api/codex/models", nil)
+	request.Header.Set("If-None-Match", nativeETag)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, request)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"multi_agent_version":null`)
+	require.Contains(t, w.Body.String(), `"multi_agent_reasoning_effort":null`)
+	require.NotEqual(t, nativeETag, w.Header().Get("ETag"))
+	request = httptest.NewRequest(http.MethodGet, "/backend-api/codex/models", nil)
+	request.Header.Set("If-None-Match", w.Header().Get("ETag"))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, request)
+	require.Equal(t, http.StatusNotModified, w.Code)
 	require.EqualValues(t, 1, upstream.ordinaryCalls.Load())
 	require.EqualValues(t, 1, upstream.codexCalls.Load())
 }

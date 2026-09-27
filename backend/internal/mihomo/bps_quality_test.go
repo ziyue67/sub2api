@@ -46,6 +46,10 @@ func TestBPSQualitySelectionAndAffinity(t *testing.T) {
 		m.bpsHealthLocked(good).modelQuality.observe(true, now)
 		m.bpsHealthLocked(good).connectQuality.observe(true, now)
 	}
+	// Ranking compares reachable exits; an unverified fast race is tested separately.
+	for node, port := range m.bpsPorts {
+		require.NoError(t, m.checkBPSHealth(context.Background(), node, fmt.Sprintf("http://127.0.0.1:%d", port)))
+	}
 	lease, err := m.acquireBPSLease(context.Background(), "new", nil)
 	require.NoError(t, err)
 	require.Equal(t, good, lease.node)

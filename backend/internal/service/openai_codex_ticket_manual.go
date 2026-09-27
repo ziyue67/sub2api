@@ -90,7 +90,15 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 	if req.CollectLanes > 1 {
 		return s.executeParallelHarvest(ctx, req, account, emit)
 	}
-	proxy := s.openAICodexTicketHarvestProxyURLContext(ctx)
+	pool := s.openAICodexTicketHarvestIPPoolEnabled(ctx)
+	proxy := ""
+	if pool {
+		if _, ok := s.pickHarvestIPPoolExit(ctx, nil); !ok {
+			return errors.New("harvest proxy is set to the IP pool, but IP management has no active proxies")
+		}
+	} else {
+		proxy = s.openAICodexTicketHarvestProxyURLContext(ctx)
+	}
 	controls, _ := s.harvestControls(ctx)
 	timeout := time.Duration(controls.Speed.AttemptTimeoutSeconds) * time.Second
 	if timeout < 3*time.Second {
@@ -165,7 +173,14 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 				break
 			}
 			attempt++
-			lease, leaseErr := s.acquireManualHarvestNode(ctx, account, model, proxy, keepID, tried, forceSwitch)
+			var lease codexHarvestAttempt
+			var leaseErr error
+			nodeName := ""
+			if pool {
+				lease, nodeName, leaseErr = s.acquireManualHarvestPoolExit(ctx, keepID, tried, forceSwitch)
+			} else {
+				lease, leaseErr = s.acquireManualHarvestNode(ctx, account, model, proxy, keepID, tried, forceSwitch)
+			}
 			if leaseErr != nil {
 				consecutiveFails++
 				message, level, detail := describeCodexProbeFailure(leaseErr.Error(), 0, model, "")
@@ -175,17 +190,28 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 				}
 				continue
 			}
-			nodeName := strings.TrimSpace(lease.node.Name)
-			if forceSwitch && keepID != "" && lease.node.ID != "" && lease.node.ID == keepID && len(tried) > 1 {
-				emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: nodeName, Result: "node_switch", Level: "WARN", Message: "定向池里暂时没有新的节点，继续使用当前出口。", TicketsStored: ticketsStored})
-			} else if lease.node.ID != "" && lease.node.ID != keepID {
-				recordCodexHarvestNode(nodeName, "Selector", 0)
-				emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: nodeName, Result: "node_switch", Level: "INFO", Message: "已切换到节点 " + nodeName, TicketsStored: ticketsStored})
+			if pool {
+				// keepID holds the current pool exit URL in pool mode.
+				if lease.proxy != keepID {
+					recordCodexHarvestNode(nodeName, "", 0)
+					emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: nodeName, Result: "node_switch", Level: "INFO", Message: "已切换到出口 " + nodeName, TicketsStored: ticketsStored})
+				} else if forceSwitch {
+					emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: nodeName, Result: "node_switch", Level: "WARN", Message: "IP 池里暂时没有新的出口，继续使用当前出口。", TicketsStored: ticketsStored})
+				}
+				keepID = lease.proxy
+			} else {
+				nodeName = strings.TrimSpace(lease.node.Name)
+				if forceSwitch && keepID != "" && lease.node.ID != "" && lease.node.ID == keepID && len(tried) > 1 {
+					emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: nodeName, Result: "node_switch", Level: "WARN", Message: "定向池里暂时没有新的节点，继续使用当前出口。", TicketsStored: ticketsStored})
+				} else if lease.node.ID != "" && lease.node.ID != keepID {
+					recordCodexHarvestNode(nodeName, "Selector", 0)
+					emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: nodeName, Result: "node_switch", Level: "INFO", Message: "已切换到节点 " + nodeName, TicketsStored: ticketsStored})
+				}
+				if lease.node.ID == "" && forceSwitch {
+					emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Result: "node_switch", Level: "WARN", Message: "定向出口不可用，本次使用代理轮询；无法确认具体节点。", TicketsStored: ticketsStored})
+				}
+				keepID = lease.node.ID
 			}
-			if lease.node.ID == "" && forceSwitch {
-				emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Result: "node_switch", Level: "WARN", Message: "定向出口不可用，本次使用代理轮询；无法确认具体节点。", TicketsStored: ticketsStored})
-			}
-			keepID = lease.node.ID
 			forceSwitch = req.NodeSwitchRule == ManualHarvestNodeSwitchEveryRequest
 
 			token, _, tokenErr := s.GetAccessToken(ctx, account)
@@ -377,6 +403,32 @@ func manualHarvestShouldSwitch(rule string, consecutiveFails int, kind string, l
 	default:
 		return degraded || consecutiveFails >= 2
 	}
+}
+
+// acquireManualHarvestPoolExit mirrors acquireManualHarvestNode for the IP
+// pool: keep the current exit unless a switch is due, prefer untried members,
+// and start another pass once every member has been tried.
+func (s *OpenAIGatewayService) acquireManualHarvestPoolExit(ctx context.Context, keepProxy string, tried map[string]bool, forceNew bool) (codexHarvestAttempt, string, error) {
+	if !forceNew && keepProxy != "" {
+		if exit, ok := s.harvestIPPoolMember(ctx, keepProxy); ok {
+			return codexHarvestAttempt{proxy: exit.url, release: func() {}}, harvestIPPoolNodeName(exit), nil
+		}
+	}
+	exit, ok := s.pickHarvestIPPoolExit(ctx, tried)
+	if !ok {
+		clear(tried)
+		if keepProxy != "" {
+			tried[keepProxy] = true
+		}
+		if exit, ok = s.pickHarvestIPPoolExit(ctx, tried); !ok {
+			exit, ok = s.pickHarvestIPPoolExit(ctx, nil)
+		}
+	}
+	if !ok {
+		return codexHarvestAttempt{}, "", errors.New("ip pool has no active proxies")
+	}
+	tried[exit.url] = true
+	return codexHarvestAttempt{proxy: exit.url, release: func() {}}, harvestIPPoolNodeName(exit), nil
 }
 
 func (s *OpenAIGatewayService) acquireManualHarvestNode(ctx context.Context, account *Account, model, proxy, keepID string, tried map[string]bool, forceNew bool) (codexHarvestAttempt, error) {

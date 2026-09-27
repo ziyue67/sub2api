@@ -217,3 +217,49 @@ describe('Select remote search', () => {
     expect(labels).toEqual(['Alpha account'])
   })
 })
+
+describe('Select multiple mode', () => {
+  it('toggles options without closing the dropdown', async () => {
+    const wrapper = mount(Select, {
+      props: {
+        modelValue: [1],
+        multiple: true,
+        options: [
+          { value: 1, label: 'Group one' },
+          { value: 2, label: 'Group two' },
+        ],
+      },
+    })
+    unmountWrapper = () => wrapper.unmount()
+
+    await wrapper.get('button').trigger('click')
+    await nextTick()
+    const options = document.querySelectorAll<HTMLElement>('.select-option')
+    await options[1].click()
+    await nextTick()
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([[[1, 2]]])
+    expect(wrapper.get('button').attributes('aria-expanded')).toBe('true')
+    await wrapper.setProps({ modelValue: [1, 2] })
+    expect(wrapper.get('button').text()).toContain('common.selectedCount')
+  })
+
+  it('clears all values in multiple mode', async () => {
+    const wrapper = mount(Select, {
+      props: {
+        modelValue: [1, 2],
+        multiple: true,
+        clearable: true,
+        options: [
+          { value: 1, label: 'Group one' },
+          { value: 2, label: 'Group two' },
+        ],
+      },
+    })
+    unmountWrapper = () => wrapper.unmount()
+
+    await wrapper.get('.select-clear').trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')).toEqual([[[]]])
+  })
+})

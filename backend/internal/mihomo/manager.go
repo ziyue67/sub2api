@@ -86,12 +86,14 @@ type saved struct {
 }
 
 type Manager struct {
-	bpsMu       sync.Mutex
-	bpsPorts    map[string]int
-	bpsSessions map[string]*bpsSession
-	bpsHealth   map[string]*bpsNodeHealth
-	bpsDynamic  map[string]bool                     // configured dynamic outbound identities; protected by bpsMu
-	bpsProbe    func(context.Context, string) error // isolated tests only
+	bpsMu         sync.Mutex
+	bpsPorts      map[string]int
+	bpsSessions   map[string]*bpsSession
+	bpsHealth     map[string]*bpsNodeHealth
+	bpsDynamic    map[string]bool                     // configured dynamic outbound identities; protected by bpsMu
+	bpsProbe      func(context.Context, string) error // isolated tests only
+	bpsStaticMode bool                                // dedicated static (IP 管理) pool: no kernel, no listeners
+	bpsStatic     map[string]string                   // static node key -> upstream proxy URL; protected by bpsMu
 
 	countryLookupURL     string // test-only override; administrators cannot change the lookup target
 	controllerURL        string // optional override for isolated controller tests
