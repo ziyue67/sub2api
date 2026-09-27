@@ -27,84 +27,19 @@ builds:
       - -X main.Date={{.Date}}
       - -X main.BuildType=release
 
-archives:
-  - id: default
-    format: tar.gz
-    name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
-    format_overrides:
-      - goos: windows
-        format: zip
-    files:
-      - LICENSE*
-      - README*
-      - deploy/*
+# 不再发布二进制归档（tar.gz / zip）与校验文件，只发布 Docker 镜像
+archives: []
 
 checksum:
-  name_template: 'checksums.txt'
-  algorithm: sha256
+  disable: true
 
 changelog:
   # 禁用自动 changelog，完全使用 tag 消息
   disable: true
 
-# Docker images
-dockers:
-  # DockerHub images (skipped if DOCKERHUB_USERNAME is 'skip')
-  - id: amd64
-    goos: linux
-    goarch: amd64
-    skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
-    image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
-    dockerfile: Dockerfile.goreleaser
-    use: buildx
-    extra_files:
-      - deploy/docker-entrypoint.sh
-      - backend/resources
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .Commit }}"
-
-  # GHCR images (owner must be lowercase)
-  - id: ghcr-amd64
-    goos: linux
-    goarch: amd64
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
-    dockerfile: Dockerfile.goreleaser
-    use: buildx
-    extra_files:
-      - deploy/docker-entrypoint.sh
-      - backend/resources
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.revision={{ .Commit }}"
-      - "--label=org.opencontainers.image.source=https://github.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}"
-
-# Docker manifests
-docker_manifests:
-  # DockerHub manifests (skipped if DOCKERHUB_USERNAME is 'skip')
-  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}"
-    skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
-    image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
-
-  - name_template: "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:latest"
-    skip_push: '{{ if eq .Env.DOCKERHUB_USERNAME "skip" }}true{{ else }}false{{ end }}'
-    image_templates:
-      - "{{ .Env.DOCKERHUB_USERNAME }}/sub2api:{{ .Version }}-amd64"
-
-  # GHCR manifests (owner must be lowercase)
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
-
-  - name_template: "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:latest"
-    image_templates:
-      - "ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}-amd64"
+# 镜像与标签统一由 .github/workflows/dockerhub.yml（main 推送）负责，
+# 这里不再发布 docker 镜像 / manifest，避免两个工作流互相覆盖同名标签
+# （曾导致 latest 与 <VERSION>-amd64 指向不同镜像）。
 
 release:
   github:
@@ -112,9 +47,8 @@ release:
     name: "{{ .Env.GITHUB_REPO_NAME }}"
   draft: false
   prerelease: auto
-  # 重发同一版本时替换既有 Release（含附件）：否则 GoReleaser 会因
-  # “asset already exists” 报 422，导致整个发布失败（2026-09-27 的重发即因此失败）。
-  mode: replace
+  # 不再向 Release 上传任何附件（二进制包已停发）
+  skip_upload: true
   name_template: "Sub2API {{.Version}}"
   # 完全使用 tag 消息作为 release 内容（通过环境变量传入）
   header: |
@@ -139,13 +73,7 @@ release:
     docker pull ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}
     ```
 
-    **One-line install (Linux):**
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}/{{ .Tag }}/deploy/install.sh | sudo bash -s -- install -v {{ .Tag }}
-    ```
-
-    **Manual download:**
-    Download the appropriate archive for your platform from the assets below.
+    本版本起不再发布 `tar.gz` / `zip` 二进制包与 `checksums.txt`，请使用上方镜像部署。
 
     ## 📚 Documentation
 
