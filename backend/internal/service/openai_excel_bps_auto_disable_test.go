@@ -53,9 +53,6 @@ func TestExcelBPSAutoDisableOn403(t *testing.T) {
 				}
 				raw := `{"error":{"code":"permission_denied","message":"PRIVATE_UPSTREAM"}}`
 				wantCode := "basispoints_upstream_error"
-				if tc.status == http.StatusTooManyRequests {
-					wantCode = "basispoints_rate_limited"
-				}
 				if tc.modelError {
 					raw = `{"error":{"code":"basispoints_model_access_changed"}}`
 					wantCode = "basispoints_model_access_changed"
@@ -73,8 +70,14 @@ func TestExcelBPSAutoDisableOn403(t *testing.T) {
 				c, _ := gin.CreateTestContext(rec)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 				_, err := svc.Forward(context.Background(), c, account, []byte(fmt.Sprintf(`{"model":"gpt-6-astra","input":"test","stream":%v}`, stream)))
-				require.EqualError(t, err, "excel BPS: "+wantCode)
-				require.Equal(t, tc.status, rec.Code)
+				if tc.status == http.StatusTooManyRequests {
+					// The handler answers after trying other accounts.
+					requireExcelBPSRateLimitFailover(t, err, c)
+					wantCode = ""
+				} else {
+					require.EqualError(t, err, "excel BPS: "+wantCode)
+					require.Equal(t, tc.status, rec.Code)
+				}
 				require.Equal(t, wantCode, gjson.Get(rec.Body.String(), "error.code").String())
 				require.Equal(t, tc.changed && tc.writeErr == nil, strings.Contains(rec.Body.String(), "automatically disabled"))
 				require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")

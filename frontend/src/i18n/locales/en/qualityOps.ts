@@ -116,7 +116,7 @@ export default {
   "loadedRounds": "Loaded rounds",
   "view": "View",
   "ruleLibrary": "Account rules",
-  "ruleLibraryHint": "Select an account to focus its test history.",
+  "ruleLibraryHint": "Click an account to view history; check rules to edit them together.",
   "searchRule": "Search accounts, models or rule IDs",
   "clearSearch": "Clear search",
   "allAccounts": "All monitored accounts",
@@ -183,5 +183,29 @@ export default {
     "stale_run": "The rule changed during testing. The old result was not applied.",
     "account_deleted": "The account was deleted. No action was taken.",
     "action_error": "The account action failed. Check service logs; grading and account actions are recorded separately."
-  }
+  },
+  "selectFilteredRules": "Select matches",
+  "rulesSelected": "{count} rules selected",
+  "selectRule": "Select rule {id} for {account}",
+  "bulkEdit": "Bulk edit",
+  "bulkEditTitle": "Edit {count} rules",
+  "bulkEditHint": "Check the fields to apply to every selected rule. Unchecked fields keep their own values. Initial values come from the first selected rule; test settings include the method, question, reference answer, reasoning effort, probe count and grading model.",
+  "bulkFields": {
+    "model": "Test model",
+    "schedule": "Schedule",
+    "test": "Test settings",
+    "action": "Failure action and groups",
+    "restore": "Automatic restoration",
+    "enabled": "Scheduled tests enabled"
+  },
+  "applyToRules": "Apply to {count} rules",
+  "selectBulkFields": "Select at least one field to change",
+  "modelRequired": "Enter a test model",
+  "scheduleRequired": "Enter a schedule",
+  "questionRequired": "Enter a question and expected answer",
+  "ruleConfigMissing": "Rule configuration is unavailable. Refresh the list and try again.",
+  "ruleUnavailable": "Rule #{id} no longer exists. Close the editor and select rules again.",
+  "bulkProgress": "Processed {completed} / {total} rules",
+  "bulkSaved": "Saved {count} rules",
+  "bulkPartial": "Saved {saved} rules; {failed} failed. Retry applies only to the remaining rules."
 }

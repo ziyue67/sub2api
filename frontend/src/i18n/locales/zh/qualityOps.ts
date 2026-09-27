@@ -116,7 +116,7 @@ export default {
   "loadedRounds": "已加载轮次",
   "view": "查看",
   "ruleLibrary": "账号规则",
-  "ruleLibraryHint": "选择账号，聚焦它的检测记录。",
+  "ruleLibraryHint": "点击账号查看记录，勾选规则可批量编辑。",
   "searchRule": "搜索账号、模型或规则编号",
   "clearSearch": "清空搜索",
   "allAccounts": "全部检测账号",
@@ -183,5 +183,29 @@ export default {
     "stale_run": "规则在检测过程中发生变化，旧检测结果未应用到账户。",
     "account_deleted": "账号已删除，本轮未执行账号操作。",
     "action_error": "账号处理未成功，请检查服务日志；答题结果与处理结果分别记录。"
-  }
+  },
+  "selectFilteredRules": "全选结果",
+  "rulesSelected": "已选 {count} 条",
+  "selectRule": "选择 {account} 的规则 {id}",
+  "bulkEdit": "批量编辑",
+  "bulkEditTitle": "批量编辑 {count} 条规则",
+  "bulkEditHint": "勾选需要统一修改的字段，未勾选的字段保留每条规则自己的值。初始值来自第一条已选规则；检测配置包含检测方式、题目、参考答案、推理强度、检测次数和判题模型。",
+  "bulkFields": {
+    "model": "检测模型",
+    "schedule": "检测频率",
+    "test": "检测配置",
+    "action": "失败处理与目标分组",
+    "restore": "自动恢复",
+    "enabled": "定时检测开关"
+  },
+  "applyToRules": "应用到 {count} 条规则",
+  "selectBulkFields": "请至少勾选一个要修改的字段",
+  "modelRequired": "请填写检测模型",
+  "scheduleRequired": "请填写检测频率",
+  "questionRequired": "请填写题目和参考答案",
+  "ruleConfigMissing": "规则配置不可用，请刷新列表后重试。",
+  "ruleUnavailable": "规则 #{id} 已不存在，请关闭编辑器后重新选择。",
+  "bulkProgress": "已处理 {completed} / {total} 条规则",
+  "bulkSaved": "已保存 {count} 条规则",
+  "bulkPartial": "已保存 {saved} 条，失败 {failed} 条。重试仅处理剩余规则。"
 }

@@ -6,6 +6,43 @@ export interface TokenGuardReloginAccount {
   mfa_secret: string
 }
 
+// Unlike the settings parser, imports must reject malformed lines rather than
+// silently dropping an account from a batch.
+export function parseTwoFALoginText(raw: string): TokenGuardReloginAccount[] {
+  const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  if (!lines.length || lines.length > 100) throw new Error('invalid_batch')
+  const seen = new Set<string>()
+  return lines.map(line => {
+    const parts = line.includes('----') ? line.split('----') : line.split(',')
+    const [email = '', password = '', mfa = ''] = parts.map(part => part.trim())
+    const normalizedEmail = email.toLowerCase()
+    if (parts.length !== 3 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        !password || !mfa || seen.has(normalizedEmail)) throw new Error('invalid_batch')
+    seen.add(normalizedEmail)
+    return { email: normalizedEmail, password, mfa_secret: mfa }
+  })
+}
+
+export interface TwoFALoginJob {
+  id: string
+  status: 'running' | 'succeeded' | 'failed'
+  credential?: Record<string, unknown>
+}
+
+const twoFALoginPath = '/admin/account-ops/token-guard/two-fa-login'
+
+export async function startTwoFALogin(entry: TokenGuardReloginAccount): Promise<TwoFALoginJob> {
+  return (await apiClient.post(twoFALoginPath, entry)).data
+}
+
+export async function getTwoFALogin(id: string): Promise<TwoFALoginJob> {
+  return (await apiClient.get(`${twoFALoginPath}/${id}`)).data
+}
+
+export async function deleteTwoFALogin(id: string): Promise<void> {
+  await apiClient.delete(`${twoFALoginPath}/${id}`)
+}
+
 export function parseTokenGuardReloginText(raw: string): TokenGuardReloginAccount[] {
   return raw
     .split(/\r?\n/)

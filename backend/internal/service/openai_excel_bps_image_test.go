@@ -104,7 +104,7 @@ func TestExcelBPSImageCapabilityRedactedFromUpstreamError(t *testing.T) {
 	require.Contains(t, out, "/api/bps-images/[redacted]")
 }
 
-func TestExcelBPS429ImageAndCompactKeepCodexSchedulable(t *testing.T) {
+func TestExcelBPS429ImageAndCompactFailOverWithoutCodexState(t *testing.T) {
 	t.Setenv("DATA_DIR", t.TempDir())
 	var pngBytes bytes.Buffer
 	require.NoError(t, png.Encode(&pngBytes, image.NewRGBA(image.Rect(0, 0, 2, 3))))
@@ -128,13 +128,13 @@ func TestExcelBPS429ImageAndCompactKeepCodexSchedulable(t *testing.T) {
 
 				_, err := svc.Forward(context.Background(), c, account, body)
 
-				require.EqualError(t, err, "excel BPS: basispoints_rate_limited")
-				require.Equal(t, http.StatusTooManyRequests, rec.Code)
+				requireExcelBPSRateLimitFailover(t, err, c)
 				require.Len(t, upstream.requests, 1)
 				require.NotContains(t, string(upstream.lastBody), "data:image")
 				require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")
 				requireNoExcelBPSQuotaWrite(t, repo)
 				require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
+				require.True(t, svc.isExcelBPSCoolingDown(account, "gpt-6-astra"))
 				require.True(t, account.IsSchedulable())
 			})
 		}

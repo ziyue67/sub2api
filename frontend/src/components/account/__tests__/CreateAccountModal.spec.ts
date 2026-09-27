@@ -72,6 +72,7 @@ vi.mock('vue-i18n', async () => {
 })
 
 import CreateAccountModal from '../CreateAccountModal.vue'
+import OpenAITwoFAImport from '../OpenAITwoFAImport.vue'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -217,6 +218,24 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('offers 2FA initial login with optional name and imports through Session deduplication', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-two-fa"]').trigger('click')
+    expect(wrapper.get('[data-tour="account-form-name"]').attributes('required')).toBeUndefined()
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    const importer = wrapper.getComponent(OpenAITwoFAImport)
+    expect(wrapper.findComponent(OAuthAuthorizationFlowStub).exists()).toBe(false)
+    const credential = { access_token: 'test-access', refresh_token: 'test-refresh', account_id: 'test-workspace' }
+    await expect(importer.props('importCredential')(credential, 'user@example.com')).resolves.toBe('created')
+    expect(importCodexSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      content: JSON.stringify(credential), name: 'user@example.com', update_existing: false, skip_existing: true,
+      concurrency: 10, group_ids: [], proxy_id: null,
+    }))
+    expect(wrapper.emitted('created')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
 
   it('sets month and year expiry presets without submitting the account form', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })

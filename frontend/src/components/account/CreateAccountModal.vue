@@ -50,7 +50,7 @@
         <input
           v-model="form.name"
           type="text"
-          :required="!isGrokSSOInputMethod"
+          :required="!isGrokSSOInputMethod && !isOpenAITwoFA"
           class="input"
           :placeholder="t('admin.accounts.enterAccountName')"
           data-tour="account-form-name"
@@ -364,13 +364,13 @@
       <!-- Account Type Selection (OpenAI) -->
       <div v-if="form.platform === 'openai'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-3" data-tour="account-form-type">
+        <div class="mt-2 grid grid-cols-3 gap-3" data-tour="account-form-type">
           <button
             type="button"
-            @click="accountCategory = 'oauth-based'"
+            @click="accountCategory = 'oauth-based'; openaiTwoFA = false"
             :class="[
               'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
-              accountCategory === 'oauth-based'
+              accountCategory === 'oauth-based' && !openaiTwoFA
                 ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
                 : 'border-gray-200 hover:border-green-300 dark:border-dark-600 dark:hover:border-green-700'
             ]"
@@ -378,12 +378,12 @@
             <div
               :class="[
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                accountCategory === 'oauth-based'
+                accountCategory === 'oauth-based' && !openaiTwoFA
                   ? 'bg-green-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
               ]"
             >
-              <Icon name="key" size="sm" />
+              <Icon name="link" size="sm" />
             </div>
             <div>
               <span class="block text-sm font-medium text-gray-900 dark:text-white">OAuth</span>
@@ -417,7 +417,18 @@
             </div>
           </button>
 
+          <button type="button" data-testid="openai-two-fa" @click="accountCategory = 'oauth-based'; openaiTwoFA = true"
+            :class="['flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              isOpenAITwoFA ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : 'border-gray-200 dark:border-dark-600']">
+            <Icon name="shield" size="sm" />
+            <div>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">2FA</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('tokenGuard.twoFA.label') }}</span>
+            </div>
+          </button>
+
         </div>
+        <p v-if="isOpenAITwoFA" class="input-hint">{{ t('tokenGuard.twoFA.nameHint') }}</p>
       </div>
 
       <!-- Optional API protocol override for OpenAI API Key accounts -->
@@ -3605,7 +3616,9 @@
 
     <!-- Step 2: OAuth Authorization -->
     <div v-else class="space-y-5">
+      <OpenAITwoFAImport v-if="isOpenAITwoFA" :import-credential="importTwoFACredential" @busy="twoFABusy = $event" />
       <OAuthAuthorizationFlow
+        v-else
         ref="oauthFlowRef"
         :add-method="form.platform === 'anthropic' ? addMethod : 'oauth'"
         :auth-url="currentAuthUrl"
@@ -3684,11 +3697,11 @@
         </button>
       </div>
       <div v-else class="flex justify-between gap-3">
-        <button type="button" class="btn btn-secondary" @click="goBackToBasicInfo">
+        <button type="button" class="btn btn-secondary" :disabled="twoFABusy" @click="goBackToBasicInfo">
           {{ t('common.back') }}
         </button>
         <button
-          v-if="isManualInputMethod"
+          v-if="!isOpenAITwoFA && isManualInputMethod"
           type="button"
           :disabled="!canExchangeCode"
           class="btn btn-primary"
@@ -3955,6 +3968,7 @@
 </template>
 
 <script setup lang="ts">
+import OpenAITwoFAImport from './OpenAITwoFAImport.vue'
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -4073,6 +4087,7 @@ const { t } = useI18n()
 const browserTimeZone = getBrowserTimeZone()
 
 const oauthStepTitle = computed(() => {
+  if (isOpenAITwoFA.value) return t('tokenGuard.twoFA.title')
   if (form.platform === 'openai') return t('admin.accounts.oauth.openai.title')
   if (form.platform === 'gemini') return t('admin.accounts.oauth.gemini.title')
   if (form.platform === 'antigravity') return t('admin.accounts.oauth.antigravity.title')
@@ -4220,6 +4235,9 @@ interface TempUnschedRuleForm {
 
 // State
 const step = ref(1)
+const openaiTwoFA = ref(false)
+const twoFABusy = ref(false)
+const isOpenAITwoFA = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiTwoFA.value)
 const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
@@ -5419,6 +5437,8 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 // Methods
 const resetForm = () => {
   step.value = 1
+  openaiTwoFA.value = false
+  twoFABusy.value = false
   form.name = ''
   form.notes = ''
   form.platform = 'anthropic'
@@ -5538,6 +5558,7 @@ const resetForm = () => {
 }
 
 const handleClose = () => {
+  if (twoFABusy.value) return
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
   emit('close')
@@ -5754,7 +5775,7 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 const handleSubmit = async () => {
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
-    if (!isGrokSSOInputMethod.value && !form.name.trim()) {
+    if (!isGrokSSOInputMethod.value && !isOpenAITwoFA.value && !form.name.trim()) {
       appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
       return
     }
@@ -6575,6 +6596,36 @@ const isAgentIdentityImportContent = (content: string) => {
       return false
     }
   }
+}
+
+// Reuse Session import normalization and identity deduplication after 2FA login.
+const importTwoFACredential = async (credential: Record<string, unknown>, email: string): Promise<'created' | 'skipped'> => {
+  const credentialExtras = buildOpenAICodexImportCredentialExtras()
+  if (credentialExtras === null) throw new Error('invalid_account_settings')
+  const result = await adminAPI.accounts.importCodexSession({
+    content: JSON.stringify(credential),
+    name: form.name.trim() ? `${form.name.trim()} (${email})` : email,
+    notes: form.notes || null,
+    proxy_id: form.proxy_id,
+    concurrency: form.concurrency,
+    load_factor: form.load_factor ?? undefined,
+    priority: form.priority,
+    rate_multiplier: form.rate_multiplier,
+    group_ids: form.group_ids,
+    expires_at: form.expires_at,
+    auto_pause_on_expired: autoPauseOnExpired.value,
+    credential_extras: credentialExtras,
+    extra: withUpstreamRequestIdHeader(buildOpenAICodexImportExtra()),
+    update_existing: false,
+    skip_existing: true
+  })
+  if (result.failed > 0) throw new Error('import_failed')
+  if (result.created > 0) {
+    emit('created')
+    return 'created'
+  }
+  if (result.skipped > 0) return 'skipped'
+  throw new Error('import_failed')
 }
 
 const handleOpenAIImportCodexSession = async (content: string) => {

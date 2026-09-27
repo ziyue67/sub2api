@@ -17,12 +17,18 @@
         <section class="workspace-panel rules-panel" aria-labelledby="quality-rules-heading">
           <header class="panel-heading"><div><h3 id="quality-rules-heading">{{ t('qualityOps.ruleLibrary') }}<span class="count-label">{{ plans.length }}</span></h3><p>{{ t('qualityOps.ruleLibraryHint') }}</p></div></header>
           <div class="rule-search"><Icon name="search" size="sm" /><input v-model="store.search" :aria-label="t('qualityOps.search')" :placeholder="t('qualityOps.searchRule')" /><button v-if="store.search" :aria-label="t('qualityOps.clearSearch')" @click="store.search = ''"><Icon name="x" size="sm" /></button></div>
+          <div class="rule-selection-toolbar">
+            <label class="rule-check-all"><input type="checkbox" data-testid="quality-select-rules" :checked="allFilteredSelected" :indeterminate="someFilteredSelected && !allFilteredSelected" :disabled="!filteredPlans.length || busy" @change="toggleFilteredSelection" />{{ t('qualityOps.selectFilteredRules') }}</label>
+            <span aria-live="polite">{{ t('qualityOps.rulesSelected', { count: selectedRuleIds.length }) }}</span>
+            <button v-if="selectedRuleIds.length" :disabled="busy" data-testid="quality-clear-rules" @click="selectedRuleIds = []">{{ t('qualityOps.clearAccountSelection') }}</button>
+            <button class="btn btn-primary bulk-edit-button" data-testid="quality-bulk-edit" :disabled="!selectedRuleIds.length || busy || selectedRulesPending" @click="editSelectedRules"><Icon name="edit" size="sm" />{{ t('qualityOps.bulkEdit') }}</button>
+          </div>
           <button class="all-accounts" :class="{ selected: store.selectedPlanId === null }" :aria-pressed="store.selectedPlanId === null" @click="store.selectedPlanId = null"><Icon name="users" size="sm" />{{ t('qualityOps.allAccounts') }}<span>{{ plans.length }}</span></button>
           <div class="rules-scroll" data-testid="rules-scroll" :aria-busy="store.rulesLoading">
             <div v-if="store.rulesError" class="panel-error" role="alert">{{ store.rulesError }}<button @click="store.refreshRules(true)">{{ t('qualityOps.retry') }}</button></div>
             <div v-if="!store.rulesLoaded && store.rulesLoading" class="skeleton-stack" role="status" :aria-label="t('qualityOps.loading')"><div v-for="n in 4" :key="n" class="rule-skeleton"><span /><span /><span /></div></div>
-            <article v-for="plan in filteredPlans" :key="plan.id" class="rule-card" :class="{ selected: store.selectedPlanId === plan.id }" :data-plan-id="plan.id">
-              <div class="rule-card-top"><button class="rule-select" :aria-pressed="store.selectedPlanId === plan.id" @click="store.selectedPlanId = plan.id"><span class="account-avatar">{{ name(plan).slice(0, 1) }}</span><span class="min-w-0"><strong :title="name(plan)">{{ name(plan) }}</strong><span class="rule-meta">#{{ plan.account_id }}<span>·</span>{{ t('qualityOps.rule') }} {{ plan.id }}</span></span></button><button class="state-toggle" :class="plan.enabled ? 'state-enabled' : 'state-paused'" :disabled="!!pending[plan.id]" :title="t(plan.enabled ? 'qualityOps.pause' : 'qualityOps.enable')" @click="toggle(plan)"><span />{{ t(plan.enabled ? 'qualityOps.activeShort' : 'qualityOps.paused') }}</button></div>
+            <article v-for="plan in filteredPlans" :key="plan.id" class="rule-card" :class="{ selected: store.selectedPlanId === plan.id, checked: selectedRuleIds.includes(plan.id) }" :data-plan-id="plan.id">
+              <div class="rule-card-top"><label class="rule-checkbox"><input v-model="selectedRuleIds" type="checkbox" :value="plan.id" :disabled="busy || !!pending[plan.id]" :aria-label="t('qualityOps.selectRule', { account: name(plan), id: plan.id })" /></label><button class="rule-select" :aria-pressed="store.selectedPlanId === plan.id" @click="store.selectedPlanId = plan.id"><span class="account-avatar">{{ name(plan).slice(0, 1) }}</span><span class="min-w-0"><strong :title="name(plan)">{{ name(plan) }}</strong><span class="rule-meta">#{{ plan.account_id }}<span>·</span>{{ t('qualityOps.rule') }} {{ plan.id }}</span></span></button><button class="state-toggle" :class="plan.enabled ? 'state-enabled' : 'state-paused'" :disabled="busy || !!pending[plan.id]" :title="t(plan.enabled ? 'qualityOps.pause' : 'qualityOps.enable')" @click="toggle(plan)"><span />{{ t(plan.enabled ? 'qualityOps.activeShort' : 'qualityOps.paused') }}</button></div>
               <div class="rule-model"><code>{{ plan.model_id }}</code><span v-if="isProbePlan(plan)" class="probe-tag" data-testid="quality-probe-tag">{{ t('qualityOps.probeTag') }}</span><span v-if="running(plan)" class="running-label">{{ t('qualityOps.running') }}</span></div>
               <div class="rule-target" :title="planGroups(plan)"><Icon name="users" size="xs" /><span>{{ planGroups(plan) }}</span></div>
               <div class="rule-schedule"><span>{{ t('qualityOps.nextRun') }}</span><time :datetime="plan.next_run_at || undefined">{{ plan.enabled ? date(plan.next_run_at) : '—' }}</time></div>
@@ -40,11 +46,11 @@
             <table class="operations-table"><thead><tr><th>{{ t('qualityOps.time') }}</th><th>{{ t('qualityOps.accounts') }}</th><th>{{ t('qualityOps.testResult') }}</th><th>{{ t('qualityOps.accountAction') }}</th><th><span class="sr-only">{{ t('qualityOps.details') }}</span></th></tr></thead><tbody>
               <template v-if="!store.operationsLoaded && store.operationsLoading"><tr v-for="n in 6" :key="`loading-${n}`" class="loading-row"><td v-for="c in 5" :key="c"><span class="cell-skeleton" /></td></tr></template>
               <tr v-for="operation in filteredOperations" :key="operation.id" :class="{ 'selected-row': detailOperation?.id === operation.id && !!historyPlan }" :data-operation-id="operation.id">
-                <td class="time-cell"><strong>{{ clock(operation.started_at) }}</strong><span>{{ day(operation.started_at) }}</span></td>
+                <td class="time-cell" :data-label="t('qualityOps.time')"><strong>{{ clock(operation.started_at) }}</strong><span>{{ day(operation.started_at) }}</span></td>
                 <td class="account-cell"><button :title="operation.account_name" @click="store.selectedPlanId = operation.plan_id"><strong>{{ operation.account_name || `#${operation.account_id}` }}</strong></button><span>{{ t('qualityOps.rule') }} {{ operation.plan_id }}<span class="mx-1">·</span>#{{ operation.account_id }}</span></td>
-                <td><span class="test-count" :class="allPassed(operation) ? 'test-passed' : 'test-other'"><Icon :name="allPassed(operation) ? 'checkCircle' : 'exclamationCircle'" size="xs" />{{ operation.passed_count }} / {{ operation.total_count }}</span><span class="cell-secondary">{{ t(allPassed(operation) ? 'qualityOps.roundPassed' : 'qualityOps.roundNotPassed') }}</span></td>
-                <td class="action-cell"><button class="outcome-badge" :class="tone(operation.quality_action)" @click="operationDetails(operation)"><span />{{ operationLabel(operation) }}</button><span class="cell-secondary" :title="operationGroups(operation)">{{ operationGroups(operation) }}</span></td>
-                <td><button class="detail-button" :aria-label="t('qualityOps.openRound', { account: operation.account_name, time: date(operation.started_at) })" @click="operationDetails(operation)"><span>{{ t('qualityOps.details') }}</span><Icon name="arrowRight" size="sm" /></button></td>
+                <td :data-label="t('qualityOps.testResult')"><span class="test-count" :class="allPassed(operation) ? 'test-passed' : 'test-other'"><Icon :name="allPassed(operation) ? 'checkCircle' : 'exclamationCircle'" size="xs" />{{ operation.passed_count }} / {{ operation.total_count }}</span><span class="cell-secondary">{{ t(allPassed(operation) ? 'qualityOps.roundPassed' : 'qualityOps.roundNotPassed') }}</span></td>
+                <td class="action-cell" :data-label="t('qualityOps.accountAction')"><button class="outcome-badge" :class="tone(operation.quality_action)" @click="operationDetails(operation)"><span />{{ operationLabel(operation) }}</button><span class="cell-secondary" :title="operationGroups(operation)">{{ operationGroups(operation) }}</span></td>
+                <td class="detail-cell"><button class="detail-button" :aria-label="t('qualityOps.openRound', { account: operation.account_name, time: date(operation.started_at) })" @click="operationDetails(operation)"><span>{{ t('qualityOps.details') }}</span><Icon name="arrowRight" size="sm" /></button></td>
               </tr>
             </tbody></table>
             <div v-if="store.operationsLoaded && !filteredOperations.length" class="panel-empty"><Icon name="document" size="lg" /><h4>{{ t('qualityOps.noResults') }}</h4><p>{{ t('qualityOps.filteredEmptyHint') }}</p></div>
@@ -55,12 +61,18 @@
     </div>
 
     <!-- Existing rule editor moves into a focused drawer instead of shifting both lists. -->
-    <BaseDialog :show="showForm" :title="editing ? t('qualityOps.edit') : t('qualityOps.create')" placement="right" width="wide" :close-on-escape="!busy && !deleteTarget && !discardPrompt" @close="closeForm">
+    <BaseDialog :show="showForm" :title="bulkEditing ? t('qualityOps.bulkEditTitle', { count: bulkRuleIds.length }) : editing ? t('qualityOps.edit') : t('qualityOps.create')" placement="right" width="wide" :close-on-escape="!busy && !deleteTarget && !discardPrompt" @close="closeForm">
       <p v-if="error" role="alert" class="editor-error">{{ error }}</p>
       <p v-if="store.groupsError" role="alert" class="editor-error">{{ store.groupsError }} <button class="underline" @click="store.refreshGroups">{{ t('qualityOps.retry') }}</button></p>
             <form id="quality-rule-form" class="quality-editor space-y-5" @submit.prevent="save"><fieldset :disabled="busy" class="space-y-5">
 
-        <div v-if="!editing" class="space-y-3">
+        <div v-if="bulkEditing" class="bulk-editor-intro">
+          <p>{{ t('qualityOps.bulkEditHint') }}</p>
+          <details><summary>{{ t('qualityOps.rulesSelected', { count: bulkRuleIds.length }) }}</summary><ul><li v-for="id in bulkRuleIds" :key="id">{{ name(plans.find(plan => plan.id === id) || { id } as ScheduledTestPlan) }} · {{ t('qualityOps.rule') }} {{ id }}</li></ul></details>
+          <div class="bulk-fields"><label v-for="field in qualityRuleFields" :key="field"><input v-model="bulkFields" type="checkbox" :value="field" :data-testid="`quality-bulk-field-${field}`" />{{ t(`qualityOps.bulkFields.${field}`) }}</label></div>
+          <p v-if="bulkProgress" role="status">{{ bulkProgress }}</p>
+        </div>
+        <div v-if="!editing && !bulkEditing" class="space-y-3">
           <label for="quality-account-search" class="block text-sm font-medium">{{ t('qualityOps.accounts') }}</label>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="space-y-1 text-sm"><span>{{ t('qualityOps.accountGroup') }}</span>
@@ -93,19 +105,19 @@
           </div>
           <div class="flex flex-wrap items-center gap-3 text-sm"><button type="button" :aria-label="t('qualityOps.previousAccountPage')" :disabled="accountsLoading || selectingAccounts || accountPage <= 1" @click="searchAccounts(accountPage - 1)">←</button><span>{{ accountPage }} / {{ accountPages }}</span><button type="button" :aria-label="t('qualityOps.nextAccountPage')" :disabled="accountsLoading || selectingAccounts || accountPage >= accountPages" @click="searchAccounts(accountPage + 1)">→</button><span aria-live="polite">{{ t('qualityOps.selected', { count: selectedAccounts.length }) }}</span></div>
         </div>
-        <div class="space-y-2">
+        <div v-if="editsField('test')" class="space-y-2">
           <label class="block space-y-1"><span>{{ t('qualityOps.questionKind') }}</span><select v-model="form.pelican_config.question_kind" class="input" data-testid="quality-question-kind" @change="selectQuestionKind"><option value="candy">{{ t('qualityOps.questionCandy') }}</option><option :value="STATE_PROBE_QUESTION">{{ t('qualityOps.questionStateProbe') }}</option></select></label>
           <p v-if="isProbe" class="text-sm text-gray-500" data-testid="quality-probe-hint">{{ t('qualityOps.probeHint') }}</p>
         </div>
         <div class="grid gap-4 sm:grid-cols-2">
-          <label class="space-y-1"><span>{{ t('qualityOps.model') }}</span><input v-model.trim="form.model_id" required maxlength="100" class="input" placeholder="gpt-6-astra" /></label>
-          <label class="space-y-1"><span>{{ t('qualityOps.cron') }}</span><input v-model.trim="form.cron_expression" required class="input" placeholder="*/30 * * * *" /></label>
-          <template v-if="!isProbe">
+          <label v-if="editsField('model')" class="space-y-1"><span>{{ t('qualityOps.model') }}</span><input v-model.trim="form.model_id" required maxlength="100" class="input" placeholder="gpt-6-astra" /></label>
+          <label v-if="editsField('schedule')" class="space-y-1"><span>{{ t('qualityOps.cron') }}</span><input v-model.trim="form.cron_expression" required class="input" placeholder="*/30 * * * *" /></label>
+          <template v-if="editsField('test') && !isProbe">
             <label class="space-y-1"><span>{{ t('qualityOps.effort') }}</span><select v-model="form.pelican_config.reasoning_effort" class="input"><option v-for="effort in ['minimal', 'low', 'medium', 'high', 'xhigh']" :key="effort">{{ effort }}</option></select></label>
             <label class="space-y-1"><span>{{ t('qualityOps.parallel') }}</span><input v-model.number="form.pelican_config.parallel_count" type="number" min="1" max="8" required class="input" /></label>
           </template>
         </div>
-        <template v-if="!isProbe">
+        <template v-if="editsField('test') && !isProbe">
         <div><div class="mb-2 flex items-center justify-between"><label for="quality-prompt">{{ t('qualityOps.prompt') }}</label><button type="button" class="text-sm text-primary-600" @click="useCandy">{{ t('qualityOps.candy') }}</button></div><textarea id="quality-prompt" v-model="form.pelican_config.prompt" required maxlength="32000" rows="5" class="input text-sm" /></div>
         <label class="block space-y-1"><span>{{ t('qualityOps.answer') }}</span><input v-model="form.pelican_config.quality.expected_answer" required maxlength="4000" class="input" /></label>
         <fieldset class="space-y-3 rounded-lg border p-4 dark:border-dark-600">
@@ -126,7 +138,7 @@
           <p class="text-sm text-gray-500">{{ t('qualityOps.grading') }}</p>
         </fieldset>
         </template>
-        <fieldset class="space-y-3 rounded-lg border p-4 dark:border-dark-600">
+        <fieldset v-if="editsField('action')" class="space-y-3 rounded-lg border p-4 dark:border-dark-600">
           <legend class="px-2 font-medium">{{ t(isProbe ? 'qualityOps.probeFailureAction' : 'qualityOps.failureAction') }}</legend>
           <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="remove_groups" />{{ t('qualityOps.removeGroups') }}</label>
           <div v-if="form.pelican_config.quality.action === 'remove_groups'" class="grid max-h-40 gap-2 overflow-auto pl-6 sm:grid-cols-2">
@@ -134,11 +146,10 @@
           </div>
           <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="disable_scheduling" />{{ t('qualityOps.disableScheduling') }}</label>
         </fieldset>
-        <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.auto_restore" type="checkbox" />{{ t('qualityOps.autoRestore') }}</label>
-        <p class="text-sm text-gray-500">{{ t('qualityOps.restoreHelp') }}</p>
-        <label class="flex items-center gap-2"><input v-model="form.enabled" type="checkbox" />{{ t('qualityOps.enabled') }}</label>
+        <template v-if="editsField('restore')"><label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.auto_restore" type="checkbox" />{{ t('qualityOps.autoRestore') }}</label><p class="text-sm text-gray-500">{{ t('qualityOps.restoreHelp') }}</p></template>
+        <label v-if="editsField('enabled')" class="flex items-center gap-2"><input v-model="form.enabled" type="checkbox" />{{ t('qualityOps.enabled') }}</label>
       </fieldset></form>
-      <template #footer><div class="editor-footer"><button v-if="editing" type="button" class="delete-rule" :disabled="busy" @click="deleteTarget = plans.find(p => p.id === editing) || null">{{ t('qualityOps.delete') }}</button><span class="flex-1" /><button class="btn btn-secondary" :disabled="busy" @click="closeForm">{{ t('qualityOps.cancel') }}</button><button form="quality-rule-form" type="submit" class="btn btn-primary" :disabled="busy || selectingAccounts || (!editing && !selectedAccounts.length)">{{ busy ? t('qualityOps.saving') : t('qualityOps.save') }}</button></div></template>
+      <template #footer><div class="editor-footer"><button v-if="editing" type="button" class="delete-rule" :disabled="busy" @click="deleteTarget = plans.find(p => p.id === editing) || null">{{ t('qualityOps.delete') }}</button><span class="flex-1" /><button class="btn btn-secondary" :disabled="busy" @click="closeForm">{{ t('qualityOps.cancel') }}</button><button form="quality-rule-form" type="submit" class="btn btn-primary" :disabled="busy || selectingAccounts || (bulkEditing ? !bulkFields.length || !bulkRuleIds.length : !editing && !selectedAccounts.length)">{{ busy ? t('qualityOps.saving') : bulkEditing ? t('qualityOps.applyToRules', { count: bulkRuleIds.length }) : t('qualityOps.save') }}</button></div></template>
     </BaseDialog>
     <BaseDialog :show="!!historyPlan" :title="detailOperation ? t('qualityOps.roundDetail') : t('qualityOps.history')" placement="right" width="extra-wide" close-on-click-outside @close="closeDetails">
       <template v-if="historyPlan">
@@ -184,6 +195,7 @@ import scheduledTests from '@/api/admin/scheduledTests'
 import * as accountsAPI from '@/api/admin/accounts'
 import * as groupsAPI from '@/api/admin/groups'
 import { CANDY_PROMPT, STATE_PROBE_QUESTION, stateProbeVerdict, type StateProbeVerdict } from '@/utils/intelligenceTest'
+import { buildQualityRulePatch, qualityRuleFields, type QualityRuleField } from '@/utils/qualityRulePatch'
 import type { AccountListItem, ScheduledTestPlan, ScheduledTestResult } from '@/types'
 
 const { t, te } = useI18n()
@@ -210,9 +222,11 @@ function invalidateAccountRequests() {
   accounts.value = []; accountPage.value = accountPages.value = 1; accountsError.value = ''
 }
 watch([search, accountGroup, accountType], invalidateAccountRequests, { flush: 'sync' })
-function showAccountPicker() { return showForm.value && !editing.value }
+function showAccountPicker() { return showForm.value && !editing.value && !bulkEditing.value }
 
 const selectedAccounts = ref<number[]>([]), editing = ref<number | null>(null)
+const selectedRuleIds = ref<number[]>([]), bulkRuleIds = ref<number[]>([])
+const bulkEditing = ref(false), bulkFields = ref<QualityRuleField[]>([]), bulkProgress = ref('')
 const busy = ref(false), error = ref(''), notice = ref(''), showForm = ref(false)
 watch(showAccountPicker, (show) => { if (!show) invalidateAccountRequests() }, { flush: 'sync' })
 const pending = ref<Record<number, string>>({}), deleteTarget = ref<ScheduledTestPlan | null>(null), deleting = ref(false)
@@ -239,6 +253,21 @@ const filteredPlans = computed(() => {
   const query = store.search.trim().toLowerCase()
   return plans.value.filter(p => !query || `${name(p)} ${p.account_id} ${p.id} ${p.model_id}`.toLowerCase().includes(query))
 })
+const allFilteredSelected = computed(() => filteredPlans.value.length > 0 && filteredPlans.value.every(plan => selectedRuleIds.value.includes(plan.id)))
+const someFilteredSelected = computed(() => filteredPlans.value.some(plan => selectedRuleIds.value.includes(plan.id)))
+const selectedRulesPending = computed(() => selectedRuleIds.value.some(id => !!pending.value[id]))
+watch(plans, (current) => {
+  const ids = new Set(current.map(plan => plan.id))
+  selectedRuleIds.value = selectedRuleIds.value.filter(id => ids.has(id))
+})
+function toggleFilteredSelection() {
+  if (busy.value) return
+  const ids = new Set(filteredPlans.value.map(plan => plan.id))
+  selectedRuleIds.value = allFilteredSelected.value
+    ? selectedRuleIds.value.filter(id => !ids.has(id))
+    : [...new Set([...selectedRuleIds.value, ...ids])]
+}
+function editsField(field: QualityRuleField) { return !bulkEditing.value || bulkFields.value.includes(field) }
 const filteredOperations = computed(() => operations.value.filter(op => {
   if (store.selectedPlanId !== null && op.plan_id !== store.selectedPlanId) return false
   if (store.operationFilter === 'attention') return attentionActions.has(op.quality_action || '')
@@ -305,7 +334,7 @@ function defaults() {
 }
 const form = ref(defaults())
 const isProbe = computed(() => form.value.pelican_config.question_kind === STATE_PROBE_QUESTION)
-const formSnapshot = () => JSON.stringify([form.value, selectedAccounts.value])
+const formSnapshot = () => JSON.stringify([form.value, selectedAccounts.value, bulkFields.value])
 function message(e: unknown) { const err = e as { response?: { data?: { message?: string; error?: string } }; message?: string }; return err.response?.data?.message || err.response?.data?.error || err.message || t('qualityOps.error') }
 async function load() { await store.refresh() }
 async function refreshOperations() { await store.refreshOperations() }
@@ -346,16 +375,29 @@ async function selectMatchingAccounts() {
   finally { if (request === accountSelectionRequest) selectingAccounts.value = false }
 }
 function newPlan() {
+  bulkEditing.value = false; bulkRuleIds.value = []; bulkFields.value = []; bulkProgress.value = ''
   closeDetails(); invalidateAccountRequests(); error.value = ''; editing.value = null; form.value = defaults()
   selectedAccounts.value = []; search.value = ''; accountGroup.value = ''; accountType.value = ''
   showForm.value = true; initialForm.value = formSnapshot(); void searchAccounts()
   if (!groups.value.length) void store.refreshGroups()
 }
 function edit(plan: ScheduledTestPlan) {
+  bulkEditing.value = false; bulkRuleIds.value = []; bulkFields.value = []; bulkProgress.value = ''
   closeDetails(); error.value = ''; editing.value = plan.id; selectedAccounts.value = []
   form.value = { ...defaults(), model_id: plan.model_id, cron_expression: plan.cron_expression, enabled: plan.enabled, max_results: plan.max_results, pelican_config: { ...defaults().pelican_config, ...JSON.parse(JSON.stringify(plan.pelican_config || {})) } }
   form.value.pelican_config.quality.judge ||= defaults().pelican_config.quality.judge
   showForm.value = true; initialForm.value = formSnapshot(); void loadJudgeModels()
+}
+function editSelectedRules() {
+  if (busy.value || selectedRulesPending.value) return
+  const selected = plans.value.filter(plan => selectedRuleIds.value.includes(plan.id))
+  if (!selected.length) return
+  // Start from the first selected rule for convenience, but no field is applied
+  // until explicitly checked. The request builder preserves each other value.
+  edit(selected[0])
+  editing.value = null; bulkEditing.value = true
+  bulkRuleIds.value = selected.map(plan => plan.id)
+  initialForm.value = formSnapshot()
 }
 function closeForm() {
   if (busy.value) return
@@ -378,6 +420,7 @@ function payload() {
 }
 async function save() {
   if (busy.value || selectingAccounts.value) return
+  if (bulkEditing.value) { await saveBulkRules(); return }
   busy.value = true; error.value = ''; notice.value = ''
   const scope = identity()
   let changed = false
@@ -398,6 +441,52 @@ async function save() {
     showForm.value = false; notice.value = t('qualityOps.saved'); await store.refreshRules(true)
   } catch (e) { if (alive && scope === identity()) { error.value = message(e); if (changed) await store.refreshRules(true) } }
   finally { busy.value = false }
+}
+async function saveBulkRules() {
+  if (!bulkRuleIds.value.length || !bulkFields.value.length) return
+  busy.value = true; error.value = ''; notice.value = ''; bulkProgress.value = ''
+  const scope = identity(), ids = [...bulkRuleIds.value]
+  const failed: number[] = [], failures: string[] = []
+  let completed = 0
+  try {
+    // Refresh before merging nested config, then validate the whole batch before
+    // issuing any writes. A deleted rule must not silently disappear from a save.
+    await store.refreshRules(true)
+    if (!alive || scope !== identity()) return
+    if (store.rulesError) throw new Error(store.rulesError)
+    const requests = ids.map(id => {
+      const plan = plans.value.find(item => item.id === id)
+      if (!plan) throw new Error(t('qualityOps.ruleUnavailable', { id }))
+      return { id, body: buildQualityRulePatch(plan, form.value, bulkFields.value) }
+    })
+    for (const { id, body } of requests) {
+      if (!alive || scope !== identity()) return
+      try {
+        await scheduledTests.update(id, body)
+        if (!alive || scope !== identity()) return
+        selectedRuleIds.value = selectedRuleIds.value.filter(value => value !== id)
+        bulkRuleIds.value = bulkRuleIds.value.filter(value => value !== id)
+      } catch (e) {
+        if (!alive || scope !== identity()) return
+        failed.push(id); failures.push(`#${id}: ${message(e)}`)
+      }
+      completed++
+      bulkProgress.value = t('qualityOps.bulkProgress', { completed, total: ids.length })
+    }
+    if (failed.length) {
+      bulkRuleIds.value = failed
+      error.value = `${t('qualityOps.bulkPartial', { saved: ids.length - failed.length, failed: failed.length })} ${failures.join(' / ')}`
+    } else {
+      showForm.value = false
+      notice.value = t('qualityOps.bulkSaved', { count: ids.length })
+    }
+    await store.refreshRules(true)
+  } catch (e) {
+    if (alive && scope === identity()) {
+      const detail = message(e)
+      error.value = te(detail) ? t(detail) : detail
+    }
+  } finally { busy.value = false }
 }
 async function planAction(plan: ScheduledTestPlan, kind: string, fn: () => Promise<unknown>) {
   if (pending.value[plan.id]) return
@@ -471,7 +560,7 @@ function retryDetails() {
   else if (historyPlan.value) void history(historyPlan.value)
 }
 function navigateOperation(offset: number) { const next = filteredOperations.value[operationIndex.value + offset]; if (next) void operationDetails(next) }
-watch(() => identity(), () => { error.value = notice.value = ''; closeDetails(); showForm.value = false; discardPrompt.value = false; deleteTarget.value = null; accounts.value = []; accountRequest++; judgeModelsRequest++ })
+watch(() => identity(), () => { error.value = notice.value = ''; closeDetails(); showForm.value = false; discardPrompt.value = false; deleteTarget.value = null; accounts.value = []; selectedRuleIds.value = []; bulkRuleIds.value = []; bulkEditing.value = false; accountRequest++; judgeModelsRequest++ })
 onMounted(() => {
   void load()
   poll = setInterval(() => { if (document.visibilityState === 'visible' && !refreshing.value) { void store.refreshRules(); void store.refreshOperations() } }, 30_000)
@@ -480,7 +569,9 @@ onBeforeUnmount(() => { alive = false; accountSelectionRequest++; detailRequest+
 </script>
 
 <style scoped>
-.quality-workspace { max-width: 1660px; margin: 0 auto; @apply space-y-5 text-gray-900 dark:text-gray-100; }
+.quality-workspace { height: calc(100dvh - 8rem - 1px); min-height: 34rem; @apply flex w-full min-w-0 flex-col gap-4 text-gray-900 dark:text-gray-100; }
+.quality-workspace > :not(.workspace-columns) { flex-shrink: 0; }
+.quality-workspace > nav { margin-bottom: 0; max-width: 100%; }
 .workspace-heading { @apply flex flex-wrap items-center justify-between gap-4; }
 .workspace-eyebrow { @apply mb-1 text-[11px] font-semibold tracking-widest text-primary-600 dark:text-primary-400; }
 .workspace-heading h2 { @apply text-2xl font-semibold tracking-tight; }
@@ -501,32 +592,45 @@ onBeforeUnmount(() => { alive = false; accountSelectionRequest++; detailRequest+
 .summary-cell strong { @apply mt-1 block text-2xl font-semibold tabular-nums tracking-tight; }
 .summary-cell strong small { @apply text-sm font-normal text-gray-400; }
 .summary-link { @apply ml-auto inline-flex items-center gap-1 text-xs text-primary-600; }
-.workspace-columns { display: grid; grid-template-columns: minmax(290px, .29fr) minmax(0, .71fr); gap: 20px; }
-.workspace-panel { height: clamp(32rem, calc(100dvh - 25rem), 56rem); @apply flex min-w-0 flex-col overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-900; }
+.workspace-columns { display: grid; grid-template-columns: clamp(320px, 30%, 480px) minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; }
+.workspace-panel { @apply flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-900; }
 .panel-heading { @apply flex shrink-0 items-center justify-between gap-3 px-5 pb-4 pt-5; }
 .panel-heading h3 { @apply flex items-center gap-2 text-base font-semibold; }
 .panel-heading p { @apply mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400; }
 .count-label { @apply rounded-md bg-gray-100 px-1.5 py-0.5 text-xs tabular-nums text-gray-500 dark:bg-dark-800; }
 .icon-button { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-dark-700 dark:hover:bg-dark-800; }
-.rule-search { @apply mx-4 mb-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-gray-400 dark:border-dark-700 dark:bg-dark-800; }
+.rule-search { @apply mx-4 mb-3 flex shrink-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-gray-400 dark:border-dark-700 dark:bg-dark-800; }
 .rule-search input { @apply h-9 min-w-0 flex-1 bg-transparent text-sm text-gray-800 outline-none dark:text-gray-100; }
-.all-accounts { @apply mx-4 mb-3 flex items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-gray-500 dark:text-gray-400; }
+.all-accounts { @apply mx-4 mb-3 flex shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-gray-500 dark:text-gray-400; }
+.rule-selection-toolbar { @apply mx-4 mb-3 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-500 dark:text-gray-400; }
+.rule-check-all { @apply flex cursor-pointer items-center gap-2; }
+.rule-selection-toolbar > button:not(.bulk-edit-button) { @apply text-primary-600; }
+.bulk-edit-button { @apply ml-auto inline-flex items-center gap-1.5 px-3 py-2 text-xs; }
+.rule-checkbox { @apply flex h-8 shrink-0 cursor-pointer items-center; }
+.rule-checkbox input, .rule-check-all input, .bulk-fields input { @apply h-4 w-4 shrink-0 cursor-pointer accent-primary-600; }
+.bulk-editor-intro { @apply space-y-3 rounded-xl border border-primary-100 bg-primary-50/50 p-4 text-sm dark:border-primary-900 dark:bg-primary-950/20; }
+.bulk-editor-intro p { @apply leading-relaxed text-gray-600 dark:text-gray-300; }
+.bulk-editor-intro summary { @apply cursor-pointer text-primary-700 dark:text-primary-300; }
+.bulk-editor-intro ul { @apply mt-2 max-h-32 space-y-1 overflow-auto break-words text-xs text-gray-500; }
+.bulk-fields { @apply grid gap-3 sm:grid-cols-2; }
+.bulk-fields label { @apply flex cursor-pointer items-center gap-2; }
 .all-accounts span:last-child { @apply ml-auto text-xs tabular-nums; }
 .all-accounts.selected { @apply bg-primary-50 font-medium text-primary-700 dark:bg-primary-950/40 dark:text-primary-300; }
 .rules-scroll { @apply min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 pb-4; scrollbar-gutter: stable; }
 .rule-card { @apply rounded-xl border border-gray-200 p-3.5 transition-colors dark:border-dark-700; }
 .rule-card.selected { @apply border-primary-300 bg-primary-50/30 ring-1 ring-primary-100 dark:border-primary-700 dark:bg-primary-950/20 dark:ring-primary-900; }
+.rule-card.checked { @apply border-primary-400 bg-primary-50/60 dark:border-primary-600 dark:bg-primary-950/40; }
 .rule-card-top { @apply flex items-start gap-2; }
 .rule-select { @apply flex min-w-0 flex-1 items-start gap-2.5 text-left; }
 .account-avatar { @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-semibold text-slate-600 dark:bg-dark-700 dark:text-gray-300; }
-.rule-select strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; @apply text-[13px] font-semibold leading-5; }
+.rule-select strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; @apply text-[13px] font-semibold leading-5; }
 .rule-meta { @apply mt-1 flex gap-1.5 text-[11px] tabular-nums text-gray-400; }
 .state-toggle { @apply inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-medium; }
 .state-toggle > span, .outcome-badge > span { @apply h-1.5 w-1.5 rounded-full bg-current; }
 .state-enabled { @apply bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400; }
 .state-paused { @apply bg-gray-100 text-gray-500 dark:bg-dark-800; }
 .rule-model { @apply mt-3 flex flex-wrap items-center gap-2 text-[11px] text-gray-600 dark:text-gray-400; }
-.rule-model code { @apply rounded bg-gray-100 px-1.5 py-0.5 dark:bg-dark-800; }
+.rule-model code { overflow-wrap: anywhere; @apply min-w-0 rounded bg-gray-100 px-1.5 py-0.5 dark:bg-dark-800; }
 .running-label { @apply text-primary-600; }
 .probe-tag { @apply rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300; }
 .rule-target { @apply mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-gray-500; }
@@ -538,11 +642,11 @@ onBeforeUnmount(() => { alive = false; accountSelectionRequest++; detailRequest+
 .rule-actions button { @apply inline-flex min-h-8 flex-1 items-center justify-center gap-1 rounded-md text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-800 dark:hover:text-gray-100; }
 .rule-actions button:first-child { @apply text-primary-600; }
 .operations-toolbar { @apply flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-t border-gray-100 bg-gray-50/60 px-5 py-3 dark:border-dark-700 dark:bg-dark-800/50; }
-.scope-label { @apply flex min-w-0 items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300; max-width: 65%; }
+.scope-label { overflow-wrap: anywhere; @apply flex min-w-0 items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300; max-width: 65%; }
 .scope-dot { @apply h-1.5 w-1.5 shrink-0 rounded-full bg-primary-500; }
 .operations-toolbar select { @apply max-w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-600 dark:border-dark-600 dark:bg-dark-900 dark:text-gray-300; }
 .operations-scroll { @apply min-h-0 flex-1 overflow-auto overscroll-contain; scrollbar-gutter: stable; }
-.operations-table { @apply w-full text-left text-xs; min-width: 650px; }
+.operations-table { @apply w-full text-left text-xs; min-width: 620px; }
 .operations-table thead { @apply sticky top-0 z-10 bg-white text-gray-400 dark:bg-dark-900; box-shadow: 0 1px 0 rgb(148 163 184 / .15); }
 .operations-table th { @apply whitespace-nowrap px-4 py-3 font-medium; }
 .operations-table td { @apply border-b border-gray-100 px-4 py-4 align-middle dark:border-dark-800; }
@@ -625,7 +729,40 @@ onBeforeUnmount(() => { alive = false; accountSelectionRequest++; detailRequest+
 button:disabled { @apply cursor-not-allowed opacity-40; }
 button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { @apply outline-none ring-2 ring-primary-400 ring-offset-2 dark:ring-offset-dark-900; }
 @keyframes quality-pulse { 50% { opacity: .45; } }
-@media (max-width: 1100px) { .workspace-columns { grid-template-columns: 1fr; } .rules-panel { height: 28rem; } .operations-panel { height: 36rem; } }
+@media (min-width: 1280px) and (max-height: 900px) {
+  .quality-workspace { gap: 12px; }
+  .workspace-eyebrow, .workspace-subtitle { display: none; }
+  .workspace-heading h2 { font-size: 20px; }
+  .summary-cell { padding-top: 10px; padding-bottom: 10px; }
+  .summary-cell strong { font-size: 20px; }
+  .panel-heading { padding-top: 12px; padding-bottom: 12px; }
+  .panel-heading p { display: none; }
+  .rule-card { padding: 12px; }
+  .rule-model, .rule-schedule, .rule-actions { margin-top: 8px; }
+}
+@media (max-width: 1279px) {
+  .quality-workspace { height: auto; min-height: 0; }
+  .workspace-columns { grid-template-columns: minmax(0, 1fr); }
+  .rules-panel { height: clamp(24rem, 60dvh, 42rem); }
+  .operations-panel { height: clamp(28rem, 70dvh, 52rem); }
+}
+@media (max-width: 640px) {
+  .operations-table { display: block; min-width: 0; }
+  .operations-table thead { @apply sr-only; }
+  .operations-table tbody { display: block; }
+  .operations-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 16px; @apply border-b border-gray-100 dark:border-dark-800; }
+  .operations-table td { min-width: 0; max-width: none; padding: 0; border: 0; }
+  .operations-table td::before { content: attr(data-label); @apply mb-1.5 block text-[10px] text-gray-400; }
+  .operations-table .account-cell { grid-column: 1 / -1; grid-row: 1; }
+  .operations-table .account-cell strong { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+  .operations-table .action-cell { grid-column: 1 / -1; }
+  .operations-table .detail-cell { grid-column: 1 / -1; text-align: right; }
+  .operations-table .outcome-badge { white-space: normal; text-align: left; }
+  .operations-table .cell-secondary { max-width: 100%; }
+  .operations-footer { @apply flex-wrap gap-1 px-4 py-3; }
+  .scope-label { max-width: 100%; }
+  .editor-footer { flex-wrap: wrap; }
+}
 @media (max-width: 640px) { .summary-cell { padding: 14px 12px; gap: 8px; } .summary-cell strong { font-size: 22px; } .summary-icon { width: 32px; height: 32px; } .summary-link { display: none; } .heading-actions { width: 100%; justify-content: flex-end; } .detail-grid { grid-template-columns: 1fr; } .result-navigation { display: flex; gap: 8px; overflow-x: auto; } .result-navigation > p { display: none; } .result-navigation button { min-width: 100px; } .account-management-link { font-size: 10px; } .detail-footer .btn { font-size: 11px; padding: 8px; } }
 @media (prefers-reduced-motion: reduce) { .cell-skeleton, .rule-skeleton span { animation: none; } }
 </style>

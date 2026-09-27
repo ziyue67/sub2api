@@ -11,7 +11,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 )
 
-type excelBPSAttachmentError struct{ status int }
+type excelBPSAttachmentError struct {
+	status     int
+	retryAfter string
+}
 
 func (e *excelBPSAttachmentError) Error() string {
 	return fmt.Sprintf("excel BPS attachment returned HTTP %d", e.status)
@@ -51,7 +54,7 @@ func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, acc
 		if status < 400 || status > 599 {
 			status = http.StatusBadGateway
 		}
-		return "", &excelBPSAttachmentError{status: status}
+		return "", &excelBPSAttachmentError{status: status, retryAfter: resp.Header.Get("Retry-After")}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
 	if err != nil || len(raw) > 64<<10 {
