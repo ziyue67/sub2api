@@ -123,7 +123,7 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 	if isClientCanceledTransportError(ctx, err) {
 		return err
 	}
-	if IsOpenAITurnAdmissionError(err) {
+	if IsOpenAITurnAdmissionError(err) || IsOpenAIRPMError(err) {
 		return err
 	}
 	if errors.Is(err, ErrCodexTicketResponseRejected) {

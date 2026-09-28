@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MihomoSettings from './MihomoSettings.vue'
 const { get, post, put } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: { get, post, put } }))
+const toast = vi.hoisted(() => ({ showSuccess: vi.fn(), showError: vi.fn(), showInfo: vi.fn(), showWarning: vi.fn() }))
+vi.mock('@/stores/app', () => ({ useAppStore: () => toast }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ locale: { value: 'zh' }, t: (key: string) => key }) }))
 const base = { installed: true, supported: true, running: true, busy: false, nodes: 1, subscriptions: 1, phase: 'running', endpoint: 'http://127.0.0.1:3101', dynamic_proxies: 1, subscription_items: [{ id: 'source-one', label: '机场 A', enabled: true, cached: true, nodes: 1 }], node_states: [{ name: 'node-one', display_name: '东京节点', state: 'enabled', subscription_ids: ['source-one'], country_code: 'JP' }] }
 let wrapper: VueWrapper
@@ -11,7 +13,7 @@ const mountPanel = (section: 'subscriptions' | 'dynamic' | 'nodes' | 'kernel' = 
   global: { stubs: {
     BaseDialog: { props: ['show'], emits: ['close'], template: '<div v-if="show" role="dialog"><button aria-label="Close modal" @click="$emit(\'close\')">关闭</button><slot /><slot name="footer" /></div>' },
     ConfirmDialog: { props: ['show', 'message'], emits: ['confirm', 'cancel'], template: '<div v-if="show" data-test="confirm"><p>{{ message }}</p><button @click="$emit(\'confirm\')">确认</button><button @click="$emit(\'cancel\')">取消</button></div>' },
-    DataTable: { props: ['columns', 'data', 'selectedKeys'], emits: ['update:selectedKeys'], template: '<div data-test="table"><button v-if="selectedKeys" @click="$emit(\'update:selectedKeys\', data.map(row => row.id))">全选</button><div v-for="row in data" :key="row.id || row.name" data-test="row"><template v-for="column in columns" :key="column.key"><slot :name="\'cell-\' + column.key" :row="row" :value="row[column.key]">{{ row[column.key] }}</slot></template></div><slot v-if="!data.length" name="empty" /></div>' }
+    DataTable: { props: ['columns', 'data', 'selectedKeys', 'rowKey'], emits: ['update:selectedKeys'], template: '<div data-test="table"><button v-if="selectedKeys" @click="$emit(\'update:selectedKeys\', data.map(row => row[rowKey || \'id\']))">全选</button><button v-if="selectedKeys" @click="$emit(\'update:selectedKeys\', data.slice(0, 1).map(row => row[rowKey || \'id\']))">选择首行</button><div v-for="row in data" :key="row.id || row.name" data-test="row"><template v-for="column in columns" :key="column.key"><slot :name="\'cell-\' + column.key" :row="row" :value="row[column.key]">{{ row[column.key] }}</slot></template></div><slot v-if="!data.length" name="empty" /></div>' }
   } }
 })
 async function click(label: string) {
@@ -19,7 +21,8 @@ async function click(label: string) {
   expect(button, label).toBeDefined()
   await button!.trigger('click'); await flushPromises()
 }
-beforeEach(() => { vi.resetAllMocks(); get.mockResolvedValue({ data: base }); post.mockResolvedValue({ data: base }); put.mockResolvedValue({ data: { ...base, subscription_download_mode: 'proxy' } }) })
+// Fresh copies, like parsed responses: node checks update rows in place.
+beforeEach(() => { vi.resetAllMocks(); get.mockImplementation(async () => ({ data: structuredClone(base) })); post.mockImplementation(async () => ({ data: structuredClone(base) })); put.mockResolvedValue({ data: { ...base, subscription_download_mode: 'proxy' } }) })
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers() })
 describe('Mihomo IP management', () => {
   it('loads a redacted subscription list without mutating configuration', async () => {
@@ -166,6 +169,104 @@ describe('Mihomo IP management', () => {
   it('does not offer installation when status loading fails', async () => {
     get.mockRejectedValue(new Error('network'))
     wrapper = mountPanel('kernel'); await flushPromises(); expect(wrapper.text()).toContain('无法读取内核状态'); expect(wrapper.text()).not.toContain('检测并安装')
+  })
+})
+
+const rowButton = (label: string, index = 0) => {
+  const button = wrapper.findAll('[data-test="row"]')[index].findAll('button').find(b => b.text() === label)
+  expect(button, label).toBeDefined()
+  return button!
+}
+const checkedAt = 1790000000
+const recorded = (check: Record<string, unknown>) => ({ ...base, node_states: [{ ...base.node_states[0], check: { checked_at: checkedAt, ...check } }] })
+const nodeCheckCalls = (suffix: string) => post.mock.calls.map(([url]) => url as string).filter(url => url.endsWith(suffix))
+
+describe('Mihomo node connection and quality checks', () => {
+  it('tests a node through its isolated check without changing configuration', async () => {
+    wrapper = mountPanel('nodes'); await flushPromises()
+    expect(wrapper.get('[data-testid="node-check"]').text()).toBe('-')
+    post.mockResolvedValue({ data: { success: true, message: 'Proxy is accessible', latency_ms: 88, ip_address: '203.0.113.9', country: '日本', city: '东京' } })
+    get.mockResolvedValue({ data: recorded({ latency_status: 'success', latency_ms: 88, ip_address: '203.0.113.9', country: '日本', city: '东京' }) })
+    await rowButton('admin.proxies.testConnection').trigger('click'); await flushPromises()
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post).toHaveBeenCalledWith('/admin/system/mihomo/nodes/node-one/test', undefined, expect.objectContaining({ timeout: expect.any(Number) }))
+    expect(toast.showSuccess).toHaveBeenCalledWith('admin.proxies.proxyWorkingWithLatency')
+    const cell = wrapper.get('[data-testid="node-check"]')
+    expect(cell.text()).toContain('88ms'); expect(cell.text()).toContain('203.0.113.9 · 日本 · 东京')
+  })
+  it('shows each result while a batch runs, before the status refresh', async () => {
+    wrapper = mountPanel('nodes'); await flushPromises()
+    post.mockResolvedValue({ data: { success: false, message: 'proxy connection failed: EOF' } })
+    get.mockReturnValue(new Promise(() => {}))
+    await click('admin.proxies.testConnection')
+    const cell = wrapper.get('[data-testid="node-check"]')
+    expect(cell.text()).toContain('admin.proxies.latencyFailed')
+    expect(cell.find('[title="proxy connection failed: EOF"]').exists()).toBe(true)
+    expect(toast.showWarning).toHaveBeenCalledWith('批量测试完成，共 1 个节点：成功 0 个，失败 1 个')
+  })
+  it('opens the quality report for a node', async () => {
+    wrapper = mountPanel('dynamic'); await flushPromises()
+    expect(wrapper.find('[data-test="row"]').exists()).toBe(false)
+    get.mockResolvedValue({ data: { ...base, node_states: [{ name: 'DYNAMIC-one', display_name: 'dynamic-01', dynamic: true, state: 'enabled' }] } })
+    await click('检测状态')
+    const report = { proxy_id: 0, score: 56, grade: 'D', summary: '通过 3 项，告警 0 项，失败 2 项，挑战 0 项', exit_ip: '203.0.113.9', country: '日本', base_latency_ms: 40, passed_count: 3, warn_count: 0, failed_count: 2, challenge_count: 0, checked_at: checkedAt, items: [{ target: 'base_connectivity', status: 'pass', latency_ms: 40 }, { target: 'openai', status: 'fail', message: '请求失败: EOF' }] }
+    post.mockResolvedValue({ data: report })
+    get.mockReturnValue(new Promise(() => {}))
+    await rowButton('admin.proxies.qualityCheck').trigger('click'); await flushPromises()
+    expect(post).toHaveBeenCalledWith('/admin/system/mihomo/nodes/DYNAMIC-one/quality-check', undefined, expect.objectContaining({ timeout: expect.any(Number) }))
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog.text()).toContain('dynamic-01'); expect(dialog.text()).toContain(report.summary); expect(dialog.text()).toContain('OpenAI'); expect(dialog.text()).toContain('请求失败: EOF')
+    expect(toast.showSuccess).toHaveBeenCalledWith('admin.proxies.qualityCheckDone')
+    const cell = wrapper.get('[data-testid="node-check"]')
+    expect(cell.text()).toContain('40ms'); expect(cell.text()).toContain('admin.proxies.qualityStatusFail')
+    await wrapper.get('[aria-label="Close modal"]').trigger('click')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  })
+  it('batch checks selected nodes, otherwise every filtered node', async () => {
+    const nodes = Array.from({ length: 3 }, (_, i) => ({ name: 'node-' + i, display_name: '节点 ' + i, state: 'enabled', subscription_ids: ['source-one'] }))
+    get.mockResolvedValue({ data: { ...base, node_states: nodes } })
+    post.mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/test') ? { success: true, message: 'Proxy is accessible', latency_ms: 30 } : { proxy_id: 0, score: 100, grade: 'A', summary: 'ok', passed_count: 5, warn_count: 0, failed_count: 0, challenge_count: 0, checked_at: checkedAt, items: [] } }))
+    wrapper = mountPanel('nodes'); await flushPromises()
+    expect(wrapper.get('[data-testid="node-batch-scope"]').text()).toContain('全部 3 个节点')
+    await click('admin.proxies.testConnection')
+    expect(nodeCheckCalls('/test').sort()).toEqual(nodes.map(n => '/admin/system/mihomo/nodes/' + n.name + '/test'))
+    expect(toast.showSuccess).toHaveBeenCalledWith('批量测试完成，共 3 个节点：成功 3 个，失败 0 个')
+    post.mockClear()
+    await click('选择首行')
+    expect(wrapper.get('[data-testid="node-batch-scope"]').text()).toContain('已选的 1 个节点')
+    await click('admin.proxies.batchQualityCheck')
+    expect(nodeCheckCalls('/quality-check')).toEqual(['/admin/system/mihomo/nodes/node-0/quality-check'])
+    expect(toast.showSuccess).toHaveBeenLastCalledWith('批量质量检测完成，共 1 个节点：优质 1 个，告警 0 个，挑战 0 个，异常 0 个')
+    expect(post.mock.calls.some(([url]) => url === '/admin/system/mihomo')).toBe(false)
+  })
+  it('renders recorded checks like the static proxy list', async () => {
+    get.mockResolvedValue({ data: { ...base, node_states: [
+      { ...base.node_states[0], check: { checked_at: checkedAt, latency_status: 'success', latency_ms: 320, ip_address: '203.0.113.9', country: '日本', quality_status: 'warn', quality_score: 90, quality_grade: 'A', quality_summary: '通过 4 项，告警 1 项', quality_checked: checkedAt } },
+      { name: 'DYNAMIC-one', dynamic: true, state: 'enabled', check: { checked_at: checkedAt, latency_status: 'failed', latency_message: 'proxy connection failed' } }
+    ] } })
+    wrapper = mountPanel('nodes'); await flushPromises()
+    const [subscription, dynamic] = wrapper.findAll('[data-testid="node-check"]')
+    expect(subscription.text()).toContain('320ms'); expect(subscription.find('.badge-warning').exists()).toBe(true)
+    expect(subscription.text()).toContain('admin.proxies.qualityInline'); expect(subscription.text()).toContain('admin.proxies.qualityStatusWarn')
+    expect(subscription.text()).toContain('203.0.113.9 · 日本')
+    expect(dynamic.text()).toContain('admin.proxies.latencyFailed'); expect(dynamic.find('[title="proxy connection failed"]').exists()).toBe(true)
+  })
+  it('reports unavailable checks without marking the node failed', async () => {
+    wrapper = mountPanel('nodes'); await flushPromises()
+    post.mockRejectedValue({ status: 409, message: 'install the kernel first' })
+    await rowButton('admin.proxies.qualityCheck').trigger('click'); await flushPromises()
+    expect(toast.showError).toHaveBeenCalledWith('install the kernel first')
+    expect(wrapper.get('[data-testid="node-check"]').text()).toBe('-')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  })
+  it('disables node checks until the kernel is installed', async () => {
+    get.mockResolvedValue({ data: { ...base, installed: false, running: false } })
+    wrapper = mountPanel('nodes'); await flushPromises()
+    for (const label of ['admin.proxies.testConnection', 'admin.proxies.batchQualityCheck']) {
+      expect(wrapper.findAll('button').find(b => b.text() === label)!.attributes('disabled')).toBeDefined()
+    }
+    expect(rowButton('admin.proxies.testConnection').attributes('disabled')).toBeDefined()
+    expect(rowButton('admin.proxies.qualityCheck').attributes('disabled')).toBeDefined()
   })
 })
 

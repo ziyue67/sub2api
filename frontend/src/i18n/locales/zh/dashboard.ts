@@ -627,7 +627,7 @@ export default {
     itemCount: '{count} 张',
     latestAt: '最近更新 {time}',
     groupEmpty: '该分组还没有作品，定时测试成功生成后会出现在这里',
-    loadMore: '加载更多',
+    scrollLabel: '{group}：拖动滑块查看更早的作品',
     loadError: '加载鹈鹕测智失败',
     itemLoading: '作品加载中…',
     itemLoadError: '作品加载失败',

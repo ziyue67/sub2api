@@ -2,19 +2,13 @@ package mihomo
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -121,100 +115,57 @@ func (m *Manager) observeCountry(ctx context.Context, node map[string]any) Count
 	observation := CountryObservation{CheckedAt: time.Now(), Error: "lookup_failed"}
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	dir, err := os.MkdirTemp(m.dir, ".country-probe-*")
-	if err != nil {
-		return observation
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return observation
-	}
-	address := listener.Addr().String()
-	_, portText, _ := net.SplitHostPort(address)
-	_ = listener.Close()
-	port, err := strconv.Atoi(portText)
-	if err != nil {
-		return observation
-	}
 	name, ok := node["name"].(string)
 	if !ok || name == "" {
 		return observation
 	}
-	secret := make([]byte, 24)
-	if _, err = rand.Read(secret); err != nil {
-		return observation
-	}
-	password := hex.EncodeToString(secret)
-	config, err := json.Marshal(map[string]any{"mixed-port": port, "allow-lan": false, "bind-address": "127.0.0.1", "mode": "rule", "log-level": "silent", "authentication": []string{"probe:" + password}, "proxies": []any{node}, "rules": []string{"MATCH," + name}})
-	if err != nil {
-		return observation
-	}
-	path := filepath.Join(dir, "config.json")
-	if atomicWrite(path, config, 0600) != nil {
-		return observation
-	}
-	cmd := exec.CommandContext(ctx, filepath.Join(m.dir, "mihomo"), "-d", dir, "-f", path)
-	configureChild(cmd)
-	if cmd.Start() != nil {
-		return observation
-	}
-	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
-	proxy := &url.URL{Scheme: "http", Host: address, User: url.UserPassword("probe", password)}
+	_ = m.withIsolatedNode(ctx, name, node, func(proxy *url.URL) {
+		if code := m.lookupCountry(ctx, proxy); code != "" {
+			observation.Code = code
+			observation.Error = ""
+		}
+	})
+	return observation
+}
+
+// lookupCountry returns the exit country seen through proxy, or "" when the
+// lookup fails or does not name a valid country.
+func (m *Manager) lookupCountry(ctx context.Context, proxy *url.URL) string {
 	transport := &http.Transport{Proxy: http.ProxyURL(proxy), DisableKeepAlives: true, TLSHandshakeTimeout: 3 * time.Second}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 6 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	ready := false
-	for i := 0; i < 40; i++ {
-		conn, dialErr := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(ctx, "tcp", address)
-		if dialErr == nil {
-			_ = conn.Close()
-			ready = true
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return observation
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	if !ready {
-		return observation
-	}
 	endpoint := m.countryLookupURL
 	if endpoint == "" {
 		endpoint = "https://api.country.is/"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return observation
+		return ""
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return observation
+		return ""
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return observation
+		return ""
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8193))
 	if err != nil || len(body) > 8192 {
-		return observation
+		return ""
 	}
 	var answer struct {
 		Country string `json:"country"`
 		IP      string `json:"ip"`
 	}
 	if json.Unmarshal(body, &answer) != nil || net.ParseIP(answer.IP) == nil {
-		return observation
+		return ""
 	}
 	code := strings.ToUpper(strings.TrimSpace(answer.Country))
 	if !validCountry(code) {
-		return observation
+		return ""
 	}
-	observation.Code = code
-	observation.Error = ""
-	return observation
+	return code
 }
 
 // Each click checks up to 20 least-recently checked nodes, at most two at once.

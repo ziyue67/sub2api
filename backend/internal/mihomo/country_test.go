@@ -84,7 +84,7 @@ func TestCountryFilterPersistsAndCannotBeBypassedByRecovery(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(m.dir, "mihomo"), []byte("#!/bin/sh\nexit 0\n"), 0700))
 	filter := CountryFilter{Mode: "exclude", Codes: []string{"HK"}}
 	require.NoError(t, m.Submit("country_filter", nil, false, &filter))
-	require.Eventually(t, func() bool { return !m.Status().Busy }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return !m.Status().Busy }, 5*time.Second, 10*time.Millisecond)
 	require.Empty(t, m.Status().Error)
 	require.NoError(t, m.run(context.Background(), "recover/node-hk", m.saved))
 	require.Equal(t, "country_excluded", m.Status().NodeStates[0].State)

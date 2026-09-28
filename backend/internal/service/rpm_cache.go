@@ -1,9 +1,12 @@
 package service
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // RPMCache RPM 计数器缓存接口
-// 用于 Anthropic OAuth/SetupToken 账号的每分钟请求数限制
+// 用于 OAuth/SetupToken 账号的每分钟请求数统计；严格上限预占由 StrictRPMCache 提供
 type RPMCache interface {
 	// IncrementRPM 原子递增并返回当前分钟的计数
 	// 使用 Redis 服务器时间确定 minute key，避免多实例时钟偏差
@@ -14,4 +17,12 @@ type RPMCache interface {
 
 	// GetRPMBatch 批量获取多个账号的 RPM 计数（使用 Pipeline）
 	GetRPMBatch(ctx context.Context, accountIDs []int64) (map[int64]int, error)
+}
+
+// StrictRPMCache optionally provides an atomic, limit-aware reservation used by
+// OpenAI OAuth. Keeping this as a separate interface preserves compatibility
+// with existing test doubles and non-Redis implementations of RPMCache.
+type StrictRPMCache interface {
+	RPMCache
+	TryAcquireRPM(ctx context.Context, accountID int64, limit int) (allowed bool, count int, resetAt time.Time, err error)
 }

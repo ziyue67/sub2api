@@ -18,22 +18,22 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 		{
 			name:    "re-enabling clears 403 marker",
 			extra:   map[string]any{"openai_excel_bps": true},
-			removed: []string{service.ExcelBPS403DisabledAtKey},
+			removed: []string{service.ExcelBPS403DisabledAtKey, service.ExcelBPS403LastProbeAtKey},
 		},
 		{
 			name:    "all models removes scope key",
 			extra:   map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": nil, "openai_excel_bps_cache_creation_as_input": false},
-			removed: []string{service.ExcelBPS403DisabledAtKey, "openai_excel_bps_models", "openai_excel_bps_cache_creation_as_input"},
+			removed: []string{service.ExcelBPS403DisabledAtKey, service.ExcelBPS403LastProbeAtKey, "openai_excel_bps_models", "openai_excel_bps_cache_creation_as_input"},
 		},
 		{
 			name:    "empty scope remains explicit",
 			extra:   map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": []string{}, "openai_excel_bps_cache_creation_as_input": true},
-			removed: []string{service.ExcelBPS403DisabledAtKey},
+			removed: []string{service.ExcelBPS403DisabledAtKey, service.ExcelBPS403LastProbeAtKey},
 		},
 		{
 			name:    "selected scope remains explicit",
 			extra:   map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": []string{"gpt-6-astra"}},
-			removed: []string{service.ExcelBPS403DisabledAtKey},
+			removed: []string{service.ExcelBPS403DisabledAtKey, service.ExcelBPS403LastProbeAtKey},
 		},
 		{
 			name:    "disabled removes all BPS settings",
@@ -48,6 +48,11 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 			name:    "auto disable false removes opt-in",
 			extra:   map[string]any{"openai_excel_bps_auto_disable_on_403": false},
 			removed: []string{"openai_excel_bps_auto_disable_on_403"},
+		},
+		{
+			name:    "auto recovery false removes opt-in",
+			extra:   map[string]any{service.ExcelBPSAutoRecoverOn403Key: false},
+			removed: []string{service.ExcelBPSAutoRecoverOn403Key},
 		},
 		{
 			name:    "auto move false removes policy and destination",
@@ -75,7 +80,7 @@ func TestBulkUpdateExcelBPSExtra(t *testing.T) {
 			expression := "COALESCE(extra, '{}'::jsonb) || $1::jsonb"
 			switch tt.name {
 			case "disabled removes all BPS settings":
-				expression = "(" + expression + ") - 'openai_excel_bps' - 'openai_excel_bps_models' - 'openai_excel_bps_cache_creation_as_input' - 'openai_excel_bps_auto_disable_on_403' - 'openai_excel_bps_auto_move_on_403' - 'openai_excel_bps_403_target_group_id' - 'openai_excel_bps_mihomo'"
+				expression = "(" + expression + ") - 'openai_excel_bps' - 'openai_excel_bps_models' - 'openai_excel_bps_cache_creation_as_input' - 'openai_excel_bps_auto_disable_on_403' - 'openai_excel_bps_auto_recover_on_403' - 'openai_excel_bps_auto_move_on_403' - 'openai_excel_bps_403_target_group_id' - 'openai_excel_bps_mihomo'"
 			case "auto move false removes policy and destination":
 				expression = "(" + expression + ") - 'openai_excel_bps_auto_move_on_403' - 'openai_excel_bps_403_target_group_id'"
 			default:

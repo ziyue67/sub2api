@@ -415,12 +415,13 @@ func openAIWSPayloadCodexWindowID(payload []byte) string {
 // normalizeOpenAIWSContextWindowBoundary breaks a Responses continuation chain
 // when Codex moves to a new local context window. WebSocket response.create can
 // still carry the previous window's previous_response_id after new_context,
-// while HTTP starts the new window without that continuation anchor.
+// while HTTP starts the new window without that continuation anchor. The current
+// window must come from the client frame before handshake/identity normalization.
 func normalizeOpenAIWSContextWindowBoundary(
 	payload []byte,
 	previousWindowID string,
+	currentWindowID string,
 ) ([]byte, openAIWSContextWindowBoundary, error) {
-	currentWindowID := openAIWSPayloadCodexWindowID(payload)
 	boundary := openAIWSContextWindowBoundary{WindowID: currentWindowID}
 	if previousWindowID == "" || currentWindowID == "" || currentWindowID == previousWindowID {
 		return payload, boundary, nil

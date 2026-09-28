@@ -21,7 +21,7 @@ const (
 )
 
 // OpenAIAutoResetCreditConfig 是账号级自动用卡配置。阈值采用 0-1 比例，
-// 避免后端调度与前端百分比展示混用同一数值语义。
+// 0 表示忽略对应窗口；未配置时仍使用 100%，避免升级后改变原有触发行为。
 type OpenAIAutoResetCreditConfig struct {
 	Enabled     bool
 	Threshold5h float64
@@ -91,7 +91,7 @@ func normalizeOpenAIAutoResetCreditExtra(platform, accountType string, isShadow 
 		}
 		value, ok := parseOpenAIAutoResetThreshold(normalized[key])
 		if !ok || !isValidOpenAIAutoResetThreshold(value) {
-			return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_AUTO_RESET_CREDIT_THRESHOLD_INVALID", "%s must be between 0.001 and 1.0", key)
+			return nil, infraerrors.Newf(http.StatusBadRequest, "OPENAI_AUTO_RESET_CREDIT_THRESHOLD_INVALID", "%s must be 0 (disabled) or between 0.001 and 1.0", key)
 		}
 		normalized[key] = value
 	}
@@ -133,7 +133,7 @@ func parseOpenAIAutoResetThreshold(value any) (float64, bool) {
 }
 
 func isValidOpenAIAutoResetThreshold(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= openAIAutoResetCreditMinimumThreshold && value <= 1
+	return value == 0 || (!math.IsNaN(value) && !math.IsInf(value, 0) && value >= openAIAutoResetCreditMinimumThreshold && value <= 1)
 }
 
 func cloneOpenAIAutoResetExtra(source map[string]any) map[string]any {

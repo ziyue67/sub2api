@@ -918,8 +918,8 @@ func stringSetting(value *string, fallback string) string {
 	return *value
 }
 
-// pelicanShowcaseConfigChanged compares normalized configs: the request carries the
-// admin's raw group order, while the stored config is sorted and deduplicated.
+// pelicanShowcaseConfigChanged compares normalized configs: the request may leave limits
+// at zero, which the stored config fills with defaults.
 func pelicanShowcaseConfigChanged(before, after service.PelicanShowcaseConfig) bool {
 	normalizedBefore, errBefore := service.NormalizePelicanShowcaseConfig(before)
 	normalizedAfter, errAfter := service.NormalizePelicanShowcaseConfig(after)

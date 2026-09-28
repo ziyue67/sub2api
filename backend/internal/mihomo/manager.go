@@ -74,6 +74,7 @@ type NodeStatus struct {
 	Name             string     `json:"name"`
 	DisplayName      string     `json:"display_name,omitempty"`
 	State            string     `json:"state"`
+	Check            *NodeCheck `json:"check,omitempty"`
 }
 
 type saved struct {
@@ -112,6 +113,7 @@ type Manager struct {
 	dir                  string
 	state                Status
 	saved                saved
+	nodeChecks           map[string]NodeCheck // latest diagnostics by node name; protected by mu, never persisted
 	cmd                  *exec.Cmd
 	done                 chan struct{}
 	cancel               context.CancelFunc
@@ -190,6 +192,9 @@ func (m *Manager) baseStatus() Status {
 			if !observation.CheckedAt.IsZero() {
 				checked := observation.CheckedAt
 				node.CountryCheckedAt = &checked
+			}
+			if check, ok := m.nodeChecks[name]; ok {
+				node.Check = check.clone()
 			}
 			s.NodeStates = append(s.NodeStates, node)
 		}

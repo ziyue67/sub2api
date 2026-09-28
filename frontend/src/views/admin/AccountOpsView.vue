@@ -96,7 +96,7 @@ onMounted(() => { void load(); timer = setInterval(() => { if (document.visibili
 onBeforeUnmount(() => { alive = false; version++; if (timer) clearInterval(timer) })
 </script>
 <style scoped>
-.account-ops { max-width: 1660px; margin: auto; @apply text-gray-900 dark:text-gray-100; }
+.account-ops { @apply w-full min-w-0 text-gray-900 dark:text-gray-100; }
 .ops-heading { @apply mb-6 flex flex-wrap items-center justify-between gap-4; }
 .eyebrow { @apply mb-1 text-[11px] font-semibold tracking-widest text-primary-600; }
 .ops-heading h2 { @apply text-2xl font-semibold tracking-tight; }

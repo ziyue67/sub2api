@@ -253,8 +253,21 @@ func (r *scheduledTestPlanRepository) ClaimPelican(ctx context.Context, plan *se
 	if err != nil {
 		return false, err
 	}
+	var bpsRecoveryPending bool
+	if n == 1 && plan.PelicanConfig != nil && plan.PelicanConfig.Quality != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM account_quality_states WHERE plan_id=$1 AND state->>'action'=$2)`,
+			plan.ID, service.QualityActionEnableBPS).Scan(&bpsRecoveryPending); err != nil {
+			return false, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
+	}
+	if n == 1 && plan.PelicanConfig != nil {
+		config := *plan.PelicanConfig
+		config.BPSRecoveryPending = bpsRecoveryPending
+		plan.PelicanConfig = &config
 	}
 	return n == 1, nil
 }

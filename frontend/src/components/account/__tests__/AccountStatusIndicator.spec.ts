@@ -51,6 +51,15 @@ function makeAccount(overrides: Partial<Account>): Account {
 }
 
 describe('AccountStatusIndicator', () => {
+
+  it('shows the RPM pause reason and clears it when refreshed after reset', async () => {
+    const account = makeAccount({ platform: 'openai', base_rpm: 10, current_rpm: 10, rpm_paused: true, rpm_reset_at: 1_900_000_020 })
+    const wrapper = mount(AccountStatusIndicator, { props: { account }, global: { stubs: { Icon: true } } })
+    expect(wrapper.text()).toContain('admin.accounts.status.rpmPaused')
+    expect(wrapper.text()).toContain('admin.accounts.status.rpmPausedUntil')
+    await wrapper.setProps({ account: { ...account, current_rpm: 0, rpm_paused: false, rpm_reset_at: undefined } })
+    expect(wrapper.text()).not.toContain('admin.accounts.status.rpmPaused')
+  })
   it('Claude 5 模型限流时显示 Opus 和 Sonnet 的短别名', () => {
     const wrapper = mount(AccountStatusIndicator, {
       props: {

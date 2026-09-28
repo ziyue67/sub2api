@@ -646,11 +646,8 @@ func ProvideIdempotencyCleanupService(repo IdempotencyRepository, cfg *config.Co
 func ProvideScheduledTestService(
 	planRepo ScheduledTestPlanRepository,
 	resultRepo ScheduledTestResultRepository,
-	showcase *PelicanShowcaseService,
 ) *ScheduledTestService {
-	svc := NewScheduledTestService(planRepo, resultRepo)
-	svc.showcase = showcase
-	return svc
+	return NewScheduledTestService(planRepo, resultRepo)
 }
 
 // ProvideScheduledTestRunnerService creates and starts ScheduledTestRunnerService.
@@ -661,9 +658,11 @@ func ProvideScheduledTestRunnerService(
 	rateLimitSvc *RateLimitService,
 	cfg *config.Config,
 	judge *QualityJudgeService,
+	groupTests *PelicanGroupTestService,
 ) *ScheduledTestRunnerService {
 	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
 	svc.judgeQuality = judge.Judge
+	svc.groupTests = groupTests
 	svc.Start()
 	return svc
 }
@@ -1023,6 +1022,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSystemOperationLockService,
 	ProvideIdempotencyCleanupService,
 	NewPelicanShowcaseService,
+	NewPelicanGroupTestService,
 	ProvideScheduledTestService,
 	ProvideScheduledTestRunnerService,
 	NewQualityJudgeService,

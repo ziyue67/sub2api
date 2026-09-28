@@ -1543,11 +1543,10 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		// Treat it like an unmapped account: skip its mapping here and let
 		// supplementUnmappedOpenAIModels contribute the default set. Mappings on
 		// the ordinary accounts in the same group still count.
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
-			continue
-		}
-
 		mapping := acc.GetModelMapping()
+		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() {
+			mapping = nil
+		}
 		for model := range mapping {
 			// Accounts pulled in through mixed scheduling only contribute the
 			// models that belong to the listing platform (e.g. an antigravity

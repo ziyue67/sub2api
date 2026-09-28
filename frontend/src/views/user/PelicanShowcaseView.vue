@@ -54,16 +54,19 @@
       </section>
 
       <!-- First load -->
-      <div v-if="loading && !view" class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-        <div
-          v-for="i in 8"
-          :key="i"
-          class="overflow-hidden rounded-2xl border border-gray-200/80 bg-white/70 dark:border-dark-700/70 dark:bg-dark-800/60"
-        >
-          <div class="aspect-[4/3] animate-pulse bg-gray-100 dark:bg-dark-900/40" />
-          <div class="space-y-2 p-4">
-            <div class="h-4 w-2/3 animate-pulse rounded bg-gray-200 dark:bg-dark-700" />
-            <div class="h-3 w-1/3 animate-pulse rounded bg-gray-100 dark:bg-dark-700/60" />
+      <div v-if="loading && !view" class="space-y-6">
+        <div v-for="row in 2" :key="row" class="flex gap-5 overflow-hidden">
+          <div
+            v-for="i in 5"
+            :key="i"
+            class="overflow-hidden rounded-2xl border border-gray-200/80 bg-white/70 dark:border-dark-700/70 dark:bg-dark-800/60"
+            :class="CARD_WIDTH"
+          >
+            <div class="aspect-[4/3] animate-pulse bg-gray-100 dark:bg-dark-900/40" />
+            <div class="space-y-2 p-4">
+              <div class="h-4 w-2/3 animate-pulse rounded bg-gray-200 dark:bg-dark-700" />
+              <div class="h-3 w-1/3 animate-pulse rounded bg-gray-100 dark:bg-dark-700/60" />
+            </div>
           </div>
         </div>
       </div>
@@ -113,24 +116,19 @@
         >
           {{ t('pelicanShowcase.groupEmpty') }}
         </div>
-        <template v-else>
-          <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-            <PelicanShowcaseCard
-              v-for="item in visibleItems(group)"
-              :key="item.id"
-              :item="item"
-              :group-name="group.name"
-              :body="bodies[item.id]"
-              @visible="requestBody(item.id)"
-              @open="openPreview(group, item)"
-            />
-          </div>
-          <div v-if="group.items.length > visibleCount(group)" class="flex justify-center">
-            <button type="button" class="btn btn-secondary" :data-testid="`showcase-more-${group.id}`" @click="showMore(group)">
-              {{ t('pelicanShowcase.loadMore') }}
-            </button>
-          </div>
-        </template>
+        <!-- Items arrive newest first, so the newest card is on the left and older ones continue to the right. -->
+        <PelicanShowcaseRow v-else :label="t('pelicanShowcase.scrollLabel', { group: group.name })">
+          <PelicanShowcaseCard
+            v-for="item in group.items"
+            :key="item.id"
+            :class="CARD_WIDTH"
+            :item="item"
+            :group-name="group.name"
+            :body="bodies[item.id]"
+            @visible="requestBody(item.id)"
+            @open="openPreview(group, item)"
+          />
+        </PelicanShowcaseRow>
       </section>
     </div>
 
@@ -225,6 +223,7 @@ import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PelicanArtworkPreview from '@/components/user/pelican/PelicanArtworkPreview.vue'
 import PelicanShowcaseCard from '@/components/user/pelican/PelicanShowcaseCard.vue'
+import PelicanShowcaseRow from '@/components/user/pelican/PelicanShowcaseRow.vue'
 import {
   pelicanDurationLabel,
   pelicanEffortLabel,
@@ -246,8 +245,9 @@ import { formatDateTimeToMinute, formatRelativeTime } from '@/utils/format'
 import { extractPelicanHtml } from '@/utils/pelicanHtml'
 import { platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
 
-const PAGE_SIZE = 8
 const MAX_CONCURRENT_BODIES = 4
+// A card is as wide as a column of the former grid (1/2/3/4 per row); on phones it leaves the next card peeking in.
+const CARD_WIDTH = 'w-[85%] shrink-0 sm:w-[calc((100%-1.25rem)/2)] lg:w-[calc((100%-2.5rem)/3)] 2xl:w-[calc((100%-3.75rem)/4)]'
 
 type TabKey = number | 'all'
 
@@ -259,7 +259,6 @@ const isAdmin = computed(() => authStore.isAdmin)
 const view = ref<PelicanShowcaseView | null>(null)
 const loading = ref(false)
 const activeGroup = ref<TabKey>('all')
-const pageSizes = reactive<Record<number, number>>({})
 const bodies = reactive<Record<number, PelicanBody>>({})
 const preview = ref<{ group: PelicanShowcaseGroup; item: PelicanShowcaseItem } | null>(null)
 const previewMode = ref<'fit' | 'actual'>('fit')
@@ -291,18 +290,6 @@ const previewEffort = computed(() => (preview.value ? pelicanEffortLabel(t, prev
 watch(groups, (list) => {
   if (activeGroup.value !== 'all' && !list.some((group) => group.id === activeGroup.value)) activeGroup.value = 'all'
 })
-
-function visibleCount(group: PelicanShowcaseGroup) {
-  return pageSizes[group.id] ?? PAGE_SIZE
-}
-
-function visibleItems(group: PelicanShowcaseGroup) {
-  return group.items.slice(0, visibleCount(group))
-}
-
-function showMore(group: PelicanShowcaseGroup) {
-  pageSizes[group.id] = visibleCount(group) + PAGE_SIZE
-}
 
 function requestBody(id: number) {
   if (bodies[id]) return

@@ -12,20 +12,28 @@ import (
 type showcaseSettingsStub struct {
 	runtime PelicanShowcaseRuntime
 	err     error
+	saved   []PelicanShowcaseRuntime
 }
 
 func (s *showcaseSettingsStub) GetPelicanShowcaseRuntime(context.Context) (PelicanShowcaseRuntime, error) {
 	return s.runtime, s.err
 }
 
+func (s *showcaseSettingsStub) UpdatePelicanShowcaseSettings(_ context.Context, enabled bool, cfg PelicanShowcaseConfig) (PelicanShowcaseRuntime, error) {
+	if s.err != nil {
+		return PelicanShowcaseRuntime{}, s.err
+	}
+	s.runtime = PelicanShowcaseRuntime{Enabled: enabled, Config: cfg}
+	s.saved = append(s.saved, s.runtime)
+	return s.runtime, nil
+}
+
 type publishCall struct {
-	resultID int64
-	groupIDs []int64
+	snapshot PelicanShowcaseSnapshot
 	maxItems int
 }
 
 type pruneCall struct {
-	groupIDs []int64
 	maxItems int
 	before   time.Time
 }
@@ -41,101 +49,112 @@ type showcaseRepoStub struct {
 	deleted   bool
 }
 
-func (r *showcaseRepoStub) Publish(_ context.Context, result *ScheduledTestResult, groupIDs []int64, maxItems int) error {
-	r.published = append(r.published, publishCall{result.ID, groupIDs, maxItems})
+func (r *showcaseRepoStub) Publish(_ context.Context, snapshot PelicanShowcaseSnapshot, maxItems int) error {
+	r.published = append(r.published, publishCall{snapshot, maxItems})
 	return nil
 }
-func (r *showcaseRepoStub) Prune(_ context.Context, groupIDs []int64, maxItems int, before time.Time) error {
-	r.pruned = append(r.pruned, pruneCall{groupIDs, maxItems, before})
+func (r *showcaseRepoStub) Prune(_ context.Context, maxItems int, before time.Time) error {
+	r.pruned = append(r.pruned, pruneCall{maxItems, before})
 	return nil
 }
-func (r *showcaseRepoStub) ListGroups(context.Context, []int64) ([]*PelicanShowcaseGroup, error) {
+func (r *showcaseRepoStub) ListGroups(context.Context) ([]*PelicanShowcaseGroup, error) {
 	return r.groups, nil
 }
 func (r *showcaseRepoStub) ListItems(_ context.Context, groupIDs []int64, _ int, since time.Time) ([]*PelicanShowcaseItem, error) {
 	r.listIDs, r.listSince = groupIDs, since
 	return r.items, nil
 }
-func (r *showcaseRepoStub) GetItem(context.Context, int64, []int64, int, time.Time) (*PelicanShowcaseItem, error) {
+func (r *showcaseRepoStub) GetItem(context.Context, int64, int, time.Time) (*PelicanShowcaseItem, error) {
 	return r.item, nil
 }
 func (r *showcaseRepoStub) Delete(context.Context, int64) (bool, error) { return r.deleted, nil }
 
-func enabledShowcase(groupIDs ...int64) *showcaseSettingsStub {
+func enabledShowcase() *showcaseSettingsStub {
 	return &showcaseSettingsStub{runtime: PelicanShowcaseRuntime{Enabled: true, Config: PelicanShowcaseConfig{
-		GroupIDs: groupIDs, MaxItems: 12, AutoCleanup: true, RetentionDays: 3,
+		MaxItems: 12, AutoCleanup: true, RetentionDays: 3,
 	}}}
 }
 
-func pelicanSuccess(id int64, output string) *ScheduledTestResult {
-	return &ScheduledTestResult{ID: id, PlanID: 7, Status: "success", ResponseText: output,
+func groupTestSuccess(id int64, output string) *PelicanGroupTestResult {
+	started := time.Date(2026, 9, 28, 4, 0, 0, 0, time.UTC)
+	return &PelicanGroupTestResult{ID: id, PlanID: 7, GroupID: 4, Status: "success", ResponseText: output, LatencyMs: 1200, StartedAt: started,
 		PelicanConfig: &PelicanTestConfig{ModelID: "gpt-6-astra", ReasoningEffort: "high"}}
 }
 
 func TestPelicanShowcaseConfigNormalizeAndParse(t *testing.T) {
-	cfg, err := NormalizePelicanShowcaseConfig(PelicanShowcaseConfig{GroupIDs: []int64{9, 3, 9}})
+	cfg, err := NormalizePelicanShowcaseConfig(PelicanShowcaseConfig{})
 	require.NoError(t, err)
-	require.Equal(t, PelicanShowcaseConfig{GroupIDs: []int64{3, 9}, MaxItems: 20, RetentionDays: 7}, cfg)
+	require.Equal(t, PelicanShowcaseConfig{MaxItems: 20, RetentionDays: 7}, cfg)
 
-	for _, bad := range []PelicanShowcaseConfig{
-		{MaxItems: 101}, {MaxItems: -1}, {RetentionDays: 91}, {GroupIDs: []int64{0}},
-		{GroupIDs: make([]int64, 51)},
-	} {
-		if len(bad.GroupIDs) == 51 {
-			for i := range bad.GroupIDs {
-				bad.GroupIDs[i] = int64(i + 1)
-			}
-		}
+	for _, bad := range []PelicanShowcaseConfig{{MaxItems: 101}, {MaxItems: -1}, {RetentionDays: 91}, {RetentionDays: -2}} {
 		_, err := NormalizePelicanShowcaseConfig(bad)
 		require.Error(t, err, "%+v", bad)
 	}
 
 	cfg, err = parsePelicanShowcaseConfig("")
 	require.NoError(t, err)
-	require.Equal(t, DefaultPelicanShowcaseConfig(), cfg, "never configured means defaults with no groups")
+	require.Equal(t, DefaultPelicanShowcaseConfig(), cfg, "never configured means defaults")
 	_, err = parsePelicanShowcaseConfig("{broken")
 	require.Error(t, err, "corrupt config must not silently become defaults")
+	cfg, err = parsePelicanShowcaseConfig(`{"group_ids":[3,9],"max_items":8,"auto_cleanup":false,"retention_days":5}`)
+	require.NoError(t, err, "configs saved before group tests still parse; their group list is ignored")
+	require.Equal(t, PelicanShowcaseConfig{MaxItems: 8, RetentionDays: 5}, cfg)
 
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	require.True(t, PelicanShowcaseConfig{AutoCleanup: false, RetentionDays: 3}.retentionCutoff(now).IsZero())
 	require.Equal(t, now.Add(-72*time.Hour), PelicanShowcaseConfig{AutoCleanup: true, RetentionDays: 3}.retentionCutoff(now))
 }
 
-func TestPelicanShowcasePublishOnlyEnabledHTMLSuccess(t *testing.T) {
+func TestPelicanShowcasePublishesOnlyHTMLGroupAnswers(t *testing.T) {
 	ctx := context.Background()
+	failed := groupTestSuccess(1, "<html>")
+	failed.Status = "failed"
 	skipped := []struct {
 		name     string
 		settings *showcaseSettingsStub
-		result   *ScheduledTestResult
+		groupID  int64
+		result   *PelicanGroupTestResult
 	}{
-		{"failed run", enabledShowcase(1), &ScheduledTestResult{ID: 1, Status: "failed", ResponseText: "<html>", PelicanConfig: &PelicanTestConfig{}}},
-		{"connectivity test", enabledShowcase(1), &ScheduledTestResult{ID: 1, Status: "success", ResponseText: "<html>"}},
-		{"answer-only output", enabledShowcase(1), pelicanSuccess(1, "21")},
-		{"candy question", enabledShowcase(1), &ScheduledTestResult{ID: 1, Status: "success", ResponseText: "<svg></svg>",
-			PelicanConfig: &PelicanTestConfig{QuestionKind: "candy"}}},
-		{"built-in candy prompt", enabledShowcase(1), &ScheduledTestResult{ID: 1, Status: "success", ResponseText: "<svg></svg>",
-			PelicanConfig: &PelicanTestConfig{Prompt: CandyPrompt}}},
-		{"graded quality question", enabledShowcase(1), &ScheduledTestResult{ID: 1, Status: "success", ResponseText: "<html></html>",
-			PelicanConfig: &PelicanTestConfig{Quality: &QualityPolicy{}}}},
-		{"unsaved result", enabledShowcase(1), pelicanSuccess(0, "<svg></svg>")},
-		{"gallery off", &showcaseSettingsStub{runtime: PelicanShowcaseRuntime{Config: PelicanShowcaseConfig{GroupIDs: []int64{1}}}}, pelicanSuccess(1, "<svg></svg>")},
-		{"no groups", enabledShowcase(), pelicanSuccess(1, "<svg></svg>")},
-		{"unreadable settings", &showcaseSettingsStub{err: errors.New("db down")}, pelicanSuccess(1, "<svg></svg>")},
+		{"failed run", enabledShowcase(), 4, failed},
+		{"answer without HTML", enabledShowcase(), 4, groupTestSuccess(1, "21")},
+		{"unsaved result", enabledShowcase(), 4, groupTestSuccess(0, "<svg></svg>")},
+		{"no group", enabledShowcase(), 0, groupTestSuccess(1, "<svg></svg>")},
+		{"unreadable settings", &showcaseSettingsStub{err: errors.New("db down")}, 4, groupTestSuccess(1, "<svg></svg>")},
 	}
 	for _, tc := range skipped {
 		repo := &showcaseRepoStub{}
 		svc := &PelicanShowcaseService{repo: repo, settings: tc.settings}
-		svc.PublishScheduledResult(ctx, tc.result)
+		svc.PublishGroupResult(ctx, tc.groupID, tc.result)
 		require.Empty(t, repo.published, tc.name)
 	}
 
 	repo := &showcaseRepoStub{}
-	svc := &PelicanShowcaseService{repo: repo, settings: enabledShowcase(4, 8)}
-	svc.PublishScheduledResult(ctx, pelicanSuccess(55, "<!DOCTYPE html><html><body><svg></svg></body></html>"))
-	require.Equal(t, []publishCall{{resultID: 55, groupIDs: []int64{4, 8}, maxItems: 12}}, repo.published)
+	settings := enabledShowcase()
+	settings.runtime.Enabled = false
+	svc := &PelicanShowcaseService{repo: repo, settings: settings}
+	result := groupTestSuccess(55, "<!DOCTYPE html><html><body><svg></svg></body></html>")
+	svc.PublishGroupResult(ctx, 4, result)
+	require.Equal(t, []publishCall{{snapshot: PelicanShowcaseSnapshot{
+		GroupID: 4, SourceResultID: 55, ModelID: "gpt-6-astra", ReasoningEffort: "high",
+		ResponseText: result.ResponseText, LatencyMs: 1200, GeneratedAt: result.StartedAt,
+	}, maxItems: 12}}, repo.published, "a gallery opened later starts with recent answers")
 
 	var nilService *PelicanShowcaseService
-	require.NotPanics(t, func() { nilService.PublishScheduledResult(ctx, pelicanSuccess(1, "<svg></svg>")) })
+	require.NotPanics(t, func() { nilService.PublishGroupResult(ctx, 4, groupTestSuccess(1, "<svg></svg>")) })
+}
+
+func TestPelicanShowcaseSettingsGoThroughSettingService(t *testing.T) {
+	ctx := context.Background()
+	settings := enabledShowcase()
+	svc := &PelicanShowcaseService{repo: &showcaseRepoStub{}, settings: settings}
+	runtime, err := svc.Settings(ctx)
+	require.NoError(t, err)
+	require.True(t, runtime.Enabled)
+
+	runtime, err = svc.UpdateSettings(ctx, false, PelicanShowcaseConfig{MaxItems: 30, RetentionDays: 9})
+	require.NoError(t, err)
+	require.Equal(t, PelicanShowcaseRuntime{Config: PelicanShowcaseConfig{MaxItems: 30, RetentionDays: 9}}, runtime)
+	require.Len(t, settings.saved, 1)
 }
 
 func TestPelicanShowcaseCleanupAppliesLimitsAndFailsClosed(t *testing.T) {
@@ -146,10 +165,10 @@ func TestPelicanShowcaseCleanupAppliesLimitsAndFailsClosed(t *testing.T) {
 	(&PelicanShowcaseService{repo: repo, settings: &showcaseSettingsStub{err: errors.New("corrupt")}}).Cleanup(ctx, now)
 	require.Empty(t, repo.pruned, "unreadable settings must never delete snapshots")
 
-	settings := enabledShowcase(2)
+	settings := enabledShowcase()
 	settings.runtime.Enabled = false
 	(&PelicanShowcaseService{repo: repo, settings: settings}).Cleanup(ctx, now)
-	require.Equal(t, []pruneCall{{groupIDs: []int64{2}, maxItems: 12, before: now.Add(-72 * time.Hour)}}, repo.pruned,
+	require.Equal(t, []pruneCall{{maxItems: 12, before: now.Add(-72 * time.Hour)}}, repo.pruned,
 		"cleanup keeps running while the gallery is off")
 
 	repo = &showcaseRepoStub{}
@@ -166,7 +185,7 @@ func TestPelicanShowcaseViewAndItemVisibility(t *testing.T) {
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
 	repo := &showcaseRepoStub{}
-	off := enabledShowcase(1)
+	off := enabledShowcase()
 	off.runtime.Enabled = false
 	view, err := (&PelicanShowcaseService{repo: repo, settings: off}).View(ctx, now)
 	require.NoError(t, err)
@@ -181,13 +200,13 @@ func TestPelicanShowcaseViewAndItemVisibility(t *testing.T) {
 			{ID: 10, GroupID: 3}, {ID: 11, GroupID: 3}, {ID: 12, GroupID: 99},
 		},
 	}
-	svc := &PelicanShowcaseService{repo: repo, settings: enabledShowcase(3, 5, 7)}
+	svc := &PelicanShowcaseService{repo: repo, settings: enabledShowcase()}
 	view, err = svc.View(ctx, now)
 	require.NoError(t, err)
 	require.True(t, view.Enabled)
 	require.Equal(t, 12, view.MaxItems)
 	require.Equal(t, 3, view.RetentionDays)
-	require.Equal(t, []int64{5, 3}, repo.listIDs, "items are only read for groups that still exist and are active")
+	require.Equal(t, []int64{5, 3}, repo.listIDs, "items are only read for groups with a plan that still exist and are active")
 	require.Equal(t, now.Add(-72*time.Hour), repo.listSince)
 	require.Len(t, view.Groups, 2)
 	require.Equal(t, "B", view.Groups[0].Name, "repository order (group sort order) is kept")
@@ -195,7 +214,7 @@ func TestPelicanShowcaseViewAndItemVisibility(t *testing.T) {
 	require.Empty(t, view.Groups[0].Items, "a showcased group without snapshots is still listed")
 	require.Len(t, view.Groups[1].Items, 2)
 
-	settings := enabledShowcase(3)
+	settings := enabledShowcase()
 	settings.runtime.Config.AutoCleanup = false
 	view, err = (&PelicanShowcaseService{repo: repo, settings: settings}).View(ctx, now)
 	require.NoError(t, err)
@@ -213,15 +232,10 @@ func TestPelicanShowcaseViewAndItemVisibility(t *testing.T) {
 	require.NoError(t, svc.Remove(ctx, 10))
 }
 
-func TestScheduledSaveResultPublishesSavedPelicanResult(t *testing.T) {
+func TestScheduledSaveResultNoLongerFeedsTheShowcase(t *testing.T) {
 	results := &pelicanResults{}
-	repo := &showcaseRepoStub{}
 	svc := NewScheduledTestService(&pelicanPlanRepo{}, results)
-	svc.showcase = &PelicanShowcaseService{repo: repo, settings: enabledShowcase(6)}
-
-	result := pelicanSuccess(0, "<svg></svg>")
-	result.ID = 91 // the stub repository returns the input as the saved row
+	result := &ScheduledTestResult{ID: 91, Status: "success", ResponseText: "<svg></svg>", PelicanConfig: &PelicanTestConfig{ModelID: "gpt-6-astra"}}
 	require.NoError(t, svc.SaveResult(context.Background(), 7, 50, result))
-	require.Equal(t, []publishCall{{resultID: 91, groupIDs: []int64{6}, maxItems: 12}}, repo.published)
-	require.Equal(t, 50, results.pruned, "admin history retention is unchanged")
+	require.Equal(t, 50, results.pruned, "account plans keep their admin history; only group tests publish")
 }

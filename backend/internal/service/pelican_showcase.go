@@ -38,30 +38,41 @@ type PelicanShowcaseView struct {
 	Groups        []*PelicanShowcaseGroup `json:"groups"`
 }
 
-// PelicanShowcaseRepository stores gallery snapshots. A zero since/before time means
-// "no age limit".
+// PelicanShowcaseSnapshot is one group test output copied into the gallery.
+type PelicanShowcaseSnapshot struct {
+	GroupID         int64
+	SourceResultID  int64
+	ModelID         string
+	ReasoningEffort string
+	ResponseText    string
+	LatencyMs       int64
+	GeneratedAt     time.Time
+}
+
+// PelicanShowcaseRepository stores gallery snapshots. The gallery shows the groups that
+// have a Pelican group test plan. A zero since/before time means "no age limit".
 type PelicanShowcaseRepository interface {
-	// Publish copies the result into every listed group its plan's account belongs to,
-	// then trims those groups to maxItems.
-	Publish(ctx context.Context, result *ScheduledTestResult, groupIDs []int64, maxItems int) error
-	// Prune deletes snapshots of unlisted groups, beyond maxItems per group, or generated before `before`.
-	Prune(ctx context.Context, groupIDs []int64, maxItems int, before time.Time) error
-	// ListGroups returns the listed groups that still exist and are active, in display order.
-	ListGroups(ctx context.Context, groupIDs []int64) ([]*PelicanShowcaseGroup, error)
+	// Publish stores the snapshot, then trims its group to maxItems.
+	Publish(ctx context.Context, snapshot PelicanShowcaseSnapshot, maxItems int) error
+	// Prune deletes snapshots of groups without a plan, beyond maxItems per group, or generated before `before`.
+	Prune(ctx context.Context, maxItems int, before time.Time) error
+	// ListGroups returns the groups with a plan that still exist and are active, in display order.
+	ListGroups(ctx context.Context) ([]*PelicanShowcaseGroup, error)
 	// ListItems returns up to maxItems newest snapshots per group, without the HTML.
 	ListItems(ctx context.Context, groupIDs []int64, maxItems int, since time.Time) ([]*PelicanShowcaseItem, error)
 	// GetItem returns one snapshot with its HTML if it is still within the gallery limits; nil otherwise.
-	GetItem(ctx context.Context, id int64, groupIDs []int64, maxItems int, since time.Time) (*PelicanShowcaseItem, error)
+	GetItem(ctx context.Context, id int64, maxItems int, since time.Time) (*PelicanShowcaseItem, error)
 	Delete(ctx context.Context, id int64) (bool, error)
 }
 
 type pelicanShowcaseSettings interface {
 	GetPelicanShowcaseRuntime(ctx context.Context) (PelicanShowcaseRuntime, error)
+	UpdatePelicanShowcaseSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig) (PelicanShowcaseRuntime, error)
 }
 
-// PelicanShowcaseService publishes scheduled Pelican HTML results to the user gallery
-// and enforces its limits. The gallery keeps copies, so admin history cleanup (per plan
-// and 7 days) does not empty it; the gallery has its own count and age limits instead.
+// PelicanShowcaseService publishes Pelican group test HTML to the user gallery and
+// enforces its limits. The gallery keeps copies, so admin history cleanup does not
+// empty it; the gallery has its own count and age limits instead.
 type PelicanShowcaseService struct {
 	repo     PelicanShowcaseRepository
 	settings pelicanShowcaseSettings
@@ -71,15 +82,12 @@ func NewPelicanShowcaseService(repo PelicanShowcaseRepository, settingService *S
 	return &PelicanShowcaseService{repo: repo, settings: settingService}
 }
 
-// PublishScheduledResult copies a successful scheduled Pelican result into the gallery.
-// Only drawing questions with real HTML/SVG output qualify: answer-only kinds (candy and
-// graded quality questions) share the plan type. Errors are logged, never returned, so
-// the admin history write is unaffected.
-func (s *PelicanShowcaseService) PublishScheduledResult(ctx context.Context, result *ScheduledTestResult) {
-	if s == nil || result == nil || result.ID <= 0 || result.PelicanConfig == nil || result.Status != "success" {
-		return
-	}
-	if cfg := result.PelicanConfig; cfg.Quality != nil || cfg.QuestionKind == "candy" || isBuiltinCandyPlan(cfg) || isOpenAICodexStateProbePlan(cfg) {
+// PublishGroupResult copies a successful group test answer with real HTML/SVG into the
+// group's gallery. It also publishes while the gallery is switched off, so a gallery
+// opened later starts with recent answers. Errors are logged, never returned, so the admin
+// history write is unaffected.
+func (s *PelicanShowcaseService) PublishGroupResult(ctx context.Context, groupID int64, result *PelicanGroupTestResult) {
+	if s == nil || result == nil || result.ID <= 0 || groupID <= 0 || result.Status != "success" {
 		return
 	}
 	if !pelicanHTMLPattern.MatchString(result.ResponseText) {
@@ -90,15 +98,35 @@ func (s *PelicanShowcaseService) PublishScheduledResult(ctx context.Context, res
 		logger.LegacyPrintf("service.pelican_showcase", "publish result=%d skipped: %v", result.ID, err)
 		return
 	}
-	if !runtime.Enabled || len(runtime.Config.GroupIDs) == 0 {
-		return
+	snapshot := PelicanShowcaseSnapshot{
+		GroupID:        groupID,
+		SourceResultID: result.ID,
+		ResponseText:   result.ResponseText,
+		LatencyMs:      result.LatencyMs,
+		GeneratedAt:    result.StartedAt,
 	}
-	if err := s.repo.Publish(ctx, result, runtime.Config.GroupIDs, runtime.Config.MaxItems); err != nil {
+	if cfg := result.PelicanConfig; cfg != nil {
+		snapshot.ModelID, snapshot.ReasoningEffort = cfg.ModelID, cfg.ReasoningEffort
+	}
+	if snapshot.GeneratedAt.IsZero() {
+		snapshot.GeneratedAt = result.CreatedAt
+	}
+	if err := s.repo.Publish(ctx, snapshot, runtime.Config.MaxItems); err != nil {
 		logger.LegacyPrintf("service.pelican_showcase", "publish result=%d failed: %v", result.ID, err)
 	}
 }
 
-// Cleanup enforces the gallery limits: groups removed from the selection, snapshots
+// Settings returns the gallery switch and limits for the admin page.
+func (s *PelicanShowcaseService) Settings(ctx context.Context) (PelicanShowcaseRuntime, error) {
+	return s.settings.GetPelicanShowcaseRuntime(ctx)
+}
+
+// UpdateSettings saves the gallery switch and limits from the admin page.
+func (s *PelicanShowcaseService) UpdateSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig) (PelicanShowcaseRuntime, error) {
+	return s.settings.UpdatePelicanShowcaseSettings(ctx, enabled, cfg)
+}
+
+// Cleanup enforces the gallery limits: groups whose plans were deleted, snapshots
 // beyond the per-group count and, with auto cleanup on, snapshots past the retention
 // window. It also runs while the gallery is switched off, like paused-plan history
 // cleanup. Unreadable settings skip the round, so a bad config never deletes snapshots.
@@ -112,14 +140,15 @@ func (s *PelicanShowcaseService) Cleanup(ctx context.Context, now time.Time) {
 		return
 	}
 	cfg := runtime.Config
-	if err := s.repo.Prune(ctx, cfg.GroupIDs, cfg.MaxItems, cfg.retentionCutoff(now)); err != nil {
+	if err := s.repo.Prune(ctx, cfg.MaxItems, cfg.retentionCutoff(now)); err != nil {
 		logger.LegacyPrintf("service.pelican_showcase", "cleanup failed: %v", err)
 	}
 }
 
-// View returns the gallery without HTML bodies. Groups without snapshots are kept so
-// users see which groups are showcased. Limits apply at read time as well, so a lowered
-// limit or a removed group is hidden before the next cleanup round deletes it.
+// View returns the gallery without HTML bodies: every group with a group test plan, in the
+// groups' display order. Groups without snapshots are kept so users see which groups are
+// showcased. Limits apply at read time as well, so a lowered limit or a deleted plan is
+// hidden before the next cleanup round deletes its snapshots.
 func (s *PelicanShowcaseService) View(ctx context.Context, now time.Time) (*PelicanShowcaseView, error) {
 	runtime, err := s.settings.GetPelicanShowcaseRuntime(ctx)
 	if err != nil {
@@ -130,10 +159,10 @@ func (s *PelicanShowcaseService) View(ctx context.Context, now time.Time) (*Peli
 	if cfg.AutoCleanup {
 		view.RetentionDays = cfg.RetentionDays
 	}
-	if !runtime.Enabled || len(cfg.GroupIDs) == 0 {
+	if !runtime.Enabled {
 		return view, nil
 	}
-	groups, err := s.repo.ListGroups(ctx, cfg.GroupIDs)
+	groups, err := s.repo.ListGroups(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -167,10 +196,10 @@ func (s *PelicanShowcaseService) Item(ctx context.Context, id int64, now time.Ti
 		return nil, err
 	}
 	cfg := runtime.Config
-	if !runtime.Enabled || len(cfg.GroupIDs) == 0 || id <= 0 {
+	if !runtime.Enabled || id <= 0 {
 		return nil, ErrPelicanShowcaseItemNotFound
 	}
-	item, err := s.repo.GetItem(ctx, id, cfg.GroupIDs, cfg.MaxItems, cfg.retentionCutoff(now))
+	item, err := s.repo.GetItem(ctx, id, cfg.MaxItems, cfg.retentionCutoff(now))
 	if err != nil {
 		return nil, err
 	}

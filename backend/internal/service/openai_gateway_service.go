@@ -451,6 +451,11 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
+	excelBPSRecoveryMu      sync.Mutex
+	excelBPSRecoveryCancel  context.CancelFunc
+	excelBPSRecoveryDone    chan struct{}
+	excelBPSRecoveryStopped bool
+
 	excelBPSWarmMu         sync.Mutex
 	excelBPSWarmCancel     context.CancelFunc
 	excelBPSWarmDone       chan struct{}
@@ -473,6 +478,7 @@ type OpenAIGatewayService struct {
 	userRepo               UserRepository
 	userSubRepo            UserSubscriptionRepository
 	cache                  GatewayCache
+	rpmCache               RPMCache
 	cfg                    *config.Config
 	codexDetector          CodexClientRestrictionDetector
 	schedulerSnapshot      *SchedulerSnapshotService
@@ -552,6 +558,11 @@ type OpenAIGatewayService struct {
 }
 
 type OpenAIGatewayOption func(*OpenAIGatewayService)
+
+// WithOpenAIRPMCache enables strict RPM accounting for OpenAI OAuth accounts.
+func WithOpenAIRPMCache(cache RPMCache) OpenAIGatewayOption {
+	return func(s *OpenAIGatewayService) { s.rpmCache = cache }
+}
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
 func NewOpenAIGatewayService(

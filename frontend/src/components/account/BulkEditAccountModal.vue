@@ -106,6 +106,23 @@
             </div>
             <div class="mt-3">
               <label class="flex items-center gap-2">
+                <input v-model="excelBPSAutoRecoverOn403" type="checkbox" :disabled="!excelBPSAutoDisableOn403"
+                  data-testid="bulk-excel-bps-auto-recover-on-403"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500 disabled:opacity-50" />
+                <span class="text-sm">{{ t('admin.accounts.openai.excelBPSAutoRecoverOn403') }}</span>
+              </label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSAutoRecoverOn403Desc') }}</p>
+              <div v-if="excelBPSAutoRecoverOn403 && excelBPSAutoDisableOn403" class="mt-2">
+                <label class="block space-y-1">
+                  <span class="text-sm">{{ t('admin.accounts.openai.excelBPS403RecoveryInterval') }}</span>
+                  <input v-model.number="excelBPSRecoveryIntervalMinutes" type="number" min="1" :max="MAX_BPS_RECOVERY_INTERVAL_MINUTES" step="1" required
+                    data-testid="bulk-excel-bps-recovery-interval" class="input w-40" />
+                </label>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPS403RecoveryIntervalHint') }}</p>
+              </div>
+            </div>
+            <div class="mt-3">
+              <label class="flex items-center gap-2">
                 <input v-model="excelBPSAutoMoveOn403" type="checkbox"
                   data-testid="bulk-excel-bps-auto-move-on-403"
                   class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
@@ -1406,8 +1423,8 @@
         </div>
       </div>
 
-      <!-- RPM Limit (仅全部为 Anthropic OAuth/SetupToken 时显示) -->
-      <div v-if="allAnthropicOAuthOrSetupToken" class="border-t border-gray-200 pt-4 dark:border-dark-600">
+      <!-- RPM Limit (Anthropic OAuth/SetupToken or OpenAI OAuth) -->
+      <div v-if="allAnthropicOAuthOrSetupToken || allOpenAIOAuthOnly" class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
           <label
             id="bulk-edit-rpm-limit-label"
@@ -1431,88 +1448,18 @@
           role="group"
           aria-labelledby="bulk-edit-rpm-limit-label"
         >
-          <div class="mb-3 flex items-center justify-between">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ t('admin.accounts.quotaControl.rpmLimit.hint') }}</span>
-            <button
-              type="button"
-              @click="rpmLimitEnabled = !rpmLimitEnabled"
-              :class="[
-                'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
-                rpmLimitEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
-              ]"
-            >
-              <span
-                :class="[
-                  'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-                  rpmLimitEnabled ? 'translate-x-5' : 'translate-x-0'
-                ]"
-              />
-            </button>
-          </div>
-
-          <div v-if="rpmLimitEnabled" class="space-y-3">
-            <div>
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpm') }}</label>
-              <input
-                v-model.number="bulkBaseRpm"
-                type="number"
-                min="1"
-                max="1000"
-                step="1"
-                class="input"
-                :placeholder="t('admin.accounts.quotaControl.rpmLimit.baseRpmPlaceholder')"
-              />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.baseRpmHint') }}</p>
-            </div>
-
-            <div>
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.strategy') }}</label>
-              <div class="flex gap-2">
-                <button
-                  type="button"
-                  @click="bulkRpmStrategy = 'tiered'"
-                  :class="[
-                    'flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-                    bulkRpmStrategy === 'tiered'
-                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                  ]"
-                >
-                  {{ t('admin.accounts.quotaControl.rpmLimit.strategyTiered') }}
-                </button>
-                <button
-                  type="button"
-                  @click="bulkRpmStrategy = 'sticky_exempt'"
-                  :class="[
-                    'flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-                    bulkRpmStrategy === 'sticky_exempt'
-                      ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
-                  ]"
-                >
-                  {{ t('admin.accounts.quotaControl.rpmLimit.strategyStickyExempt') }}
-                </button>
-              </div>
-            </div>
-
-            <div v-if="bulkRpmStrategy === 'tiered'">
-              <label class="input-label text-xs">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBuffer') }}</label>
-              <input
-                v-model.number="bulkRpmStickyBuffer"
-                type="number"
-                min="1"
-                step="1"
-                class="input"
-                :placeholder="t('admin.accounts.quotaControl.rpmLimit.stickyBufferPlaceholder')"
-              />
-              <p class="input-hint">{{ t('admin.accounts.quotaControl.rpmLimit.stickyBufferHint') }}</p>
-            </div>
-
-            </div>
-          </div>
+          <AccountRpmSettings
+            v-model:enabled="rpmLimitEnabled"
+            v-model:base-rpm="bulkBaseRpm"
+            v-model:strategy="bulkRpmStrategy"
+            v-model:sticky-buffer="bulkRpmStickyBuffer"
+            :strict="allOpenAIOAuthOnly"
+            :show-title="false"
+          />
+        </div>
 
         <!-- 用户消息限速模式（独立于 RPM 开关，始终可见） -->
-        <div class="mt-4">
+        <div v-if="allAnthropicOAuthOrSetupToken" class="mt-4">
           <label class="input-label">{{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueue') }}</label>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 mb-2">
             {{ t('admin.accounts.quotaControl.rpmLimit.userMsgQueueHint') }}
@@ -1626,6 +1573,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, MAX_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
@@ -1645,6 +1593,8 @@ import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import AccountRpmSettings from '@/components/account/AccountRpmSettings.vue'
+import { applyAccountRPMSettings } from '@/components/account/accountRpm'
 import Icon from '@/components/icons/Icon.vue'
 import {
   buildModelMappingObject as buildModelMappingPayload,
@@ -1776,7 +1726,7 @@ const allHeaderOverrideCapable = computed(() => {
   )
 })
 
-// 是否全部为 Anthropic OAuth/SetupToken（RPM 配置仅在此条件下显示）
+// 是否全部为 Anthropic OAuth/SetupToken（显示完整配额控制）
 const allAnthropicOAuthOrSetupToken = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
@@ -1869,6 +1819,8 @@ const excelBPSMihomo = ref(false)
 const excelBPSProxySource = ref<'mihomo' | 'ip_pool'>('mihomo')
 const excelBPSCacheCreationAsInput = ref(false)
 const excelBPSAutoDisableOn403 = ref(false)
+const excelBPSAutoRecoverOn403 = ref(false)
+const excelBPSRecoveryIntervalMinutes = ref<number | string>(DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES)
 const excelBPSOmitUnsupportedTools = ref(false)
 const excelBPSIgnoreImages = ref(false)
 const excelBPSIgnoreEncryptedContent = ref(false)
@@ -2182,6 +2134,8 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.openai_excel_bps_cache_creation_as_input =
       excelBPSEnabled.value && excelBPSCacheCreationAsInput.value
     extra.openai_excel_bps_auto_disable_on_403 = excelBPSEnabled.value && excelBPSAutoDisableOn403.value
+    extra.openai_excel_bps_auto_recover_on_403 = excelBPSEnabled.value && excelBPSAutoDisableOn403.value && excelBPSAutoRecoverOn403.value
+    extra.openai_excel_bps_403_recovery_interval_minutes = bpsRecoveryIntervalOrDefault(excelBPSRecoveryIntervalMinutes.value)
     extra.openai_excel_bps_omit_unsupported_tools = excelBPSEnabled.value && excelBPSOmitUnsupportedTools.value
     extra.openai_excel_bps_ignore_images = excelBPSEnabled.value && excelBPSIgnoreImages.value
     extra.openai_excel_bps_ignore_encrypted_content = excelBPSEnabled.value && excelBPSIgnoreEncryptedContent.value
@@ -2336,22 +2290,15 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   }
 
   // RPM limit settings (写入 extra 字段)
-  if (enableRpmLimit.value) {
+  if (enableRpmLimit.value && (allAnthropicOAuthOrSetupToken.value || allOpenAIOAuthOnly.value)) {
     const extra = ensureExtra()
-    if (rpmLimitEnabled.value && bulkBaseRpm.value != null && bulkBaseRpm.value > 0) {
-      extra.base_rpm = bulkBaseRpm.value
-      extra.rpm_strategy = bulkRpmStrategy.value
-      if (bulkRpmStickyBuffer.value != null && bulkRpmStickyBuffer.value > 0) {
-        extra.rpm_sticky_buffer = bulkRpmStickyBuffer.value
-      }
-    } else {
-      // 关闭 RPM 限制 - 设置 base_rpm 为 0，并用空值覆盖关联字段
-      // 后端使用 JSONB || merge 语义，不会删除已有 key，
-      // 所以必须显式发送空值来重置（后端读取时会 fallback 到默认值）
-      extra.base_rpm = 0
-      extra.rpm_strategy = ''
-      extra.rpm_sticky_buffer = 0
-    }
+    applyAccountRPMSettings(extra, {
+      enabled: rpmLimitEnabled.value && bulkBaseRpm.value != null && bulkBaseRpm.value > 0,
+      baseRpm: bulkBaseRpm.value,
+      strict: allOpenAIOAuthOnly.value,
+      strategy: bulkRpmStrategy.value,
+      stickyBuffer: bulkRpmStickyBuffer.value
+    }, 'merge')
     updates.extra = extra
   }
 
@@ -2456,6 +2403,10 @@ const handleSubmit = () => {
     return
   }
 
+  if (enableExcelBPS.value && allOpenAIOAuthOnly.value && excelBPSEnabled.value && excelBPSAutoDisableOn403.value && excelBPSAutoRecoverOn403.value && !isValidBPSRecoveryInterval(excelBPSRecoveryIntervalMinutes.value)) {
+    appStore.showError(t('admin.accounts.openai.excelBPS403RecoveryIntervalInvalid'))
+    return
+  }
   if (enableExcelBPS.value && allOpenAIOAuthOnly.value && excelBPSEnabled.value && excelBPSAutoMoveOn403.value) {
     const target = Number(excelBPS403TargetGroupID.value)
     if (excelBPS403TargetGroupID.value === '' || !Number.isSafeInteger(target) || target < 0 ||
@@ -2643,6 +2594,8 @@ watch(
       excelBPSProxySource.value = 'mihomo'
       excelBPSCacheCreationAsInput.value = false
       excelBPSAutoDisableOn403.value = false
+      excelBPSAutoRecoverOn403.value = false
+      excelBPSRecoveryIntervalMinutes.value = DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES
       excelBPSOmitUnsupportedTools.value = false
       excelBPSIgnoreImages.value = false
       excelBPSIgnoreEncryptedContent.value = false

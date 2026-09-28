@@ -726,6 +726,14 @@ func (s *stubAdminService) CheckProxyQuality(ctx context.Context, id int64) (*se
 	}, nil
 }
 
+func (s *stubAdminService) TestMihomoNode(ctx context.Context, kernel service.MihomoNodeProber, name string) (*service.ProxyTestResult, error) {
+	return &service.ProxyTestResult{Success: true, Message: "ok"}, nil
+}
+
+func (s *stubAdminService) CheckMihomoNodeQuality(ctx context.Context, kernel service.MihomoNodeProber, name string) (*service.ProxyQualityCheckResult, error) {
+	return &service.ProxyQualityCheckResult{Score: 100, Grade: "A", CheckedAt: time.Now().Unix()}, nil
+}
+
 func (s *stubAdminService) ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string, sortBy, sortOrder string) ([]service.RedeemCode, int64, error) {
 	s.lastListRedeemCodes.codeType = codeType
 	s.lastListRedeemCodes.status = status

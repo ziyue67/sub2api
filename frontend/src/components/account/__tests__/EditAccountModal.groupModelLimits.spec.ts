@@ -51,9 +51,9 @@ const account = () => ({
   ]
 })
 
-function mountModal() {
+function mountModal(overrides: Record<string, unknown> = {}) {
   return mount(EditAccountModal, {
-    props: { show: true, account: account(), proxies: [], groups },
+    props: { show: true, account: { ...account(), ...overrides }, proxies: [], groups },
     global: { stubs: {
       BaseDialog: BaseDialogStub, Select: true, Icon: true, ProxySelector: true,
       GroupSelector: true, ModelWhitelistSelector: true
@@ -71,6 +71,23 @@ describe('EditAccountModal per-group model limits', () => {
   beforeEach(() => {
     updateAccountMock.mockReset()
     updateAccountMock.mockResolvedValue(account())
+  })
+
+  it('renders and saves the OpenAI OAuth strict RPM setting', async () => {
+    const wrapper = mountModal({ platform: 'openai', type: 'oauth', base_rpm: 20, extra: { base_rpm: 20 } })
+    const settings = wrapper.findComponent({ name: 'AccountRpmSettings' })
+    expect(settings.exists()).toBe(true)
+    expect(settings.text()).toContain('admin.accounts.quotaControl.rpmLimit.openaiHint')
+    expect(settings.text()).not.toContain('admin.accounts.quotaControl.rpmLimit.strategyTiered')
+    await settings.get('input[type="number"]').setValue('30')
+    const payload = await submit(wrapper)
+    expect(payload.extra).toMatchObject({ base_rpm: 30 })
+    expect(payload.extra).not.toHaveProperty('rpm_strategy')
+  })
+
+  it.each(['apikey', 'setup-token'])('does not expose RPM controls for OpenAI %s', (type) => {
+    const wrapper = mountModal({ platform: 'openai', type })
+    expect(wrapper.findComponent({ name: 'AccountRpmSettings' }).exists()).toBe(false)
   })
 
   it('loads the saved limits and sends them back unchanged', async () => {

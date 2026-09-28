@@ -28,7 +28,9 @@ func isOpenAICodexStateProbePlan(cfg *PelicanTestConfig) bool {
 // 质量规则场景下同时写入 QualityJudgment（correct/incorrect/unknown），不经过判题模型。
 func (s *AccountTestService) runOpenAICodexStateProbeScheduled(ctx context.Context, accountID int64, model string, cfg *PelicanTestConfig) (*ScheduledTestResult, error) {
 	started := time.Now()
-	probe, err := s.ProbeOpenAICodexState(ctx, accountID, model)
+	// 「降智后开 BPS」规则要在 BPS 开启后继续探直连通道，决定何时恢复。
+	ignoreBPS := cfg.Quality != nil && (cfg.Quality.Action == QualityActionEnableBPS || cfg.BPSRecoveryPending)
+	probe, err := s.probeOpenAICodexState(ctx, accountID, model, ignoreBPS)
 	if err != nil {
 		if !errors.Is(err, ErrOpenAICodexStateProbeBusy) {
 			return nil, err

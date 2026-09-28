@@ -15,8 +15,6 @@ var scheduledTestCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom 
 type ScheduledTestService struct {
 	planRepo   ScheduledTestPlanRepository
 	resultRepo ScheduledTestResultRepository
-	// showcase copies successful Pelican HTML results to the user gallery; nil disables it.
-	showcase *PelicanShowcaseService
 }
 
 // NewScheduledTestService creates a new ScheduledTestService.
@@ -79,14 +77,13 @@ func (s *ScheduledTestService) ListResults(ctx context.Context, planID int64, li
 	return s.resultRepo.ListByPlanID(ctx, planID, limit, includeContent...)
 }
 
-// SaveResult inserts a result and prunes old entries beyond maxResults.
+// SaveResult inserts a result and prunes old entries beyond maxResults. Account plans
+// only feed the admin history; the user showcase is fed by group tests.
 func (s *ScheduledTestService) SaveResult(ctx context.Context, planID int64, maxResults int, result *ScheduledTestResult) error {
 	result.PlanID = planID
-	saved, err := s.resultRepo.Create(ctx, result)
-	if err != nil {
+	if _, err := s.resultRepo.Create(ctx, result); err != nil {
 		return err
 	}
-	s.showcase.PublishScheduledResult(ctx, saved)
 	return s.resultRepo.PruneOldResults(ctx, planID, maxResults)
 }
 

@@ -1,6 +1,7 @@
 import qualityOps from './qualityOps'
 import accountOps from './accountOps'
 import tokenGuard from './tokenGuard'
+import pelicanTests from './pelicanTests'
 import landing from './landing'
 import common from './common'
 import dashboard from './dashboard'
@@ -21,6 +22,7 @@ export default {
   qualityOps,
   accountOps,
   tokenGuard,
+  pelicanTests,
   requestTiming,
   ...landing,
   ...common,

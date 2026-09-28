@@ -65,9 +65,17 @@ const emit = defineEmits<{
   (e: 'open'): void
 }>()
 
+// scrollMargin extends the lookahead to cards still hidden in their horizontal row, which
+// clips them otherwise. Kept out of the call: TS 5.6's lib.dom does not declare the option yet.
+const OBSERVER_OPTIONS = { rootMargin: '200px', scrollMargin: '200px' }
+// A card must stay in view this long: cards a slider drag sweeps past would otherwise all
+// load, queued ahead of the ones the drag stops at.
+const VISIBLE_DWELL_MS = 150
+
 const { t } = useI18n()
 const cardRef = ref<HTMLElement | null>(null)
 let observer: IntersectionObserver | null = null
+let dwellTimer: ReturnType<typeof setTimeout> | undefined
 
 const label = computed(() => `${props.groupName} · ${props.item.model_id || '—'}`)
 const effortLabel = computed(() => pelicanEffortLabel(t, props.item.reasoning_effort))
@@ -80,14 +88,19 @@ onMounted(() => {
     return
   }
   observer = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) {
+    clearTimeout(dwellTimer)
+    if (!entries[entries.length - 1].isIntersecting) return
+    dwellTimer = setTimeout(() => {
       emit('visible')
       observer?.disconnect()
       observer = null
-    }
-  }, { rootMargin: '200px' })
+    }, VISIBLE_DWELL_MS)
+  }, OBSERVER_OPTIONS)
   observer.observe(cardRef.value)
 })
 
-onBeforeUnmount(() => observer?.disconnect())
+onBeforeUnmount(() => {
+  clearTimeout(dwellTimer)
+  observer?.disconnect()
+})
 </script>

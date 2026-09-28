@@ -532,8 +532,8 @@ func (s *OpenAIQuotaAutoResetService) buildAssessment(account *Account, config O
 		threshold5h:   config.Threshold5h,
 		threshold7d:   config.Threshold7d,
 	}
-	reset5h := utilization5h >= config.Threshold5h
-	reset7d := utilization7d >= config.Threshold7d
+	reset5h := config.Threshold5h > 0 && utilization5h >= config.Threshold5h
+	reset7d := config.Threshold7d > 0 && utilization7d >= config.Threshold7d
 	assessment.resetReached = reset5h || reset7d
 	assessment.triggerWindow = joinOpenAIAutoResetWindows(reset5h, reset7d)
 

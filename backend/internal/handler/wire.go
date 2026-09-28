@@ -40,6 +40,7 @@ func ProvideAdminHandlers(
 	pluginHandler *admin.PluginHandler,
 	apiKeyHandler *admin.AdminAPIKeyHandler,
 	scheduledTestHandler *admin.ScheduledTestHandler,
+	pelicanGroupTestHandler *admin.PelicanGroupTestHandler,
 	accountOpsHandler *admin.AccountOpsHandler,
 	accountTokenGuardHandler *admin.AccountTokenGuardHandler,
 	channelHandler *admin.ChannelHandler,
@@ -97,6 +98,7 @@ func ProvideAdminHandlers(
 		AccountOps:             accountOpsHandler,
 		AccountTokenGuard:      accountTokenGuardHandler,
 		ScheduledTest:          scheduledTestHandler,
+		PelicanGroupTest:       pelicanGroupTestHandler,
 		Channel:                channelHandler,
 		ChannelMonitor:         channelMonitorHandler,
 		ChannelMonitorTemplate: channelMonitorTemplateHandler,
@@ -168,9 +170,12 @@ func ProvideBatchImageHandler(
 	return h
 }
 
-// ProvideSystemHandler creates admin.SystemHandler with UpdateService
-func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService) *admin.SystemHandler {
-	return admin.NewSystemHandler(updateService, lockService)
+// ProvideSystemHandler creates admin.SystemHandler with UpdateService and the
+// Mihomo node checks backed by the admin proxy diagnostics.
+func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService, adminService service.AdminService) *admin.SystemHandler {
+	h := admin.NewSystemHandler(updateService, lockService)
+	h.SetMihomoNodeChecker(adminService)
+	return h
 }
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
@@ -312,6 +317,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewPluginHandler,
 	admin.NewAdminAPIKeyHandler,
 	admin.NewScheduledTestHandler,
+	admin.NewPelicanGroupTestHandler,
 	admin.NewAccountOpsHandler,
 	admin.NewAccountTokenGuardHandler,
 	admin.NewChannelHandler,
