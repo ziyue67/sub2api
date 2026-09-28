@@ -252,7 +252,7 @@ jobs:
               printf '# Docker Hub\ndocker pull %s/sub2api:%s\n\n' "$DOCKERHUB_USER" "$VERSION"
             fi
             printf '# GitHub Container Registry\ndocker pull ghcr.io/%s/sub2api:%s\n```\n\n' "$OWNER_LOWER" "$VERSION"
-            printf '本版本起不再发布 `tar.gz` / `zip` 二进制包与 `checksums.txt`，请使用上方镜像部署。\n\n'
+            printf '二进制部署可在管理后台使用「更新 / 回退」，附件为 `sub2api_%s_linux_amd64.tar.gz` 与 `checksums.txt`。\n\n' "$VERSION"
             printf '## 📚 Documentation\n\n'
             printf -- '- [GitHub Repository](https://github.com/%s)\n' "$REPO"
             printf -- '- [Installation Guide](https://github.com/%s/blob/%s/deploy/README.md)\n' "$REPO" "$TAG_NAME"

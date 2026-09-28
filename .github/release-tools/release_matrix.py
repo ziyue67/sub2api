@@ -96,11 +96,11 @@ def generate_config(args):
         data['builds'] = [{'id': 'sub2api', 'skip': True}]
         data['archives'] = []
         extra = [{'glob': 'release-input/sub2api_*.tar.gz'}, {'glob': 'release-input/sub2api_*.zip'}]
-        if args.simple:
-            data['checksum'] = {'disable': True}
-        else:
-            data['release']['extra_files'] = extra
-            data['checksum'] = {'name_template': 'checksums.txt', 'algorithm': 'sha256', 'extra_files': extra}
+        # 二进制归档与 checksums.txt 必须随 Release 上传：管理后台的「更新 / 回退」
+        # 依赖这两个附件，因此这里不继承各配置文件里的 skip_upload / checksum.disable。
+        data['release'].pop('skip_upload', None)
+        data['release']['extra_files'] = extra
+        data['checksum'] = {'name_template': 'checksums.txt', 'algorithm': 'sha256', 'extra_files': extra}
     Path(args.output).write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
 
 

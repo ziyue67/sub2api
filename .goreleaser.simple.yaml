@@ -1,4 +1,4 @@
-# 简化版 GoReleaser 配置 - 仅发布 x86_64 GHCR 镜像
+# 简化版 GoReleaser 配置 - 仅发布 x86_64 GHCR 镜像与 linux/amd64 二进制归档
 version: 2
 
 project_name: sub2api
@@ -26,12 +26,21 @@ builds:
       - -X main.Date={{.Date}}
       - -X main.BuildType=release
 
-# 跳过 archives
-archives: []
+# 二进制归档必须发布：管理后台的「更新 / 回退」会从本仓库 Release 下载
+# sub2api_<version>_linux_amd64.tar.gz 并用 checksums.txt 校验后再替换二进制。
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE*
+      - README*
+      - deploy/*
 
-# 跳过 checksum
 checksum:
-  disable: true
+  name_template: 'checksums.txt'
+  algorithm: sha256
 
 changelog:
   disable: true
@@ -65,12 +74,12 @@ release:
     name: "{{ .Env.GITHUB_REPO_NAME }}"
   draft: false
   prerelease: auto
+  # 重发同一版本时替换既有 Release（含附件），否则重复发布/补发附件会 422。
+  mode: replace
   name_template: "Sub2API {{.Version}} (Simple)"
-  # 跳过上传二进制包
-  skip_upload: true
   header: |
     > AI API Gateway Platform - 将 AI 订阅配额分发和管理
-    > ⚡ Simple Release: 仅包含 x86_64 GHCR 镜像
+    > ⚡ Simple Release: 仅包含 x86_64 GHCR 镜像与 linux/amd64 二进制归档
 
     {{ .Env.TAG_MESSAGE }}
 
