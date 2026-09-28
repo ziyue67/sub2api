@@ -1080,6 +1080,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_excel_bps",
 		"openai_excel_bps_auto_disable_on_403",
 		service.ExcelBPSAutoRecoverOn403Key,
+		service.ExcelBPS403RecoveryIntervalMinutesKey,
 		service.ExcelBPSAutoMoveOn403Key,
 		service.ExcelBPS403TargetGroupIDKey,
 		"openai_excel_bps_mihomo",

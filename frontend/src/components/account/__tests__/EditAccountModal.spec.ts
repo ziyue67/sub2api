@@ -556,7 +556,7 @@ describe('EditAccountModal', () => {
     wrapper.unmount()
   })
 
-  it('persists hourly 403 recovery and clears it when auto-disable is turned off', async () => {
+  it.each([30, 360])('persists a %i minute recovery interval and disables recovery with auto-disable', async (minutes) => {
     const account = buildAccount()
     account.type = 'oauth'
     account.extra = { openai_excel_bps: true }
@@ -568,11 +568,16 @@ describe('EditAccountModal', () => {
     expect(wrapper.get<HTMLInputElement>(recovery).element.disabled).toBe(true)
     await wrapper.get('[data-testid="excel-bps-auto-disable-on-403"]').setValue(true)
     await wrapper.get(recovery).setValue(true)
+    const interval = wrapper.get<HTMLInputElement>('[data-testid="excel-bps-recovery-interval"]')
+    expect(interval.element.value).toBe('60')
+    await interval.setValue(String(minutes))
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
     const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
     expect(extra.openai_excel_bps_auto_recover_on_403).toBe(true)
+    expect(extra.openai_excel_bps_403_recovery_interval_minutes).toBe(minutes)
     await wrapper.setProps({ account: { ...account, extra } })
+    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-recovery-interval"]').element.value).toBe(String(minutes))
     expect(wrapper.get<HTMLInputElement>(recovery).element.checked).toBe(true)
     await wrapper.get('[data-testid="excel-bps-auto-disable-on-403"]').setValue(false)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
@@ -580,10 +585,24 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[1]?.[1]?.extra.openai_excel_bps_auto_recover_on_403).toBeUndefined()
   })
 
+  it.each(['', '0', '-1', '1.5', '10081'])('rejects an invalid recovery interval: %s', async (value) => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { openai_excel_bps: true, openai_excel_bps_auto_disable_on_403: true, openai_excel_bps_auto_recover_on_403: true }
+    updateAccountMock.mockReset()
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="excel-bps-recovery-interval"]').setValue(value)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('can enable and stop recovery on a 403-disabled account without losing hidden BPS options', async () => {
     const account = buildAccount()
     account.type = 'oauth'
     const options = {
+      openai_excel_bps_403_recovery_interval_minutes: 360,
       openai_excel_bps_models: ['gpt-6-astra'], openai_excel_bps_mihomo: true,
       openai_excel_bps_proxy_source: 'ip_pool', openai_excel_bps_ignore_images: true,
       openai_excel_bps_ignore_encrypted_content: true, openai_excel_bps_cache_creation_as_input: true,
@@ -2274,7 +2293,12 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     }
   })
 
-  it('独立保存两个阈值，并禁止把运行态回写到管理请求', async () => {
+  it.each([
+    [75.5, 92],
+    [0, 90],
+    [80, 0],
+    [0, 0]
+  ])('保存并重新载入 5h=%s、7d=%s，且不回写运行态', async (threshold5h, threshold7d) => {
     const account = buildOpenAIOAuthParentAccount()
     account.extra = {
       codex_auto_reset_credit_state: {
@@ -2287,25 +2311,30 @@ describe('EditAccountModal OpenAI 自动使用重置卡', () => {
     const wrapper = mountModal(account)
 
     await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
-    await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue('75.5')
-    await wrapper.get('[data-testid="auto-reset-credit-7d-threshold"]').setValue('92')
+    await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue(String(threshold5h))
+    await wrapper.get('[data-testid="auto-reset-credit-7d-threshold"]').setValue(String(threshold7d))
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
     expect(extra).toMatchObject({
       auto_reset_credit_enabled: true,
-      auto_reset_credit_5h_threshold: 0.755,
-      auto_reset_credit_7d_threshold: 0.92
+      auto_reset_credit_5h_threshold: threshold5h / 100,
+      auto_reset_credit_7d_threshold: threshold7d / 100
     })
     expect(extra).not.toHaveProperty('codex_auto_reset_credit_state')
     wrapper.unmount()
+
+    const reopened = mountModal({ ...account, extra })
+    expect((reopened.get('[data-testid="auto-reset-credit-5h-threshold"]').element as HTMLInputElement).value).toBe(String(threshold5h))
+    expect((reopened.get('[data-testid="auto-reset-credit-7d-threshold"]').element as HTMLInputElement).value).toBe(String(threshold7d))
+    reopened.unmount()
   })
 
-  it('开启后拒绝超出 0.1–100 范围的任一阈值', async () => {
+  it.each(['', '-0.1', '0.01', '100.1'])('开启后拒绝无效阈值 %s', async (invalidThreshold) => {
     const wrapper = mountModal(buildOpenAIOAuthParentAccount())
     await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
-    await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue('0')
+    await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue(invalidThreshold)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock).not.toHaveBeenCalled()
     wrapper.unmount()

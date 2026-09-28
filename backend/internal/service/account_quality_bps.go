@@ -18,23 +18,24 @@ const QualityActionEnableBPS = "enable_bps"
 // HoldOnUsage = 按「满足任一」开启时，用量仍在 UsagePercent 以上就先不关。
 // 其余字段与账号编辑页的 BPS 选项一一对应。
 type QualityBPSPolicy struct {
-	FailureThreshold       int      `json:"failure_threshold"`
-	UsagePercent           float64  `json:"usage_percent"`
-	RequireAll             bool     `json:"require_all"`
-	PassThreshold          int      `json:"pass_threshold"`
-	HoldOnUsage            bool     `json:"hold_on_usage"`
-	AllModels              bool     `json:"all_models"`
-	Models                 []string `json:"models"`
-	OmitUnsupportedTools   bool     `json:"omit_unsupported_tools"`
-	IgnoreImages           bool     `json:"ignore_images"`
-	IgnoreEncryptedContent bool     `json:"ignore_encrypted_content"`
-	AutoDisableOn403       bool     `json:"auto_disable_on_403"`
-	AutoRecoverOn403       bool     `json:"auto_recover_on_403"`
-	AutoMoveOn403          bool     `json:"auto_move_on_403"`
-	TargetGroupID          int64    `json:"target_group_id"`
-	SessionProxy           bool     `json:"session_proxy"`
-	ProxySource            string   `json:"proxy_source"`
-	CacheCreationAsInput   bool     `json:"cache_creation_as_input"`
+	FailureThreshold        int      `json:"failure_threshold"`
+	UsagePercent            float64  `json:"usage_percent"`
+	RequireAll              bool     `json:"require_all"`
+	PassThreshold           int      `json:"pass_threshold"`
+	HoldOnUsage             bool     `json:"hold_on_usage"`
+	AllModels               bool     `json:"all_models"`
+	Models                  []string `json:"models"`
+	OmitUnsupportedTools    bool     `json:"omit_unsupported_tools"`
+	IgnoreImages            bool     `json:"ignore_images"`
+	IgnoreEncryptedContent  bool     `json:"ignore_encrypted_content"`
+	AutoDisableOn403        bool     `json:"auto_disable_on_403"`
+	AutoRecoverOn403        bool     `json:"auto_recover_on_403"`
+	RecoveryIntervalMinutes *int     `json:"recovery_interval_minutes,omitempty"`
+	AutoMoveOn403           bool     `json:"auto_move_on_403"`
+	TargetGroupID           int64    `json:"target_group_id"`
+	SessionProxy            bool     `json:"session_proxy"`
+	ProxySource             string   `json:"proxy_source"`
+	CacheCreationAsInput    bool     `json:"cache_creation_as_input"`
 }
 
 // QualityBPSManagedKeys 是规则开 BPS 时会改写、恢复时会还原的账号 Extra 键。
@@ -47,6 +48,7 @@ var QualityBPSManagedKeys = []string{
 	ExcelBPSIgnoreEncryptedContentKey,
 	"openai_excel_bps_auto_disable_on_403",
 	ExcelBPSAutoRecoverOn403Key,
+	ExcelBPS403RecoveryIntervalMinutesKey,
 	ExcelBPSAutoMoveOn403Key,
 	ExcelBPS403TargetGroupIDKey,
 	"openai_excel_bps_mihomo",
@@ -57,6 +59,11 @@ var QualityBPSManagedKeys = []string{
 func validateQualityBPSPolicy(b *QualityBPSPolicy) error {
 	if b == nil {
 		return fmt.Errorf("BPS settings are required for the enable_bps action")
+	}
+	if b.RecoveryIntervalMinutes != nil {
+		if _, ok := excelBPS403RecoveryMinutes(*b.RecoveryIntervalMinutes); !ok {
+			return fmt.Errorf("BPS recovery interval must be an integer between 1 and 10080 minutes")
+		}
 	}
 	if b.FailureThreshold < 0 || b.FailureThreshold > 100 {
 		return fmt.Errorf("degraded count must be 0–100")
@@ -117,7 +124,12 @@ func validateQualityBPSPolicy(b *QualityBPSPolicy) error {
 // QualityBPSExtra 返回规则开启 BPS 时写入账号 Extra 的值。nil 表示删除该键
 // （全部模型 = 不限定模型范围；未开启 403 转组 = 不留目标分组）。
 func QualityBPSExtra(b *QualityBPSPolicy) map[string]any {
+	interval := DefaultExcelBPS403RecoveryIntervalMinutes
+	if b.RecoveryIntervalMinutes != nil {
+		interval = *b.RecoveryIntervalMinutes
+	}
 	extra := map[string]any{
+		ExcelBPS403RecoveryIntervalMinutesKey:      interval,
 		"openai_excel_bps":                         true,
 		"openai_excel_bps_models":                  nil,
 		ExcelBPSOmitUnsupportedToolsKey:            b.OmitUnsupportedTools,

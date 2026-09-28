@@ -160,3 +160,74 @@ func TestStateProbeQualityPlanSkipsJudge(t *testing.T) {
 	require.Equal(t, []string{"passed"}, plans.outcomes)
 	require.True(t, plans.finished)
 }
+
+func TestStateProbeScheduleSkipsUnsupportedAccounts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account *Account
+	}{
+		{name: "api key", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}},
+		{name: "other provider", account: &Account{Platform: PlatformAnthropic, Type: AccountTypeOAuth}},
+		{name: "synthetic", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"synthetic_ui_test": true}}},
+		{name: "agent identity", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"auth_mode": "agentIdentity"}}},
+		{name: "bps", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": true}}},
+		{name: "deleted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plans, results := &qualityPlanRepo{}, &pelicanResults{}
+			runner := &ScheduledTestRunnerService{
+				planRepo: plans, scheduledSvc: NewScheduledTestService(plans, results),
+				accountTestSvc: &AccountTestService{accountRepo: &stateProbeAccountRepo{account: tc.account}},
+			}
+			called := false
+			runner.runPelican = func(context.Context, int64, string, *PelicanTestConfig) (*ScheduledTestResult, error) {
+				called = true
+				return &ScheduledTestResult{Status: "success"}, nil
+			}
+			plan := pelicanPlan()
+			plan.PelicanConfig = stateProbePlanConfig()
+			plan.PelicanConfig.Quality = &QualityPolicy{Action: "disable_scheduling"}
+			runner.runOnePlan(context.Background(), plan)
+			require.False(t, called)
+			require.Empty(t, results.results)
+			require.Empty(t, plans.outcomes, "skipped probes must not modify account state or recovery counters")
+			require.True(t, plans.claimed, "claim advances the next scheduled run")
+			require.True(t, plans.finished, "release the lease even when skipped")
+		})
+	}
+}
+
+func TestStateProbeScheduleAllowsSupportedAccountsAndBPSRecovery(t *testing.T) {
+	for _, kind := range []string{"oauth", "setup-token", "enable-bps", "pending-recovery"} {
+		t.Run(kind, func(t *testing.T) {
+			plans, results := &qualityPlanRepo{}, &pelicanResults{}
+			account := stateProbeAccount()
+			plan := pelicanPlan()
+			plan.PelicanConfig = stateProbePlanConfig()
+			plan.PelicanConfig.Quality = &QualityPolicy{Action: "disable_scheduling"}
+			if kind == "setup-token" {
+				account.Type = AccountTypeSetupToken
+			}
+			if kind == "enable-bps" || kind == "pending-recovery" {
+				account.Extra = map[string]any{"openai_excel_bps": true}
+				if kind == "enable-bps" {
+					plan.PelicanConfig.Quality.Action = QualityActionEnableBPS
+					plan.PelicanConfig.Quality.BPS = &QualityBPSPolicy{FailureThreshold: 1, AllModels: true}
+				} else {
+					plan.PelicanConfig.BPSRecoveryPending = true
+				}
+			}
+			runner := &ScheduledTestRunnerService{
+				planRepo: plans, scheduledSvc: NewScheduledTestService(plans, results),
+				accountTestSvc: &AccountTestService{accountRepo: &stateProbeAccountRepo{account: account}},
+			}
+			runner.runPelican = func(context.Context, int64, string, *PelicanTestConfig) (*ScheduledTestResult, error) {
+				return &ScheduledTestResult{Status: "success", QualityJudgment: &QualityJudgment{Verdict: "correct"}}, nil
+			}
+			runner.runOnePlan(context.Background(), plan)
+			require.Len(t, results.results, 1)
+			require.Equal(t, []string{"passed"}, plans.outcomes)
+			require.True(t, plans.finished)
+		})
+	}
+}

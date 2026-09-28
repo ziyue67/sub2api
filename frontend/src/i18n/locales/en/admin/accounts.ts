@@ -734,8 +734,11 @@ export default {
         excelBPSProxySourceIPPool: 'IP management pool',
         excelBPSProxySourceIPPoolDesc: 'Uses every active, unexpired proxy in IP management as the exit pool, with no Mihomo required. Binding, ranking, cooldown and probing follow the same rules as the Mihomo pool. Proxy changes apply within about 15 seconds.',
         excelBPSMihomoDesc: 'Off by default. Poor-quality or unstable exit IPs can substantially increase request failures, interrupted streams, and wait times. Enable with caution. Configure and start Mihomo before using its pool; the IP Management pool does not require Mihomo. Identified sessions keep a bound exit; requests without a session ID use a temporary binding released when the request ends. A background worker warms exits to match enabled account concurrency and checks the actual BPS endpoint. Requests select only ready exits and reuse them by load when scarce; they never probe cold nodes. An empty ready pool fails fast while warming continues. Healthy sessions keep their exit. Ordinary nodes cool down for 5 minutes after the first broken stream, increasing to at most 30 minutes on repeated failures. Dynamic proxies start at 30 seconds, up to 2 minutes. Nodes must pass probes after cooldown. Affected sessions switch exits only after in-flight requests finish. One extra attempt is allowed only when the request is confirmed unsent. Sent requests and responses already streaming are not replayed, and there is no direct fallback. Idle bindings expire after 30 minutes and are reassigned after restart. Dynamic IP providers must support sticky exits; a successful connectivity probe does not guarantee a stable long-running stream. Disabling restores the account proxy.',
-        excelBPSAutoRecoverOn403: 'Check BPS recovery hourly after a 403 error',
-        excelBPSAutoRecoverOn403Desc: 'Off by default; requires automatic disable on 403. One hour after an automatic shutdown, send a small text probe using this account’s credentials, BPS model and proxy settings. Retry hourly on failure; re-enable BPS and clear the shutdown marker only after a complete successful response. Previously changed groups are not restored. Turn this off to stop future probes. Probes use a small amount of upstream quota.',
+        excelBPSAutoRecoverOn403: 'Automatically check BPS recovery after a 403 error',
+        excelBPSAutoRecoverOn403Desc: 'Off by default; requires automatic disable on 403. After an automatic shutdown, send a small text probe at the interval below using this account’s credentials, BPS model and proxy settings. Retry at the same interval on failure; re-enable BPS and clear the shutdown marker only after a complete successful response. Previously changed groups are not restored. Turn this off to stop future probes. Probes use a small amount of upstream quota.',
+        excelBPS403RecoveryInterval: 'Recovery probe interval (minutes)',
+        excelBPS403RecoveryIntervalHint: 'Defaults to 60 minutes. Enter an integer from 1 to 10080, such as 30 or 360. Applies to the first probe and retries; changes are measured from shutdown or the last probe.',
+        excelBPS403RecoveryIntervalInvalid: 'Recovery probe interval must be an integer from 1 to 10080 minutes',
         excelBPSAutoDisableOn403: 'Automatically disable BPS on a 403 error',
         excelBPSAutoMoveOn403: 'Automatically change groups on a BPS 403 error',
         excelBPSAutoMoveOn403Desc: 'Disabled by default. Uses the same trigger as disabling BPS; both options work independently or together. Move to the selected group and leave all other groups, or leave every group. The account stays enabled and the request is not retried. Invalid destinations or changed settings leave memberships unchanged. After an automatic move, the account list shows a “BPS 403: Excel possibly banned” badge under the account name until the account’s groups change again.',
@@ -1090,8 +1093,8 @@ export default {
 	    hint: 'Uses the earliest-expiring available credit only when actual usage reaches a threshold. Off by default; the account remains paused if no credit is available or reset fails.',
 	    threshold5h: '5h auto-reset threshold (%)',
 	    threshold7d: '7d auto-reset threshold (%)',
-	    thresholdHint: 'Each window is evaluated independently. Enter 0.1–100; both default to 100.',
-	    thresholdInvalid: 'Automatic reset-credit thresholds must be between 0.1% and 100%.'
+	    thresholdHint: 'Set 0 to ignore a window. Any enabled window reaching its threshold triggers a reset. Enter 0 or 0.1–100; both default to 100. For example, 5h = 0 and 7d = 90 uses credits only at 90% weekly usage. Normal auto-pause rules still apply.',
+	    thresholdInvalid: 'Automatic reset-credit thresholds must be 0 (ignore this window) or between 0.1% and 100%.'
 	  },
       // Quota control (Anthropic OAuth/SetupToken only)
       quotaControl: {

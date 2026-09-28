@@ -1,4 +1,9 @@
 export default {
+  "bulkAccountSelectionHint": "Combine group, type and search filters. Select all includes every matching page and only accounts with existing rules. Changing filters keeps your selection.",
+  "accountNoRule": "No rule",
+  "probeAccountUnsupported": "This account does not support the subscription probe. Use an OpenAI OAuth or Setup Token account.",
+  "setupTokenAccounts": "Setup Token accounts",
+
   "conflictChecks": "Which checks can prevent restoration?",
   "title": "Quality operations",
   "description": "Test account answers on a schedule, then remove selected groups, disable scheduling or enable the BPS protocol on a wrong (degraded) answer. One rule per account.",

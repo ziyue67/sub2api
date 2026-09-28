@@ -1,4 +1,9 @@
 export default {
+  "bulkAccountSelectionHint": "分组、类型与搜索可组合筛选；全选包含所有匹配页，仅选择已有规则的账户。切换筛选保留已选账户。",
+  "accountNoRule": "暂无规则",
+  "probeAccountUnsupported": "该账户不支持订阅探针，请使用 OpenAI OAuth 或 Setup Token 账户。",
+  "setupTokenAccounts": "Setup Token 账户",
+
   "conflictChecks": "哪些检查会阻止自动恢复？",
   "title": "质量运维",
   "description": "定时检测账户回答质量，答错（降智）后移出指定分组、关闭调度或开启 BPS 协议。每个账户只配置一条规则。",

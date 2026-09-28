@@ -1,11 +1,12 @@
 import type { PelicanTestConfig, QualityBPSPolicy, QualityPolicy, ScheduledTestPlan, UpdateScheduledTestPlanRequest } from '@/types'
 import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 import { STATE_PROBE_QUESTION } from './intelligenceTest'
+import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval } from './excelBPSRecovery'
 
 // 新建「降智开 BPS」时的默认勾选；target_group_id = -1 表示还没选 403 后的目标分组。
 export function defaultQualityBPS(): QualityBPSPolicy {
   return { failure_threshold: 2, usage_percent: 0, require_all: false, all_models: false, models: [...DEFAULT_EXCEL_BPS_MODELS],
-    omit_unsupported_tools: true, ignore_images: false, ignore_encrypted_content: true, auto_disable_on_403: false, auto_recover_on_403: false, auto_move_on_403: false,
+    omit_unsupported_tools: true, ignore_images: false, ignore_encrypted_content: true, auto_disable_on_403: false, auto_recover_on_403: false, recovery_interval_minutes: DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, auto_move_on_403: false,
     target_group_id: -1, session_proxy: false, proxy_source: 'mihomo', cache_creation_as_input: false, pass_threshold: 2, hold_on_usage: true }
 }
 
@@ -30,6 +31,7 @@ export function qualityBPSError(bps: QualityBPSPolicy): string {
   if (!count && !usage) return 'qualityOps.bpsTriggerRequired'
   if (!validPassCount(bps.pass_threshold)) return 'qualityOps.bpsPassCountInvalid'
   if (!bps.all_models && !bps.models.some(model => model.trim())) return 'qualityOps.bpsModelsRequired'
+  if (bps.recovery_interval_minutes !== undefined && !isValidBPSRecoveryInterval(bps.recovery_interval_minutes)) return 'admin.accounts.openai.excelBPS403RecoveryIntervalInvalid'
   if (bps.auto_move_on_403 && !(bps.target_group_id >= 0)) return 'qualityOps.bpsTargetGroupRequired'
   return ''
 }
@@ -38,6 +40,7 @@ export function qualityBPSError(bps: QualityBPSPolicy): string {
 export function qualityBPSPayload(bps: QualityBPSPolicy): QualityBPSPolicy {
   return {
     ...bps,
+    recovery_interval_minutes: bps.recovery_interval_minutes ?? DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES,
     models: bps.all_models ? [] : [...bps.models],
     target_group_id: bps.auto_move_on_403 ? bps.target_group_id : 0,
     proxy_source: bps.session_proxy ? bps.proxy_source || 'mihomo' : '',

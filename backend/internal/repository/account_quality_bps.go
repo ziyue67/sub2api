@@ -228,6 +228,8 @@ func qualityBPSSnapshotEqual(a, b map[string]json.RawMessage) bool {
 
 func qualityBPSDefaultJSON(key string) json.RawMessage {
 	switch key {
+	case service.ExcelBPS403RecoveryIntervalMinutesKey:
+		return json.RawMessage(`60`)
 	case "openai_excel_bps", service.ExcelBPSOmitUnsupportedToolsKey,
 		service.ExcelBPSIgnoreImagesKey, service.ExcelBPSIgnoreEncryptedContentKey,
 		"openai_excel_bps_auto_disable_on_403", service.ExcelBPSAutoRecoverOn403Key, service.ExcelBPSAutoMoveOn403Key,

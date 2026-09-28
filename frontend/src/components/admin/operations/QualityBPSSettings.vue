@@ -25,6 +25,12 @@
       <div v-for="[key, label] in bpsToggles" :key="key">
         <label class="flex items-center gap-2"><input v-model="bps[key]" type="checkbox" :disabled="key === 'auto_recover_on_403' && !bps.auto_disable_on_403" :data-testid="`quality-bps-${key}`" />{{ t(`admin.accounts.openai.excelBPS${label}`) }}</label>
         <p class="mt-1 pl-6 text-xs text-gray-500">{{ t(`admin.accounts.openai.excelBPS${label}Desc`) }}</p>
+        <div v-if="key === 'auto_recover_on_403' && bps.auto_disable_on_403 && bps.auto_recover_on_403" class="mt-2 pl-6">
+          <label class="block space-y-1"><span>{{ t('admin.accounts.openai.excelBPS403RecoveryInterval') }}</span>
+            <input v-model.number="bps.recovery_interval_minutes" type="number" min="1" :max="MAX_BPS_RECOVERY_INTERVAL_MINUTES" step="1" required class="input w-40" data-testid="quality-bps-recovery-interval" />
+          </label>
+          <p class="mt-1 text-xs text-gray-500">{{ t('admin.accounts.openai.excelBPS403RecoveryIntervalHint') }}</p>
+        </div>
       </div>
       <div>
         <label class="flex items-center gap-2"><input v-model="bps.auto_move_on_403" type="checkbox" data-testid="quality-bps-auto_move_on_403" />{{ t('admin.accounts.openai.excelBPSAutoMoveOn403') }}</label>
@@ -59,6 +65,7 @@
 // 「降智后开启 BPS」的触发条件、满血后关闭和开启时默认勾选的模型/选项。
 // 质量运维的规则表单和添加/编辑账号弹窗共用这一份，改一处三处一致。
 import { useI18n } from 'vue-i18n'
+import { MAX_BPS_RECOVERY_INTERVAL_MINUTES } from '@/utils/excelBPSRecovery'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
 import QualityBPSRestoreOptions from './QualityBPSRestoreOptions.vue'
 import type { QualityBPSPolicy } from '@/types'

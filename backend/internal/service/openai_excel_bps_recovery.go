@@ -17,13 +17,12 @@ import (
 	"go.uber.org/zap"
 )
 
-const excelBPS403RecoveryInterval = time.Hour
 const excelBPS403RecoveryScanInterval = time.Minute
 const excelBPS403RecoveryTimeout = 45 * time.Second
 const excelBPS403RecoveryConcurrency = 3
 
 // Claims persist before network I/O, preventing duplicate attempts across
-// instances and preserving the hourly interval after a restart.
+// instances and preserving the configured interval after a restart.
 type AccountExcelBPSRecoveryRepository interface {
 	ClaimExcelBPS403Probe(context.Context, *Account, time.Time) (bool, error)
 	RestoreExcelBPSAfter403(context.Context, *Account) (bool, error)
@@ -64,7 +63,7 @@ func (a *Account) ExcelBPS403RecoveryDue(now time.Time) bool {
 			last = at
 		}
 	}
-	return !now.Before(last.Add(excelBPS403RecoveryInterval))
+	return !now.Before(last.Add(a.ExcelBPS403RecoveryInterval()))
 }
 
 func cloneExcelBPSRecoveryExtra(extra map[string]any) map[string]any {

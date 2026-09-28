@@ -113,6 +113,7 @@ func TestExcelBPS403RecoveryRestoresProtocolAndSchedulerAtomically(t *testing.T)
 
 func TestExcelBPS403RecoveryRejectsChangesDuringProbe(t *testing.T) {
 	for _, tc := range []struct{ name, mutation string }{
+		{"interval changed", `extra=extra || '{"openai_excel_bps_403_recovery_interval_minutes":360}'::jsonb`},
 		{"opted out", `extra=extra || '{"openai_excel_bps_auto_recover_on_403":false}'::jsonb`},
 		{"auto shutdown off", `extra=extra || '{"openai_excel_bps_auto_disable_on_403":false}'::jsonb`},
 		{"model changed", `extra=extra || '{"openai_excel_bps_models":["gpt-5.6-sol"]}'::jsonb`},
@@ -140,5 +141,38 @@ func TestExcelBPS403RecoveryRejectsChangesDuringProbe(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &extra))
 			require.NotEqual(t, true, extra["openai_excel_bps"])
 		})
+	}
+}
+
+func TestExcelBPS403RecoveryCustomIntervalPersistsAcrossRestart(t *testing.T) {
+	for _, minutes := range []int{30, 360} {
+		repo, a, now := newExcelBPSRecoveryFixture(t)
+		a.Extra[service.ExcelBPS403RecoveryIntervalMinutesKey] = minutes
+		a.Extra[service.ExcelBPS403DisabledAtKey] = now.Format(time.RFC3339Nano)
+		require.NoError(t, repo.Update(t.Context(), a))
+		fresh, err := repo.GetByID(t.Context(), a.ID)
+		require.NoError(t, err)
+		interval := time.Duration(minutes) * time.Minute
+		// Updates cannot forge the server-owned shutdown marker; use its persisted time.
+		disabledText, ok := fresh.Extra[service.ExcelBPS403DisabledAtKey].(string)
+		require.True(t, ok)
+		disabled, err := time.Parse(time.RFC3339Nano, disabledText)
+		require.NoError(t, err)
+		claimed, err := repo.ClaimExcelBPS403Probe(t.Context(), fresh, disabled.Add(interval-time.Second))
+		require.NoError(t, err)
+		require.False(t, claimed)
+		claimed, err = repo.ClaimExcelBPS403Probe(t.Context(), fresh, disabled.Add(interval))
+		require.NoError(t, err)
+		require.True(t, claimed)
+		fresh, err = repo.GetByID(t.Context(), a.ID)
+		require.NoError(t, err)
+		require.Equal(t, float64(minutes), fresh.Extra[service.ExcelBPS403RecoveryIntervalMinutesKey])
+		restarted := newAccountRepositoryWithSQL(integrationEntClient, integrationDB, nil)
+		claimed, err = restarted.ClaimExcelBPS403Probe(t.Context(), fresh, disabled.Add(2*interval-time.Second))
+		require.NoError(t, err)
+		require.False(t, claimed)
+		claimed, err = restarted.ClaimExcelBPS403Probe(t.Context(), fresh, disabled.Add(2*interval))
+		require.NoError(t, err)
+		require.True(t, claimed)
 	}
 }

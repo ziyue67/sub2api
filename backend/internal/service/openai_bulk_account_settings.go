@@ -80,6 +80,12 @@ func normalizeBulkOpenAISettings(input *BulkUpdateAccountsInput) (bulkOpenAISett
 // A nil model scope removes the key (all models); an empty list selects no models.
 func normalizeBulkExcelBPSExtra(extra map[string]any) (bool, error) {
 	changed := false
+	if _, exists := extra[ExcelBPS403RecoveryIntervalMinutesKey]; exists {
+		changed = true
+		if err := validateExcelBPS403RecoveryExtra(extra); err != nil {
+			return true, err
+		}
+	}
 	for _, key := range []string{"openai_excel_bps", ExcelBPSIgnoreImagesKey, ExcelBPSIgnoreEncryptedContentKey, "openai_excel_bps_cache_creation_as_input", "openai_excel_bps_auto_disable_on_403", ExcelBPSAutoRecoverOn403Key, ExcelBPSAutoMoveOn403Key, "openai_excel_bps_mihomo"} {
 		if raw, exists := extra[key]; exists {
 			changed = true

@@ -70,6 +70,9 @@ func validateExcelBPS403GroupExtra(extra map[string]any) error {
 }
 
 func (s *adminServiceImpl) validateExcelBPS403GroupSettings(ctx context.Context, account *Account) error {
+	if err := validateExcelBPS403RecoveryExtra(account.Extra); err != nil {
+		return err
+	}
 	if err := validateExcelBPS403GroupExtra(account.Extra); err != nil {
 		return err
 	}
