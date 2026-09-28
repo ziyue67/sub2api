@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+FROM node:20-bookworm-slim AS node
+
+RUN npm install --prefix /opt/tosub2-runtime \
+    --omit=dev --ignore-scripts --no-audit --no-fund \
+    jsdom@26.1.0
+
+FROM python:3.12-slim-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir curl_cffi==0.16.0
+
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /opt/tosub2-runtime/node_modules /opt/tosub2/node_modules
+
+WORKDIR /app
+COPY tools/openai_oauth_reauth_worker.py /app/openai_oauth_reauth_worker.py
+
+# Build with: docker build --build-context turb=/path/to/turb --build-context tosub2=/path/to/toSub2 ...
+COPY --from=turb config /opt/turb/config
+COPY --from=turb core/__init__.py /opt/turb/core/__init__.py
+COPY --from=turb core/codex_oauth.py /opt/turb/core/codex_oauth.py
+COPY --from=turb core/humanize.py /opt/turb/core/humanize.py
+COPY --from=turb core/openai_auth.py /opt/turb/core/openai_auth.py
+COPY --from=turb core/sentinel.py /opt/turb/core/sentinel.py
+COPY --from=turb core/sentinel_runner.py /opt/turb/core/sentinel_runner.py
+COPY --from=turb core/session.py /opt/turb/core/session.py
+COPY --from=turb core/sms_provider.py /opt/turb/core/sms_provider.py
+COPY --from=turb sentinel /opt/turb/sentinel
+COPY --from=turb LICENSE /opt/turb/LICENSE
+COPY --from=tosub2 src /opt/tosub2/src
+COPY --from=tosub2 LICENSE /opt/tosub2/LICENSE
+
+RUN node -e "require('/opt/tosub2/node_modules/jsdom')"
+
+RUN useradd --create-home --uid 10001 worker \
+    && chown -R worker:worker /app /opt/turb /opt/tosub2
+
+USER worker
+ENV CODEX_PROTOCOL_ROOT=/opt/turb \
+    TOSUB2_ROOT=/opt/tosub2 \
+    NODE_EXECUTABLE=node \
+    PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "/app/openai_oauth_reauth_worker.py"]

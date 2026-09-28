@@ -10,6 +10,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
 
 // Pelican group tests ask a group the Pelican question on a schedule. For every sample
@@ -84,11 +85,6 @@ type PelicanGroupTestResult struct {
 	CreatedAt     time.Time                 `json:"created_at"`
 }
 
-type PelicanGroupTestResultPage struct {
-	Items      []*PelicanGroupTestResult `json:"items"`
-	NextCursor int64                     `json:"next_cursor"`
-}
-
 // PelicanGroupTestPlanInput is what an admin edits; the question is always the HTML drawing kind.
 type PelicanGroupTestPlanInput struct {
 	GroupID         int64  `json:"group_id"`
@@ -119,7 +115,7 @@ type PelicanGroupTestRepository interface {
 	PruneResults(ctx context.Context, planID int64, keep int) error
 	PruneExpiredResults(ctx context.Context, before time.Time) error
 	// ListResults returns results newest first without HTML; planID 0 lists every plan.
-	ListResults(ctx context.Context, planID, beforeID int64, limit int) ([]*PelicanGroupTestResult, error)
+	ListResults(ctx context.Context, planID int64, offset, limit int) ([]*PelicanGroupTestResult, int64, error)
 	// GetResult returns nil when the result does not exist.
 	GetResult(ctx context.Context, id int64) (*PelicanGroupTestResult, error)
 }
@@ -430,8 +426,11 @@ func (s *PelicanGroupTestService) runSample(ctx context.Context, plan *PelicanGr
 			result.AccountID, result.AccountName, result.Attempts = last.AccountID, last.AccountName, attempts[:len(attempts)-1]
 			return result
 		}
-		sample, err := s.runAccount(ctx, route.account.ID, route.model, plan.PelicanConfig)
-		route.release()
+		var sample *ScheduledTestResult
+		func() {
+			defer route.release()
+			sample, err = s.runAccount(ctx, route.account.ID, route.model, plan.PelicanConfig)
+		}()
 		if err != nil || sample == nil {
 			sample = &ScheduledTestResult{Status: "failed", ErrorMessage: fmt.Sprint(err)}
 			if err == nil {
@@ -486,20 +485,9 @@ func pelicanFailedBeforeOutput(result *ScheduledTestResult) bool {
 	return true
 }
 
-func (s *PelicanGroupTestService) ListResults(ctx context.Context, planID, beforeID int64, limit int) (*PelicanGroupTestResultPage, error) {
-	if limit < 1 || limit > 100 {
-		limit = 50
-	}
-	items, err := s.repo.ListResults(ctx, planID, beforeID, limit+1)
-	if err != nil {
-		return nil, err
-	}
-	page := &PelicanGroupTestResultPage{Items: items}
-	if len(items) > limit {
-		page.Items = items[:limit]
-		page.NextCursor = items[limit-1].ID
-	}
-	return page, nil
+func (s *PelicanGroupTestService) ListResults(ctx context.Context, planID int64, page, pageSize int) ([]*PelicanGroupTestResult, int64, error) {
+	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
+	return s.repo.ListResults(ctx, planID, params.Offset(), params.Limit())
 }
 
 func (s *PelicanGroupTestService) GetResult(ctx context.Context, id int64) (*PelicanGroupTestResult, error) {

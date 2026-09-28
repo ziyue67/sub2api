@@ -246,8 +246,8 @@ import { extractPelicanHtml } from '@/utils/pelicanHtml'
 import { platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
 
 const MAX_CONCURRENT_BODIES = 4
-// A card is as wide as a column of the former grid (1/2/3/4 per row); on phones it leaves the next card peeking in.
-const CARD_WIDTH = 'w-[85%] shrink-0 sm:w-[calc((100%-1.25rem)/2)] lg:w-[calc((100%-2.5rem)/3)] 2xl:w-[calc((100%-3.75rem)/4)]'
+// Use 70% of the former width at every breakpoint; artwork keeps its 4:3 ratio.
+const CARD_WIDTH = 'w-[59.5%] shrink-0 sm:w-[calc((100%-1.25rem)/2*0.7)] lg:w-[calc((100%-2.5rem)/3*0.7)] 2xl:w-[calc((100%-3.75rem)/4*0.7)]'
 
 type TabKey = number | 'all'
 

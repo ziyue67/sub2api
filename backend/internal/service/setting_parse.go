@@ -282,16 +282,19 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyExcelBPSImageRelayEnabled:  "false",
 		SettingKeyExcelBPSImageBaseURL:       "",
 
-		SettingKeyUsageShowLongContextBadge:   "true",
-		SettingKeyExcelBPSImageBodyLimitMiB:   strconv.Itoa(DefaultExcelBPSImageBodyLimitMiB),
-		SettingKeyExcelBPSImageBudgetMiB:      strconv.Itoa(DefaultExcelBPSImageBudgetMiB),
-		SettingKeyExcelBPSImageMaxRequests:    strconv.Itoa(DefaultExcelBPSImageMaxRequests),
-		SettingKeyExcelBPSImageMaxImageMiB:    "20",
-		SettingKeyExcelBPSImageMaxImages:      "20",
-		SettingKeyExcelBPSImageMaxTotalMiB:    "32",
-		SettingKeyExcelBPSImageStorageMiB:     "1024",
-		SettingKeyExcelBPSImageStorageEntries: "512",
-		SettingKeyExcelBPSImageTTLMinutes:     "30",
+		SettingKeyUsageShowLongContextBadge:     "true",
+		SettingKeyExcelBPSImageBodyLimitMiB:     strconv.Itoa(DefaultExcelBPSImageBodyLimitMiB),
+		SettingKeyExcelBPSImageBudgetMiB:        strconv.Itoa(DefaultExcelBPSImageBudgetMiB),
+		SettingKeyExcelBPSImageMaxRequests:      strconv.Itoa(DefaultExcelBPSImageMaxRequests),
+		SettingKeyExcelBPSImageMaxImageMiB:      "20",
+		SettingKeyExcelBPSImageLimitPolicy:      "off",
+		SettingKeyExcelBPSImageWarningRemaining: "8",
+		SettingKeyExcelBPSImageCompactReserve:   "3",
+		SettingKeyExcelBPSImageMaxImages:        "20",
+		SettingKeyExcelBPSImageMaxTotalMiB:      "32",
+		SettingKeyExcelBPSImageStorageMiB:       "1024",
+		SettingKeyExcelBPSImageStorageEntries:   "512",
+		SettingKeyExcelBPSImageTTLMinutes:       "30",
 	}
 
 	return s.settingRepo.SetMultiple(ctx, defaults)
@@ -1118,6 +1121,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.ExcelBPSImageMaxImageMiB = imageLimits.MaxImageMiB
 	result.ExcelBPSImageMaxImages = imageLimits.MaxImages
+	result.ExcelBPSImageLimitPolicy = settings[SettingKeyExcelBPSImageLimitPolicy]
+	if result.ExcelBPSImageLimitPolicy == "" {
+		result.ExcelBPSImageLimitPolicy = "off"
+	}
+	result.ExcelBPSImageWarningRemaining, _ = parseExcelBPSImageCapacity(settings[SettingKeyExcelBPSImageWarningRemaining], 8)
+	result.ExcelBPSImageCompactReserve, _ = parseExcelBPSImageCapacity(settings[SettingKeyExcelBPSImageCompactReserve], 3)
 	result.ExcelBPSImageMaxTotalMiB = imageLimits.MaxTotalMiB
 	result.ExcelBPSImageStorageMiB = imageLimits.StorageMiB
 	result.ExcelBPSImageStorageEntries = imageLimits.StorageEntries

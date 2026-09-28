@@ -765,7 +765,7 @@ export default {
         autoBPSLoading: 'Loading this account’s auto-BPS rule…',
         autoBPSLoadFailed: 'Failed to load the auto-BPS rule: {error}. Saving now will not change this rule.',
         autoBPSPauseHint: 'Turning this off pauses the rule. Its settings and records are kept and it resumes with the same settings when turned back on; BPS that is already on stays on.',
-        autoBPSRuleConflict: 'This account already has another quality rule (#{id}). Only one quality rule is allowed per account, including paused rules. Edit the existing rule in Quality operations.',
+        autoBPSRuleConflict: 'This account already has a BPS quality rule (#{id}). Edit it in Quality operations. Group/scheduling rules can run alongside BPS rules.',
         autoBPSManageRules: 'Manage quality rules',
         autoBPSSaveFailed: 'The account was saved, but the auto-BPS rule was not: {error}. Fix it under Smart operations → Quality operations.',
         autoBPSCreateFailed: 'The accounts were created, but {count} of them did not get the auto-BPS rule: {error}. Add it under Smart operations → Quality operations.',

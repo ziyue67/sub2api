@@ -93,7 +93,7 @@ export default {
   },
   history: {
     title: 'Test history',
-    hint: 'The last 7 days, up to 100 per test, including which account each answer came from.',
+    hint: 'The last 7 days, up to 100 per test. Browse by page and choose how many records to show.',
     empty: 'No test results yet.',
     time: 'Time',
     group: 'Group',
@@ -105,7 +105,6 @@ export default {
     failed: 'Failed',
     view: 'View',
     tried: 'Tried first: {accounts}',
-    loadMore: 'Load more',
     loading: 'Loading…',
     previewTitle: '{group} · {model}',
     previewLoading: 'Loading…',

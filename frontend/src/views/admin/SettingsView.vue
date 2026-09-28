@@ -7434,6 +7434,20 @@
                   {{ t('admin.settings.features.excelBpsImages.baseUrlHint') }}
                 </p>
               </div>
+              <div class="mt-5 space-y-3" data-testid="bps-image-policy">
+                <label class="input-label" for="bps-image-limit-policy">{{ t('admin.settings.features.excelBpsImages.policyTitle') }}</label>
+                <select id="bps-image-limit-policy" v-model="form.excel_bps_image_limit_policy" class="input">
+                  <option value="off">{{ t('admin.settings.features.excelBpsImages.policyOff') }}</option>
+                  <option value="auto_compact">{{ t('admin.settings.features.excelBpsImages.policyAuto') }}</option>
+                  <option value="warn">{{ t('admin.settings.features.excelBpsImages.policyWarn') }}</option>
+                </select>
+                <p class="text-xs text-gray-500">{{ t('admin.settings.features.excelBpsImages.policyHint') }}</p>
+                <div v-if="form.excel_bps_image_limit_policy === 'warn'" class="grid gap-4 sm:grid-cols-2">
+                  <label class="space-y-1"><span class="input-label">{{ t('admin.settings.features.excelBpsImages.policyWarning') }}</span><input id="bps-image-warning-remaining" v-model.number="form.excel_bps_image_warning_remaining" class="input" type="number" min="1" max="4096" required /></label>
+                  <label class="space-y-1"><span class="input-label">{{ t('admin.settings.features.excelBpsImages.policyReserve') }}</span><input id="bps-image-compact-reserve" v-model.number="form.excel_bps_image_compact_reserve" class="input" type="number" min="1" max="4096" required /></label>
+                  <p class="text-xs text-gray-500 sm:col-span-2">{{ t('admin.settings.features.excelBpsImages.policyMarginsHint') }}</p>
+                </div>
+              </div>
               <h4 class="mt-6 input-label">{{ t('admin.settings.features.excelBpsImages.requestLimitsTitle') }}</h4>
               <div class="mt-5 grid gap-4 sm:grid-cols-4">
                 <div class="space-y-1">
@@ -10473,6 +10487,9 @@ const form = reactive<SettingsForm>({
   excel_bps_image_max_requests: 128,
   excel_bps_image_max_image_mib: 20,
   excel_bps_image_max_images: 20,
+  excel_bps_image_limit_policy: "off" as "off" | "auto_compact" | "warn",
+  excel_bps_image_warning_remaining: 8,
+  excel_bps_image_compact_reserve: 3,
   excel_bps_image_max_total_mib: 32,
   excel_bps_image_storage_mib: 1024,
   excel_bps_image_storage_entries: 512,
@@ -11808,6 +11825,7 @@ async function saveSettings() {
     }
     if (
       !Number.isInteger(form.excel_bps_image_max_image_mib) || form.excel_bps_image_max_image_mib < 1 || form.excel_bps_image_max_image_mib > 128 ||
+      (form.excel_bps_image_limit_policy === 'warn' && (!Number.isInteger(form.excel_bps_image_warning_remaining) || !Number.isInteger(form.excel_bps_image_compact_reserve) || form.excel_bps_image_compact_reserve < 1 || form.excel_bps_image_compact_reserve >= form.excel_bps_image_warning_remaining || form.excel_bps_image_warning_remaining >= form.excel_bps_image_max_images)) ||
       !Number.isInteger(form.excel_bps_image_max_images) || form.excel_bps_image_max_images < 1 || form.excel_bps_image_max_images > 4096 ||
       !Number.isInteger(form.excel_bps_image_max_total_mib) || form.excel_bps_image_max_total_mib < 1 || form.excel_bps_image_max_total_mib > 128 ||
       !Number.isInteger(form.excel_bps_image_storage_mib) || form.excel_bps_image_storage_mib < 1 || form.excel_bps_image_storage_mib > 16384 ||
@@ -12326,6 +12344,10 @@ async function saveSettings() {
       excel_bps_image_max_requests: form.excel_bps_image_max_requests,
       excel_bps_image_max_image_mib: form.excel_bps_image_max_image_mib,
       excel_bps_image_max_images: form.excel_bps_image_max_images,
+      excel_bps_image_limit_policy: form.excel_bps_image_limit_policy,
+      excel_bps_image_warning_remaining: form.excel_bps_image_warning_remaining,
+      excel_bps_image_compact_reserve: form.excel_bps_image_compact_reserve,
+
       excel_bps_image_max_total_mib: form.excel_bps_image_max_total_mib,
       excel_bps_image_storage_mib: form.excel_bps_image_storage_mib,
       excel_bps_image_storage_entries: form.excel_bps_image_storage_entries,

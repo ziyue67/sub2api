@@ -776,6 +776,10 @@ export interface SystemSettings {
   excel_bps_image_max_requests: number;
   excel_bps_image_max_image_mib: number;
   excel_bps_image_max_images: number;
+  excel_bps_image_limit_policy: "off" | "auto_compact" | "warn";
+  excel_bps_image_warning_remaining: number;
+  excel_bps_image_compact_reserve: number;
+
   excel_bps_image_max_total_mib: number;
   excel_bps_image_storage_mib: number;
   excel_bps_image_storage_entries: number;
@@ -1110,6 +1114,10 @@ export interface UpdateSettingsRequest {
   excel_bps_image_max_requests?: number;
   excel_bps_image_max_image_mib?: number;
   excel_bps_image_max_images?: number;
+  excel_bps_image_limit_policy?: "off" | "auto_compact" | "warn";
+  excel_bps_image_warning_remaining?: number;
+  excel_bps_image_compact_reserve?: number;
+
   excel_bps_image_max_total_mib?: number;
   excel_bps_image_storage_mib?: number;
   excel_bps_image_storage_entries?: number;

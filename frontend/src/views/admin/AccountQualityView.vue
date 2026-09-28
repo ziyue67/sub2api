@@ -194,7 +194,9 @@ const accountNames = computed(() => {
 const accounts = ref<AccountListItem[]>([]), accountsLoading = ref(false)
 const search = ref(''), accountPage = ref(1), accountPages = ref(1)
 const accountGroup = ref(''), accountType = ref(''), accountsError = ref(''), selectingAccounts = ref(false)
-const existingAccountIds = computed(() => new Set(plans.value.map(plan => plan.account_id)))
+const existingAccountIds = computed(() => new Set(plans.value.filter(plan =>
+  (plan.pelican_config?.quality?.action === 'enable_bps') === (form.value.pelican_config.quality.action === 'enable_bps')
+).map(plan => plan.account_id)))
 const selectableAccounts = computed(() => accounts.value.filter(account => !accountDisabledReason(account)))
 let accountSelectionRequest = 0
 const accountFilters = () => ({ search: search.value.trim(), group: accountGroup.value || undefined, type: accountType.value || undefined, lite: 'true', sort_by: 'id', sort_order: 'asc' as const })
@@ -243,7 +245,7 @@ const identity = () => auth.user ? `${auth.user.id}:${auth.user.role}` : ''
 const refreshing = computed(() => store.rulesLoading || store.operationsLoading)
 const enabledCount = computed(() => plans.value.filter(p => p.enabled).length)
 // 开 BPS 被 403 记录挡住或账号不支持 BPS 时，规则无法自动处理，也列为待处理。
-const attentionActions = new Set(['restore_conflict', 'action_error', 'bps_blocked_403', 'bps_unsupported'])
+const attentionActions = new Set(['restore_conflict', 'action_conflict', 'action_error', 'bps_blocked_403', 'bps_unsupported'])
 const attentionCount = computed(() => {
   const latest = new Map<number, QualityOperation>()
   for (const operation of operations.value) if (!latest.has(operation.plan_id)) latest.set(operation.plan_id, operation)
@@ -443,6 +445,7 @@ function closeForm() {
 watch(() => form.value.pelican_config.quality.action, (next, prev) => {
   if (editing.value || bulkEditing.value || (next !== 'enable_bps' && prev !== 'enable_bps')) return
   form.value.pelican_config.quality.auto_restore = next === 'enable_bps'
+  selectedAccounts.value = selectedAccounts.value.filter(id => !existingAccountIds.value.has(id))
 }, { flush: 'sync' })
 function useCandy() { form.value.pelican_config.prompt = CANDY_PROMPT; form.value.pelican_config.quality.expected_answer = '21' }
 function selectQuestionKind() {

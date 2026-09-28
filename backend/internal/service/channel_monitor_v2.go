@@ -37,6 +37,7 @@ type ChannelMonitorV2PlatformConfig struct {
 }
 
 type ChannelMonitorV2Config struct {
+	CandyProbes            []ChannelMonitorV2CandyProbe     `json:"candy_probes,omitempty"`
 	Version                int                              `json:"version"`
 	Enabled                bool                             `json:"enabled"`
 	RefreshIntervalSeconds int                              `json:"refresh_interval_seconds"`
@@ -89,6 +90,7 @@ type ChannelMonitorV2Filter struct {
 }
 
 type ChannelMonitorV2Metric struct {
+	HasSamples               bool                    `json:"has_samples"`
 	SuccessRequests          int64                   `json:"success_requests"`
 	ErrorRequests            int64                   `json:"error_requests"`
 	RequestCount             int64                   `json:"request_count"`
@@ -244,13 +246,15 @@ type ChannelMonitorV2ModelRow struct {
 }
 
 type ChannelMonitorV2MatrixRow struct {
-	Platform  string                       `json:"platform"`
-	GroupID   *int64                       `json:"group_id,omitempty"`
-	GroupName string                       `json:"group_name,omitempty"`
-	Model     string                       `json:"model,omitempty"`
-	Metrics   ChannelMonitorV2Metric       `json:"metrics"`
-	Health    ChannelMonitorV2Health       `json:"health"`
-	Buckets   []ChannelMonitorV2TrendPoint `json:"buckets"`
+	Candy               *ChannelMonitorV2CandyHistory `json:"candy,omitempty"`
+	GroupRateMultiplier *float64                      `json:"group_rate_multiplier,omitempty"`
+	Platform            string                        `json:"platform"`
+	GroupID             *int64                        `json:"group_id,omitempty"`
+	GroupName           string                        `json:"group_name,omitempty"`
+	Model               string                        `json:"model,omitempty"`
+	Metrics             ChannelMonitorV2Metric        `json:"metrics"`
+	Health              ChannelMonitorV2Health        `json:"health"`
+	Buckets             []ChannelMonitorV2TrendPoint  `json:"buckets"`
 }
 
 type ChannelMonitorV2Matrix struct {
@@ -376,6 +380,7 @@ func ChannelMonitorV2BootstrapProgress(now, coveredFrom time.Time, hasData bool)
 }
 
 type ChannelMonitorV2Service struct {
+	candy    *ChannelMonitorV2CandyService
 	repo     ChannelMonitorV2Repository
 	settings channelMonitorRuntimeReader
 	now      func() time.Time
@@ -435,6 +440,11 @@ func (s *ChannelMonitorV2Service) getEnabledConfig(ctx context.Context) (*Channe
 func (s *ChannelMonitorV2Service) UpdateConfig(ctx context.Context, cfg ChannelMonitorV2Config, expectedVersion int, actorID int64) (*ChannelMonitorV2Config, error) {
 	if err := normalizeChannelMonitorV2Config(&cfg); err != nil {
 		return nil, err
+	}
+	if s.candy != nil {
+		if err := s.candy.validateGroups(ctx, cfg.CandyProbes); err != nil {
+			return nil, err
+		}
 	}
 	cfg.UpdatedBy = &actorID
 	return s.repo.UpdateConfig(ctx, cfg, expectedVersion)
@@ -538,6 +548,11 @@ func (s *ChannelMonitorV2Service) Matrix(ctx context.Context, filter ChannelMoni
 			}
 		}
 	}
+	if s.candy != nil && matrix != nil {
+		if err := s.candy.attachHistory(ctx, matrix, cfg, admin); err != nil {
+			return nil, err
+		}
+	}
 	return matrix, nil
 }
 
@@ -625,6 +640,7 @@ func redactChannelMonitorV2PublicConfig(cfg *ChannelMonitorV2Config) {
 	cfg.GroupIDs = nil
 	cfg.IgnoredErrorCategories = nil
 	cfg.UpdatedBy = nil
+	cfg.CandyProbes = nil
 	for i := range cfg.Platforms {
 		cfg.Platforms[i].Models = nil
 	}
@@ -638,6 +654,7 @@ func redactChannelMonitorV2Metric(m *ChannelMonitorV2Metric, hideThroughput bool
 	if m == nil {
 		return
 	}
+	m.HasSamples = m.RequestCount > 0
 	m.SuccessRequests = 0
 	m.ErrorRequests = 0
 	m.RequestCount = 0
@@ -748,6 +765,9 @@ func channelMonitorV2TopUsersWithSelf(items []ChannelMonitorV2UserRow, selfIndex
 }
 
 func normalizeChannelMonitorV2Config(cfg *ChannelMonitorV2Config) error {
+	if err := normalizeChannelMonitorV2CandyProbes(cfg.CandyProbes); err != nil {
+		return err
+	}
 	if cfg.RefreshIntervalSeconds == 0 {
 		cfg.RefreshIntervalSeconds = 300
 	}

@@ -1,6 +1,9 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/features/channel-monitor-v2/__tests__/MonitorCandySettings.spec.ts \
+	src/features/channel-monitor-v2/__tests__/MonitorStatusCards.spec.ts \
+	src/features/channel-monitor-v2/__tests__/monitorCards.spec.ts \
 	src/views/admin/__tests__/AccountQualityView.spec.ts \
 	src/utils/__tests__/qualityRulePatch.spec.ts \
 	src/stores/__tests__/accountQuality.spec.ts \

@@ -1,6 +1,49 @@
 /** Channel Monitor V2 (user + admin passive monitor UI) */
 export default {
   channelMonitorV2: {
+    "cards": {
+        "showCards": "卡片视图",
+        "showAnalytics": "详细数据",
+        "passive": "V2 被动用量 · 缓存率与可用率",
+        "groupRate": "分组倍率 {value}x",
+        "cache": "缓存率",
+        "availability": "可用率",
+        "ttft": "首 TOKEN",
+        "windows": "近 {count} 个时间段",
+        "refreshIn": "{seconds}s 后刷新",
+        "trafficHistory": "真实请求健康状态时间线",
+        "health": {
+            "healthy": "正常",
+            "warning": "降级",
+            "critical": "异常",
+            "unknown": "样本不足"
+        }
+    },
+    "candy": {
+        "invalid": '请填写检测模型, 间隔必须是 1-1440 的整数分钟.',
+        "title": "降智状态",
+        "cadence": "每 {minutes} 分钟检测",
+        "window": "近 60 分钟 · 仅显示已检测记录",
+        "waiting": "等待检测",
+        "legend": "21 绿 · 其他黄 · 检测失败红",
+        "states": {
+            "correct": "正常",
+            "incorrect": "答案异常",
+            "error": "检测失败",
+            "unknown": "暂无检测",
+            "stale": "检测已过期"
+        },
+        "settingsTitle": "分组糖果逻辑检测",
+        "settingsHint": "按 /admin/pelican-tests 的分组调度方式执行, 每次由真实网关调度器选择账号. 使用账号测试的内置糖果题, 不绑定单个账号.",
+        "costHint": "主动检测会消耗上游额度. 默认不启用; 仅在系统启用 V2 数据监控且分组在展示范围内时运行. 最多 64 个分组, 每实例同时检测 4 个分组, 单次最多 90 秒.",
+        "model": "检测模型",
+        "modelHint": "填写该分组可用的模型 ID",
+        "effort": "推理强度",
+        "interval": "检测间隔 (分钟)",
+        "selectGroup": "选择分组",
+        "addGroup": "添加检测分组",
+        "ruleHint": "21、21个、答案是21个等明确答案记为正确, 其他答案记为错误. 检测失败单独标记, 不计为答错; 不因答错自动禁用账号. 保存后生效. 公开页仅展示状态和时间, 检测记录保留 24 小时. 本次测试不代表模型的永久能力."
+    },
     title: '渠道监控',
     updating: '正在更新数据',
     updatedTo: '更新至 {time}',

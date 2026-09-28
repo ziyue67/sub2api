@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,11 +45,10 @@ func (r *groupTestHandlerRepo) DeletePlan(_ context.Context, id int64) (bool, er
 func (r *groupTestHandlerRepo) Claim(context.Context, *service.PelicanGroupTestPlan, time.Time, time.Time, *time.Time) (bool, error) {
 	return r.claimOK, nil
 }
-func (r *groupTestHandlerRepo) ListResults(_ context.Context, _, _ int64, limit int) ([]*service.PelicanGroupTestResult, error) {
-	if len(r.results) > limit {
-		return r.results[:limit], nil
-	}
-	return r.results, nil
+func (r *groupTestHandlerRepo) ListResults(_ context.Context, _ int64, offset, limit int) ([]*service.PelicanGroupTestResult, int64, error) {
+	start := min(offset, len(r.results))
+	end := min(start+limit, len(r.results))
+	return r.results[start:end], int64(len(r.results)), nil
 }
 func (r *groupTestHandlerRepo) GetResult(context.Context, int64) (*service.PelicanGroupTestResult, error) {
 	return nil, nil
@@ -108,9 +108,26 @@ func TestPelicanGroupTestHandlerStatusCodes(t *testing.T) {
 	require.Equal(t, http.StatusConflict, w.Code, "a run in progress is reported, not queued twice")
 	require.Contains(t, w.Body.String(), "PELICAN_GROUP_TEST_PLAN_RUNNING")
 
-	w = serveGroupTest(h.ListResults, http.MethodGet, "/results", "/results?limit=20", "")
+	w = serveGroupTest(h.ListResults, http.MethodGet, "/results", "/results?page=2&page_size=20", "")
 	require.Equal(t, http.StatusOK, w.Code)
-	require.Contains(t, w.Body.String(), `"next_cursor":41`)
-	require.Equal(t, http.StatusBadRequest, serveGroupTest(h.ListResults, http.MethodGet, "/results", "/results?before_id=-1", "").Code)
+	var page struct {
+		Data struct {
+			Items    []*service.PelicanGroupTestResult `json:"items"`
+			Total    int64                             `json:"total"`
+			Page     int                               `json:"page"`
+			PageSize int                               `json:"page_size"`
+			Pages    int                               `json:"pages"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+	require.EqualValues(t, 60, page.Data.Total)
+	require.Equal(t, 2, page.Data.Page)
+	require.Equal(t, 20, page.Data.PageSize)
+	require.Equal(t, 3, page.Data.Pages)
+	require.Len(t, page.Data.Items, 20)
+	require.EqualValues(t, 40, page.Data.Items[0].ID)
+	for _, query := range []string{"plan_id=-1", "plan_id=abc"} {
+		require.Equal(t, http.StatusBadRequest, serveGroupTest(h.ListResults, http.MethodGet, "/results", "/results?"+query, "").Code)
+	}
 	require.Equal(t, http.StatusNotFound, serveGroupTest(h.GetResult, http.MethodGet, "/results/:id", "/results/5", "").Code)
 }

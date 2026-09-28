@@ -145,6 +145,18 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if settings.ExcelBPSImageTTLMinutes == 0 {
 		settings.ExcelBPSImageTTLMinutes = imageRelay.Limits.TTLMinutes
 	}
+	if settings.ExcelBPSImageLimitPolicy == "" {
+		settings.ExcelBPSImageLimitPolicy = "off"
+	}
+	if settings.ExcelBPSImageWarningRemaining == 0 {
+		settings.ExcelBPSImageWarningRemaining = 8
+	}
+	if settings.ExcelBPSImageCompactReserve == 0 {
+		settings.ExcelBPSImageCompactReserve = 3
+	}
+	if err := validateExcelBPSImagePolicy(settings.ExcelBPSImageLimitPolicy, settings.ExcelBPSImageWarningRemaining, settings.ExcelBPSImageCompactReserve, settings.ExcelBPSImageMaxImages); err != nil {
+		return nil, infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_POLICY", err.Error())
+	}
 	if err := settings.imageRelayLimits().Validate(); err != nil {
 		return nil, infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_LIMITS", err.Error())
 	}
@@ -681,6 +693,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyExcelBPSImageBudgetMiB] = strconv.Itoa(settings.ExcelBPSImageBudgetMiB)
 	updates[SettingKeyExcelBPSImageMaxRequests] = strconv.Itoa(settings.ExcelBPSImageMaxRequests)
 	updates[SettingKeyExcelBPSImageMaxImageMiB] = strconv.Itoa(settings.ExcelBPSImageMaxImageMiB)
+	updates[SettingKeyExcelBPSImageLimitPolicy] = settings.ExcelBPSImageLimitPolicy
+	updates[SettingKeyExcelBPSImageWarningRemaining] = strconv.Itoa(settings.ExcelBPSImageWarningRemaining)
+	updates[SettingKeyExcelBPSImageCompactReserve] = strconv.Itoa(settings.ExcelBPSImageCompactReserve)
 	updates[SettingKeyExcelBPSImageMaxImages] = strconv.Itoa(settings.ExcelBPSImageMaxImages)
 	updates[SettingKeyExcelBPSImageMaxTotalMiB] = strconv.Itoa(settings.ExcelBPSImageMaxTotalMiB)
 	updates[SettingKeyExcelBPSImageStorageMiB] = strconv.Itoa(settings.ExcelBPSImageStorageMiB)

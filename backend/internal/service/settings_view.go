@@ -337,19 +337,22 @@ type SystemSettings struct {
 	RequestCaptureQuotaMiB      int64
 	RequestCaptureRetentionDays int
 	// 使用详情中长上下文计费 x2 徽标的展示开关（默认开启）
-	ExcelBPSImageMode           string
-	UsageShowLongContextBadge   bool
-	ExcelBPSImageRelayEnabled   bool
-	ExcelBPSImageBaseURL        string
-	ExcelBPSImageBodyLimitMiB   int
-	ExcelBPSImageBudgetMiB      int
-	ExcelBPSImageMaxRequests    int
-	ExcelBPSImageMaxImageMiB    int
-	ExcelBPSImageMaxImages      int
-	ExcelBPSImageMaxTotalMiB    int
-	ExcelBPSImageStorageMiB     int
-	ExcelBPSImageStorageEntries int
-	ExcelBPSImageTTLMinutes     int
+	ExcelBPSImageMode             string
+	UsageShowLongContextBadge     bool
+	ExcelBPSImageRelayEnabled     bool
+	ExcelBPSImageBaseURL          string
+	ExcelBPSImageBodyLimitMiB     int
+	ExcelBPSImageBudgetMiB        int
+	ExcelBPSImageMaxRequests      int
+	ExcelBPSImageMaxImageMiB      int
+	ExcelBPSImageMaxImages        int
+	ExcelBPSImageLimitPolicy      string
+	ExcelBPSImageWarningRemaining int
+	ExcelBPSImageCompactReserve   int
+	ExcelBPSImageMaxTotalMiB      int
+	ExcelBPSImageStorageMiB       int
+	ExcelBPSImageStorageEntries   int
+	ExcelBPSImageTTLMinutes       int
 }
 
 type DefaultSubscriptionSetting struct {

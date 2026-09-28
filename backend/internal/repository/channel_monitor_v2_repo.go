@@ -21,16 +21,16 @@ func NewChannelMonitorV2Repository(db *sql.DB) service.ChannelMonitorV2Repositor
 
 func (r *channelMonitorV2Repository) GetConfig(ctx context.Context) (*service.ChannelMonitorV2Config, error) {
 	var cfg service.ChannelMonitorV2Config
-	var platforms, thresholds []byte
+	var platforms, thresholds, probes []byte
 	err := r.db.QueryRowContext(ctx, `
 		SELECT version, enabled, refresh_interval_seconds, platforms, group_ids,
 		       COALESCE(ignored_error_categories, '{}'),
-		       COALESCE(health_thresholds, '{}'::jsonb),
+		       COALESCE(health_thresholds, '{}'::jsonb), candy_probes,
 		       updated_at, updated_by
 		FROM channel_monitor_v2_config WHERE id = 1`).Scan(
 		&cfg.Version, &cfg.Enabled, &cfg.RefreshIntervalSeconds, &platforms,
 		pq.Array(&cfg.GroupIDs), pq.Array(&cfg.IgnoredErrorCategories),
-		&thresholds,
+		&thresholds, &probes,
 		&cfg.UpdatedAt, &cfg.UpdatedBy,
 	)
 	if err != nil {
@@ -41,6 +41,9 @@ func (r *channelMonitorV2Repository) GetConfig(ctx context.Context) (*service.Ch
 	}
 	if cfg.IgnoredErrorCategories == nil {
 		cfg.IgnoredErrorCategories = []string{}
+	}
+	if err := json.Unmarshal(probes, &cfg.CandyProbes); err != nil {
+		return nil, err
 	}
 	cfg.HealthThresholds = service.DefaultChannelMonitorV2HealthThresholds()
 	if len(thresholds) > 0 {
@@ -63,23 +66,27 @@ func (r *channelMonitorV2Repository) UpdateConfig(ctx context.Context, cfg servi
 	if err != nil {
 		return nil, err
 	}
+	probes, err := json.Marshal(cfg.CandyProbes)
+	if err != nil {
+		return nil, err
+	}
 	var updated service.ChannelMonitorV2Config
-	var raw, rawThresholds []byte
+	var raw, rawThresholds, rawProbes []byte
 	err = r.db.QueryRowContext(ctx, `
 		UPDATE channel_monitor_v2_config
 		SET version = version + 1, enabled = $1, refresh_interval_seconds = $2,
 		    platforms = $3, group_ids = $4, ignored_error_categories = $5,
-		    health_thresholds = $6, updated_by = $7, updated_at = NOW()
+		    health_thresholds = $6, updated_by = $7, updated_at = NOW(), candy_probes = $9
 		WHERE id = 1 AND version = $8
 		RETURNING version, enabled, refresh_interval_seconds, platforms, group_ids,
 		          COALESCE(ignored_error_categories, '{}'),
-		          COALESCE(health_thresholds, '{}'::jsonb),
+		          COALESCE(health_thresholds, '{}'::jsonb), candy_probes,
 		          updated_at, updated_by`,
 		cfg.Enabled, cfg.RefreshIntervalSeconds, platforms, pq.Array(cfg.GroupIDs),
-		pq.Array(cfg.IgnoredErrorCategories), thresholds, cfg.UpdatedBy, expectedVersion,
+		pq.Array(cfg.IgnoredErrorCategories), thresholds, cfg.UpdatedBy, expectedVersion, probes,
 	).Scan(&updated.Version, &updated.Enabled, &updated.RefreshIntervalSeconds, &raw,
 		pq.Array(&updated.GroupIDs), pq.Array(&updated.IgnoredErrorCategories),
-		&rawThresholds,
+		&rawThresholds, &rawProbes,
 		&updated.UpdatedAt, &updated.UpdatedBy)
 	if err == sql.ErrNoRows {
 		return nil, service.ErrChannelMonitorV2ConfigConflict
@@ -92,6 +99,9 @@ func (r *channelMonitorV2Repository) UpdateConfig(ctx context.Context, cfg servi
 	}
 	if updated.IgnoredErrorCategories == nil {
 		updated.IgnoredErrorCategories = []string{}
+	}
+	if err := json.Unmarshal(rawProbes, &updated.CandyProbes); err != nil {
+		return nil, err
 	}
 	updated.HealthThresholds = service.DefaultChannelMonitorV2HealthThresholds()
 	_ = json.Unmarshal(rawThresholds, &updated.HealthThresholds)
@@ -462,6 +472,10 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 		if key.groupID > 0 {
 			groupID := key.groupID
 			row.GroupID = &groupID
+			if info, ok := groupInfo[groupID]; ok {
+				rate := info.rate
+				row.GroupRateMultiplier = &rate
+			}
 		}
 		bucketKeys := make([]string, 0, len(acc.buckets))
 		for bucket := range acc.buckets {
@@ -638,6 +652,7 @@ func channelMonitorV2RestrictedGroupScopeEmpty(filter service.ChannelMonitorV2Fi
 }
 
 type channelMonitorV2GroupInfo struct {
+	rate     float64
 	name     string
 	platform string
 }
@@ -664,7 +679,7 @@ func (r *channelMonitorV2Repository) loadChannelMonitorV2GroupInfo(ctx context.C
 	if len(groupIDs) == 0 {
 		return out, nil
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(name, ''), lower(COALESCE(NULLIF(TRIM(platform), ''), 'unknown')) FROM groups WHERE id = ANY($1) AND deleted_at IS NULL AND status = 'active'`, pq.Array(groupIDs))
+	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(name, ''), lower(COALESCE(NULLIF(TRIM(platform), ''), 'unknown')), rate_multiplier FROM groups WHERE id = ANY($1) AND deleted_at IS NULL AND status = 'active'`, pq.Array(groupIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -672,10 +687,11 @@ func (r *channelMonitorV2Repository) loadChannelMonitorV2GroupInfo(ctx context.C
 	for rows.Next() {
 		var id int64
 		var name, platform string
-		if err := rows.Scan(&id, &name, &platform); err != nil {
+		var rate float64
+		if err := rows.Scan(&id, &name, &platform, &rate); err != nil {
 			return nil, err
 		}
-		out[id] = channelMonitorV2GroupInfo{name: name, platform: platform}
+		out[id] = channelMonitorV2GroupInfo{name: name, platform: platform, rate: rate}
 	}
 	return out, rows.Err()
 }

@@ -176,12 +176,21 @@ func (r *ImageRelay) SetPublicOrigin(baseURL string) error {
 }
 
 func (r *ImageRelay) Rewrite(raw []byte, scope string) ([]byte, error) {
+	return r.RewriteWithImageLimit(raw, scope, 0)
+}
+
+// RewriteWithImageLimit permits a separately validated history/new-input pair.
+// It does not modify the shared relay configuration or any byte/storage limit.
+func (r *ImageRelay) RewriteWithImageLimit(raw []byte, scope string, maxImages int) ([]byte, error) {
 	if r == nil {
 		return raw, nil
 	}
 	r.mu.Lock()
 	baseURL, closed, limits := r.baseURL, r.closed, r.limits
 	r.mu.Unlock()
+	if maxImages > 0 {
+		limits.MaxImages = maxImages
+	}
 	if closed {
 		return nil, ErrImageRelayStorage
 	}

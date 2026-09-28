@@ -170,26 +170,32 @@ func (r *pelicanGroupTestRepository) PruneExpiredResults(ctx context.Context, be
 const pelicanGroupTestResultSelect = `SELECT r.id, r.plan_id, p.group_id, g.name, COALESCE(r.account_id, 0), r.account_name, r.attempts,
  r.status, r.error_message, r.latency_ms, r.pelican_config, r.started_at, r.finished_at, r.created_at`
 
-func (r *pelicanGroupTestRepository) ListResults(ctx context.Context, planID, beforeID int64, limit int) ([]*service.PelicanGroupTestResult, error) {
-	rows, err := r.db.QueryContext(ctx, pelicanGroupTestResultSelect+`
+const pelicanGroupTestResultFrom = `
  FROM pelican_group_test_results r
  JOIN pelican_group_test_plans p ON p.id = r.plan_id
  JOIN groups g ON g.id = p.group_id
- WHERE ($1::bigint = 0 OR r.plan_id = $1) AND ($2::bigint = 0 OR r.id < $2)
- ORDER BY r.id DESC LIMIT $3`, planID, beforeID, limit)
+ WHERE ($1::bigint = 0 OR r.plan_id = $1)`
+
+func (r *pelicanGroupTestRepository) ListResults(ctx context.Context, planID int64, offset, limit int) ([]*service.PelicanGroupTestResult, int64, error) {
+	var total int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*)`+pelicanGroupTestResultFrom, planID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := r.db.QueryContext(ctx, pelicanGroupTestResultSelect+pelicanGroupTestResultFrom+`
+ ORDER BY r.id DESC LIMIT $2 OFFSET $3`, planID, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = rows.Close() }()
 	results := make([]*service.PelicanGroupTestResult, 0, limit)
 	for rows.Next() {
 		result, err := scanPelicanGroupTestResult(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		results = append(results, result)
 	}
-	return results, rows.Err()
+	return results, total, rows.Err()
 }
 
 func (r *pelicanGroupTestRepository) GetResult(ctx context.Context, id int64) (*service.PelicanGroupTestResult, error) {

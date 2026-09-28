@@ -11,6 +11,10 @@ import (
 )
 
 const (
+	SettingKeyExcelBPSImageLimitPolicy      = "excel_bps_image_limit_policy"
+	SettingKeyExcelBPSImageWarningRemaining = "excel_bps_image_warning_remaining"
+	SettingKeyExcelBPSImageCompactReserve   = "excel_bps_image_compact_reserve"
+
 	SettingKeyExcelBPSImageMode           = "excel_bps_image_mode"
 	ExcelBPSImageModeRelay                = "relay"
 	ExcelBPSImageModeNative               = "native"
@@ -32,13 +36,16 @@ const (
 )
 
 type ExcelBPSImageRelaySettings struct {
-	Mode         string
-	Enabled      bool
-	BaseURL      string
-	BodyLimitMiB int
-	BudgetMiB    int
-	MaxRequests  int
-	Limits       basispoints.ImageRelayLimits
+	Mode             string
+	Enabled          bool
+	BaseURL          string
+	BodyLimitMiB     int
+	BudgetMiB        int
+	MaxRequests      int
+	Policy           string
+	WarningRemaining int
+	CompactReserve   int
+	Limits           basispoints.ImageRelayLimits
 }
 
 func normalizeExcelBPSImageRelaySettings(enabled bool, baseURL, mode string) (ExcelBPSImageRelaySettings, error) {
@@ -96,6 +103,7 @@ func (s *SettingService) GetExcelBPSImageRelaySettings(ctx context.Context) (Exc
 	dbCtx, cancel := context.WithTimeout(ctx, gatewayForwardingDBTimeout)
 	defer cancel()
 	values, err := s.settingRepo.GetMultiple(dbCtx, []string{
+		SettingKeyExcelBPSImageLimitPolicy, SettingKeyExcelBPSImageWarningRemaining, SettingKeyExcelBPSImageCompactReserve,
 		SettingKeyExcelBPSImageMode, SettingKeyExcelBPSImageRelayEnabled, SettingKeyExcelBPSImageBaseURL,
 		SettingKeyExcelBPSImageBodyLimitMiB, SettingKeyExcelBPSImageBudgetMiB, SettingKeyExcelBPSImageMaxRequests,
 		SettingKeyExcelBPSImageMaxImageMiB, SettingKeyExcelBPSImageMaxImages, SettingKeyExcelBPSImageMaxTotalMiB, SettingKeyExcelBPSImageStorageMiB, SettingKeyExcelBPSImageStorageEntries, SettingKeyExcelBPSImageTTLMinutes,
@@ -120,6 +128,20 @@ func (s *SettingService) GetExcelBPSImageRelaySettings(ctx context.Context) (Exc
 	settings.Limits, err = parseExcelBPSImageLimits(values)
 	if err != nil {
 		return ExcelBPSImageRelaySettings{}, infraerrors.ServiceUnavailable("EXCEL_BPS_IMAGE_SETTINGS_UNAVAILABLE", "Excel BPS image limits are unavailable")
+	}
+	settings.Policy = values[SettingKeyExcelBPSImageLimitPolicy]
+	settings.WarningRemaining, err = parseExcelBPSImageCapacity(values[SettingKeyExcelBPSImageWarningRemaining], 8)
+	if err == nil {
+		settings.CompactReserve, err = parseExcelBPSImageCapacity(values[SettingKeyExcelBPSImageCompactReserve], 3)
+	}
+	if settings.Policy == "" {
+		settings.Policy = "off"
+	}
+	if err == nil {
+		err = validateExcelBPSImagePolicy(settings.Policy, settings.WarningRemaining, settings.CompactReserve, settings.Limits.MaxImages)
+	}
+	if err != nil {
+		return ExcelBPSImageRelaySettings{}, infraerrors.ServiceUnavailable("EXCEL_BPS_IMAGE_SETTINGS_UNAVAILABLE", "Excel BPS image policy is invalid")
 	}
 	return settings, nil
 }
@@ -163,4 +185,19 @@ func (s *SystemSettings) imageRelayLimits() basispoints.ImageRelayLimits {
 		StorageEntries: s.ExcelBPSImageStorageEntries,
 		TTLMinutes:     s.ExcelBPSImageTTLMinutes,
 	}
+}
+
+func validateExcelBPSImagePolicy(policy string, warning, reserve, limit int) error {
+	switch policy {
+	case "off", "auto_compact", "warn":
+	default:
+		return fmt.Errorf("unknown image limit policy")
+	}
+	if warning < 1 || warning > 4096 || reserve < 1 || reserve > 4096 {
+		return fmt.Errorf("image policy margins must be 1-4096")
+	}
+	if policy == "warn" && (reserve >= warning || warning >= limit) {
+		return fmt.Errorf("image policy requires reserve < warning remaining < image limit")
+	}
+	return nil
 }

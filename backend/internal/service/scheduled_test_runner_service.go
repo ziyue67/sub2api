@@ -22,7 +22,8 @@ type ScheduledTestRunnerService struct {
 	judgeQuality   func(context.Context, int64, *PelicanTestConfig, string) *QualityJudgment
 	runPelican     func(context.Context, int64, string, *PelicanTestConfig) (*ScheduledTestResult, error)
 	// groupTests runs the Pelican group tests on the same tick; nil disables them.
-	groupTests *PelicanGroupTestService
+	groupTests   *PelicanGroupTestService
+	candyMonitor *ChannelMonitorV2CandyService
 
 	cron      *cron.Cron
 	startOnce sync.Once
@@ -103,7 +104,8 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 	s.groupTests.Cleanup(ctx, now)
 	// Group tests run beside the account plans rather than after them.
 	var groupRuns sync.WaitGroup
-	groupRuns.Add(1)
+	groupRuns.Add(2)
+	go func() { defer groupRuns.Done(); s.candyMonitor.RunDue(ctx, now) }()
 	go func() {
 		defer groupRuns.Done()
 		s.groupTests.RunDue(ctx, now)
