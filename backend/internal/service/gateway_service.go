@@ -630,10 +630,23 @@ type AccountSelectionResult struct {
 	AdmissionMaxConcurrencySet bool
 	// stickySessionHit 标记账号来自会话粘性绑定命中，供非高级调度路径回填决策标签。
 	stickySessionHit bool
+	// pluginScheduling 携带调度插件的提名结果（未启用调度插件时为 nil）。
+	// 与 stickySessionHit 同理：它在选择序列生成时写入，由调度栈在返回前
+	// 回填到 OpenAIAccountScheduleDecision 上用于观测，不参与任何准入决策。
+	pluginScheduling *pluginSchedulingMark
 	// profitGate 携带本次选号真实生效的利润门（无门为 nil）。门安装在调度栈的
 	// 局部 ctx 上，handler 必须经 ContextWithSelectionProfitGate 重放后才能在
 	// 调度栈之外做抢槽后终检与准入后粘性绑定。
 	profitGate *openAIProfitControlGate
+}
+
+// pluginSchedulingMark 是一次插件提名的可观测记录。
+type pluginSchedulingMark struct {
+	nominatedAccountID int64
+	affinityHit        bool
+	// selected 表示最终选中的账号就是插件提名的那个。提名了但没选上
+	// （抢槽失败等）时该值为 false，此时不应把选号归因于插件。
+	selected bool
 }
 
 // selectionAdmissionMaxConcurrency snapshots the limit that owns a

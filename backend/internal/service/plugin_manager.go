@@ -1077,8 +1077,13 @@ func (m *PluginManager) buildHostServices(installation *PluginInstallation) plug
 // 唯一放宽账号可见性的通用入口：为需要账号访问的新能力扩权只需在此加一行，无需新增
 // RPC 或按插件定制目录实现。授予的范围以能力 id 为准并被固定，清单无法通过声明不同的
 // platform/account_type 来扩大它。
+//
+// 调度能力需要账号目录：插件必须能读到每个账号"是否可调度"以及当前在途负载，
+// 否则它会对着一个正在限流的账号反复提名。可见范围与出站传输完全一致（都是
+// OpenAI OAuth 账号），不额外扩权。
 var pluginCapabilityAccountScopeGrants = map[string]pluginAccountScopeEntry{
-	PluginCapabilityOpenAIOAuthOutbound: {Platform: PlatformOpenAI, AccountType: AccountTypeOAuth},
+	PluginCapabilityOpenAIOAuthOutbound:     {Platform: PlatformOpenAI, AccountType: AccountTypeOAuth},
+	PluginCapabilityOpenAIAccountScheduling: {Platform: PlatformOpenAI, AccountType: AccountTypeOAuth},
 }
 
 // pluginAccountScopeFromManifest 从（安装期已校验的）清单声明能力推导出账号可见范围

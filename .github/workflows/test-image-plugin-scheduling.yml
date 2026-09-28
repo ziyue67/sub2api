@@ -1,0 +1,110 @@
+name: Test Image (scheduling capability)
+
+# 为「插件调度能力」分支构建测试镜像，推送到 GHCR 与 Docker Hub 的 test 标签。
+#
+# 为什么需要它：调度能力是宿主侧改动，插件包本身装不进镜像（管理后台上传），
+# 所以想试用完整能力必须有一个"已经编译进调度能力"的镜像。手工构建需要
+# Go + Node 工具链与十几分钟，不适合让用户自己做。
+#
+# 标签策略 —— 全部带 test 后缀，绝不覆盖正式镜像：
+#   ghcr.io/<owner>/sub2api:test-plugin-scheduling
+#   ghcr.io/<owner>/sub2api:test-plugin-scheduling-<sha>
+#   docker.io/<user>/sub2api:test-plugin-scheduling（配了 DOCKERHUB_* 才推）
+#
+# 正式镜像仍由 dockerhub.yml / release.yml 在 main / tag 上发布，两者互不干扰。
+on:
+  push:
+    branches:
+      - feat/plugin-scheduling-capability
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  TEST_TAG: test-plugin-scheduling
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read version
+        id: version
+        # 版本号取自 backend/cmd/server/VERSION（与正式镜像同源），
+        # 但镜像标签会带 test 后缀，不会与正式版混淆。
+        run: echo "value=$(tr -d '[:space:]' < backend/cmd/server/VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        id: dockerhub
+        continue-on-error: true
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push (GHCR)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+            COMMIT=${{ github.sha }}
+            NODE_MAX_OLD_SPACE_SIZE=4096
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/sub2api:${{ env.TEST_TAG }}
+            ghcr.io/${{ github.repository_owner }}/sub2api:${{ env.TEST_TAG }}-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push (Docker Hub)
+        # 未配置 Docker Hub 凭据时静默跳过，不影响 GHCR 发布。
+        if: steps.dockerhub.outcome == 'success'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+            COMMIT=${{ github.sha }}
+            NODE_MAX_OLD_SPACE_SIZE=4096
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/sub2api:${{ env.TEST_TAG }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/sub2api:${{ env.TEST_TAG }}-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "## 测试镜像已发布"
+            echo
+            echo "宿主版本：${{ steps.version.outputs.value }}"
+            echo "提交：\`${{ github.sha }}\`"
+            echo
+            echo "镜像（含插件调度能力）："
+            echo
+            echo '```'
+            echo "ghcr.io/${{ github.repository_owner }}/sub2api:${{ env.TEST_TAG }}"
+            if [ "${{ steps.dockerhub.outcome }}" = "success" ]; then
+              echo "${{ secrets.DOCKERHUB_USERNAME }}/sub2api:${{ env.TEST_TAG }}"
+            fi
+            echo '```'
+            echo
+            echo "> 标签带 \`test-\` 前缀，与正式镜像完全隔离。"
+          } >> "$GITHUB_STEP_SUMMARY"
