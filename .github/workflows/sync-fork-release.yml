@@ -60,7 +60,12 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.value }}
         run: |
-          if ! gh api "repos/Wei-Shaw/sub2api/releases/tags/$TAG" --jq .body > upstream-release.md; then
+          # 本 Fork 的版本号与上游（Wei-Shaw/sub2api）并不对应，按 tag 取上游说明通常落空；
+          # 仓库内 docs/releases/<tag>.md 才是本 Fork 的权威说明，优先使用。
+          if [ -f "docs/releases/$TAG.md" ]; then
+            cp "docs/releases/$TAG.md" upstream-release.md
+            echo "使用仓库内说明：docs/releases/$TAG.md"
+          elif ! gh api "repos/Wei-Shaw/sub2api/releases/tags/$TAG" --jq .body > upstream-release.md; then
             printf '> AI API Gateway Platform - 将 AI 订阅配额分发和管理\n' > upstream-release.md
           fi
 
@@ -116,6 +121,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
           TARGET: ${{ github.event.workflow_run.head_sha }}
         run: |
+          # 与 release.yml（tag push）存在竞态：本工作流源于 main 推送，可能比 Release
+          # 工作流先跑完；若期间 Release 已建好，这里不得用模板正文覆盖 tag 说明。
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，保持现有说明不做覆盖。"
+            exit 0
+          fi
+
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$TARGET" \

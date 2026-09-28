@@ -220,6 +220,47 @@ jobs:
           GITHUB_REPO_NAME: ${{ github.event.repository.name }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME || 'skip' }}
 
+      # GoReleaser 为 keep-existing 模式：若 Release 已被其它工作流先行创建（例如
+      # sync-fork-release.yml 在 main 推送后抢跑），其模板正文会被保留而丢掉 tag 说明
+      # （v0.2.91 曾因此丢失）。这里以仓库内说明文件为准回写一次，保证 Release 正文
+      # 等于 docs/releases/<tag>.md；没有说明文件时保留 GoReleaser 写入的 tag 说明。
+      - name: Sync release notes from repository doc
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          else
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+          fi
+
+          DOC="docs/releases/$TAG_NAME.md"
+          if [ ! -f "$DOC" ]; then
+            echo "$DOC 不存在，保留 GoReleaser 写入的 tag 说明"
+            exit 0
+          fi
+
+          VERSION="${TAG_NAME#v}"
+          OWNER_LOWER="$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
+          NOTES_FILE="$(mktemp)"
+          {
+            cat "$DOC"
+            printf '\n---\n\n## 📥 Installation\n\n**Docker:**\n```bash\n'
+            if [ -n "$DOCKERHUB_USER" ]; then
+              printf '# Docker Hub\ndocker pull %s/sub2api:%s\n\n' "$DOCKERHUB_USER" "$VERSION"
+            fi
+            printf '# GitHub Container Registry\ndocker pull ghcr.io/%s/sub2api:%s\n```\n\n' "$OWNER_LOWER" "$VERSION"
+            printf '本版本起不再发布 `tar.gz` / `zip` 二进制包与 `checksums.txt`，请使用上方镜像部署。\n\n'
+            printf '## 📚 Documentation\n\n'
+            printf -- '- [GitHub Repository](https://github.com/%s)\n' "$REPO"
+            printf -- '- [Installation Guide](https://github.com/%s/blob/%s/deploy/README.md)\n' "$REPO" "$TAG_NAME"
+          } > "$NOTES_FILE"
+
+          gh release edit "$TAG_NAME" --repo "$REPO" --notes-file "$NOTES_FILE"
+          echo "Release notes synced from $DOC (含 Docker / 文档页脚)"
+
       # Update DockerHub description
       - name: Update DockerHub description
         if: ${{ env.SIMPLE_RELEASE != 'true' && env.DOCKERHUB_USERNAME != '' }}
