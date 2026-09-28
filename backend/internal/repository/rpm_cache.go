@@ -35,6 +35,28 @@ const (
 	rpmKeyTTL = 120 * time.Second
 )
 
+var tryRPMScript = redis.NewScript(`
+local now = redis.call('TIME')
+local minute = math.floor(tonumber(now[1]) / 60)
+if minute ~= tonumber(ARGV[3]) then
+  return {-1, 0, minute}
+end
+local current = redis.call('GET', KEYS[1])
+local limit = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+if not current then
+  redis.call('SET', KEYS[1], 1, 'EX', ttl)
+  return {1, 1, minute}
+end
+current = tonumber(current)
+if limit > 0 and current >= limit then
+  return {0, current, minute}
+end
+current = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ttl)
+return {1, current, minute}
+`)
+
 // RPMCacheImpl RPM 计数器缓存 Redis 实现
 type RPMCacheImpl struct {
 	rdb *redis.Client
@@ -54,6 +76,59 @@ func (c *RPMCacheImpl) currentMinuteKey(ctx context.Context, accountID int64) (s
 	}
 	minuteTS := serverTime.Unix() / 60
 	return fmt.Sprintf("%s%d:%d", rpmKeyPrefix, accountID, minuteTS), nil
+}
+
+// TryAcquireRPM atomically reserves one request when the current minute is
+// below limit. It is deliberately separate from IncrementRPM because a strict
+// limit must never increment beyond the configured ceiling.
+func (c *RPMCacheImpl) TryAcquireRPM(ctx context.Context, accountID int64, limit int) (bool, int, time.Time, error) {
+	serverTime, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return false, 0, time.Time{}, fmt.Errorf("rpm acquire time: %w", err)
+	}
+	minuteTS := serverTime.Unix() / 60
+	for attempt := 0; attempt < 3; attempt++ {
+		key := fmt.Sprintf("%s%d:%d", rpmKeyPrefix, accountID, minuteTS)
+		values, err := tryRPMScript.Run(ctx, c.rdb, []string{key}, limit, int(rpmKeyTTL/time.Second), minuteTS).Result()
+		if err != nil {
+			return false, 0, time.Time{}, fmt.Errorf("rpm acquire: %w", err)
+		}
+		result, ok := values.([]any)
+		if !ok || len(result) != 3 {
+			return false, 0, time.Time{}, fmt.Errorf("rpm acquire: invalid redis result")
+		}
+		allowed, okAllowed := redisInt(result[0])
+		count, okCount := redisInt(result[1])
+		minute, okMinute := redisInt(result[2])
+		if !okAllowed || !okCount || !okMinute {
+			return false, 0, time.Time{}, fmt.Errorf("rpm acquire: invalid redis values")
+		}
+		minuteTS = int64(minute)
+		if allowed == -1 {
+			// TIME and EVAL may straddle a minute. The script refuses to charge
+			// an old bucket, and returns the current minute for a bounded retry.
+			continue
+		}
+		return allowed != 0, count, time.Unix((minuteTS+1)*60, 0), nil
+	}
+	return false, 0, time.Time{}, fmt.Errorf("rpm acquire: minute changed repeatedly")
+}
+
+func redisInt(value any) (int, bool) {
+	switch v := value.(type) {
+	case int64:
+		return int(v), true
+	case int:
+		return v, true
+	case string:
+		n, err := strconv.Atoi(v)
+		return n, err == nil
+	case []byte:
+		n, err := strconv.Atoi(string(v))
+		return n, err == nil
+	default:
+		return 0, false
+	}
 }
 
 // currentMinuteSuffix 获取当前分钟时间戳后缀（供批量操作使用）

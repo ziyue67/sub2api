@@ -62,6 +62,16 @@ func TestAdminServiceBulkUpdateAccounts_ExcelBPSSettings(t *testing.T) {
 			want:  map[string]any{"openai_excel_bps_cache_creation_as_input": false},
 		},
 		{
+			name:  "hourly recovery option",
+			extra: map[string]any{ExcelBPSAutoRecoverOn403Key: true},
+			want:  map[string]any{ExcelBPSAutoRecoverOn403Key: true},
+		},
+		{
+			name:  "manual protocol shutdown clears hourly recovery",
+			extra: map[string]any{"openai_excel_bps": false, ExcelBPSAutoRecoverOn403Key: true},
+			want:  map[string]any{"openai_excel_bps": false, "openai_excel_bps_models": nil, "openai_excel_bps_cache_creation_as_input": false, ExcelBPSAutoRecoverOn403Key: false},
+		},
+		{
 			name:  "auto disable only",
 			extra: map[string]any{"openai_excel_bps_auto_disable_on_403": true},
 			want:  map[string]any{"openai_excel_bps_auto_disable_on_403": true},
@@ -106,6 +116,8 @@ func TestAdminServiceBulkUpdateAccounts_RejectsInvalidExcelBPSValues(t *testing.
 		{"openai_excel_bps_cache_creation_as_input": nil},
 		{"openai_excel_bps_auto_disable_on_403": "true"},
 		{"openai_excel_bps_auto_disable_on_403": nil},
+		{ExcelBPSAutoRecoverOn403Key: "true"},
+		{ExcelBPSAutoRecoverOn403Key: nil},
 		{ExcelBPSAutoMoveOn403Key: "true"},
 		{ExcelBPSAutoMoveOn403Key: nil},
 		{ExcelBPS403TargetGroupIDKey: "0"},

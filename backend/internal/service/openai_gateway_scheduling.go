@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -920,6 +921,11 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsStickyHit(ctx 
 	if err != nil {
 		return nil, false, fmt.Errorf("query accounts failed: %w", err)
 	}
+	prefetchedRPMCtx, rpmErr := s.withOpenAIRPMPrefetch(ctx, accounts)
+	if rpmErr != nil {
+		return nil, false, rpmErr
+	}
+	ctx = prefetchedRPMCtx
 
 	// 3. 按优先级 + LRU 选择最佳账号
 	// Select by priority + LRU
@@ -1113,6 +1119,12 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 		if rateCmp := rateOrder.compare(a, b); rateCmp != 0 {
 			return rateCmp < 0
 		}
+		if a.Priority == b.Priority {
+			aRPM, bRPM := openAIRPMEffectiveLoad(ctx, a, 0), openAIRPMEffectiveLoad(ctx, b, 0)
+			if aRPM != bRPM {
+				return aRPM < bRPM
+			}
+		}
 		return s.isBetterAccount(a, b)
 	})
 	return eligible[0], compactBlocked, filterStats
@@ -1192,9 +1204,52 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 	}
 	if s.concurrencyService == nil || !cfg.LoadBatchEnabled {
-		account, stickyHit, err := s.selectAccountForModelWithExclusionsStickyHit(ctx, groupID, platform, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
-		if err != nil {
-			return nil, err
+		effectiveExcludedIDs := cloneExcludedAccountIDs(excludedIDs)
+		var account *Account
+		var stickyHit bool
+		var headroomFallback *Account
+		rpmEligible := 0
+		rpmExhausted := 0
+		for {
+			var selectErr error
+			account, stickyHit, selectErr = s.selectAccountForModelWithExclusionsStickyHit(ctx, groupID, platform, sessionHash, requestedModel, effectiveExcludedIDs, requireCompact, stickyAccountID, requiredCapability, preferLowUpstreamRate)
+			if selectErr != nil && !errors.Is(selectErr, ErrNoAvailableAccounts) {
+				return nil, selectErr
+			}
+			if account == nil {
+				if headroomFallback != nil {
+					account = headroomFallback
+					stickyHit = false
+					break
+				}
+				if rpmEligible > 0 && rpmExhausted == rpmEligible {
+					return nil, fmt.Errorf("%w: all eligible OAuth accounts are at their per-minute limit", ErrOpenAIRPMExhausted)
+				}
+				if selectErr != nil {
+					return nil, selectErr
+				}
+				return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
+			}
+			allowed, rpmState, rpmErr := s.OpenAIRPMSchedulable(ctx, account, true)
+			if rpmErr != nil {
+				return nil, rpmErr
+			}
+			if account.IsOpenAIOAuth() {
+				rpmEligible++
+				if !allowed && rpmState.Current >= rpmState.Limit {
+					rpmExhausted++
+				}
+			}
+			if allowed {
+				break
+			}
+			if rpmState.Current < rpmState.Limit && headroomFallback == nil {
+				headroomFallback = account
+			}
+			if effectiveExcludedIDs == nil {
+				effectiveExcludedIDs = make(map[int64]struct{})
+			}
+			effectiveExcludedIDs[account.ID] = struct{}{}
 		}
 		if stickyLaneBinding.AccountID == account.ID {
 			_ = applyStickyLaneBinding(account, stickyLaneBinding, time.Now())
@@ -1232,6 +1287,11 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	if len(accounts) == 0 {
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, openAISelectionFilterStats{}.summary(""))
 	}
+	prefetchedRPMCtx, rpmErr := s.withOpenAIRPMPrefetch(ctx, accounts)
+	if rpmErr != nil {
+		return nil, rpmErr
+	}
+	ctx = prefetchedRPMCtx
 
 	isExcluded := func(accountID int64) bool {
 		if excludedIDs == nil {
@@ -1253,10 +1313,22 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			account, err := s.getSchedulableAccount(ctx, accountID)
 			if err == nil {
 				clearSticky := shouldClearStickySession(account, requestedModel)
+				stickyRPMAllowed := true
+				if !clearSticky && account != nil && account.IsOpenAIOAuth() {
+					// Movable sessions yield at 80%; the load-aware fallback still
+					// admits them below the hard ceiling when other capacity is scarce.
+					stickyRPMAllowed, _, err = s.OpenAIRPMSchedulable(ctx, account, true)
+					if err != nil {
+						return nil, err
+					}
+					if !stickyRPMAllowed {
+						stickySpillover = true
+					}
+				}
 				if clearSticky {
 					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 				}
-				if !clearSticky && isOpenAICompatibleAccountEligibleForRequest(ctx, account, groupID, platform, requestedModel, false, requiredCapability) {
+				if !clearSticky && stickyRPMAllowed && isOpenAICompatibleAccountEligibleForRequest(ctx, account, groupID, platform, requestedModel, false, requiredCapability) {
 					account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, groupID, platform, requestedModel, requireCompact, requiredCapability)
 					if account == nil {
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
@@ -1321,6 +1393,8 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		return a
 	}
 	baseCandidateCount := 0
+	rpmEligible := 0
+	rpmExhausted := 0
 	filterStats := openAISelectionFilterStats{pool: len(accounts)}
 	candidates := make([]*Account, 0, len(accounts))
 	for i := range accounts {
@@ -1352,6 +1426,20 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			filterStats.exclude("channel_upstream_restricted")
 			continue
 		}
+		if acc.IsOpenAIOAuth() {
+			rpmEligible++
+			allowed, rpmState, rpmErr := s.OpenAIRPMSchedulable(ctx, acc, false)
+			if rpmErr != nil {
+				return nil, rpmErr
+			}
+			if !allowed {
+				if rpmState.Current >= rpmState.Limit {
+					rpmExhausted++
+				}
+				filterStats.exclude("oauth_rpm_exhausted")
+				continue
+			}
+		}
 		baseCandidateCount++
 		// Carry a model-scoped lane affinity into the candidate snapshot.  The
 		// sticky-account layer may be skipped (e.g. a bounded queue spillover or
@@ -1366,6 +1454,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 	}
 
 	if len(candidates) == 0 {
+		if rpmEligible > 0 && rpmExhausted == rpmEligible {
+			return nil, fmt.Errorf("%w: all eligible OAuth accounts are at their per-minute limit", ErrOpenAIRPMExhausted)
+		}
 		return nil, noAvailableOpenAISelectionError(requestedModel, false, filterStats.summary(""))
 	}
 	rateOrder := openAILegacyUpstreamRateOrder{}
@@ -1420,6 +1511,15 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 		})
 		shuffleWithinSortGroups(available)
+		// RPM is a capacity signal alongside concurrency. Keep the configured
+		// priority, and prefer accounts with lower combined utilization.
+		sort.SliceStable(available, func(i, j int) bool {
+			a, b := available[i], available[j]
+			if a.account.Priority != b.account.Priority {
+				return a.account.Priority < b.account.Priority
+			}
+			return openAIRPMEffectiveLoad(ctx, a.account, a.loadInfo.LoadRate) < openAIRPMEffectiveLoad(ctx, b.account, b.loadInfo.LoadRate)
+		})
 		if rateOrder.enabled {
 			sort.SliceStable(available, func(i, j int) bool {
 				return rateOrder.compare(available[i].account, available[j].account) < 0

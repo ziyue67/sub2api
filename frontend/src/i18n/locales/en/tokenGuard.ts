@@ -2,7 +2,7 @@ export default {
   "twoFA": {
   "title": "2FA login and import",
   "label": "Initial login with email, password and 2FA",
-  "hint": "One email----password----2FA per line (commas also supported), up to 100 entries. Uses the saved Credential Guard relogin endpoint and headers, even when inspection is off. Passwords and 2FA secrets are used only for this login and are not saved to accounts or guard settings.",
+  "hint": "One email----password----2FA per line (commas also supported), up to 100 entries. Uses the saved Credential Guard relogin endpoint and headers, even when inspection is off. After a successful login, passwords and 2FA secrets are automatically saved or updated by email in Credential Guard for future logins; inspection is not enabled automatically.",
   "settings": "View relogin service settings",
   "credentials": "Login credentials",
   "placeholder": "email----password----2FA secret",
@@ -18,7 +18,7 @@ export default {
     "importing": "Importing…",
     "created": "Imported",
     "skipped": "Account exists, skipped",
-    "failed": "Login incomplete; retry or check credentials and service",
+    "failed": "Login or credential save incomplete; retry or check credentials, service and guard settings",
     "importFailed": "Logged in, import failed; retry import"
   }
 },

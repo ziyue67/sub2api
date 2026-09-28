@@ -256,6 +256,7 @@ describe('BulkEditAccountModal', () => {
       openai_excel_bps_ignore_encrypted_content: false,
       openai_excel_bps_omit_unsupported_tools: false,
       openai_excel_bps_auto_disable_on_403: false,
+      openai_excel_bps_auto_recover_on_403: false,
       openai_excel_bps_auto_move_on_403: false,
       openai_excel_bps_403_target_group_id: null
     }
@@ -289,6 +290,22 @@ describe('BulkEditAccountModal', () => {
       await wrapper.get('#bulk-edit-status-enabled').setValue(true)
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { status: 'active' })
+    })
+
+    it('saves hourly 403 recovery only with automatic shutdown enabled', async () => {
+      const wrapper = mountModal(oauthProps)
+      await enableBPS(wrapper)
+      const recovery = '[data-testid="bulk-excel-bps-auto-recover-on-403"]'
+      expect(wrapper.get<HTMLInputElement>(recovery).element.disabled).toBe(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(true)
+      await wrapper.get(recovery).setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
+        extra: { ...defaultExtra, openai_excel_bps_auto_disable_on_403: true, openai_excel_bps_auto_recover_on_403: true }
+      })
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(false)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], { extra: defaultExtra })
     })
 
     it('defaults BPS to Astra, 5.6 Sol and 5.6 Terra without changing other protocol settings', async () => {

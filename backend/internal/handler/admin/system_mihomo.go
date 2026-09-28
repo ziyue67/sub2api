@@ -1,12 +1,52 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"github.com/Wei-Shaw/sub2api/internal/mihomo"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"net/http"
 )
+
+// mihomoNodeChecker runs the static proxy list's connection test and quality
+// check through a single Mihomo node.
+type mihomoNodeChecker interface {
+	TestMihomoNode(ctx context.Context, kernel service.MihomoNodeProber, name string) (*service.ProxyTestResult, error)
+	CheckMihomoNodeQuality(ctx context.Context, kernel service.MihomoNodeProber, name string) (*service.ProxyQualityCheckResult, error)
+}
+
+// SetMihomoNodeChecker enables per-node connection tests and quality checks.
+func (h *SystemHandler) SetMihomoNodeChecker(checker mihomoNodeChecker) { h.nodeChecker = checker }
+
+// TestMihomoNode tests one subscription or dynamic node without changing its
+// state. POST /api/v1/admin/system/mihomo/nodes/:name/test
+func (h *SystemHandler) TestMihomoNode(c *gin.Context) {
+	if h.nodeChecker == nil {
+		response.Error(c, http.StatusServiceUnavailable, "node checks are unavailable")
+		return
+	}
+	result, err := h.nodeChecker.TestMihomoNode(c.Request.Context(), h.kernel, c.Param("name"))
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, result)
+}
+
+// CheckMihomoNodeQuality checks one node against common AI targets without
+// changing its state. POST /api/v1/admin/system/mihomo/nodes/:name/quality-check
+func (h *SystemHandler) CheckMihomoNodeQuality(c *gin.Context) {
+	if h.nodeChecker == nil {
+		response.Error(c, http.StatusServiceUnavailable, "node checks are unavailable")
+		return
+	}
+	result, err := h.nodeChecker.CheckMihomoNodeQuality(c.Request.Context(), h.kernel, c.Param("name"))
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	response.Success(c, result)
+}
 
 func (h *SystemHandler) GetMihomo(c *gin.Context) { response.Success(c, h.kernel.Status()) }
 func (h *SystemHandler) ManageMihomo(c *gin.Context) {

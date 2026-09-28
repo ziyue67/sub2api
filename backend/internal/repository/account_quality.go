@@ -49,6 +49,11 @@ type qualityState struct {
 	AccountVersion time.Time       `json:"account_version"`
 	Removed        []qualityGroup  `json:"removed"`
 	Remaining      json.RawMessage `json:"remaining"`
+	// 以下只用于「降智开 BPS」：连续降智轮数、开启后连续满血轮数，以及开启前 / 开启时 BPS 相关 Extra 的快照。
+	FailureStreak int                        `json:"failure_streak,omitempty"`
+	PassStreak    int                        `json:"pass_streak,omitempty"`
+	BPSPrevious   map[string]json.RawMessage `json:"bps_previous,omitempty"`
+	BPSApplied    map[string]json.RawMessage `json:"bps_applied,omitempty"`
 }
 
 // Lease/version checks, account mutation, ownership and scheduler invalidation
@@ -89,11 +94,29 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 			return "", err
 		}
 	}
+	q := plan.PelicanConfig.Quality
+	// 已被本规则开过 BPS 的账号即便规则后来改了动作，也由 BPS 分支负责恢复。
+	if state.Action == service.QualityActionEnableBPS || (state.Action == "" && q.Action == service.QualityActionEnableBPS) {
+		action, err := applyQualityBPSOutcome(ctx, tx, plan, outcome, status, state, len(raw) > 0)
+		if err != nil {
+			return "", err
+		}
+		if err = tx.Commit(); err != nil {
+			return "", err
+		}
+		return action, nil
+	}
+	if state.Action == "" && state.FailureStreak > 0 {
+		// 规则已不再是「降智开 BPS」：丢掉残留的连续次数，改回来时重新计数。
+		if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, plan.ID); err != nil {
+			return "", err
+		}
+		state = qualityState{}
+	}
 	groups, err := qualityGroups(ctx, tx, plan.AccountID)
 	if err != nil {
 		return "", err
 	}
-	q := plan.PelicanConfig.Quality
 	action := "no_change"
 	changed := false
 	switch {
@@ -144,11 +167,7 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 			if err != nil {
 				return "", err
 			}
-			data, marshalErr := json.Marshal(state)
-			if marshalErr != nil {
-				return "", marshalErr
-			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO account_quality_states(plan_id,state) VALUES($1,$2)`, plan.ID, string(data)); err != nil {
+			if err = qualityUpsertState(ctx, tx, plan.ID, state); err != nil {
 				return "", err
 			}
 		}

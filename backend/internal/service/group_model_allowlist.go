@@ -29,29 +29,35 @@ func GroupModelAllowlistFromDomain(cfg domain.GroupModelAllowlist) GroupModelAll
 }
 
 // supplementUnmappedOpenAIModels ensures a partial mapping catalog does not
-// hide models from unmapped or passthrough OpenAI accounts (passthrough routing
-// ignores model_mapping, so it serves the same default set as an unmapped
-// account). An empty catalog is left unchanged so callers retain their existing
-// discovery fallback. Unmapped accounts that the group restricts to specific
-// models are already listed by that allowlist and must not pull in the full
-// default set — the group-level restriction wins over both branches above.
+// hide models from unmapped or passthrough OpenAI accounts. An empty catalog is
+// left unchanged so callers retain their existing discovery fallback. Each
+// account contributes only defaults allowed by its own group restrictions.
 func supplementUnmappedOpenAIModels(accounts []Account, groupID *int64, models []string) []string {
 	if len(models) == 0 {
 		return models
 	}
+	catalog := openai.DefaultModelIDs()
+	defaults := make([]string, 0, len(catalog))
+	seen := make(map[string]struct{}, len(catalog))
 	for i := range accounts {
 		account := &accounts[i]
-		if account.Platform != PlatformOpenAI {
+		if account.Platform != PlatformOpenAI || (!account.IsOpenAIPassthroughEnabled() && len(account.GetModelMapping()) != 0) {
 			continue
 		}
-		if len(account.GroupAllowedModels(derefGroupID(groupID))) != 0 {
-			continue
+		for _, model := range catalog {
+			if _, found := seen[model]; !found && account.IsModelAllowedInGroup(groupID, model) {
+				seen[model] = struct{}{}
+				defaults = append(defaults, model)
+			}
 		}
-		if account.IsOpenAIPassthroughEnabled() || len(account.GetModelMapping()) == 0 {
-			return dedupeAndSortModelIDs(slices.Concat(models, openai.DefaultModelIDs()))
+		if len(defaults) == len(catalog) {
+			break
 		}
 	}
-	return models
+	if len(defaults) == 0 {
+		return models
+	}
+	return dedupeAndSortModelIDs(slices.Concat(models, defaults))
 }
 
 // normalizeGroupModelAllowlist 归一化管理端提交的分组模型白名单：

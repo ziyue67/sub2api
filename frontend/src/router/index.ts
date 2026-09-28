@@ -644,6 +644,7 @@ const routes: RouteRecordRaw[] = [
   },
   { path: '/admin/smart-ops', redirect: '/admin/account-quality', meta: { requiresAuth: true, requiresAdmin: true } },
   { path: '/admin/token-guard', name: 'AdminTokenGuard', component: () => import('@/views/admin/ops/TokenGuardView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Credential Guard', titleKey: 'tokenGuard.title', descriptionKey: 'tokenGuard.description' } },
+  { path: '/admin/pelican-tests', name: 'AdminPelicanTests', component: () => import('@/views/admin/PelicanTestsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Pelican Showcase', titleKey: 'pelicanTests.title', descriptionKey: 'pelicanTests.description' } },
   { path: '/admin/account-ops', name: 'AdminAccountOps', component: () => import('@/views/admin/AccountOpsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Account operations', titleKey: 'accountOps.title', descriptionKey: 'accountOps.description' } },
   {
     path: '/admin/account-quality',

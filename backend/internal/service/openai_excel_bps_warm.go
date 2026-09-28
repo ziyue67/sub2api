@@ -15,6 +15,15 @@ const excelBPSWarmMaxTarget = 4096
 func excelBPSWarmTargets(accounts []Account) (managed, static int) {
 	for i := range accounts {
 		a := &accounts[i]
+		// Keep one healthy exit available for opted-in disabled accounts, even
+		// when no production account still uses their proxy pool.
+		if a.IsExcelBPS403RecoveryPending() {
+			probe := *a
+			probe.Extra = cloneExcelBPSRecoveryExtra(a.Extra)
+			probe.Extra["openai_excel_bps"] = true
+			probe.Concurrency = 1
+			a = &probe
+		}
 		if !a.IsActive() || !a.Schedulable || !a.IsExcelBPSMihomoEnabled() {
 			continue
 		}

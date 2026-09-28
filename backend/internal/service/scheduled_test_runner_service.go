@@ -21,6 +21,8 @@ type ScheduledTestRunnerService struct {
 	cfg            *config.Config
 	judgeQuality   func(context.Context, int64, *PelicanTestConfig, string) *QualityJudgment
 	runPelican     func(context.Context, int64, string, *PelicanTestConfig) (*ScheduledTestResult, error)
+	// groupTests runs the Pelican group tests on the same tick; nil disables them.
+	groupTests *PelicanGroupTestService
 
 	cron      *cron.Cron
 	startOnce sync.Once
@@ -98,7 +100,15 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 	if err := s.scheduledSvc.resultRepo.PruneExpiredPelican(ctx, now.Add(-7*24*time.Hour)); err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "pelican history cleanup failed: %v", err)
 	}
-	s.scheduledSvc.showcase.Cleanup(ctx, now)
+	s.groupTests.Cleanup(ctx, now)
+	// Group tests run beside the account plans rather than after them.
+	var groupRuns sync.WaitGroup
+	groupRuns.Add(1)
+	go func() {
+		defer groupRuns.Done()
+		s.groupTests.RunDue(ctx, now)
+	}()
+	defer groupRuns.Wait()
 	plans, err := s.planRepo.ListDue(ctx, now)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] ListDue error: %v", err)

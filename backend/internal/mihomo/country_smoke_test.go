@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -20,14 +19,9 @@ import (
 // Real Mihomo routes through a loopback fake upstream proxy, not a real airport
 // or the public geolocation service. No model endpoint is contacted.
 func TestCountryProbeWithOfficialKernel(t *testing.T) {
-	if os.Getenv("MIHOMO_INSTALL_SMOKE") != "1" {
-		t.Skip("opt-in official kernel download")
-	}
-	m := New(t.TempDir())
-	defer m.Close()
+	m := officialKernelManager(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	require.NoError(t, m.run(ctx, "install", saved{}))
 	var country atomic.Value
 	country.Store("HK")
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -3403,8 +3403,11 @@ func (a *Account) GetBaseRPM() int {
 }
 
 // GetRPMStrategy 获取 RPM 策略
-// "tiered" = 三区模型（默认）, "sticky_exempt" = 粘性豁免
+// "strict" = OpenAI OAuth 硬上限；Anthropic 使用 "tiered" 或 "sticky_exempt"。
 func (a *Account) GetRPMStrategy() string {
+	if a.IsOpenAIOAuth() {
+		return "strict"
+	}
 	if a.Extra == nil {
 		return "tiered"
 	}
@@ -3474,6 +3477,9 @@ func (a *Account) CheckRPMSchedulability(currentRPM int) WindowCostSchedulabilit
 	}
 
 	strategy := a.GetRPMStrategy()
+	if strategy == "strict" {
+		return WindowCostNotSchedulable
+	}
 	if strategy == "sticky_exempt" {
 		return WindowCostStickyOnly // 粘性豁免无红区
 	}
@@ -3589,6 +3595,18 @@ func parseExtraInt(value any) int {
 
 // IsShadow 报告账号是否为影子账号（parent_account_id 非空；当前唯一预设是 spark 维度）。
 func (a *Account) IsShadow() bool { return a != nil && a.ParentAccountID != nil }
+
+// RPMAccountID returns the counter owner for per-minute limits. Credential
+// shadows intentionally share their parent account's upstream quota.
+func (a *Account) RPMAccountID() int64 {
+	if a == nil {
+		return 0
+	}
+	if a.IsOpenAIOAuth() && a.ParentAccountID != nil && *a.ParentAccountID > 0 {
+		return *a.ParentAccountID
+	}
+	return a.ID
+}
 
 // IsCredentialShadow 语义别名，供「凭据消费者跳过影子」处使用（管理/后台 OAuth 路径）。
 func (a *Account) IsCredentialShadow() bool { return a.IsShadow() }

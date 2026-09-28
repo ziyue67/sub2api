@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,31 +19,27 @@ const (
 	PelicanShowcaseMaxItemsLimit        = 100
 	PelicanShowcaseDefaultRetentionDays = 7
 	PelicanShowcaseRetentionDaysLimit   = 90
-	pelicanShowcaseMaxGroups            = 50
 )
 
-// PelicanShowcaseConfig selects the groups whose scheduled Pelican HTML results are
-// shown to users, and bounds the gallery: MaxItems per group, plus an optional
-// age limit (AutoCleanup + RetentionDays). The gallery keeps its own copies, so these
-// limits are independent of the admin test history (per plan 1–200, 7 days).
+// PelicanShowcaseConfig bounds the gallery: MaxItems per group, plus an optional age
+// limit (AutoCleanup + RetentionDays). The gallery shows the groups that have a Pelican
+// group test plan and keeps its own copies, so these limits are independent of the admin
+// test history. Configs saved before group tests also carry "group_ids"; it is ignored.
 type PelicanShowcaseConfig struct {
-	GroupIDs      []int64 `json:"group_ids"`
-	MaxItems      int     `json:"max_items"`
-	AutoCleanup   bool    `json:"auto_cleanup"`
-	RetentionDays int     `json:"retention_days"`
+	MaxItems      int  `json:"max_items"`
+	AutoCleanup   bool `json:"auto_cleanup"`
+	RetentionDays int  `json:"retention_days"`
 }
 
 func DefaultPelicanShowcaseConfig() PelicanShowcaseConfig {
 	return PelicanShowcaseConfig{
-		GroupIDs:      []int64{},
 		MaxItems:      PelicanShowcaseDefaultMaxItems,
 		AutoCleanup:   true,
 		RetentionDays: PelicanShowcaseDefaultRetentionDays,
 	}
 }
 
-// NormalizePelicanShowcaseConfig fills zero limits with defaults, rejects out-of-range
-// values, and sorts/deduplicates group IDs (display order follows the groups' sort order).
+// NormalizePelicanShowcaseConfig fills zero limits with defaults and rejects out-of-range values.
 func NormalizePelicanShowcaseConfig(cfg PelicanShowcaseConfig) (PelicanShowcaseConfig, error) {
 	if cfg.MaxItems == 0 {
 		cfg.MaxItems = PelicanShowcaseDefaultMaxItems
@@ -57,21 +53,10 @@ func NormalizePelicanShowcaseConfig(cfg PelicanShowcaseConfig) (PelicanShowcaseC
 	if cfg.RetentionDays < 1 || cfg.RetentionDays > PelicanShowcaseRetentionDaysLimit {
 		return cfg, fmt.Errorf("showcase retention must be 1–%d days", PelicanShowcaseRetentionDaysLimit)
 	}
-	ids := append([]int64{}, cfg.GroupIDs...)
-	for _, id := range ids {
-		if id <= 0 {
-			return cfg, fmt.Errorf("showcase group IDs must be positive")
-		}
-	}
-	slices.Sort(ids)
-	cfg.GroupIDs = slices.Compact(ids)
-	if len(cfg.GroupIDs) > pelicanShowcaseMaxGroups {
-		return cfg, fmt.Errorf("at most %d showcase groups are allowed", pelicanShowcaseMaxGroups)
-	}
 	return cfg, nil
 }
 
-// A missing setting means "never configured" and yields the defaults (no groups).
+// A missing setting means "never configured" and yields the defaults.
 // Corrupt JSON is an error, so callers fail closed instead of deleting snapshots.
 func parsePelicanShowcaseConfig(raw string) (PelicanShowcaseConfig, error) {
 	if strings.TrimSpace(raw) == "" {
@@ -119,29 +104,25 @@ func (s *SettingService) GetPelicanShowcaseRuntime(ctx context.Context) (Pelican
 	return PelicanShowcaseRuntime{Enabled: vals[SettingKeyPelicanShowcaseEnabled] == "true", Config: cfg}, nil
 }
 
-// validateAddedPelicanShowcaseGroups checks only groups that were not selected before,
-// so a group deleted after selection never blocks saving unrelated settings.
-func (s *SettingService) validateAddedPelicanShowcaseGroups(ctx context.Context, groupIDs []int64) error {
-	if s.defaultSubGroupReader == nil || len(groupIDs) == 0 {
-		return nil
+// UpdatePelicanShowcaseSettings saves the gallery switch and limits from the Smart Ops
+// page. Only these two keys are written, so it never touches other system settings.
+func (s *SettingService) UpdatePelicanShowcaseSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig) (PelicanShowcaseRuntime, error) {
+	if s == nil || s.settingRepo == nil {
+		return PelicanShowcaseRuntime{}, errPelicanShowcaseSettingsUnavailable
 	}
-	selected := make(map[int64]bool)
-	if previous, err := s.GetPelicanShowcaseRuntime(ctx); err == nil {
-		for _, id := range previous.Config.GroupIDs {
-			selected[id] = true
-		}
+	normalized, err := NormalizePelicanShowcaseConfig(cfg)
+	if err != nil {
+		return PelicanShowcaseRuntime{}, infraerrors.BadRequest("INVALID_PELICAN_SHOWCASE", err.Error())
 	}
-	for _, id := range groupIDs {
-		if selected[id] {
-			continue
-		}
-		group, err := s.defaultSubGroupReader.GetByID(ctx, id)
-		if err != nil && !errors.Is(err, ErrGroupNotFound) {
-			return err
-		}
-		if err != nil || group == nil {
-			return infraerrors.BadRequest("INVALID_PELICAN_SHOWCASE_GROUP", fmt.Sprintf("showcase group %d does not exist", id))
-		}
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return PelicanShowcaseRuntime{}, err
 	}
-	return nil
+	if err := s.settingRepo.SetMultiple(ctx, map[string]string{
+		SettingKeyPelicanShowcaseEnabled: strconv.FormatBool(enabled),
+		SettingKeyPelicanShowcaseConfig:  string(raw),
+	}); err != nil {
+		return PelicanShowcaseRuntime{}, err
+	}
+	return PelicanShowcaseRuntime{Enabled: enabled, Config: normalized}, nil
 }

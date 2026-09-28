@@ -204,7 +204,8 @@ type AccountTokenGuardService struct {
 	invalidator TokenCacheInvalidator
 	httpClient  *http.Client
 
-	config atomic.Value
+	configMu sync.Mutex // Serializes config reads, saves and login credential merges.
+	config   atomic.Value
 
 	runMu     sync.Mutex
 	stateMu   sync.Mutex
@@ -379,6 +380,12 @@ func normalizeAccountTokenGuardConfig(c AccountTokenGuardConfig) AccountTokenGua
 }
 
 func (s *AccountTokenGuardService) GetConfig(ctx context.Context) (AccountTokenGuardConfig, error) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	return s.getConfigLocked(ctx)
+}
+
+func (s *AccountTokenGuardService) getConfigLocked(ctx context.Context) (AccountTokenGuardConfig, error) {
 	cfg := defaultAccountTokenGuardConfig()
 	raw, err := s.settings.GetValue(ctx, accountTokenGuardSettingsKey)
 	if err != nil && !errors.Is(err, ErrSettingNotFound) {
@@ -398,6 +405,12 @@ func (s *AccountTokenGuardService) GetConfig(ctx context.Context) (AccountTokenG
 }
 
 func (s *AccountTokenGuardService) SaveConfig(ctx context.Context, cfg AccountTokenGuardConfig) (AccountTokenGuardConfig, error) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	return s.saveConfigLocked(ctx, cfg)
+}
+
+func (s *AccountTokenGuardService) saveConfigLocked(ctx context.Context, cfg AccountTokenGuardConfig) (AccountTokenGuardConfig, error) {
 	cfg = normalizeAccountTokenGuardConfig(cfg)
 	if err := ValidateAccountTokenGuardConfig(cfg); err != nil {
 		return cfg, err

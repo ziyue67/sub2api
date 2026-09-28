@@ -128,8 +128,6 @@ vi.mock("@/stores", () => ({
     showInfo: vi.fn(),
     fetchPublicSettings,
   }),
-  // GroupSelector (Pelican showcase groups) reads simple mode.
-  useAuthStore: () => ({ isSimpleMode: false }),
 }));
 
 vi.mock("@/stores/app", () => ({
@@ -250,7 +248,6 @@ vi.mock("vue-i18n", async () => {
     "admin.settings.openaiFastPolicy.summaryAction.pass": "透传",
     "admin.settings.security.passkeyDeploymentHint":
       "请由服务器运维在部署配置中将 webauthn.enabled 设为 true，填写 webauthn.rp_id（仅域名）与 webauthn.rp_origins（完整 HTTPS 来源），然后重启服务。",
-    "admin.settings.features.pelicanShowcase.staleGroupLabel": "不可用的分组 #{id}",
     "admin.settings.site.uploadImage": "上传图片",
     "admin.settings.site.remove": "移除",
     "admin.settings.platformQuota.platform": "平台",
@@ -748,47 +745,24 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockResolvedValue(undefined);
   });
 
-  it("saves Pelican showcase groups and gallery limits", async () => {
-    getGroups.mockResolvedValue([
-      { id: 1, name: "Claude Max", platform: "anthropic", status: "active", subscription_type: "standard", rate_multiplier: 1 },
-      { id: 2, name: "GPT Plus", platform: "openai", status: "active", subscription_type: "standard", rate_multiplier: 1 },
-      { id: 3, name: "Paused", platform: "openai", status: "disabled", subscription_type: "standard", rate_multiplier: 1 },
-    ]);
+  it("points to Smart Ops for the Pelican showcase and never saves its settings", async () => {
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,
       pelican_showcase_enabled: true,
-      pelican_showcase_config: { group_ids: [1, 9], max_items: 20, auto_cleanup: true, retention_days: 7 },
+      pelican_showcase_config: { max_items: 30, auto_cleanup: true, retention_days: 7 },
     });
     const wrapper = mountView();
     await flushPromises();
-    const card = wrapper.get('[data-testid="pelican-showcase-settings"]');
+    const card = wrapper.get('[data-testid="pelican-showcase-moved"]');
+    expect(card.get("router-link").attributes("to")).toBe("/admin/pelican-tests");
 
-    // Only active groups are offered; a selected group that no longer exists is listed for removal.
-    const options = card.findAll('input[type="checkbox"][value]').map((input) => (input.element as HTMLInputElement).value);
-    expect(options).toEqual(["1", "2"]);
-    expect(card.get('[data-testid="pelican-showcase-stale-groups"]').text()).toContain("#9");
-    await card.get('[data-testid="pelican-showcase-stale-groups"] button').trigger("click");
-    expect(card.find('[data-testid="pelican-showcase-stale-groups"]').exists()).toBe(false);
-
-    await card.get('input[type="checkbox"][value="2"]').setValue(true);
-    await card.get('[data-testid="pelican-showcase-max-items"]').setValue("150");
-    await card.get('[data-testid="pelican-showcase-retention-days"]').setValue("30");
     await wrapper.find("form").trigger("submit.prevent");
     await flushPromises();
     const payload = updateSettings.mock.calls[0]?.[0];
-    expect(payload.pelican_showcase_enabled).toBe(true);
-    expect(payload.pelican_showcase_config).toEqual({
-      group_ids: [1, 2],
-      max_items: 100, // clamped to the backend limit instead of failing the whole save
-      auto_cleanup: true,
-      retention_days: 30,
-    });
-
-    // Turning auto cleanup off hides the day limit but keeps the count limit.
-    await card.get('[data-testid="pelican-showcase-auto-cleanup"]').setValue(false);
-    expect(card.find('[data-testid="pelican-showcase-retention-days"]').exists()).toBe(false);
-    await card.get('[data-testid="pelican-showcase-enabled"]').setValue(false);
-    expect(card.find('[data-testid="pelican-showcase-max-items"]').exists()).toBe(false);
+    expect(payload).toBeDefined();
+    // Saving system settings must not overwrite what the Smart Ops page saved.
+    expect(payload).not.toHaveProperty("pelican_showcase_enabled");
+    expect(payload).not.toHaveProperty("pelican_showcase_config");
     wrapper.unmount();
   });
 

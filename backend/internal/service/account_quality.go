@@ -13,6 +13,7 @@ type QualityPolicy struct {
 	Action         string              `json:"action"`
 	RemoveGroupIDs []int64             `json:"remove_group_ids"`
 	AutoRestore    bool                `json:"auto_restore"`
+	BPS            *QualityBPSPolicy   `json:"bps,omitempty"`
 }
 
 func validateQualityPolicy(plan *ScheduledTestPlan) error {
@@ -39,8 +40,20 @@ func validateQualityPolicy(plan *ScheduledTestPlan) error {
 	} else if len(q.ExpectedAnswer) > 4000 {
 		return fmt.Errorf("expected answer must be 1–4000 bytes")
 	}
-	if q.Action != "remove_groups" && q.Action != "disable_scheduling" {
+	if q.Action != "remove_groups" && q.Action != "disable_scheduling" && q.Action != QualityActionEnableBPS {
 		return fmt.Errorf("invalid quality action")
+	}
+	if q.Action == QualityActionEnableBPS {
+		// BPS 开启后糖果题会走 BPS 通道，判不出直连是否恢复；只有探针能绕开 BPS 继续探直连。
+		if plan.PelicanConfig.QuestionKind != OpenAICodexStateProbeQuestionKind {
+			return fmt.Errorf("the enable_bps action requires the state probe question")
+		}
+		if err := validateQualityBPSPolicy(q.BPS); err != nil {
+			return err
+		}
+		q.RemoveGroupIDs = nil
+	} else {
+		q.BPS = nil
 	}
 	if q.Action == "remove_groups" && len(q.RemoveGroupIDs) == 0 {
 		return fmt.Errorf("select at least one group to remove")

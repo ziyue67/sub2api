@@ -13,6 +13,8 @@
 | GET | /api/v1/admin/system/mihomo | 内核、来源、节点和下载设置状态 |
 | POST | /api/v1/admin/system/mihomo | 提交已有内核动作或来源管理动作 |
 | PUT | /api/v1/admin/system/mihomo/download-mode | 独立保存订阅下载模式 |
+| POST | /api/v1/admin/system/mihomo/nodes/:name/test | 经独立内核测试单个节点的连通性、延迟与出口 |
+| POST | /api/v1/admin/system/mihomo/nodes/:name/quality-check | 经独立内核对单个节点做质量检测 |
 
 POST 操作可能异步执行。HTTP 接受操作不代表应用成功；前端应轮询 busy、phase、error，完成后再显示成功。PUT 下载模式是独立的持久化操作，不下载订阅、不重启内核、不修改账号出口。管理动作串行化，忙时拒绝并发写入。
 
@@ -59,6 +61,19 @@ POST 正文保留 action、subscriptions、dynamic_proxies、append、country_fi
 - 旧 settings.json 无需数据库迁移；缺少的逐来源缓存在首次成功更新时补齐。不能把缺失缓存解释成已经验证可用。
 - 只导入订阅中的 outbound 节点，不接受订阅提供的监听端口、控制器、规则或可执行配置。
 - 配置修改先构造候选，校验和内核应用失败时保留原配置；持久化使用受限权限与原子写入。
+
+## 节点连接测试与质量检测
+
+两个 POST 接口为订阅节点和动态代理提供与静态代理列表相同的“测试连接”和“质量检测”。路径中的 :name 使用状态响应 node_states[].name 中的稳定节点 ID，不使用显示名称；请求无正文。
+
+- 每次检测启动一个独立的单节点 Mihomo 进程，只在 127.0.0.1 上开放带一次性凭据的监听，路由规则只指向该节点。检测结束即结束进程并删除临时配置；订阅地址和节点凭据不写入日志或响应。
+- 只要求内核已安装，不要求运行中的内核；不修改运行配置、轮换组、BPS 监听和打票通道。停用、检测失败、已使用和地区排除的节点都可检测，检测后状态不变；也不修改地区检测结果、settings.json 或静态代理的延迟缓存。
+- 响应与 /api/v1/admin/proxies/:id/test、/quality-check 相同：连接测试返回 success、message、latency_ms 与出口 IP/地区；质量检测返回评分、等级、各检测项，proxy_id 固定为 0。节点本身不可达属于检测结果（success=false 或基础连通性 fail），不返回 HTTP 错误。
+- 最近一次结果保存在内存，以 node_states[].check 返回：checked_at、latency_status、latency_ms、latency_message、ip_address、country、country_code、region、city，以及 quality_status、quality_score、quality_grade、quality_summary、quality_checked。结果随节点删除而丢弃，进程重启后清空；只做连接测试时保留上一次质量等级。动态代理的出口信息只描述被测的那次连接。
+- 同时最多运行 4 个独立内核，超出的请求排队直到客户端取消；单次检测最长 2 分钟，内核 5 秒内未就绪即失败，启动即退出时立即报告。
+- 节点 ID 不存在返回 404（reason 为 MIHOMO_NODE_NOT_FOUND）；内核未安装、服务停止或独立内核无法启动返回 409（MIHOMO_NODE_CHECK_UNAVAILABLE）；未配置检测服务返回 503。
+
+原有 probe/节点ID 管理动作保持不变：它经运行中内核测速，并按结果把节点标记为检测失败或恢复为启用。
 
 ## 集成顺序与来源
 

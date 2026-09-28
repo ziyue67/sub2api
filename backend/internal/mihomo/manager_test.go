@@ -116,6 +116,8 @@ func TestFailedSubscriptionKeepsRunningPhase(t *testing.T) {
 	t.Cleanup(m.Close)
 	m.state.Installed = true
 	m.state.Running = true
+	// This test uses an HTTP stub and never starts the platform-specific kernel.
+	m.state.Supported = true
 	m.subscriptionProxyURL = server.URL
 	m.saved = saved{URLs: []string{"https://old.example/sub"}, Nodes: []map[string]any{{"name": "node-one", "type": "socks5", "server": "example.org", "port": 1080}}}
 

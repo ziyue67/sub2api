@@ -84,26 +84,8 @@ export default {
         },
         pelicanShowcase: {
           title: 'Pelican Showcase',
-          description: 'Show users the HTML results of scheduled Pelican tests so they can see the model quality of each group. Disabled by default.',
-          configureLink: 'Go to Accounts and add plans from an account\'s action menu: Pelican Test > Scheduled tests',
-          enabled: 'Enable Pelican Showcase',
-          enabledHint: 'Adds a "Pelican Showcase" page to the user sidebar. When off, the page is hidden and no new results are collected; kept results are still cleaned up by the rules below.',
-          groups: 'Showcased groups',
-          groupsHint: 'Shows scheduled Pelican results of accounts in these groups. Only successful HTML is collected and account names are never shown. Results of a removed group are cleaned up within a minute.',
-          noGroups: 'No groups selected, so the user page will be empty.',
-          staleGroups: 'These selected groups were deleted or disabled and are not shown to users:',
-          removeStaleGroup: 'Remove',
-          staleGroupLabel: 'Unavailable group #{id}',
-          groupsLoadFailed: 'Could not load groups. The saved selection is kept; refresh to retry.',
-          maxItems: 'Keep per group',
-          maxItemsUnit: 'items',
-          maxItemsHint: '1–100. The oldest result of a group is removed once the limit is exceeded.',
-          autoCleanup: 'Auto cleanup',
-          autoCleanupHint: 'Remove results older than the retention period. When off, only the count limit applies.',
-          retentionDays: 'Retention',
-          retentionDaysUnit: 'days',
-          retentionDaysHint: '1–90 days',
-          independentNote: 'Showcased results are separate copies. They are not affected by the test history limits (keep N results, remove after 7 days) and stay visible after a test plan is deleted, until cleaned up by the rules here.',
+          movedHint: 'The showcase switch, retention rules and the scheduled group tests now live under Smart Ops → Pelican Showcase.',
+          movedLink: 'Open Pelican Showcase',
         },
         siteBillingMode: {
           title: 'Site Billing Mode',
@@ -520,14 +502,14 @@ export default {
         accountSchedulingThresholdsRangeHint: 'Integer 1–100 (percent). OpenAI/Anthropic/Grok only.'
       },
       upstreamBillingProbe: {
-        title: 'Upstream Rate Auto Detection',
-        description: 'Periodically retrieve rates declared by upstream Sub2API sites. Account rates change only when the separate sync switch is enabled.',
+        title: 'Upstream Declaration Auto Detection',
+        description: 'Periodically retrieve the rates and balances declared by upstream Sub2API sites. Account rates change only when the separate sync switch is enabled.',
         enabled: 'Enable global auto detection',
         enabledHint: 'When enabled, scheduled detection runs only for accounts that also enable automatic detection. Disabling stops all scheduled detection; manual detection remains available.',
         intervalMinutes: 'Detection interval (minutes)',
         intervalHint: 'Range: 5–1440 minutes. A successful result remains valid for two detection intervals.',
-        saved: 'Upstream rate auto detection settings saved',
-        saveFailed: 'Failed to save upstream rate auto detection settings'
+        saved: 'Upstream declaration auto detection settings saved',
+        saveFailed: 'Failed to save upstream declaration auto detection settings'
       },
       ollamaCloudUsage: {
         title: 'Ollama Cloud Usage Refresh',

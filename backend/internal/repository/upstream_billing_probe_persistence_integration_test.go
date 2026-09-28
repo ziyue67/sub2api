@@ -542,3 +542,65 @@ func latestBulkAccountOutboxPayload(t *testing.T, ctx context.Context, tx sqlQue
 	require.NoError(t, json.Unmarshal(payloadJSON, &payload))
 	return payload.AccountIDs
 }
+
+func TestProbeSnapshotBalanceRoundTripsThroughCASAndIdentityClear(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
+	account := mustCreateAccount(t, tx.Client(), &service.Account{
+		Name:        "probe-balance-round-trip",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-old", "base_url": "https://relay.example/v1"},
+		Extra:       map[string]any{service.UpstreamBillingProbeEnabledExtraKey: true},
+	})
+	receivedAt := time.Date(2026, time.July, 13, 1, 0, 0, 0, time.UTC)
+	freshUntil := receivedAt.Add(time.Hour)
+	snapshotWithBalance := func(remaining float64) *service.UpstreamBillingProbeSnapshot {
+		return &service.UpstreamBillingProbeSnapshot{
+			Status:        service.UpstreamBillingProbeStatusUnsupported,
+			LastAttemptAt: receivedAt,
+			NextProbeAt:   receivedAt.Add(30 * time.Minute),
+			Balance: &service.UpstreamBalanceSnapshot{
+				Status: service.UpstreamBillingProbeStatusOK,
+				Data: map[string]any{
+					"is_valid":  true,
+					"plan_name": "钱包余额",
+					"remaining": remaining,
+					"windows":   []map[string]any{{"window": "5h", "limit": 5.0, "used": 1.25}},
+				},
+				ReceivedAt:    &receivedAt,
+				FreshUntil:    &freshUntil,
+				LastAttemptAt: receivedAt,
+			},
+		}
+	}
+
+	loaded, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, loaded, snapshotWithBalance(1084.44), nil))
+
+	// The next probe's CAS compares against the snapshot as read back from
+	// JSONB, nested balance included.
+	reloaded, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	items := service.BuildUpstreamBillingRateSnapshotItems([]service.Account{*reloaded})
+	require.Len(t, items, 1)
+	require.NotNil(t, items[0].Snapshot)
+	require.NotNil(t, items[0].Snapshot.Balance)
+	require.Equal(t, 1084.44, items[0].Snapshot.Balance.Data["remaining"])
+	require.Equal(t, []any{map[string]any{"window": "5h", "limit": 5.0, "used": 1.25}}, items[0].Snapshot.Balance.Data["windows"])
+	require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, reloaded, snapshotWithBalance(12.5), nil))
+
+	updated, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	raw, err := json.Marshal(updated.Extra[service.UpstreamBillingProbeExtraKey])
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"remaining":12.5`)
+
+	updated.Credentials["api_key"] = "sk-new"
+	require.NoError(t, repo.Update(ctx, updated))
+	cleared, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.NotContains(t, cleared.Extra, service.UpstreamBillingProbeExtraKey)
+}

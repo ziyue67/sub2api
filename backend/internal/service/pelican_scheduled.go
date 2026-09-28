@@ -25,6 +25,14 @@ const PelicanDeliveryContract = "所有账号使用相同交付约定：直接�
 
 var pelicanHTMLPattern = regexp.MustCompile(`(?i)<(?:!doctype\s+html|html|svg)[\s>]`)
 
+// Failures that describe the model's output rather than the account; group tests keep
+// them as the group's answer instead of trying another account.
+const (
+	pelicanErrEmptyOutput  = "Model returned empty output"
+	pelicanErrCaptureLimit = "Response exceeds 4 MiB capture limit"
+	pelicanErrHistoryLimit = "Output exceeds 2 MiB history limit"
+)
+
 func (s *AccountTestService) RunPelicanBackground(ctx context.Context, accountID int64, model string, cfg *PelicanTestConfig) (*ScheduledTestResult, error) {
 	// 探针题型不下发题目，直接走门票探针。
 	if isOpenAICodexStateProbePlan(cfg) {
@@ -47,7 +55,7 @@ func (s *AccountTestService) RunPelicanBackground(ctx context.Context, accountID
 	output, message := parsePelicanOutput(w.Body.String())
 	if w.overflow {
 		output = ""
-		message = "Response exceeds 4 MiB capture limit"
+		message = pelicanErrCaptureLimit
 	}
 	if err != nil && message == "" {
 		message = err.Error()
@@ -58,7 +66,7 @@ func (s *AccountTestService) RunPelicanBackground(ctx context.Context, accountID
 	// Bounded history storage; never persist a truncated animation as a success.
 	if len(output) > 2<<20 {
 		output = ""
-		message = "Output exceeds 2 MiB history limit"
+		message = pelicanErrHistoryLimit
 	}
 	status := "success"
 	if message != "" {
@@ -229,7 +237,7 @@ func intelligenceTestOutputError(cfg *PelicanTestConfig, output string) string {
 	if cfg.Quality != nil {
 		// Completed answers are graded by the configured model in the runner.
 		if strings.TrimSpace(output) == "" {
-			return "Model returned empty output"
+			return pelicanErrEmptyOutput
 		}
 		return ""
 	}
@@ -237,7 +245,7 @@ func intelligenceTestOutputError(cfg *PelicanTestConfig, output string) string {
 		return "answer_mismatch: expected 21"
 	}
 	if strings.TrimSpace(output) == "" {
-		return "Model returned empty output"
+		return pelicanErrEmptyOutput
 	}
 	if cfg.QuestionKind != "candy" && !isBuiltinCandyPlan(cfg) && !pelicanHTMLPattern.MatchString(output) {
 		return "Model did not return HTML or SVG"

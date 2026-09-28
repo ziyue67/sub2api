@@ -690,6 +690,24 @@ func TestGetAvailableModels_OpenAIPassthroughUsesDefaultFallback(t *testing.T) {
 			want: dedupeAndSortModelIDs(append([]string{"configured-model"}, openai.DefaultModelIDs()...)),
 		},
 		{
+			name: "restricted passthrough preserves group allowlist without defaults",
+			accounts: []Account{
+				{
+					ID:            5,
+					Platform:      PlatformOpenAI,
+					Credentials:   map[string]any{"model_mapping": map[string]any{"stale-model": "upstream-model"}},
+					Extra:         map[string]any{"openai_passthrough": true},
+					AccountGroups: []AccountGroup{{GroupID: groupID, AllowedModels: []string{"allowed-model"}}},
+				},
+				{
+					ID:          6,
+					Platform:    PlatformOpenAI,
+					Credentials: map[string]any{"model_mapping": map[string]any{"configured-model": "configured-upstream"}},
+				},
+			},
+			want: []string{"allowed-model", "configured-model"},
+		},
+		{
 			name: "ordinary accounts preserve mapped whitelist",
 			accounts: []Account{
 				{

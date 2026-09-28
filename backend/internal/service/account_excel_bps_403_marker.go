@@ -5,6 +5,11 @@ package service
 // admin account list shows it as a suspected Excel ban.
 const ExcelBPS403DisabledAtKey = "openai_excel_bps_403_disabled_at"
 
+const ExcelBPSAutoRecoverOn403Key = "openai_excel_bps_auto_recover_on_403"
+
+// Server-owned attempt time also acts as a cross-instance claim token.
+const ExcelBPS403LastProbeAtKey = "openai_excel_bps_403_last_probe_at"
+
 // ExcelBPS403MovedAtKey and ExcelBPS403MovedGroupIDKey record the last automatic
 // group action after an upstream HTTP 403 (group 0 means all groups were left).
 // Only MoveExcelBPSOn403 writes them; the account list flags the suspected ban
@@ -14,11 +19,11 @@ const (
 	ExcelBPS403MovedGroupIDKey = "openai_excel_bps_403_moved_group_id"
 )
 
-var excelBPS403MarkerKeys = []string{ExcelBPS403DisabledAtKey, ExcelBPS403MovedAtKey, ExcelBPS403MovedGroupIDKey}
+var excelBPS403MarkerKeys = []string{ExcelBPS403DisabledAtKey, ExcelBPS403LastProbeAtKey, ExcelBPS403MovedAtKey, ExcelBPS403MovedGroupIDKey}
 
 // MergeExcelBPS403Marker keeps the persisted 403 records across account edits
 // and ignores values supplied by the edit. Turning Excel BPS back on
-// acknowledges the automatic shutdown and clears its record; group-action
+// acknowledges the automatic shutdown and clears its record and probe time; group-action
 // records stay until the next automatic move. The repository applies this
 // under the row lock.
 func MergeExcelBPS403Marker(extra, current map[string]any) map[string]any {
@@ -28,7 +33,7 @@ func MergeExcelBPS403Marker(extra, current map[string]any) map[string]any {
 	enabled, _ := extra["openai_excel_bps"].(bool)
 	for _, key := range excelBPS403MarkerKeys {
 		value, ok := current[key]
-		if !ok || (enabled && key == ExcelBPS403DisabledAtKey) {
+		if !ok || (enabled && (key == ExcelBPS403DisabledAtKey || key == ExcelBPS403LastProbeAtKey)) {
 			continue
 		}
 		if extra == nil {

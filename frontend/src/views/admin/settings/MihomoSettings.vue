@@ -68,10 +68,14 @@
 
     <template v-if="section === 'dynamic' || section === 'nodes'">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <div><h2 class="font-semibold">{{ section === 'dynamic' ? text('动态代理', 'Dynamic proxies') : text('节点管理', 'Node management') }}</h2><p class="mt-1 text-xs text-gray-500">{{ text('检测仅测试网络连接，不调用模型。订阅节点从所属订阅移除；动态代理可单独删除。', 'Checks test connectivity without model calls. Remove subscription nodes through their source; dynamic proxies can be deleted individually.') }}</p></div>
-        <button v-if="section === 'dynamic'" type="button" class="btn btn-primary" :disabled="busy || !status?.installed" @click="dynamicDialog = true">{{ text('导入动态代理', 'Import dynamic proxies') }}</button>
+        <div><h2 class="font-semibold">{{ section === 'dynamic' ? text('动态代理', 'Dynamic proxies') : text('节点管理', 'Node management') }}</h2><p class="mt-1 text-xs text-gray-500">{{ text('测试连接与质量检测通过独立内核只经该节点出口，不调用模型，也不改变节点状态；“检测”会按结果标记检测失败或恢复节点。订阅节点从所属订阅移除；动态代理可单独删除。', 'Test connection and quality check route through an isolated kernel using only that node; they call no models and never change node state. “Probe” marks the node failed or recovers it. Remove subscription nodes through their source; dynamic proxies can be deleted individually.') }}</p></div>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="btn btn-secondary" :disabled="!status?.installed || batchTesting || !nodeBatchTargets.length" @click="batchTestNodes">{{ t('admin.proxies.testConnection') }}</button>
+          <button type="button" class="btn btn-secondary" :disabled="!status?.installed || batchQualityChecking || !nodeBatchTargets.length" @click="batchCheckNodeQuality">{{ t('admin.proxies.batchQualityCheck') }}</button>
+          <button v-if="section === 'dynamic'" type="button" class="btn btn-primary" :disabled="busy || !status?.installed" @click="dynamicDialog = true">{{ text('导入动态代理', 'Import dynamic proxies') }}</button>
+        </div>
       </div>
-      <div class="flex flex-wrap gap-3">
+      <div class="flex flex-wrap items-center gap-3">
         <input v-model="search" type="search" class="input sm:max-w-xs" :placeholder="text('搜索节点名称或地区', 'Search node names or regions')" :aria-label="text('搜索节点', 'Search nodes')" />
         <select v-model="nodeState" class="input w-auto" :aria-label="text('节点状态', 'Node status')">
           <option value="">{{ text('全部状态', 'All statuses') }}</option><option v-for="state in nodeStates" :key="state" :value="state">{{ stateLabel(state) }}</option>
@@ -80,15 +84,30 @@
           <option value="">{{ text('全部来源', 'All sources') }}</option><option value="dynamic">{{ text('动态代理', 'Dynamic proxies') }}</option>
           <option v-for="source in status?.subscription_items || []" :key="source.id" :value="source.id">{{ source.label }}</option>
         </select>
+        <span class="text-xs text-gray-500" data-testid="node-batch-scope">{{ selectedNodes.length ? text(`批量检测已选的 ${nodeBatchTargets.length} 个节点`, `Batch checks cover ${nodeBatchTargets.length} selected nodes`) : text(`未选择时批量检测当前筛选的全部 ${nodeBatchTargets.length} 个节点`, `Without a selection, batch checks cover all ${nodeBatchTargets.length} filtered nodes`) }}</span>
       </div>
-      <DataTable :columns="nodeColumns" :data="pagedNodes" row-key="name" :loading="loading">
+      <DataTable v-model:selected-keys="selectedNodes" :columns="nodeColumns" :data="pagedNodes" row-key="name" selectable :loading="loading">
         <template #cell-display_name="{ row }">{{ row.display_name || row.name }}</template>
         <template #cell-source="{ row }">{{ nodeSourceLabel(row) }}</template>
         <template #cell-state="{ row }"><span class="badge" :class="row.state === 'enabled' ? 'badge-success' : 'badge-gray'">{{ stateLabel(row.state) }}</span></template>
         <template #cell-country_code="{ row }">{{ row.dynamic ? text('供应商控制', 'Provider managed') : row.country_code || text('未知', 'Unknown') }}</template>
+        <template #cell-check="{ row }">
+          <div class="flex flex-col gap-1" data-testid="node-check">
+            <span v-if="row.check?.latency_status === 'failed'" class="badge badge-danger" :title="row.check.latency_message || undefined">{{ t('admin.proxies.latencyFailed') }}</span>
+            <span v-else-if="typeof row.check?.latency_ms === 'number'" :class="['badge', row.check.latency_ms < 200 ? 'badge-success' : 'badge-warning']">{{ row.check.latency_ms }}ms</span>
+            <span v-else class="text-sm text-gray-400">-</span>
+            <div v-if="typeof row.check?.quality_checked === 'number'" class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400" :title="row.check.quality_summary || undefined">
+              <span>{{ t('admin.proxies.qualityInline', { grade: row.check.quality_grade || '-', score: row.check.quality_score ?? '-' }) }}</span>
+              <span class="badge" :class="proxyQualityOverallClass(row.check.quality_status)">{{ t(proxyQualityOverallLabelKey(row.check.quality_status)) }}</span>
+            </div>
+            <span v-if="row.check && checkExit(row.check)" class="text-xs text-gray-500 dark:text-gray-400" :title="checkTitle(row)">{{ checkExit(row.check) }}</span>
+          </div>
+        </template>
         <template #cell-actions="{ row }">
           <div class="flex flex-wrap gap-2">
-            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !status?.running" @click="operate('probe/' + row.name)">{{ text('检测', 'Test') }}</button>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="!status?.installed || testingNodes.has(row.name)" :aria-busy="testingNodes.has(row.name)" @click="testNode(row)">{{ testingNodes.has(row.name) ? t('admin.proxies.testing') : t('admin.proxies.testConnection') }}</button>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="!status?.installed || qualityNodes.has(row.name)" :aria-busy="qualityNodes.has(row.name)" @click="checkNodeQuality(row)">{{ qualityNodes.has(row.name) ? t('admin.proxies.testing') : t('admin.proxies.qualityCheck') }}</button>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || !status?.running" :title="text('经运行中的内核测速：失败则标记为检测失败，成功则恢复节点', 'Measures through the running kernel: failure marks the node failed, success recovers it')" @click="operate('probe/' + row.name)">{{ text('检测', 'Probe') }}</button>
             <button v-if="!row.dynamic" type="button" class="btn btn-secondary btn-sm" :disabled="busy || !status?.running" @click="operate('country_probe/' + row.name)">{{ text('检测地区', 'Check region') }}</button>
             <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || row.state === 'country_excluded'" @click="operate((row.state === 'enabled' ? 'disable/' : 'recover/') + row.name)">{{ row.state === 'enabled' ? text('停用', 'Disable') : text('恢复', 'Recover') }}</button>
             <button v-if="row.dynamic" type="button" class="btn btn-danger btn-sm" :disabled="busy" @click="confirmRemoval(['dynamic_remove/' + row.name])">{{ text('移除', 'Remove') }}</button>
@@ -142,24 +161,33 @@ http://username:password@hostname:port</pre></details>
       <template #footer><button type="button" class="btn btn-primary" :disabled="busy || !dynamicProxies.trim()" @click="saveDynamic">{{ text('应用动态代理', 'Apply dynamic proxies') }}</button></template>
     </BaseDialog>
     <ConfirmDialog :show="!!confirmation" :title="text('确认变更代理来源', 'Confirm proxy source changes')" :message="confirmation?.message || ''" danger @cancel="confirmation = undefined" @confirm="confirmActions" />
+    <ProxyQualityReportDialog :show="!!qualityReport" :name="qualityReportName" :report="qualityReport" @close="qualityReport = null" />
   </div>
 </template>
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { apiClient } from '@/api/client'
+import { useAppStore } from '@/stores/app'
 import DataTable from '@/components/common/DataTable.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import ProxyQualityReportDialog from '@/components/admin/proxy/ProxyQualityReportDialog.vue'
 import MihomoCountryFilter from './MihomoCountryFilter.vue'
 import type { CountryFilter, CountryNode } from './mihomoCountry'
+import type { ProxyQualityCheckResult } from '@/types'
+import { proxyQualityOverallClass, proxyQualityOverallLabelKey, summarizeProxyQuality } from '@/utils/proxyQuality'
 const props = withDefaults(defineProps<{ section?: 'subscriptions' | 'dynamic' | 'nodes' | 'kernel' }>(), { section: 'subscriptions' })
-const { locale } = useI18n()
+const { locale, t } = useI18n()
+const appStore = useAppStore()
 const text = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en
 type SubscriptionDownloadMode = 'auto' | 'proxy' | 'direct'
 interface WarmPoolStatus { ready_subscription?: number; ready_dynamic?: number; target: number; ready: number; checking: number; cooling: number; failure_reasons?: Record<string, number> }
 interface Subscription { id: string; label: string; enabled: boolean; nodes: number; cached: boolean; updated_at?: string }
-interface ManagedNode extends CountryNode { subscription_ids?: string[] }
+// Latest isolated-kernel check of a node, shaped like the static proxy list's latency fields.
+interface NodeCheck { checked_at: number; latency_status?: 'success' | 'failed'; latency_ms?: number; latency_message?: string; ip_address?: string; country?: string; country_code?: string; region?: string; city?: string; quality_status?: string; quality_score?: number; quality_grade?: string; quality_summary?: string; quality_checked?: number }
+interface NodeTestResult { success: boolean; message: string; latency_ms?: number; ip_address?: string; country?: string; country_code?: string; region?: string; city?: string }
+interface ManagedNode extends CountryNode { subscription_ids?: string[]; check?: NodeCheck }
 interface Status { subscription_download_mode?: SubscriptionDownloadMode; bps_warm_pool?: WarmPoolStatus; bps_ip_warm_pool?: WarmPoolStatus; installed: boolean; running: boolean; busy: boolean; supported: boolean; phase: string; error?: string; nodes: number; subscriptions: number; subscription_items?: Subscription[]; dynamic_proxies?: number; endpoint: string; use_once?: boolean; node_states?: ManagedNode[]; country_filter?: CountryFilter; country_codes?: string[] }
 interface Payload { subscriptions?: string[]; dynamic_proxies?: string[]; country_filter?: CountryFilter; name?: string }
 const status = ref<Status>()
@@ -180,6 +208,16 @@ const dynamicProxies = ref('')
 const dynamicProtocol = ref('http')
 const replaceDynamic = ref(false)
 const selected = ref<Array<string | number>>([])
+const selectedNodes = ref<Array<string | number>>([])
+const testingNodes = ref(new Set<string>())
+const qualityNodes = ref(new Set<string>())
+const batchTesting = ref(false)
+const batchQualityChecking = ref(false)
+const qualityReport = ref<ProxyQualityCheckResult | null>(null)
+const qualityReportName = ref('')
+// Each check starts a private kernel and may queue behind other checks on the server.
+const nodeTestTimeout = 60000
+const nodeQualityTimeout = 150000
 const search = ref('')
 const nodeState = ref('')
 const nodeSource = ref('')
@@ -197,7 +235,8 @@ const subscriptionColumns = computed(() => [
 ])
 const nodeColumns = computed(() => [
   { key: 'display_name', label: text('名称', 'Name') }, { key: 'source', label: text('来源', 'Source') },
-  { key: 'state', label: text('状态', 'Status') }, { key: 'country_code', label: text('地区', 'Region') }, { key: 'actions', label: text('操作', 'Actions') }
+  { key: 'state', label: text('状态', 'Status') }, { key: 'country_code', label: text('地区', 'Region') },
+  { key: 'check', label: t('admin.proxies.columns.latency') }, { key: 'actions', label: text('操作', 'Actions') }
 ])
 const filteredSubscriptions = computed(() => (status.value?.subscription_items || []).filter(s => (s.label + s.id).toLowerCase().includes(search.value.trim().toLowerCase())))
 const filteredNodes = computed(() => (status.value?.node_states || []).filter(n =>
@@ -207,12 +246,139 @@ const filteredNodes = computed(() => (status.value?.node_states || []).filter(n 
 ))
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredNodes.value.length / 50)))
 const pagedNodes = computed(() => filteredNodes.value.slice((page.value - 1) * 50, page.value * 50))
-watch([search, nodeState, nodeSource, () => props.section], () => { page.value = 1; selected.value = [] })
+// Like the static proxy list: selected nodes, otherwise every node matching the filters.
+const nodeBatchTargets = computed(() => {
+  if (!selectedNodes.value.length) return filteredNodes.value
+  const chosen = new Set(selectedNodes.value)
+  return filteredNodes.value.filter(n => chosen.has(n.name))
+})
+watch([search, nodeState, nodeSource, () => props.section], () => { page.value = 1; selected.value = []; selectedNodes.value = [] })
 watch(() => props.section, () => { search.value = ''; nodeSource.value = ''; nodeState.value = '' })
 watch(totalPages, count => { page.value = Math.min(page.value, count) })
 function nodeSourceLabel(node: ManagedNode) {
   if (node.dynamic) return text('动态代理', 'Dynamic proxy')
   return node.subscription_ids?.map(id => status.value?.subscription_items?.find(s => s.id === id)?.label || id.slice(0, 8)).join(', ') || text('订阅（待更新来源）', 'Subscription (refresh to identify)')
+}
+const checkExit = (check: NodeCheck) => [check.ip_address, check.country, check.city].filter(Boolean).join(' · ')
+function checkTitle(node: ManagedNode) {
+  const checked = node.check ? text('检测时间 ', 'Checked ') + new Date(node.check.checked_at * 1000).toLocaleString() : ''
+  return node.dynamic ? checked + text('；动态代理每次连接可能更换出口', '; dynamic proxies may change exit on every connection') : checked
+}
+const nodeCheckPath = (name: string, check: 'test' | 'quality-check') => `/admin/system/mihomo/nodes/${encodeURIComponent(name)}/${check}`
+const causeMessage = (cause: unknown, fallback: string) => (cause as { message?: string })?.message || fallback
+function setNodeBusy(nodes: Ref<Set<string>>, name: string, active: boolean) {
+  const next = new Set(nodes.value)
+  if (active) next.add(name)
+  else next.delete(name)
+  nodes.value = next
+}
+// Show a result at once; the next status refresh returns the kernel's record.
+function applyNodeCheck(name: string, update: (previous?: NodeCheck) => NodeCheck) {
+  const node = status.value?.node_states?.find(n => n.name === name)
+  if (node) node.check = update(node.check)
+}
+function previousQuality(check?: NodeCheck): Partial<NodeCheck> {
+  if (typeof check?.quality_checked !== 'number') return {}
+  return { quality_status: check.quality_status, quality_score: check.quality_score, quality_grade: check.quality_grade, quality_summary: check.quality_summary, quality_checked: check.quality_checked }
+}
+async function runNodeTest(node: ManagedNode): Promise<NodeTestResult> {
+  setNodeBusy(testingNodes, node.name, true)
+  try {
+    const { data } = await apiClient.post<NodeTestResult>(nodeCheckPath(node.name, 'test'), undefined, { timeout: nodeTestTimeout })
+    applyNodeCheck(node.name, previous => ({
+      ...previousQuality(previous), checked_at: Math.floor(Date.now() / 1000), latency_status: data.success ? 'success' : 'failed', latency_message: data.message,
+      ...(data.success ? { latency_ms: data.latency_ms, ip_address: data.ip_address, country: data.country, country_code: data.country_code, region: data.region, city: data.city } : {})
+    }))
+    return data
+  } finally { setNodeBusy(testingNodes, node.name, false) }
+}
+async function runNodeQuality(node: ManagedNode): Promise<ProxyQualityCheckResult> {
+  setNodeBusy(qualityNodes, node.name, true)
+  try {
+    const { data } = await apiClient.post<ProxyQualityCheckResult>(nodeCheckPath(node.name, 'quality-check'), undefined, { timeout: nodeQualityTimeout })
+    const reachable = (data.items || []).some(item => item.target === 'base_connectivity' && item.status === 'pass')
+    applyNodeCheck(node.name, previous => {
+      const sameExit = !!data.exit_ip && previous?.ip_address === data.exit_ip
+      return {
+        checked_at: Math.floor(Date.now() / 1000), latency_status: reachable ? 'success' : 'failed', latency_ms: reachable && data.base_latency_ms ? data.base_latency_ms : undefined, latency_message: data.summary,
+        ip_address: data.exit_ip, country: data.country, country_code: data.country_code, region: sameExit ? previous?.region : undefined, city: sameExit ? previous?.city : undefined,
+        quality_status: summarizeProxyQuality(data), quality_score: data.score, quality_grade: data.grade, quality_summary: data.summary, quality_checked: data.checked_at
+      }
+    })
+    return data
+  } finally { setNodeBusy(qualityNodes, node.name, false) }
+}
+async function testNode(node: ManagedNode) {
+  try {
+    const result = await runNodeTest(node)
+    if (result.success) appStore.showSuccess(result.latency_ms ? t('admin.proxies.proxyWorkingWithLatency', { latency: result.latency_ms }) : t('admin.proxies.proxyWorking'))
+    else appStore.showError(result.message || t('admin.proxies.proxyTestFailed'))
+  } catch (cause: unknown) {
+    appStore.showError(causeMessage(cause, t('admin.proxies.failedToTest')))
+  }
+  if (!disposed) void refresh()
+}
+async function checkNodeQuality(node: ManagedNode) {
+  try {
+    const result = await runNodeQuality(node)
+    if (disposed) return
+    qualityReportName.value = node.display_name || node.name
+    qualityReport.value = result
+    appStore.showSuccess(t('admin.proxies.qualityCheckDone', { score: result.score, grade: result.grade }))
+  } catch (cause: unknown) {
+    appStore.showError(causeMessage(cause, t('admin.proxies.qualityCheckFailed')))
+  }
+  if (!disposed) void refresh()
+}
+async function runNodeBatch(nodes: ManagedNode[], concurrency: number, run: (node: ManagedNode) => Promise<void>) {
+  let index = 0
+  const worker = async () => {
+    while (index < nodes.length && !disposed) await run(nodes[index++])
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, nodes.length) }, worker))
+}
+async function batchTestNodes() {
+  const targets = [...nodeBatchTargets.value]
+  if (batchTesting.value || !targets.length) return
+  batchTesting.value = true
+  let succeeded = 0
+  let failed = 0
+  try {
+    await runNodeBatch(targets, 3, async node => {
+      if (testingNodes.value.has(node.name)) return
+      try {
+        if ((await runNodeTest(node)).success) succeeded++
+        else failed++
+      } catch { failed++ }
+    })
+    if (disposed) return
+    const summary = text(`批量测试完成，共 ${succeeded + failed} 个节点：成功 ${succeeded} 个，失败 ${failed} 个`, `Tested ${succeeded + failed} nodes: ${succeeded} succeeded, ${failed} failed`)
+    if (failed) appStore.showWarning(summary)
+    else appStore.showSuccess(summary)
+  } finally {
+    batchTesting.value = false
+    if (!disposed) void refresh()
+  }
+}
+async function batchCheckNodeQuality() {
+  const targets = [...nodeBatchTargets.value]
+  if (batchQualityChecking.value || !targets.length) return
+  batchQualityChecking.value = true
+  const counts = { healthy: 0, warn: 0, challenge: 0, failed: 0 }
+  try {
+    await runNodeBatch(targets, 2, async node => {
+      if (qualityNodes.value.has(node.name)) return
+      try { counts[summarizeProxyQuality(await runNodeQuality(node))]++ } catch { counts.failed++ }
+    })
+    if (disposed) return
+    const total = counts.healthy + counts.warn + counts.challenge + counts.failed
+    const summary = text(`批量质量检测完成，共 ${total} 个节点：优质 ${counts.healthy} 个，告警 ${counts.warn} 个，挑战 ${counts.challenge} 个，异常 ${counts.failed} 个`, `Quality checked ${total} nodes: healthy ${counts.healthy}, warn ${counts.warn}, challenge ${counts.challenge}, abnormal ${counts.failed}`)
+    if (counts.challenge || counts.failed) appStore.showWarning(summary)
+    else appStore.showSuccess(summary)
+  } finally {
+    batchQualityChecking.value = false
+    if (!disposed) void refresh()
+  }
 }
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false

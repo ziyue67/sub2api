@@ -7,11 +7,14 @@ import (
 
 // PelicanTestConfig stores intelligence test inputs; a missing kind preserves legacy HTML plans.
 type PelicanTestConfig struct {
-	Quality         *QualityPolicy `json:"quality,omitempty"`
-	QuestionKind    string         `json:"question_kind,omitempty"`
-	Prompt          string         `json:"prompt"`
-	ReasoningEffort string         `json:"reasoning_effort"`
-	ParallelCount   int            `json:"parallel_count"`
+	// BPSRecoveryPending is filled from persisted ownership when the runner
+	// claims a plan. It is never accepted from or written to configuration JSON.
+	BPSRecoveryPending bool           `json:"-"`
+	Quality            *QualityPolicy `json:"quality,omitempty"`
+	QuestionKind       string         `json:"question_kind,omitempty"`
+	Prompt             string         `json:"prompt"`
+	ReasoningEffort    string         `json:"reasoning_effort"`
+	ParallelCount      int            `json:"parallel_count"`
 	// ModelID is recorded with each result so later edits do not relabel history.
 	ModelID string `json:"model_id,omitempty"`
 }

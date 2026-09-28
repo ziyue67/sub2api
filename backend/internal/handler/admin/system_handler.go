@@ -21,9 +21,10 @@ import (
 
 // SystemHandler handles system-related operations
 type SystemHandler struct {
-	updateSvc systemUpdateService
-	lockSvc   *service.SystemOperationLockService
-	kernel    *mihomo.Manager
+	updateSvc   systemUpdateService
+	lockSvc     *service.SystemOperationLockService
+	kernel      *mihomo.Manager
+	nodeChecker mihomoNodeChecker
 }
 
 // systemUpdateTimeout bounds a full in-place update or rollback: the release

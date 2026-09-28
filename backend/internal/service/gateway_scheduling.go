@@ -1455,74 +1455,32 @@ checkSchedulability:
 	return true
 }
 
-// rpmPrefetchContextKey is the context key for prefetched RPM counts.
-type rpmPrefetchContextKeyType struct{}
-
-var rpmPrefetchContextKey = rpmPrefetchContextKeyType{}
-
-func rpmFromPrefetchContext(ctx context.Context, accountID int64) (int, bool) {
-	if v, ok := ctx.Value(rpmPrefetchContextKey).(map[int64]int); ok {
-		count, found := v[accountID]
-		return count, found
-	}
-	return 0, false
-}
-
-// withRPMPrefetch 批量预取所有候选账号的 RPM 计数
+// withRPMPrefetch shares the account counter reader while preserving Anthropic's
+// existing fail-open scheduling behavior.
 func (s *GatewayService) withRPMPrefetch(ctx context.Context, accounts []Account) context.Context {
-	if s.rpmCache == nil {
-		return ctx
-	}
-
-	var ids []int64
-	for i := range accounts {
-		if accounts[i].IsAnthropicOAuthOrSetupToken() && accounts[i].GetBaseRPM() > 0 {
-			ids = append(ids, accounts[i].ID)
-		}
-	}
-	if len(ids) == 0 {
-		return ctx
-	}
-
-	counts, err := s.rpmCache.GetRPMBatch(ctx, ids)
+	prefetched, err := withAccountRPMPrefetch(ctx, s.rpmCache, accounts, PlatformAnthropic)
 	if err != nil {
-		return ctx // 失败开放
+		return ctx
 	}
-	return context.WithValue(ctx, rpmPrefetchContextKey, counts)
+	return prefetched
 }
 
-// isAccountSchedulableForRPM 检查账号是否可根据 RPM 进行调度
-// 仅适用于 Anthropic OAuth/SetupToken 账号
 func (s *GatewayService) isAccountSchedulableForRPM(ctx context.Context, account *Account, isSticky bool) bool {
-	if !account.IsAnthropicOAuthOrSetupToken() {
+	if account == nil || !account.IsAnthropicOAuthOrSetupToken() {
 		return true
 	}
-	baseRPM := account.GetBaseRPM()
-	if baseRPM <= 0 {
+	state, err := readAccountRPMState(ctx, s.rpmCache, account)
+	if err != nil || !state.Enabled {
 		return true
 	}
-
-	// 尝试从预取缓存获取
-	var currentRPM int
-	if count, ok := rpmFromPrefetchContext(ctx, account.ID); ok {
-		currentRPM = count
-	} else if s.rpmCache != nil {
-		if count, err := s.rpmCache.GetRPM(ctx, account.ID); err == nil {
-			currentRPM = count
-		}
-		// 失败开放：GetRPM 错误时允许调度
-	}
-
-	schedulability := account.CheckRPMSchedulability(currentRPM)
-	switch schedulability {
-	case WindowCostSchedulable:
-		return true
+	switch account.CheckRPMSchedulability(state.Current) {
 	case WindowCostStickyOnly:
 		return isSticky
 	case WindowCostNotSchedulable:
 		return false
+	default:
+		return true
 	}
-	return true
 }
 
 // IncrementAccountRPM increments the RPM counter for the given account.

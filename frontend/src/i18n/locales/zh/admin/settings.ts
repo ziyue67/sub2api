@@ -84,26 +84,8 @@ export default {
         },
         pelicanShowcase: {
           title: '鹈鹕测智展示',
-          description: '把账号定时鹈鹕测试生成的 HTML 作品展示给用户，让用户直观看到各分组的模型水平。默认关闭。',
-          configureLink: '前往 账号管理，在账号操作菜单的「鹈鹕测智 > 定时测试」里添加计划',
-          enabled: '启用鹈鹕测智展示',
-          enabledHint: '开启后用户侧边栏出现「鹈鹕测智」页面；关闭后页面隐藏、不再收录新作品，已保留的作品仍按下方规则清理。',
-          groups: '展示分组',
-          groupsHint: '展示这些分组内账号的定时鹈鹕测试结果，只收录成功生成的 HTML，不会显示账号名称。移出的分组，其作品会在一分钟内清理。',
-          noGroups: '还没有选择分组，用户页面会是空的。',
-          staleGroups: '以下已选分组已删除或停用，用户页面不会显示它们：',
-          removeStaleGroup: '移除',
-          staleGroupLabel: '不可用的分组 #{id}',
-          groupsLoadFailed: '分组加载失败，已选分组会原样保留，请刷新后重试。',
-          maxItems: '每个分组最多保留',
-          maxItemsUnit: '张',
-          maxItemsHint: '1–100 张，超出后自动删除该分组最旧的作品。',
-          autoCleanup: '自动清理',
-          autoCleanupHint: '超过保留天数的作品自动删除；关闭后只按张数保留。',
-          retentionDays: '保留天数',
-          retentionDaysUnit: '天',
-          retentionDaysHint: '1–90 天',
-          independentNote: '展示的作品是单独保存的副本，不受测试记录「保留 N 份、超过 7 天清理」的影响，删掉测试计划后也会继续展示，直到按这里的规则清理。',
+          movedHint: '展示开关、保留规则和按分组的定时测试都移到了「智能运维 → 鹈鹕测智」。',
+          movedLink: '前往鹈鹕测智',
         },
         siteBillingMode: {
           title: '站点类型',
@@ -513,14 +495,14 @@ export default {
         accountSchedulingThresholdsRangeHint: '整数 1–100（百分比）。仅 OpenAI / Anthropic / Grok。'
       },
       upstreamBillingProbe: {
-        title: '上游倍率自动探测',
-        description: '定期获取 API Key 账号所连接上游 Sub2API 站点声明的计费倍率；只有另行开启“同步上游声明倍率”的账号才会更新账号倍率。',
+        title: '上游渠道声明自动探测',
+        description: '定期获取 API Key 账号所连接上游 Sub2API 站点声明的计费倍率与余额；只有另行开启“同步上游声明倍率”的账号才会更新账号倍率。',
         enabled: '启用全局自动探测',
         enabledHint: '开启后，仅对账号自身已启用自动检测的账号执行定时探测；关闭后停止所有定时探测，手动探测不受影响。',
         intervalMinutes: '探测周期（分钟）',
         intervalHint: '范围 5–1440 分钟。成功探测结果的有效期为两个探测周期。',
-        saved: '上游倍率自动探测设置已保存',
-        saveFailed: '保存上游倍率自动探测设置失败'
+        saved: '上游渠道声明自动探测设置已保存',
+        saveFailed: '保存上游渠道声明自动探测设置失败'
       },
       ollamaCloudUsage: {
         title: 'Ollama Cloud 用量刷新',
