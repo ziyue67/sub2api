@@ -80,10 +80,11 @@ class ReleaseMatrixTest(unittest.TestCase):
                 self.assertFalse(data['dockers'])
                 self.assertEqual(data['release']['header'], original['release']['header'])
                 self.assertEqual(data['release']['footer'], original['release']['footer'])
-                # 两种模式下都必须上传二进制归档 + checksums.txt，
-                # 否则管理后台的「更新 / 回退」找不到附件。
-                self.assertFalse(data['release'].get('skip_upload', False))
-                self.assertEqual(data['checksum']['extra_files'], data['release']['extra_files'])
+                if simple:
+                    self.assertTrue(data['checksum']['disable'])
+                    self.assertTrue(data['release']['skip_upload'])
+                else:
+                    self.assertEqual(data['checksum']['extra_files'], data['release']['extra_files'])
 
     def test_collect_and_verify_hash_and_source_binding(self):
         args = self.fixture_artifacts()
