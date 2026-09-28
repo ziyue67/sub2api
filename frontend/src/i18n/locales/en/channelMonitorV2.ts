@@ -1,6 +1,49 @@
 /** Channel Monitor V2 (user + admin passive monitor UI) */
 export default {
   channelMonitorV2: {
+    "cards": {
+        "showCards": "Cards",
+        "showAnalytics": "Detailed data",
+        "passive": "V2 passive traffic · cache and availability",
+        "groupRate": "Group rate {value}x",
+        "cache": "Cache rate",
+        "availability": "Availability",
+        "ttft": "First token",
+        "windows": "Last {count} time windows",
+        "refreshIn": "Refresh in {seconds}s",
+        "trafficHistory": "Observed request health timeline",
+        "health": {
+            "healthy": "Healthy",
+            "warning": "Degraded",
+            "critical": "Unhealthy",
+            "unknown": "Insufficient samples"
+        }
+    },
+    "candy": {
+        "invalid": 'Enter a model and an integer interval from 1 to 1440 minutes.',
+        "title": "Reasoning check",
+        "cadence": "Every {minutes} min",
+        "window": "Last 60 min · observed checks only",
+        "waiting": "Waiting for a check",
+        "legend": "21 green · other yellow · probe failure red",
+        "states": {
+            "correct": "Correct",
+            "incorrect": "Wrong answer",
+            "error": "Probe failed",
+            "unknown": "Not checked",
+            "stale": "Check expired"
+        },
+        "settingsTitle": "Group candy logic checks",
+        "settingsHint": "Uses the same group routing as /admin/pelican-tests. The gateway scheduler selects an account for each check using the built-in account candy question. No fixed account binding.",
+        "costHint": "Active checks consume upstream quota. Disabled by default; runs only in enabled V2 mode for displayed groups. Maximum 64 groups, 4 concurrent checks per instance, and 90 seconds per check.",
+        "model": "Probe model",
+        "modelHint": "A model ID available in this group",
+        "effort": "Reasoning effort",
+        "interval": "Interval (minutes)",
+        "selectGroup": "Choose a group",
+        "addGroup": "Add group check",
+        "ruleHint": "Accepts clear answers such as 21, 21 candies or the answer is 21. Other answers fail. Transport failures are shown separately. Wrong answers do not disable accounts. Save to apply. Public results expose status and time only; records are retained for 24 hours. A single test does not establish permanent model capability."
+    },
     title: 'Channel Monitor',
     updating: 'Updating data',
     updatedTo: 'Updated to {time}',

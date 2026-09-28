@@ -90,22 +90,25 @@ func (h *PelicanGroupTestHandler) RunPlan(c *gin.Context) {
 	response.Success(c, gin.H{"started": true})
 }
 
-// ListResults GET /api/v1/admin/pelican-group-test-results?plan_id=&before_id=&limit=
+// ListResults GET /api/v1/admin/pelican-group-test-results?plan_id=&page=&page_size=
 // Newest first, without HTML; plan_id 0 or missing lists every plan.
 func (h *PelicanGroupTestHandler) ListResults(c *gin.Context) {
-	planID, _ := strconv.ParseInt(c.Query("plan_id"), 10, 64)
-	beforeID, _ := strconv.ParseInt(c.Query("before_id"), 10, 64)
-	limit, _ := strconv.Atoi(c.Query("limit"))
-	if planID < 0 || beforeID < 0 {
-		response.BadRequest(c, "invalid cursor")
-		return
+	var planID int64
+	if raw := c.Query("plan_id"); raw != "" {
+		var err error
+		planID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || planID < 0 {
+			response.BadRequest(c, "invalid plan_id")
+			return
+		}
 	}
-	page, err := h.svc.ListResults(c.Request.Context(), planID, beforeID, limit)
+	page, pageSize := response.ParsePagination(c)
+	items, total, err := h.svc.ListResults(c.Request.Context(), planID, page, pageSize)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, page)
+	response.Paginated(c, items, total, page, pageSize)
 }
 
 // GetResult GET /api/v1/admin/pelican-group-test-results/:id

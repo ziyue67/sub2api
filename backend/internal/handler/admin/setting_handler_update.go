@@ -400,23 +400,26 @@ type UpdateSettingsRequest struct {
 	AuthSourceGooglePlatformQuotas   map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_google_platform_quotas"`
 	AuthSourceDingTalkPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_dingtalk_platform_quotas"`
 
-	AllowUserViewErrorRequests  *bool   `json:"allow_user_view_error_requests"`
-	UsageShowLongContextBadge   *bool   `json:"usage_show_long_context_badge"`
-	RequestCaptureEnabled       *bool   `json:"request_capture_enabled"`
-	RequestCaptureQuotaMiB      *int64  `json:"request_capture_quota_mib"`
-	RequestCaptureRetentionDays *int    `json:"request_capture_retention_days"`
-	ExcelBPSImageMode           *string `json:"excel_bps_image_mode"`
-	ExcelBPSImageRelayEnabled   *bool   `json:"excel_bps_image_relay_enabled"`
-	ExcelBPSImageBaseURL        *string `json:"excel_bps_image_base_url"`
-	ExcelBPSImageBodyLimitMiB   *int    `json:"excel_bps_image_body_limit_mib"`
-	ExcelBPSImageBudgetMiB      *int    `json:"excel_bps_image_budget_mib"`
-	ExcelBPSImageMaxRequests    *int    `json:"excel_bps_image_max_requests"`
-	ExcelBPSImageMaxImageMiB    *int    `json:"excel_bps_image_max_image_mib"`
-	ExcelBPSImageMaxImages      *int    `json:"excel_bps_image_max_images"`
-	ExcelBPSImageMaxTotalMiB    *int    `json:"excel_bps_image_max_total_mib"`
-	ExcelBPSImageStorageMiB     *int    `json:"excel_bps_image_storage_mib"`
-	ExcelBPSImageStorageEntries *int    `json:"excel_bps_image_storage_entries"`
-	ExcelBPSImageTTLMinutes     *int    `json:"excel_bps_image_ttl_minutes"`
+	AllowUserViewErrorRequests    *bool   `json:"allow_user_view_error_requests"`
+	UsageShowLongContextBadge     *bool   `json:"usage_show_long_context_badge"`
+	RequestCaptureEnabled         *bool   `json:"request_capture_enabled"`
+	RequestCaptureQuotaMiB        *int64  `json:"request_capture_quota_mib"`
+	RequestCaptureRetentionDays   *int    `json:"request_capture_retention_days"`
+	ExcelBPSImageMode             *string `json:"excel_bps_image_mode"`
+	ExcelBPSImageRelayEnabled     *bool   `json:"excel_bps_image_relay_enabled"`
+	ExcelBPSImageBaseURL          *string `json:"excel_bps_image_base_url"`
+	ExcelBPSImageBodyLimitMiB     *int    `json:"excel_bps_image_body_limit_mib"`
+	ExcelBPSImageBudgetMiB        *int    `json:"excel_bps_image_budget_mib"`
+	ExcelBPSImageMaxRequests      *int    `json:"excel_bps_image_max_requests"`
+	ExcelBPSImageMaxImageMiB      *int    `json:"excel_bps_image_max_image_mib"`
+	ExcelBPSImageMaxImages        *int    `json:"excel_bps_image_max_images"`
+	ExcelBPSImageLimitPolicy      *string `json:"excel_bps_image_limit_policy"`
+	ExcelBPSImageWarningRemaining *int    `json:"excel_bps_image_warning_remaining"`
+	ExcelBPSImageCompactReserve   *int    `json:"excel_bps_image_compact_reserve"`
+	ExcelBPSImageMaxTotalMiB      *int    `json:"excel_bps_image_max_total_mib"`
+	ExcelBPSImageStorageMiB       *int    `json:"excel_bps_image_storage_mib"`
+	ExcelBPSImageStorageEntries   *int    `json:"excel_bps_image_storage_entries"`
+	ExcelBPSImageTTLMinutes       *int    `json:"excel_bps_image_ttl_minutes"`
 }
 
 // UpdateSettings 更新系统设置
@@ -541,6 +544,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if req.ExcelBPSImageMaxImageMiB != nil && (*req.ExcelBPSImageMaxImageMiB < 1 || *req.ExcelBPSImageMaxImageMiB > 128) {
 		response.BadRequest(c, "Image relay max_image_mib must be 1-128")
+		return
+	}
+	if (req.ExcelBPSImageWarningRemaining != nil && (*req.ExcelBPSImageWarningRemaining < 1 || *req.ExcelBPSImageWarningRemaining > 4096)) || (req.ExcelBPSImageCompactReserve != nil && (*req.ExcelBPSImageCompactReserve < 1 || *req.ExcelBPSImageCompactReserve > 4096)) {
+		response.BadRequest(c, "Image policy margins must be 1-4096")
 		return
 	}
 	if req.ExcelBPSImageMaxImages != nil && (*req.ExcelBPSImageMaxImages < 1 || *req.ExcelBPSImageMaxImages > 4096) {
@@ -1801,6 +1808,24 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.ExcelBPSImageMaxImageMiB
 		}(),
+		ExcelBPSImageLimitPolicy: func() string {
+			if req.ExcelBPSImageLimitPolicy != nil {
+				return *req.ExcelBPSImageLimitPolicy
+			}
+			return previousSettings.ExcelBPSImageLimitPolicy
+		}(),
+		ExcelBPSImageWarningRemaining: func() int {
+			if req.ExcelBPSImageWarningRemaining != nil {
+				return *req.ExcelBPSImageWarningRemaining
+			}
+			return previousSettings.ExcelBPSImageWarningRemaining
+		}(),
+		ExcelBPSImageCompactReserve: func() int {
+			if req.ExcelBPSImageCompactReserve != nil {
+				return *req.ExcelBPSImageCompactReserve
+			}
+			return previousSettings.ExcelBPSImageCompactReserve
+		}(),
 		ExcelBPSImageMaxImages: func() int {
 			if req.ExcelBPSImageMaxImages != nil {
 				return *req.ExcelBPSImageMaxImages
@@ -2710,10 +2735,14 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ExcelBPSImageRelayEnabled:         updatedSettings.ExcelBPSImageRelayEnabled,
 		ExcelBPSImageMaxImageMiB:          updatedSettings.ExcelBPSImageMaxImageMiB,
 		ExcelBPSImageMaxImages:            updatedSettings.ExcelBPSImageMaxImages,
-		ExcelBPSImageMaxTotalMiB:          updatedSettings.ExcelBPSImageMaxTotalMiB,
-		ExcelBPSImageStorageMiB:           updatedSettings.ExcelBPSImageStorageMiB,
-		ExcelBPSImageStorageEntries:       updatedSettings.ExcelBPSImageStorageEntries,
-		ExcelBPSImageTTLMinutes:           updatedSettings.ExcelBPSImageTTLMinutes,
+		ExcelBPSImageLimitPolicy:          updatedSettings.ExcelBPSImageLimitPolicy,
+		ExcelBPSImageWarningRemaining:     updatedSettings.ExcelBPSImageWarningRemaining,
+		ExcelBPSImageCompactReserve:       updatedSettings.ExcelBPSImageCompactReserve,
+
+		ExcelBPSImageMaxTotalMiB:    updatedSettings.ExcelBPSImageMaxTotalMiB,
+		ExcelBPSImageStorageMiB:     updatedSettings.ExcelBPSImageStorageMiB,
+		ExcelBPSImageStorageEntries: updatedSettings.ExcelBPSImageStorageEntries,
+		ExcelBPSImageTTLMinutes:     updatedSettings.ExcelBPSImageTTLMinutes,
 
 		ExcelBPSImageBaseURL:      updatedSettings.ExcelBPSImageBaseURL,
 		ExcelBPSImageBodyLimitMiB: updatedSettings.ExcelBPSImageBodyLimitMiB,

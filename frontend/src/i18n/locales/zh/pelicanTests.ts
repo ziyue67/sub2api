@@ -93,7 +93,7 @@ export default {
   },
   history: {
     title: '测试记录',
-    hint: '保留最近 7 天、每个测试最多 100 条，可以看到每次落到了哪个账号。',
+    hint: '保留最近 7 天, 每个测试最多 100 条. 支持翻页、跳页和调整每页条数.',
     empty: '还没有测试记录。',
     time: '时间',
     group: '分组',
@@ -105,7 +105,6 @@ export default {
     failed: '失败',
     view: '查看作品',
     tried: '先试过：{accounts}',
-    loadMore: '加载更多',
     loading: '加载中…',
     previewTitle: '{group} · {model}',
     previewLoading: '作品加载中…',

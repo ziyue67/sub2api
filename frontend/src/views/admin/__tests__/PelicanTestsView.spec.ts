@@ -1,6 +1,7 @@
 import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PelicanTestsView from '../PelicanTestsView.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import type { PelicanGroupTestPlan, PelicanGroupTestResult } from '@/api/admin/pelicanTests'
 
 const api = vi.hoisted(() => ({
@@ -72,10 +73,11 @@ const mountView = () => mount(PelicanTestsView, {
 
 let wrapper: ReturnType<typeof mountView>
 beforeEach(() => {
+  localStorage.clear()
   for (const fn of Object.values(api)) fn.mockReset()
   api.listPlans.mockResolvedValue([plan(), plan({ id: 8, group_id: 5, group_name: '迁移来的分组', model_id: '', enabled: false, last_run_at: null, next_run_at: null, last_result: undefined })])
   api.getShowcaseSettings.mockResolvedValue({ ...settings })
-  api.listResults.mockResolvedValue({ items: [result(), result({ id: 89, status: 'failed', account_id: 0, account_name: '', attempts: [], error_message: 'no_available_account: no available accounts' })], next_cursor: 0 })
+  api.listResults.mockResolvedValue({ items: [result(), result({ id: 89, status: 'failed', account_id: 0, account_name: '', attempts: [], error_message: 'no_available_account: no available accounts' })], total: 2 })
   getGroups.mockReset().mockResolvedValue([
     { id: 4, name: 'GPT PRO号池', platform: 'openai', status: 'active' },
     { id: 6, name: 'Claude Max', platform: 'anthropic', status: 'active' },
@@ -83,7 +85,10 @@ beforeEach(() => {
   ])
   fetchPublicSettings.mockReset().mockResolvedValue(undefined)
 })
-afterEach(() => wrapper?.unmount())
+afterEach(() => {
+  wrapper?.unmount()
+  vi.useRealTimers()
+})
 
 describe('PelicanTestsView', () => {
   it('lists the group tests with the account the scheduler picked', async () => {
@@ -215,6 +220,7 @@ describe('PelicanTestsView', () => {
     api.deletePlan.mockResolvedValue(undefined)
     wrapper = mountView()
     await flushPromises()
+    api.listResults.mockResolvedValue({ items: [], total: 0 })
     await wrapper.get('[data-testid="pelican-plan-delete-7"]').trigger('click')
     await wrapper.get('.confirm-yes').trigger('click')
     await flushPromises()
@@ -224,8 +230,8 @@ describe('PelicanTestsView', () => {
   })
 
   it('previews an answer in the sandbox and pages the history', async () => {
-    api.listResults.mockResolvedValueOnce({ items: [result()], next_cursor: 90 })
-    api.listResults.mockResolvedValueOnce({ items: [result({ id: 80 })], next_cursor: 0 })
+    api.listResults.mockResolvedValueOnce({ items: [result()], total: 21 })
+    api.listResults.mockResolvedValueOnce({ items: [result({ id: 80 })], total: 21 })
     api.getResult.mockResolvedValue(result({ response_text: '<svg data-answer="90"></svg>' }))
     wrapper = mountView()
     await flushPromises()
@@ -235,10 +241,93 @@ describe('PelicanTestsView', () => {
     expect(frame.attributes('sandbox')).toBe('allow-scripts')
     expect(frame.attributes('srcdoc')).toContain('data-answer="90"')
 
-    await wrapper.get('[data-testid="pelican-history-more"]').trigger('click')
+    wrapper.getComponent(Pagination).vm.$emit('update:page', 2)
     await flushPromises()
-    expect(api.listResults).toHaveBeenLastCalledWith(90)
+    expect(api.listResults).toHaveBeenLastCalledWith(2, 20, 0, expect.any(AbortSignal))
     expect(wrapper.find('[data-testid="pelican-result-80"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="pelican-history-more"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="pelican-result-90"]').exists()).toBe(false)
+    expect(wrapper.getComponent(Pagination).props()).toMatchObject({ total: 21, page: 2, pageSize: 20, showJump: true })
+  })
+
+  it('uses the shared page size and returns to page one when it changes', async () => {
+    localStorage.setItem('table-page-size', '50')
+    api.listResults.mockResolvedValue({ items: [result()], total: 120 })
+    wrapper = mountView()
+    await flushPromises()
+    expect(api.listResults).toHaveBeenLastCalledWith(1, 50, 0, expect.any(AbortSignal))
+    wrapper.getComponent(Pagination).vm.$emit('update:page', 2)
+    await flushPromises()
+    await wrapper.get('[data-testid="pelican-history-pagination"] select').setValue('20')
+    await flushPromises()
+    expect(api.listResults).toHaveBeenLastCalledWith(1, 20, 0, expect.any(AbortSignal))
+    expect(localStorage.getItem('table-page-size')).toBe('20')
+    expect(wrapper.getComponent(Pagination).props('page')).toBe(1)
+  })
+
+  it('replaces the current page while polling instead of accumulating rows', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    api.listResults.mockResolvedValue({ items: [result()], total: 80 })
+    wrapper = mountView()
+    await flushPromises()
+    wrapper.getComponent(Pagination).vm.$emit('update:page', 2)
+    await flushPromises()
+    api.listResults.mockResolvedValue({ items: [result({ id: 91 })], total: 81 })
+    await vi.advanceTimersByTimeAsync(15000)
+    await flushPromises()
+    expect(api.listResults).toHaveBeenLastCalledWith(2, 20, 0, expect.any(AbortSignal))
+    expect(wrapper.getComponent(Pagination).props('page')).toBe(2)
+    expect(wrapper.findAll('[data-testid="pelican-test-history"] tbody tr')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="pelican-result-90"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="pelican-result-91"]').exists()).toBe(true)
+  })
+
+  it('ignores a late response from an earlier page and aborts it', async () => {
+    api.listResults.mockResolvedValue({ items: [result()], total: 80 })
+    wrapper = mountView()
+    await flushPromises()
+    let resolveOld!: (value: unknown) => void
+    api.listResults.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
+    wrapper.getComponent(Pagination).vm.$emit('update:page', 2)
+    const oldSignal = api.listResults.mock.calls.at(-1)?.[3] as AbortSignal
+    api.listResults.mockResolvedValueOnce({ items: [result({ id: 70 })], total: 80 })
+    wrapper.getComponent(Pagination).vm.$emit('update:page', 3)
+    await flushPromises()
+    expect(oldSignal.aborted).toBe(true)
+    resolveOld({ items: [result({ id: 80 })], total: 80 })
+    await flushPromises()
+    expect(wrapper.getComponent(Pagination).props('page')).toBe(3)
+    expect(wrapper.find('[data-testid="pelican-result-70"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="pelican-result-80"]').exists()).toBe(false)
+  })
+
+  it('moves to the last available page after history is deleted', async () => {
+    api.listResults.mockResolvedValue({ items: [result()], total: 21 })
+    wrapper = mountView()
+    await flushPromises()
+    wrapper.getComponent(Pagination).vm.$emit('update:page', 2)
+    await flushPromises()
+    api.listResults.mockResolvedValueOnce({ items: [], total: 1 })
+    api.listResults.mockResolvedValueOnce({ items: [result({ id: 70, plan_id: 8 })], total: 1 })
+    await wrapper.get('[data-testid="pelican-plan-delete-7"]').trigger('click')
+    await wrapper.get('.confirm-yes').trigger('click')
+    await flushPromises()
+    expect(api.listResults).toHaveBeenLastCalledWith(1, 20, 0, expect.any(AbortSignal))
+    expect(wrapper.getComponent(Pagination).props()).toMatchObject({ page: 1, total: 1 })
+    expect(wrapper.find('[data-testid="pelican-result-70"]').exists()).toBe(true)
+  })
+
+  it('reports a failed page request and cancels requests on unmount', async () => {
+    api.listResults.mockResolvedValue({ items: [result()], total: 80 })
+    wrapper = mountView()
+    await flushPromises()
+    api.listResults.mockRejectedValueOnce(new Error('history unavailable'))
+    wrapper.getComponent(Pagination).vm.$emit('update:page', 2)
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('history unavailable')
+    api.listResults.mockReturnValueOnce(new Promise(() => {}))
+    wrapper.getComponent(Pagination).vm.$emit('update:page', 3)
+    const signal = api.listResults.mock.calls.at(-1)?.[3] as AbortSignal
+    wrapper.unmount()
+    expect(signal.aborted).toBe(true)
   })
 })

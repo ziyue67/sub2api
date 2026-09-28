@@ -84,3 +84,58 @@ the final response locally. This does not provide upstream constrained decoding.
 The gateway separately permits one regeneration when the first tool interaction ends in exactly one undeclared run_officejs target at the end of a completed response. It must have no prior tool calls/results and no dispatched client tool. This path reuses the prepared request, current catalog, account, model, proxy and attachment IDs; it does not append a fabricated executed tool result. Its corrected response must pass the current catalog, argument schema, identity and parallel-call checks. A second unknown target, invalid arguments or incomplete response fails without dispatching tools. Both attempts' reported usage is retained, including progressive usage if the correction disconnects before its terminal event.
 
 This path and the existing known-target formatting path are selected independently. A function argument schema error alone does not trigger either path.
+
+# Optional inline image limit policies
+
+Administrator settings under Facilities → Feature switches → Excel / BPS image
+support select off (default), automatic compaction, or warning interception.
+Existing persisted settings need no migration. Clients omitting the new fields
+preserve their current values. Native uploads and HTTPS relay use the same
+inline image counting rules, including tool outputs and agent messages; repeated
+image occurrences each count. Existing size and resource limits still apply.
+
+Automatic compaction only runs when history plus new images exceeds the configured
+limit and each partition fits independently. It accepts Codex client identities
+and a stable session scoped by account, API key, thread and model. A digest of the
+last successful input identifies the unconsumed tail; bootstrap accepts only a
+trailing user batch or a complete terminal tool call/result batch. Uncertain
+boundaries fail explicitly. Old history is compacted at most once with client
+tools disabled, and the actual encrypted compaction window is used for the
+continuation. New inputs stay intact. The compacted window is emitted before
+continuation items with adjusted output indexes, and both phases' reported usage
+is counted even when generation fails. This consumes additional model tokens.
+The client must retain and echo the compaction output items on later requests;
+the gateway reconciles verified history checkpoints as described below. Mock
+protocol tests do not replace acceptance testing in the actual Codex client;
+unsupported clients should use manual compact.
+
+Warning mode requires 1 <= reserve < warning remainder < maximum images. With
+20/8/3, 0–11 pass, 12–17 warn once per conversation cycle then pass on retry, and
+18–20 block ordinary requests. At 12 images the user sees 5 available slots.
+Only administrators see the reserve setting. Explicit compact endpoints and native
+compaction triggers bypass these warning thresholds, but not the total limit.
+Successful compact or a return below the warning threshold starts a new cycle.
+Redis stores only progress position/digest and the atomic warning marker, expiring
+after two idle hours. A missing stable session identity rejects requests requiring a policy action.
+Redis session-state errors fail closed for ordinary requests; manual compact
+remains available when Redis policy state is unavailable.
+
+## Gateway checkpoint reconciliation
+
+Ordinary Codex compaction output does not itself replace local client history.
+After automatic compaction, the gateway commits an authenticated checkpoint
+before emitting the window. Redis stores only canonical SHA256 digests, input
+positions and split positions; it never stores the compacted window or full
+messages. The client must echo the exact emitted window immediately after the
+request input. On subsequent requests the gateway verifies the prior input and
+window, moves the preserved new-input tail after that window, and drops only
+the verified compacted prefix from the BPS request. It applies at most 16 such
+checkpoints in order. Altered/missing windows fail explicitly where the prefix
+matches; unrecognized histories retain normal limits. Concurrent checkpoint
+writes use compare-and-swap and abort on conflict before generation.
+
+The client's raw upload can still include old images. Raw request-size protection
+remains in force; this is gateway reconciliation, not client memory cleanup.
+A manual compact resets the checkpoint chain. State expiry or a different account,
+model, key or thread can require manual compact again. Checkpoints remain useful
+if generation fails after emitting the compaction window; all usage is still billed.

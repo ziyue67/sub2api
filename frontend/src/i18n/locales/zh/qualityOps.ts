@@ -6,7 +6,7 @@ export default {
 
   "conflictChecks": "哪些检查会阻止自动恢复？",
   "title": "质量运维",
-  "description": "定时检测账户回答质量，答错（降智）后移出指定分组、关闭调度或开启 BPS 协议。每个账户只配置一条规则。",
+  "description": "定时检测账户回答质量，答错（降智）后移出指定分组、关闭调度或开启 BPS 协议。分组/调度规则与自动 BPS 规则可各配置一条，独立运行。",
   "refresh": "刷新",
   "create": "新建检测规则",
   "edit": "编辑规则",
@@ -23,8 +23,8 @@ export default {
   "selectMatchingAccounts": "全选当前筛选结果",
   "selectingAccounts": "正在选择全部结果…",
   "clearAccountSelection": "清空已选",
-  "accountSelectionHint": "分组、类型与搜索可组合筛选；全选包含所有匹配页，跳过已有规则的账户。切换筛选保留已选账户。",
-  "accountHasRule": "已有规则",
+  "accountSelectionHint": "分组、类型与搜索可组合筛选；全选包含所有匹配页，跳过已有同类规则的账户。切换筛选保留已选账户。",
+  "accountHasRule": "已有同类规则",
   "noMatchingAccounts": "没有匹配的账户",
   "previousAccountPage": "上一页账户",
   "nextAccountPage": "下一页账户",
@@ -77,6 +77,7 @@ export default {
   "queued": "已加入检测队列，预计一分钟内开始。",
   "deleteConfirm": "删除此规则及检测记录？已移出的分组、关闭的调度或本规则开启的 BPS 不会自动恢复，请先在账户页处理。",
   "outcomes": {
+    "action_conflict": "等待其他规则恢复",
     "no_change": "未变更账户",
     "inconclusive": "检测或判题不确定，未执行动作",
     "already_quarantined": "保持隔离",
@@ -189,6 +190,7 @@ export default {
   "discard": "放弃修改",
   "disableSchedulingShort": "关闭调度，保留分组",
   "actionHelp": {
+    "action_conflict": "其他规则修改过处置类型，但仍保留本类处置的恢复记录。请先恢复或处理该规则的账号状态，本轮未覆盖其设置。",
     "no_change": "本轮没有修改账号设置。",
     "inconclusive": "请求或判题未得到明确结论，本轮没有修改账号。",
     "already_quarantined": "账号之前已被本规则隔离，本轮未再次修改分组或调度。",

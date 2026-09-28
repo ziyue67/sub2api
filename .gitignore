@@ -147,6 +147,7 @@ docs/*
 !docs/cyber-session-blocking.md
 !docs/request-capture.md
 !docs/account-token-guard.md
+!docs/priority-scheduling.md
 !docs/legal/
 !docs/legal/*.md
 !docs/screenshots/

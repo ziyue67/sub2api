@@ -119,23 +119,34 @@ describe('EditAccountModal auto BPS switch', () => {
     expect(wrapper.emitted('updated')).toHaveLength(1)
   })
 
-  it.each([true, false])('blocks a conflicting quality rule, enabled=%s, without blocking the account save', async (enabled) => {
+  it.each([true, false])('creates BPS alongside a group/scheduling rule, enabled=%s', async (enabled) => {
     mocks.listByAccount.mockResolvedValue([buildRule({ enabled, pelican_config: {
       question_kind: 'state_probe', prompt: '', parallel_count: 1,
       quality: { expected_answer: '', action: 'disable_scheduling', remove_group_ids: [], auto_restore: true }
     } })])
     const wrapper = mountModal()
     await flushPromises()
-    expect(wrapper.get(toggleSelector).attributes('disabled')).toBeDefined()
-    expect(wrapper.get(toggleSelector).attributes('aria-checked')).toBe('false')
-    const conflict = wrapper.get('[data-testid="account-auto-bps-conflict"]')
-    expect(conflict.text()).toContain('admin.accounts.openai.autoBPSRuleConflict')
-    expect(conflict.get('a').attributes('href')).toBe('/admin/account-quality')
+    expect(wrapper.get(toggleSelector).attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="account-auto-bps-conflict"]').exists()).toBe(false)
+    await wrapper.get(toggleSelector).trigger('click')
     await submit(wrapper)
-    expect(mocks.updateAccount).toHaveBeenCalledTimes(1)
-    expect(mocks.createPlan).not.toHaveBeenCalled()
+    expect(mocks.createPlan).toHaveBeenCalledTimes(1)
+    expect(mocks.createPlan.mock.calls[0][0].pelican_config.quality.action).toBe('enable_bps')
     expect(mocks.updatePlan).not.toHaveBeenCalled()
-    expect(wrapper.emitted('updated')).toHaveLength(1)
+  })
+
+  it('edits only the BPS rule when both rule types exist', async () => {
+    mocks.listByAccount.mockResolvedValue([buildRule({ id: 47, pelican_config: {
+      question_kind: 'candy', quality: { action: 'remove_groups', remove_group_ids: [1] }
+    } }), buildRule()])
+    const wrapper = mountModal()
+    await flushPromises()
+    expect(wrapper.get(toggleSelector).attributes('aria-checked')).toBe('true')
+    expect(wrapper.get(toggleSelector).attributes('disabled')).toBeUndefined()
+    await wrapper.get(toggleSelector).trigger('click')
+    await submit(wrapper)
+    expect(mocks.updatePlan).toHaveBeenCalledWith(31, { enabled: false })
+    expect(mocks.createPlan).not.toHaveBeenCalled()
   })
 
   it('leaves the rule alone when nothing about it changed', async () => {

@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from '../client'
+import type { PaginatedResponse } from '@/types'
 
 export interface PelicanGroupTestConfig {
   question_kind?: string
@@ -101,12 +102,13 @@ export async function runPlan(id: number): Promise<void> {
   await apiClient.post(`/admin/pelican-group-tests/${id}/run`)
 }
 
-/** Newest first, without HTML. next_cursor 0 means there is nothing more. */
-export async function listResults(beforeId = 0, planId = 0): Promise<{ items: PelicanGroupTestResult[]; next_cursor: number }> {
-  const { data } = await apiClient.get('/admin/pelican-group-test-results', {
-    params: { before_id: beforeId || undefined, plan_id: planId || undefined },
+/** Newest first, without HTML; only the requested page is transferred. */
+export async function listResults(page = 1, pageSize = 20, planId = 0, signal?: AbortSignal): Promise<PaginatedResponse<PelicanGroupTestResult>> {
+  const { data } = await apiClient.get<PaginatedResponse<PelicanGroupTestResult>>('/admin/pelican-group-test-results', {
+    params: { page, page_size: pageSize, plan_id: planId || undefined },
+    signal,
   })
-  return { items: data?.items ?? [], next_cursor: data?.next_cursor ?? 0 }
+  return data
 }
 
 export async function getResult(id: number): Promise<PelicanGroupTestResult> {

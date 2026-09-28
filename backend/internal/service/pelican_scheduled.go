@@ -257,11 +257,11 @@ func intelligenceTestOutputError(cfg *PelicanTestConfig, output string) string {
 		}
 		return ""
 	}
-	if isBuiltinCandyPlan(cfg) && strings.TrimSpace(output) != "21" {
-		return "answer_mismatch: expected 21"
-	}
 	if strings.TrimSpace(output) == "" {
 		return pelicanErrEmptyOutput
+	}
+	if isBuiltinCandyPlan(cfg) && !CandyAnswerCorrect(output) {
+		return "answer_mismatch: expected 21"
 	}
 	if cfg.QuestionKind != "candy" && !isBuiltinCandyPlan(cfg) && !pelicanHTMLPattern.MatchString(output) {
 		return "Model did not return HTML or SVG"

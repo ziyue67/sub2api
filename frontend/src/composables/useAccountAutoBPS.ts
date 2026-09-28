@@ -33,8 +33,8 @@ export function useAccountAutoBPS() {
       const plans = await adminAPI.scheduledTests.listByAccount(accountId)
       if (current !== version) return
       rule.value = pickAutoBPSRule(plans)
-      // The unique account index also includes paused quality rules.
-      conflictingRule.value = plans.find(plan => plan.pelican_config?.quality && !isAutoBPSRule(plan)) ?? null
+      // Group/scheduling rules own a separate scope and can coexist with BPS.
+      conflictingRule.value = plans.find(plan => plan.pelican_config?.quality?.action === 'enable_bps' && !isAutoBPSRule(plan)) ?? null
       draft.value = autoBPSDraftFromRule(rule.value)
       initial = JSON.stringify(draft.value)
     } catch (error) {

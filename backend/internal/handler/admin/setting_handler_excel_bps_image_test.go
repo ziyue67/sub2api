@@ -129,3 +129,26 @@ func TestSettingsExcelBPSImageLimitsValidationAndPreservation(t *testing.T) {
 		require.Equal(t, "64", repo.values[service.SettingKeyExcelBPSImageMaxTotalMiB])
 	}
 }
+
+func TestSettingsExcelBPSImagePolicyPreservesOmittedAndRejectsInvalid(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
+	rec := doUpdateSettings(t, h, map[string]any{"excel_bps_image_limit_policy": "warn", "excel_bps_image_warning_remaining": 9, "excel_bps_image_compact_reserve": 4}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "warn", gjson.Get(rec.Body.String(), "data.excel_bps_image_limit_policy").String())
+	rec = doUpdateSettings(t, h, map[string]any{"site_name": "preserve policy"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "warn", repo.values[service.SettingKeyExcelBPSImageLimitPolicy])
+	require.Equal(t, "9", repo.values[service.SettingKeyExcelBPSImageWarningRemaining])
+	require.Equal(t, "4", repo.values[service.SettingKeyExcelBPSImageCompactReserve])
+	for _, bad := range []map[string]any{{"excel_bps_image_limit_policy": "invalid"}, {"excel_bps_image_warning_remaining": 0}, {"excel_bps_image_compact_reserve": 0}, {"excel_bps_image_compact_reserve": 9}, {"excel_bps_image_max_images": 9}} {
+		rec = doUpdateSettings(t, h, bad, nil)
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		require.Equal(t, "4", repo.values[service.SettingKeyExcelBPSImageCompactReserve])
+	}
+	rec = httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
+	h.GetSettings(c)
+	require.Equal(t, "warn", gjson.Get(rec.Body.String(), "data.excel_bps_image_limit_policy").String())
+	require.EqualValues(t, 9, gjson.Get(rec.Body.String(), "data.excel_bps_image_warning_remaining").Int())
+}

@@ -883,7 +883,7 @@ export default {
         autoBPSLoading: '正在读取本账号的自动开启 BPS 规则…',
         autoBPSLoadFailed: '读取自动开启 BPS 规则失败：{error}。本次保存不会改动这条规则。',
         autoBPSPauseHint: '关闭后规则暂停检测，设置和记录都保留，再打开按原设置继续；已经开启的 BPS 不会被关闭。',
-        autoBPSRuleConflict: '本账号已有其他质量规则 #{id}。每个账号只能有一条质量规则，暂停的规则也会占用名额；请前往质量运维修改现有规则。',
+        autoBPSRuleConflict: '本账号已有 BPS 质量规则 #{id}，请前往质量运维修改。分组/调度规则可与 BPS 规则同时使用。',
         autoBPSManageRules: '管理质量规则',
         autoBPSSaveFailed: '账号已保存，但自动开启 BPS 规则没保存成功：{error}。可到 智能运维 → 质量运维 手动处理。',
         autoBPSCreateFailed: '账号已创建，但有 {count} 个账号没加上自动开启 BPS 规则：{error}。可到 智能运维 → 质量运维 为它们新建规则。',

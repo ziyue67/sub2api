@@ -155,6 +155,9 @@
               </tr>
             </thead>
             <tbody>
+              <tr v-if="resultsLoading && !results.length">
+                <td colspan="7" class="text-center" role="status">{{ t('pelicanTests.history.loading') }}</td>
+              </tr>
               <tr v-for="result in results" :key="result.id" :data-testid="`pelican-result-${result.id}`">
                 <td class="whitespace-nowrap">{{ formatDateTimeToMinute(result.started_at) }}</td>
                 <td><strong :title="result.group_name">{{ result.group_name }}</strong></td>
@@ -181,13 +184,18 @@
               </tr>
             </tbody>
           </table>
-          <div v-if="resultsLoaded && !results.length" class="empty-state"><Icon name="document" size="xl" /><p>{{ t('pelicanTests.history.empty') }}</p></div>
+          <div v-if="resultsLoaded && !resultsLoading && !results.length" class="empty-state"><Icon name="document" size="xl" /><p>{{ t('pelicanTests.history.empty') }}</p></div>
         </div>
-        <footer v-if="nextCursor" class="history-footer">
-          <button :disabled="loadingMore" data-testid="pelican-history-more" @click="loadMore">
-            {{ t(loadingMore ? 'pelicanTests.history.loading' : 'pelicanTests.history.loadMore') }}
-          </button>
-        </footer>
+        <Pagination
+          v-if="resultsTotal > 0"
+          :total="resultsTotal"
+          :page="resultsPage"
+          :page-size="resultsPageSize"
+          show-jump
+          data-testid="pelican-history-pagination"
+          @update:page="changeResultsPage"
+          @update:page-size="changeResultsPageSize"
+        />
       </section>
 
       <aside class="scope-note"><Icon name="infoCircle" size="sm" /><p>{{ t('pelicanTests.accountNote') }}</p></aside>
@@ -307,6 +315,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Select from '@/components/common/Select.vue'
@@ -324,6 +333,7 @@ import {
   type PelicanShowcaseSettings,
 } from '@/api/admin/pelicanTests'
 import { useAppStore } from '@/stores/app'
+import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import type { AdminGroup, GroupPlatform } from '@/types'
 import { extractApiErrorCode, extractApiErrorMessage } from '@/utils/apiError'
 import { formatDateTimeToMinute } from '@/utils/format'
@@ -351,11 +361,13 @@ const settings = ref<PelicanShowcaseSettings | null>(null)
 const draft = ref<PelicanShowcaseSettings | null>(null)
 const results = ref<PelicanGroupTestResult[]>([])
 const resultsLoaded = ref(false)
-const nextCursor = ref(0)
+const resultsPage = ref(1)
+const resultsPageSize = ref(getPersistedPageSize())
+const resultsTotal = ref(0)
+const resultsLoading = ref(false)
 const groups = ref<AdminGroup[]>([])
 const groupsLoadFailed = ref(false)
 const loading = ref(false)
-const loadingMore = ref(false)
 const savingSettings = ref(false)
 const savingPlan = ref(false)
 const error = ref('')
@@ -366,6 +378,9 @@ const deleting = ref<PelicanGroupTestPlan | null>(null)
 const preview = ref<{ result: PelicanGroupTestResult; html: string; status: 'loading' | 'ready' | 'invalid' | 'error' } | null>(null)
 let alive = true
 let timer: ReturnType<typeof setInterval> | undefined
+let resultsController: AbortController | undefined
+let resultsRequest = 0
+let polling = false
 
 const settingsDirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== JSON.stringify(settings.value))
 const groupOptions = computed(() => {
@@ -426,10 +441,10 @@ async function load() {
   if (loading.value) return
   loading.value = true
   try {
-    const [planList, showcase, page] = await Promise.all([
+    const [planList, showcase] = await Promise.all([
       pelicanTestsAPI.listPlans(),
       pelicanTestsAPI.getShowcaseSettings(),
-      pelicanTestsAPI.listResults(),
+      loadResults(),
     ])
     if (!alive) return
     plans.value = planList
@@ -437,9 +452,6 @@ async function load() {
     settings.value = showcase
     // Keep an admin's unsaved edits across a refresh.
     if (!draft.value || !settingsDirty.value) draft.value = { ...showcase }
-    results.value = page.items
-    nextCursor.value = page.next_cursor
-    resultsLoaded.value = true
   } catch (err: unknown) {
     fail(err, t('pelicanTests.loadError'))
   } finally {
@@ -447,35 +459,64 @@ async function load() {
   }
 }
 
-// Runs finish in the background; poll plans and prepend new results without losing loaded pages.
+// Refresh the current page in place so polling cannot grow the table indefinitely.
 async function poll() {
-  if (loading.value || document.hidden) return
+  if (loading.value || polling || document.hidden) return
+  polling = true
   try {
-    const [planList, page] = await Promise.all([pelicanTestsAPI.listPlans(), pelicanTestsAPI.listResults()])
+    const [planList] = await Promise.all([pelicanTestsAPI.listPlans(), loadResults(true)])
     if (!alive) return
     plans.value = planList
-    const newest = results.value[0]?.id ?? 0
-    const fresh = page.items.filter((result) => result.id > newest)
-    if (!results.value.length) nextCursor.value = page.next_cursor
-    results.value = [...fresh, ...results.value]
   } catch {
     // The next tick or a manual refresh tries again.
+  } finally {
+    polling = false
   }
 }
 
-async function loadMore() {
-  if (loadingMore.value || !nextCursor.value) return
-  loadingMore.value = true
+async function loadResults(silent = false) {
+  if (silent && resultsLoading.value) return
+  const request = ++resultsRequest
+  resultsController?.abort()
+  const controller = new AbortController()
+  resultsController = controller
+  const pageNumber = resultsPage.value
+  const pageSize = resultsPageSize.value
+  resultsLoading.value = true
+  if (!silent) results.value = []
   try {
-    const page = await pelicanTestsAPI.listResults(nextCursor.value)
-    const seen = new Set(results.value.map((result) => result.id))
-    results.value = [...results.value, ...page.items.filter((result) => !seen.has(result.id))]
-    nextCursor.value = page.next_cursor
+    let page = await pelicanTestsAPI.listResults(pageNumber, pageSize, 0, controller.signal)
+    if (!alive || request !== resultsRequest) return
+    // Deleting a plan or retention cleanup can remove the last page.
+    const lastPage = Math.max(1, Math.ceil(page.total / pageSize))
+    if (pageNumber > lastPage) {
+      resultsPage.value = lastPage
+      page = await pelicanTestsAPI.listResults(lastPage, pageSize, 0, controller.signal)
+    }
+    if (!alive || request !== resultsRequest) return
+    results.value = page.items
+    resultsTotal.value = page.total
+    resultsLoaded.value = true
   } catch (err: unknown) {
-    fail(err, t('pelicanTests.loadError'))
+    if (alive && request === resultsRequest && !controller.signal.aborted && !silent) {
+      fail(err, t('pelicanTests.loadError'))
+    }
   } finally {
-    loadingMore.value = false
+    if (alive && request === resultsRequest) resultsLoading.value = false
   }
+}
+
+function changeResultsPage(page: number) {
+  if (page === resultsPage.value) return
+  resultsPage.value = page
+  void loadResults()
+}
+
+function changeResultsPageSize(pageSize: number) {
+  if (pageSize === resultsPageSize.value) return
+  resultsPageSize.value = pageSize
+  resultsPage.value = 1
+  void loadResults()
 }
 
 async function saveSettings() {
@@ -594,8 +635,8 @@ async function removePlan() {
   try {
     await pelicanTestsAPI.deletePlan(plan.id)
     plans.value = plans.value.filter((item) => item.id !== plan.id)
-    results.value = results.value.filter((result) => result.plan_id !== plan.id)
     succeed(t('pelicanTests.plans.deleted'))
+    await loadResults()
   } catch (err: unknown) {
     fail(err, t('pelicanTests.plans.actionFailed'))
   } finally {
@@ -621,6 +662,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   alive = false
+  resultsController?.abort()
   if (timer) clearInterval(timer)
 })
 </script>
@@ -683,8 +725,6 @@ td small { @apply mt-1 block text-[11px]; }
 .badge-ok { @apply bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300; }
 .badge-bad { @apply bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-300; }
 .link-button { @apply text-primary-600 hover:underline dark:text-primary-400; }
-.history-footer { @apply flex justify-center border-t border-gray-100 px-5 py-3 dark:border-dark-700; }
-.history-footer button { @apply text-xs text-primary-600; }
 .empty-state { @apply flex min-h-48 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-gray-400; }
 .scope-note { @apply mt-5 flex items-start gap-2 text-xs leading-6 text-gray-400; }
 .scope-note svg { @apply mt-1 shrink-0; }

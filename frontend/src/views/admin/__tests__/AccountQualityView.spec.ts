@@ -205,6 +205,32 @@ describe('quality operations', () => {
     expect(vm.selectedAccounts).toEqual([])
     wrapper.unmount()
   })
+  it('selects accounts by rule type and drops conflicting selections when switching type', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue([
+      { id: 4, account_id: 1, enabled: false, pelican_config: { quality: { action: 'remove_groups', remove_group_ids: [21] } } },
+      { id: 5, account_id: 2, enabled: false, pelican_config: { quality: { action: 'enable_bps', remove_group_ids: [] } } }
+    ] as any)
+    vi.mocked(accountsAPI.list).mockResolvedValue({ items: [
+      { id: 1, name: 'Group rule', platform: 'openai', type: 'oauth', extra: {} },
+      { id: 2, name: 'BPS rule', platform: 'openai', type: 'oauth', extra: {} },
+      { id: 3, name: 'New', platform: 'openai', type: 'oauth', extra: {} }
+    ], total: 3 } as any)
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
+    expect(vm.selectedAccounts).toEqual([2, 3])
+    vm.form.pelican_config.question_kind = 'state_probe'
+    vm.form.pelican_config.quality.action = 'enable_bps'
+    await flushPromises()
+    expect(vm.selectedAccounts).toEqual([3])
+    expect(wrapper.get('input[type="checkbox"][value="1"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('input[type="checkbox"][value="2"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-select-all"]').trigger('click'); await flushPromises()
+    expect(vm.selectedAccounts).toEqual([3, 1])
+    await vm.save()
+    expect(vi.mocked(scheduledTests.create).mock.calls.map(([request]) => request.account_id)).toEqual([3, 1])
+    wrapper.unmount()
+  })
   it('selects all filtered pages without duplicate IDs or accounts with rules', async () => {
     vi.mocked(listQualityPlans).mockResolvedValue([{ id: 4, account_id: 1 }] as any)
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any

@@ -29,6 +29,8 @@ type groupTestRepoFake struct {
 	pruned        []int64
 	expiredBefore time.Time
 	listed        []*PelicanGroupTestResult
+	listedOffset  int
+	listedLimit   int
 	nextID        int64
 }
 
@@ -114,8 +116,11 @@ func (r *groupTestRepoFake) PruneExpiredResults(_ context.Context, before time.T
 	r.expiredBefore = before
 	return nil
 }
-func (r *groupTestRepoFake) ListResults(context.Context, int64, int64, int) ([]*PelicanGroupTestResult, error) {
-	return r.listed, nil
+func (r *groupTestRepoFake) ListResults(_ context.Context, _ int64, offset, limit int) ([]*PelicanGroupTestResult, int64, error) {
+	r.listedOffset, r.listedLimit = offset, limit
+	start := min(offset, len(r.listed))
+	end := min(start+limit, len(r.listed))
+	return r.listed[start:end], int64(len(r.listed)), nil
 }
 func (r *groupTestRepoFake) GetResult(_ context.Context, id int64) (*PelicanGroupTestResult, error) {
 	for _, result := range r.results {
@@ -354,6 +359,7 @@ func TestPelicanGroupTestSampleSurvivesAccountTestFailures(t *testing.T) {
 	result := svc.runSample(context.Background(), groupTestPlan(1), &Group{ID: 4})
 	require.Equal(t, "failed", result.Status)
 	require.Equal(t, "pelican_group_test_panic: sample failed", result.ErrorMessage)
+	require.Equal(t, []int64{11}, router.released, "panic must release the account concurrency slot")
 
 	router = &groupTestRouterFake{steps: []routeStep{{account: account(11, "a")}, {account: account(12, "b")}}}
 	calls := 0
@@ -466,14 +472,32 @@ func TestPelicanGroupTestCleanupAndHistoryPaging(t *testing.T) {
 	for id := int64(10); id > 0; id-- {
 		repo.listed = append(repo.listed, &PelicanGroupTestResult{ID: id})
 	}
-	page, err := svc.ListResults(ctx, 0, 0, 3)
+	items, total, err := svc.ListResults(ctx, 0, 1, 3)
 	require.NoError(t, err)
-	require.Len(t, page.Items, 3)
-	require.EqualValues(t, 8, page.NextCursor)
-	repo.listed = repo.listed[:2]
-	page, err = svc.ListResults(ctx, 0, 0, 3)
+	require.Len(t, items, 3)
+	require.EqualValues(t, 10, total)
+	require.EqualValues(t, 10, items[0].ID)
+	items, total, err = svc.ListResults(ctx, 0, 2, 3)
 	require.NoError(t, err)
-	require.Zero(t, page.NextCursor)
+	require.EqualValues(t, 7, items[0].ID)
+	require.EqualValues(t, 10, total)
+	items, total, err = svc.ListResults(ctx, 0, 4, 3)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.EqualValues(t, 10, total, "the last page still reports the full total")
+	require.EqualValues(t, 1, items[0].ID)
+	items, total, err = svc.ListResults(ctx, 0, 5, 3)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.EqualValues(t, 10, total, "an empty page still reports the total")
+	_, _, err = svc.ListResults(ctx, 0, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, 0, repo.listedOffset)
+	require.Equal(t, 20, repo.listedLimit)
+	_, _, err = svc.ListResults(ctx, 0, 2, 2000)
+	require.NoError(t, err)
+	require.Equal(t, 1000, repo.listedOffset)
+	require.Equal(t, 1000, repo.listedLimit)
 
 	_, err = svc.GetResult(ctx, 12345)
 	require.ErrorIs(t, err, ErrPelicanGroupTestResultNotFound)

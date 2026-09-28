@@ -95,6 +95,22 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		}
 	}
 	q := plan.PelicanConfig.Quality
+	// Changing a rule's action does not discard its previous ownership. While
+	// holding the account lock, keep another rule from taking over that scope
+	// until the previous owner's snapshot has been restored.
+	if state.Action == "" {
+		var owned bool
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM account_quality_states s JOIN scheduled_test_plans p ON p.id=s.plan_id
+ WHERE p.account_id=$1 AND p.id<>$2 AND COALESCE(s.state->>'action','')<>''
+ AND (s.state->>'action'='enable_bps')=$3)`, plan.AccountID, plan.ID, q.Action == service.QualityActionEnableBPS).Scan(&owned)
+		if err != nil {
+			return "", err
+		}
+		if owned {
+			return "action_conflict", nil
+		}
+	}
 	// 已被本规则开过 BPS 的账号即便规则后来改了动作，也由 BPS 分支负责恢复。
 	if state.Action == service.QualityActionEnableBPS || (state.Action == "" && q.Action == service.QualityActionEnableBPS) {
 		action, err := applyQualityBPSOutcome(ctx, tx, plan, outcome, status, state, len(raw) > 0)

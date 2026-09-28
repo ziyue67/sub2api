@@ -202,8 +202,9 @@ func TestPelicanGroupTestRepo_ResultsHistory(t *testing.T) {
 	require.Equal(t, []service.PelicanGroupTestAttempt{{AccountID: 87, AccountName: "pool-a", Error: "API returned 429"}}, listed.LastResult.Attempts)
 	require.Empty(t, listed.LastResult.ResponseText, "the plan overview never carries HTML")
 
-	page, err := repo.ListResults(ctx, plan.ID, 0, 10)
+	page, total, err := repo.ListResults(ctx, plan.ID, 0, 10)
 	require.NoError(t, err)
+	require.EqualValues(t, 2, total)
 	require.Equal(t, []int64{failedOver.ID, none.ID}, []int64{page[0].ID, page[1].ID})
 	require.Empty(t, page[0].ResponseText)
 	require.Equal(t, group.Name, page[0].GroupName)
@@ -211,11 +212,18 @@ func TestPelicanGroupTestRepo_ResultsHistory(t *testing.T) {
 	require.Zero(t, page[1].AccountID, "no account was routed")
 	require.Equal(t, []service.PelicanGroupTestAttempt{}, page[1].Attempts)
 	require.Equal(t, "gpt-6-astra", page[1].PelicanConfig.ModelID)
-	page, err = repo.ListResults(ctx, plan.ID, failedOver.ID, 10)
+	page, total, err = repo.ListResults(ctx, plan.ID, 1, 1)
 	require.NoError(t, err)
-	require.Len(t, page, 1, "the cursor continues below the given id")
-	page, err = repo.ListResults(ctx, 0, 0, 500)
+	require.Len(t, page, 1, "the next page skips earlier results")
+	require.Equal(t, none.ID, page[0].ID)
+	require.EqualValues(t, 2, total)
+	page, total, err = repo.ListResults(ctx, plan.ID, 2, 1)
 	require.NoError(t, err)
+	require.Empty(t, page)
+	require.EqualValues(t, 2, total)
+	page, total, err = repo.ListResults(ctx, 0, 0, 500)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, total)
 	seen := map[int64]bool{}
 	for _, result := range page {
 		seen[result.ID] = true
@@ -232,8 +240,9 @@ func TestPelicanGroupTestRepo_ResultsHistory(t *testing.T) {
 	require.Nil(t, missing)
 
 	require.NoError(t, repo.PruneResults(ctx, plan.ID, 1))
-	page, err = repo.ListResults(ctx, plan.ID, 0, 10)
+	page, total, err = repo.ListResults(ctx, plan.ID, 0, 10)
 	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
 	require.Len(t, page, 1)
 	require.Equal(t, failedOver.ID, page[0].ID)
 
