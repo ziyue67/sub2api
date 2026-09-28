@@ -525,9 +525,13 @@ func stripDeepSeekUnsupportedChatResponseFormat(account *Account, chatBody []byt
 // （聚合站场景：账号是 platform=openai，但本条请求已映射到 deepseek-*，
 // chatReq.Model 在进入本函数前已经改写为出站模型名）。
 //
-// 该判定是 HEAD 侧 targetsDeepSeekAPIHost 的超集：账号级 DeepSeek 判定完全
-// 覆盖（platform=deepseek 或 base_url 指向 api.deepseek.com），并额外支持
-// 聚合站按映射后模型名识别 DeepSeek 语义上游，故合并时统一收敛到本函数。
+// 该判定是上游 targetsDeepSeekAPIHost 的超集：账号级 DeepSeek 判定完全覆盖
+// （platform=deepseek 或 base_url 指向 api.deepseek.com），并额外支持聚合站按
+// 映射后模型名识别 DeepSeek 语义上游，故合并时统一收敛到本函数。
+// OpenCode Zen / Go 的 deepseek-* 模型（含 `opencode-go/DeepSeek-V4-Pro` 这种
+// 带前缀、大小写混用的 ID）同样由 DeepSeek 承载、原样回吐 thinking-mode 400，
+// 故先按 opencode 前缀归一化再判定，覆盖上游 requiresDeepSeekChatReasoning 的
+// 「官方 OpenCode 上游 + deepseek-* 模型」这一条链路。
 func isDeepSeekSemanticsChatUpstream(account *Account, upstreamModel string) bool {
 	if account == nil {
 		return false
@@ -538,7 +542,10 @@ func isDeepSeekSemanticsChatUpstream(account *Account, upstreamModel string) boo
 	if isDeepSeekAPIHost(account.GetOpenAIBaseURL()) {
 		return true
 	}
-	return isDeepSeekModelName(upstreamModel)
+	if isDeepSeekModelName(upstreamModel) {
+		return true
+	}
+	return isDeepSeekModelName(normalizeOpenCodeGoModelID(upstreamModel))
 }
 
 // deepSeekChatReasoningPlaceholderText 是 Chat Completions 侧 thinking-mode
@@ -552,7 +559,7 @@ const deepSeekChatReasoningPlaceholderText = " "
 // "The `reasoning_content` in the thinking mode must be passed back to the API"。
 //
 // 桥接会从 summary / 缓存回注真实明文；这里只填仍为空的缺口，不覆盖已有内容。
-// 非 DeepSeek 上游原样返回（字节不变）。
+// 判定见 isDeepSeekSemanticsChatUpstream，不命中的上游原样返回（字节不变）。
 func ensureDeepSeekChatReasoningPlaceholders(account *Account, body []byte) []byte {
 	if !isDeepSeekSemanticsChatUpstream(account, gjson.GetBytes(body, "model").String()) {
 		return body
