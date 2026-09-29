@@ -105,6 +105,8 @@ backend/internal/web/dist/*
 
 # 后端运行时缓存数据
 backend/data/
+# 运行时 BPS 图片会话数据（单元测试会就地写入，勿提交）
+backend/internal/service/data/
 
 # ===================
 # 本地配置文件（包含敏感信息）
