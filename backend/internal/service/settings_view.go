@@ -174,6 +174,7 @@ type SystemSettings struct {
 	DefaultBalance                    float64
 	RiskControlEnabled                bool
 	CyberSessionBlockEnabled          bool
+	CyberPolicyUserAllowlist          string
 	CyberSessionBlockTTLSeconds       int
 	CyberSessionIdentityStrictEnabled bool
 	AffiliateEnabled                  bool

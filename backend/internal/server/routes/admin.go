@@ -413,6 +413,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 			accounts.PUT("/:id/openai-reauth/email", h.Admin.OpenAIOAuthReauth.SaveConfig)
 			accounts.POST("/:id/openai-reauth", h.Admin.OpenAIOAuthReauth.CreateTask)
 		}
+		accounts.GET("/:id/claude/reset-credits", h.Admin.Account.ClaudeResetCredits)
 		accounts.POST("", h.Admin.Account.Create)
 		accounts.POST("/:id/proxy-lanes", h.Admin.Account.CreateProxyLane)
 		accounts.POST("/:id/duplicate", h.Admin.Account.Duplicate)
