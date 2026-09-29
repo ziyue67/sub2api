@@ -480,7 +480,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
 
 <style scoped>
-.guard-v2 { max-width: 1660px; margin: auto; @apply text-gray-900 dark:text-gray-100; }
+.guard-v2 { @apply w-full min-w-0 text-gray-900 dark:text-gray-100; }
 .page-heading { @apply mb-6 flex flex-wrap items-center justify-between gap-4; }
 .eyebrow { @apply mb-1 text-[11px] font-semibold tracking-widest text-primary-600; }
 .page-heading h2 { @apply text-2xl font-semibold tracking-tight; }

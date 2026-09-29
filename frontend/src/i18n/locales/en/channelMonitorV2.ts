@@ -2,6 +2,8 @@
 export default {
   channelMonitorV2: {
     "cards": {
+        "bucketDetails": "Samples in this time window",
+        "sampleDetails": "{time} · Availability {availability} · Cache {cache} · TTFT P50 {ttft}",
         "showCards": "Cards",
         "showAnalytics": "Detailed data",
         "passive": "V2 passive traffic · cache and availability",
@@ -20,6 +22,8 @@ export default {
         }
     },
     "candy": {
+        "disabled": "Checks disabled",
+        "disabledHint": "Intelligence checks are not enabled for this group. An administrator can configure them in Channel Monitor.",
         "invalid": 'Enter a model and an integer interval from 1 to 1440 minutes.',
         "title": "Reasoning check",
         "cadence": "Every {minutes} min",

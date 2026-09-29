@@ -1,4 +1,4 @@
-import type { HealthState, MonitorCandyHistory, MonitorCoverage, MonitorMatrixRow, MonitorMetric } from '@/api/channelMonitorV2'
+import type { HealthState, MonitorCandyHistory, MonitorCoverage, MonitorMatrixBucket, MonitorMatrixRow, MonitorMetric } from '@/api/channelMonitorV2'
 
 export function hasMonitorSamples(metric: MonitorMetric): boolean {
   return metric.has_samples === true || metric.request_count > 0
@@ -24,7 +24,7 @@ export function monitorCardTimeline(row: MonitorMatrixRow, coverage: MonitorCove
   const end = Date.parse(coverage?.requested_end || coverage?.data_through || '')
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return []
   const width = (end - start) / 18
-  const bars = Array.from({ length: 18 }, (_, index) => ({ start: start + index * width, end: start + (index + 1) * width, state: 'unknown' as HealthState, observed: false }))
+  const bars = Array.from({ length: 18 }, (_, index) => ({ start: start + index * width, end: start + (index + 1) * width, state: 'unknown' as HealthState, observed: false, buckets: [] as MonitorMatrixBucket[] }))
   const severity: Record<HealthState, number> = { unknown: 0, healthy: 1, warning: 2, critical: 3 }
   for (const bucket of row.buckets) {
     const at = Date.parse(bucket.bucket_start)
@@ -32,8 +32,12 @@ export function monitorCardTimeline(row: MonitorMatrixRow, coverage: MonitorCove
     const bar = bars[Math.floor((at - start) / width)]
     if (!bar) continue
     bar.observed = true
+    // Keep the original bucket metrics: redacted counts cannot weight rates,
+    // and bucket medians cannot be combined into a time-window P50.
+    bar.buckets.push(bucket)
     if (severity[bucket.health.overall] > severity[bar.state]) bar.state = bucket.health.overall
   }
+  for (const bar of bars) bar.buckets.sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
   return bars
 }
 
