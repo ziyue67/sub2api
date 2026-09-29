@@ -97,6 +97,12 @@ func computeNextRun(cronExpr string, from time.Time) (time.Time, error) {
 
 func nextPlanRun(plan *ScheduledTestPlan, now time.Time) (time.Time, error) {
 	if cfg := plan.PelicanConfig; cfg != nil {
+		if cfg.TestChannel != "" && cfg.TestChannel != "account" && cfg.TestChannel != "bps" {
+			return time.Time{}, fmt.Errorf("invalid test channel")
+		}
+		if cfg.TestChannel == "bps" && (cfg.QuestionKind != "candy" || cfg.Quality == nil || cfg.Quality.Action != QualityActionObserveOnly) {
+			return time.Time{}, fmt.Errorf("BPS channel tests require a candy question and observation-only policy")
+		}
 		// 探针题型不需要题目文本；其余题型题目必填。
 		if isOpenAICodexStateProbePlan(cfg) {
 			if len(cfg.Prompt) > 32000 || strings.TrimSpace(plan.ModelID) == "" || len(plan.ModelID) > 100 {

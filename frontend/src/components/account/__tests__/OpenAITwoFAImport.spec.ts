@@ -39,6 +39,8 @@ describe('OpenAI initial 2FA import', () => {
     expect(importCredential).toHaveBeenCalledTimes(3)
     expect(startTwoFALogin).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).not.toContain('tokenGuard.twoFA.retry')
+    expect(importCredential.mock.calls[1]?.[2]).toEqual({ email: 'b@example.com', password: 'p2', mfa_secret: 's2' })
+    expect(importCredential.mock.calls[2]?.[2]).toEqual({ email: 'b@example.com', password: 'p2', mfa_secret: 's2' })
     expect(wrapper.emitted('busy')).toEqual([[true], [false], [true], [false]])
   })
 

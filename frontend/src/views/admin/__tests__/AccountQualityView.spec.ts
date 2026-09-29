@@ -7,6 +7,7 @@ import scheduledTests from '@/api/admin/scheduledTests'
 import { listQualityPlans, listQualityOperations } from '@/api/admin/accountQuality'
 import { useAccountQualityStore } from '@/stores/accountQuality'
 import type { ScheduledTestPlan } from '@/types'
+import { defaultQualityBPS } from '@/utils/qualityRulePatch'
 vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { template: '<nav />' } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1, role: 'admin' } }) }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
@@ -120,6 +121,44 @@ describe('quality operations', () => {
     expect(wrapper.find('#quality-rule-form').exists()).toBe(true)
     await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
     expect(vi.mocked(scheduledTests.update).mock.calls.map(([id]) => id)).toEqual([1, 2, 3, 2])
+    expect(wrapper.find('#quality-rule-form').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('identifies a non-probe rule in a 13-rule BPS batch and saves after explicitly changing the test method', async () => {
+    const selected = Array.from({ length: 13 }, (_, index) => ({
+      ...rules()[0], id: index + 1, account_id: index + 1, account_name: `Account ${index + 1}`,
+      model_id: `model-${index + 1}`,
+    }))
+    selected[12].pelican_config = { question_kind: 'candy', prompt: 'Own question', reasoning_effort: 'low', parallel_count: 3,
+      quality: { expected_answer: '7', action: 'disable_scheduling', remove_group_ids: [], auto_restore: false,
+        judge: { group_id: 21, model_id: 'own-judge', prompt: 'Own grading instructions' } } }
+    const before = JSON.stringify(selected)
+    vi.mocked(listQualityPlans).mockResolvedValue(selected)
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-testid="quality-select-rules"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bulk-edit"]').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="quality-bulk-field-action"]').setValue(true)
+    await wrapper.get('[data-testid="quality-action-enable-bps"]').setValue(true)
+    await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('qualityOps.rule #13: qualityOps.bpsRequiresProbe')
+    expect(scheduledTests.update).not.toHaveBeenCalled()
+    expect(JSON.stringify(selected)).toBe(before)
+    expect((wrapper.vm as any).bulkRuleIds).toHaveLength(13)
+
+    // The test method changes only after the user explicitly includes it.
+    await wrapper.get('[data-testid="quality-bulk-field-test"]').setValue(true)
+    await wrapper.get('[data-testid="quality-question-kind"]').setValue('state_probe')
+    await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
+    expect(scheduledTests.update).toHaveBeenCalledTimes(13)
+    for (const [index, [id, body]] of vi.mocked(scheduledTests.update).mock.calls.entries()) {
+      expect(id).toBe(index + 1)
+      expect(body).not.toHaveProperty('model_id')
+      expect(body).not.toHaveProperty('cron_expression')
+      expect(body.pelican_config).toMatchObject({ question_kind: 'state_probe', prompt: '', parallel_count: 1,
+        quality: { action: 'enable_bps', expected_answer: '', remove_group_ids: [], auto_restore: false } })
+      expect(body.pelican_config!.quality).not.toHaveProperty('judge')
+    }
     expect(wrapper.find('#quality-rule-form').exists()).toBe(false)
     wrapper.unmount()
   })
@@ -417,9 +456,11 @@ describe('quality operations', () => {
     expect((wrapper.find('[data-testid="quality-bps-auto-disable"]').element as HTMLInputElement).checked).toBe(true)
     expect(wrapper.find('[data-testid="quality-auto-restore"]').exists()).toBe(false)
     const checked = (id: string) => (wrapper.find(`[data-testid="quality-bps-${id}"]`).element as HTMLInputElement).checked
-    expect([checked('omit_unsupported_tools'), checked('ignore_images'), checked('ignore_encrypted_content'), checked('auto_disable_on_403')]).toEqual([true, false, true, false])
+    expect([checked('omit_unsupported_tools'), checked('ignore_images'), checked('ignore_encrypted_content'), checked('auto_disable_on_403'), checked('cache_creation_as_input')]).toEqual([false, false, true, true, true])
     expect(checked('auto_recover_on_403')).toBe(false)
-    expect((wrapper.find('[data-testid="quality-bps-auto_recover_on_403"]').element as HTMLInputElement).disabled).toBe(true)
+    expect((wrapper.find('[data-testid="quality-bps-auto_recover_on_403"]').element as HTMLInputElement).disabled).toBe(false)
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="quality-probe-interval"]').element.value).toBe('*/2 * * * *')
+    await wrapper.get('[data-testid="quality-probe-interval"]').setValue('*/10 * * * *')
     expect(wrapper.find('[data-testid="model-selector"]').text()).toBe('gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra')
     expect(wrapper.find('[data-testid="quality-bps-require-all"]').exists()).toBe(false)
     expect((wrapper.find('[data-testid="quality-bps-pass-threshold"]').element as HTMLInputElement).value).toBe('2')
@@ -450,15 +491,16 @@ describe('quality operations', () => {
     vm.form.pelican_config.quality.remove_group_ids = [21]
     await vm.save()
     const request = vi.mocked(scheduledTests.create).mock.calls[0][0] as any
+    expect(request.cron_expression).toBe('*/10 * * * *')
     expect(request.pelican_config.quality).toEqual({ expected_answer: '', action: 'enable_bps', remove_group_ids: [], auto_restore: true, bps: {
       failure_threshold: 3, usage_percent: 80, require_all: true, all_models: false, models: ['gpt-6-astra'],
-      omit_unsupported_tools: true, ignore_images: true, ignore_encrypted_content: true, auto_disable_on_403: true,
+      omit_unsupported_tools: false, ignore_images: true, ignore_encrypted_content: true, auto_disable_on_403: true,
       auto_recover_on_403: true, recovery_interval_minutes: 360,
-      auto_move_on_403: true, target_group_id: 21, session_proxy: false, proxy_source: '', cache_creation_as_input: false,
+      auto_move_on_403: true, target_group_id: 21, session_proxy: false, proxy_source: '', cache_creation_as_input: true,
       pass_threshold: 3, hold_on_usage: false } })
     wrapper.unmount()
   })
-  it('validates BPS triggers and drops BPS when a rule switches back to candy', async () => {
+  it('validates BPS triggers and switches candy tests to BPS observation', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
     vm.newPlan(); await flushPromises(); vm.selectedAccounts = [1]
     await wrapper.find('[data-testid="quality-question-kind"]').setValue('state_probe')
@@ -483,14 +525,80 @@ describe('quality operations', () => {
     expect(wrapper.find('[data-testid="quality-bps-models"]').exists()).toBe(false)
     expect(scheduledTests.create).not.toHaveBeenCalled()
     await wrapper.find('[data-testid="quality-question-kind"]').setValue('candy')
-    expect(vm.form.pelican_config.quality.action).toBe('remove_groups')
+    expect(vm.form.pelican_config.quality.action).toBe('observe_only')
+    expect(vm.form.pelican_config.test_channel).toBe('bps')
     expect(wrapper.find('[data-testid="quality-action-enable-bps"]').exists()).toBe(false)
     vm.form.pelican_config.quality.judge = { group_id: 21, model_id: 'test-judge', prompt: 'grade semantically' }
     vm.form.pelican_config.quality.remove_group_ids = [21]
     await vm.save()
     const request = vi.mocked(scheduledTests.create).mock.calls[0][0] as any
-    expect(request.pelican_config.quality).toMatchObject({ action: 'remove_groups', remove_group_ids: [21] })
+    expect(request.pelican_config).toMatchObject({ question_kind: 'candy', test_channel: 'bps' })
+    expect(request.pelican_config.quality).toMatchObject({ action: 'observe_only', remove_group_ids: [], auto_restore: false })
     expect(request.pelican_config.quality.bps).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('saves 13 BPS rules as candy observations without retaining BPS lifecycle actions', async () => {
+    const selected = Array.from({ length: 13 }, (_, index) => {
+      const rule = rules()[0]
+      return { ...rule, id: index + 1, account_id: index + 1, model_id: `model-${index + 1}`,
+        pelican_config: { ...rule.pelican_config!, quality: { ...rule.pelican_config!.quality!,
+          action: 'enable_bps' as const, auto_restore: true, bps: defaultQualityBPS() } } }
+    })
+    const before = JSON.stringify(selected)
+    vi.mocked(listQualityPlans).mockResolvedValue(selected)
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-testid="quality-select-rules"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bulk-edit"]').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="quality-bulk-field-test"]').setValue(true)
+    await wrapper.get('[data-testid="quality-question-kind"]').setValue('candy')
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="quality-test-channel"]').element.value).toBe('bps')
+    expect(wrapper.get('[data-testid="quality-bps-observation-hint"]').text()).toContain('qualityOps.bpsObservationHint')
+    const vm = wrapper.vm as any
+    vm.form.pelican_config.quality.judge = { group_id: 21, model_id: 'judge', prompt: 'Grade the answer' }
+    await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
+    expect(scheduledTests.update).toHaveBeenCalledTimes(13)
+    for (const [index, [id, body]] of vi.mocked(scheduledTests.update).mock.calls.entries()) {
+      expect(id).toBe(index + 1)
+      expect(body).not.toHaveProperty('model_id')
+      expect(body).not.toHaveProperty('cron_expression')
+      expect(body.pelican_config).toMatchObject({ question_kind: 'candy', test_channel: 'bps',
+        quality: { action: 'observe_only', expected_answer: '21', remove_group_ids: [], auto_restore: false,
+          judge: { group_id: 21, model_id: 'judge', prompt: 'Grade the answer' } } })
+      expect(body.pelican_config!.quality).not.toHaveProperty('bps')
+    }
+    expect(JSON.stringify(selected)).toBe(before)
+    expect(wrapper.find('#quality-rule-form').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('creates a candy BPS observation without group or lifecycle settings', async () => {
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises(); vm.selectedAccounts = [1]
+    await wrapper.get('[data-testid="quality-test-channel"]').setValue('bps')
+    expect(wrapper.find('[data-testid="quality-action-enable-bps"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="quality-auto-restore"]').exists()).toBe(false)
+    vm.form.pelican_config.quality.judge = { group_id: 21, model_id: 'judge', prompt: 'Grade the answer' }
+    await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
+    expect(scheduledTests.create).toHaveBeenCalledWith(expect.objectContaining({ pelican_config: expect.objectContaining({
+      question_kind: 'candy', test_channel: 'bps', quality: expect.objectContaining({ action: 'observe_only', auto_restore: false, remove_group_ids: [] }),
+    }) }))
+    wrapper.unmount()
+  })
+
+  it('allows observation beside existing account policies while excluding duplicate observations', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue([
+      { ...rules()[0], account_id: 1 },
+      { ...rules()[1], account_id: 2, pelican_config: { ...rules()[1].pelican_config!, quality: { ...rules()[1].pelican_config!.quality!, action: 'enable_bps' } } },
+      { ...rules()[2], account_id: 3, pelican_config: { ...rules()[2].pelican_config!, quality: { ...rules()[2].pelican_config!.quality!, action: 'observe_only' } } },
+    ])
+    vi.mocked(accountsAPI.list).mockResolvedValue({ items: [1, 2, 3].map(id => ({ id, name: 'Account', platform: 'openai', type: 'oauth' })), total: 3 } as any)
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-test-channel"]').setValue('bps')
+    await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
+    expect(vm.selectedAccounts).toEqual([1, 2])
+    expect(wrapper.get('#quality-rule-form input[type="checkbox"][value="3"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
   it('loads saved BPS rules, summarizes their trigger and labels counted failures', async () => {

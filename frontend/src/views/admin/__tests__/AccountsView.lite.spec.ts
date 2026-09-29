@@ -10,6 +10,7 @@ const {
   listWithEtag,
   getById,
   getBatchTodayStats,
+  getManagementCapabilities,
   getUpstreamBillingProbeSettings,
   getAllProxies,
   getAllGroups,
@@ -21,6 +22,7 @@ const {
   listWithEtag: vi.fn(),
   getById: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  getManagementCapabilities: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
@@ -32,7 +34,7 @@ const {
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
-      getManagementCapabilities: vi.fn().mockResolvedValue({ web_search_enabled: false, account_quota_notify_enabled: false }),
+      getManagementCapabilities,
       list: listAccounts,
       getById,
       listWithEtag,
@@ -68,6 +70,7 @@ const DataTableStub = defineComponent({
     <div>
       <div v-for="row in data" :key="row.id" :data-account-name="row.name">
         <slot name="cell-groups" :row="row" />
+        <slot name="cell-capacity" :row="row" />
         <slot name="cell-actions" :row="row" />
       </div>
     </div>
@@ -121,7 +124,7 @@ function mountView(stubActionMenu = true) {
         EditAccountModal: EditAccountModalStub,
         BulkEditAccountModal: true,
         PlatformTypeBadge: true,
-        AccountCapacityCell: true,
+        AccountCapacityCell: false,
         AccountStatusIndicator: true,
         AccountTodayStatsCell: true,
         AccountGroupsCell: AccountGroupsCellStub,
@@ -145,7 +148,7 @@ const listRow = {
   concurrency: 2,
   priority: 1,
   group_ids: [7],
-  extra: {},
+  extra: { auto_config_concurrency: { concurrency: 2, successes: 1, required: 20, maximum: 100, step: 1 } },
   credentials: {}
 }
 
@@ -164,6 +167,7 @@ describe('admin AccountsView lite account list', () => {
     listWithEtag.mockReset().mockResolvedValue({ notModified: true, etag: 'compact-etag', data: null })
     getById.mockReset().mockResolvedValue(fullAccount)
     getBatchTodayStats.mockReset().mockResolvedValue({ stats: {} })
+    getManagementCapabilities.mockReset().mockResolvedValue({ concurrency_upgrade_enabled: false })
     getUpstreamBillingProbeSettings.mockReset().mockResolvedValue({ enabled: true })
     getAllProxies.mockReset().mockResolvedValue([])
     getAllGroups.mockReset().mockResolvedValue([{ id: 7, name: 'codex', platform: 'openai' }])
@@ -187,6 +191,56 @@ describe('admin AccountsView lite account list', () => {
       expect.objectContaining({ lite: '1' }),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+    wrapper.unmount()
+  })
+
+  it('hides stored upgrade progress until the global switch is enabled', async () => {
+    let resolveCapabilities!: (value: { concurrency_upgrade_enabled: boolean }) => void
+    getManagementCapabilities.mockReturnValueOnce(new Promise(resolve => { resolveCapabilities = resolve }))
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('progress').exists()).toBe(false)
+
+    resolveCapabilities({ concurrency_upgrade_enabled: true })
+    await flushPromises()
+    expect(wrapper.get('progress').attributes()).toMatchObject({ value: '1', max: '20' })
+    wrapper.unmount()
+  })
+
+  it.each([false, undefined])('hides historical progress when the upgrade flag is %s', async enabled => {
+    getManagementCapabilities.mockResolvedValue({ concurrency_upgrade_enabled: enabled })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('progress').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('autoConfig.tier')
+    expect(wrapper.text()).not.toContain('autoConfig.progress')
+    wrapper.unmount()
+  })
+
+  it('hides upgrade progress after disabling even when the account ETag is unchanged', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    localStorage.setItem('account-auto-refresh', JSON.stringify({ enabled: true, interval_seconds: 5 }))
+    getManagementCapabilities.mockResolvedValue({ concurrency_upgrade_enabled: true })
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('progress').exists()).toBe(true)
+
+    getManagementCapabilities.mockResolvedValue({ concurrency_upgrade_enabled: false })
+    await vi.advanceTimersByTimeAsync(6000)
+    await flushPromises()
+    expect(listWithEtag).toHaveBeenCalled()
+    expect(wrapper.find('progress').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('autoConfig.tier')
+    wrapper.unmount()
+  })
+
+  it('hides upgrade progress if the switch cannot be read', async () => {
+    getManagementCapabilities.mockRejectedValue(new Error('settings unavailable'))
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('[data-account-name]').exists()).toBe(true)
+    expect(wrapper.find('progress').exists()).toBe(false)
     wrapper.unmount()
   })
 

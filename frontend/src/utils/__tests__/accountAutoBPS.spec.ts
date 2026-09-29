@@ -23,6 +23,45 @@ function plan(id: number, patch: Partial<ScheduledTestPlan> = {}): ScheduledTest
 }
 
 describe('accountAutoBPS', () => {
+  it('defaults to two-minute probes and the selected BPS options without enabling the rule', () => {
+    const draft = newAutoBPSDraft()
+    expect(draft).toMatchObject({ enabled: false, cronExpression: '*/2 * * * *', bps: {
+      omit_unsupported_tools: false, ignore_images: false, ignore_encrypted_content: true,
+      auto_disable_on_403: true, auto_recover_on_403: false, auto_move_on_403: false,
+      session_proxy: false, cache_creation_as_input: true,
+    } })
+    draft.bps.models.push('custom-model')
+    draft.bps.cache_creation_as_input = false
+    expect(newAutoBPSDraft().bps.models).not.toContain('custom-model')
+    expect(newAutoBPSDraft().bps.cache_creation_as_input).toBe(true)
+  })
+
+  it('preserves saved options and custom schedules when resuming a paused rule', () => {
+    const saved = plan(4, { enabled: false, cron_expression: '13 9 * * 1-5' })
+    Object.assign(saved.pelican_config!.quality!.bps!, {
+      omit_unsupported_tools: true, ignore_encrypted_content: false, auto_disable_on_403: false, cache_creation_as_input: false,
+    })
+    const loaded = autoBPSDraftFromRule(saved)
+    expect(loaded.cronExpression).toBe('13 9 * * 1-5')
+    expect(loaded.bps).toMatchObject({ omit_unsupported_tools: true, ignore_encrypted_content: false, auto_disable_on_403: false, cache_creation_as_input: false })
+    const change = autoBPSRuleChange(saved, loaded, { ...loaded, enabled: true }, 9)
+    expect(change).toMatchObject({ kind: 'update', id: 4, request: { enabled: true, pelican_config: { quality: { bps: { auto_disable_on_403: false, cache_creation_as_input: false } } } } })
+    if (change?.kind === 'update') expect(change.request).not.toHaveProperty('cron_expression')
+  })
+
+  it('uses the chosen schedule on create and updates the existing rule when the schedule changes', () => {
+    const draft = { ...newAutoBPSDraft(), enabled: true, cronExpression: ' 0 */2 * * * ' }
+    expect(autoBPSCreateRequest(42, draft).cron_expression).toBe('0 */2 * * *')
+    const saved = plan(5)
+    const loaded = autoBPSDraftFromRule(saved)
+    const change = autoBPSRuleChange(saved, loaded, { ...loaded, cronExpression: '*/5 * * * *' }, 9)
+    expect(change).toMatchObject({ kind: 'update', id: 5, request: { cron_expression: '*/5 * * * *' } })
+    if (change?.kind === 'update') {
+      expect(change.request).not.toHaveProperty('model_id')
+      expect(change.request.pelican_config?.reasoning_effort).toBe('xhigh')
+    }
+  })
+
   it('picks the running auto-BPS rule, otherwise the oldest one', () => {
     const otherAction = plan(1, { pelican_config: { question_kind: 'state_probe', quality: { expected_answer: '', action: 'remove_groups', remove_group_ids: [2], auto_restore: false } } })
     const pelican = plan(2, { pelican_config: { question_kind: 'pelican', quality: { expected_answer: 'x', action: 'enable_bps', remove_group_ids: [], auto_restore: false } } })
@@ -80,6 +119,7 @@ describe('accountAutoBPS', () => {
     if (change?.kind !== 'update') return
     expect(change.id).toBe(5)
     expect(change.request.enabled).toBe(true)
+    expect(change.request).not.toHaveProperty('cron_expression')
     expect(change.request.pelican_config?.reasoning_effort).toBe('xhigh')
     expect(change.request.pelican_config?.quality).toMatchObject({ action: 'enable_bps', auto_restore: true, bps: { failure_threshold: 1, models: [] } })
 

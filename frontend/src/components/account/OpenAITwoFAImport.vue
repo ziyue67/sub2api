@@ -38,7 +38,7 @@ import { deleteTwoFALogin, getTwoFALogin, parseTwoFALoginText, startTwoFALogin }
 import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 
 const props = defineProps<{
-  importCredential: (credential: Record<string, unknown>, email: string) => Promise<'created' | 'skipped'>
+  importCredential: (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount) => Promise<'created' | 'skipped'>
 }>()
 const emit = defineEmits<{ busy: [value: boolean] }>()
 const { t } = useI18n()
@@ -104,14 +104,16 @@ async function run() {
             throw new Error('login_failed')
           }
           row.credential = job.credential
-          row.entry.password = ''
-          row.entry.mfa_secret = ''
           await discardJob(row)
         }
         if (stopRequested.value || disposed) { row.status = 'pending'; break }
         row.status = 'importing'
-        row.status = await props.importCredential(row.credential, row.entry.email)
+        // Keep the input in memory until encrypted credential-operations
+        // enrollment succeeds. An import/enrollment retry reuses this login.
+        row.status = await props.importCredential(row.credential, row.entry.email, { ...row.entry })
         row.credential = undefined
+        row.entry.password = ''
+        row.entry.mfa_secret = ''
       } catch (cause: unknown) {
         const status = (cause as { status?: number; response?: { status?: number } })?.status ??
           (cause as { response?: { status?: number } })?.response?.status

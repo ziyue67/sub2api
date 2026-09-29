@@ -20,7 +20,10 @@ import chatStudio from './chatStudio'
 
 import requestTiming from './requestTiming'
 
+import autoConfig from './autoConfig'
+
 export default {
+  autoConfig,
   priorityScheduling,
   qualityOps,
   accountOps,

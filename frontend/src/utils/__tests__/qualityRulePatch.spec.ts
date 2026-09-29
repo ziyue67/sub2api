@@ -126,6 +126,17 @@ describe('quality rule partial updates', () => {
     expect(() => buildQualityRulePatch(probePlan(), input, ['action'])).toThrow('qualityOps.bpsTriggerRequired')
   })
 
+  it('converts explicit BPS candy observations without retaining automatic BPS or restoration', () => {
+    const rule = probePlan()
+    rule.pelican_config!.quality = { ...rule.pelican_config!.quality!, action: 'enable_bps', auto_restore: true, bps: bps() }
+    const input = draft(); input.pelican_config.test_channel = 'bps'
+    const patch = buildQualityRulePatch(rule, input, ['test', 'restore'])
+    expect(patch.pelican_config).toMatchObject({ question_kind: 'candy', test_channel: 'bps', prompt: 'New question',
+      quality: { action: 'observe_only', auto_restore: false, remove_group_ids: [], expected_answer: '42', judge: input.pelican_config.quality.judge } })
+    expect(patch.pelican_config!.quality).not.toHaveProperty('bps')
+    expect(rule.pelican_config!.quality!.action).toBe('enable_bps')
+  })
+
   it('reports the first invalid BPS setting', () => {
     expect(qualityBPSError(bps())).toBe('')
     expect(qualityBPSError({ ...bps(), failure_threshold: 0, usage_percent: 80 })).toBe('')

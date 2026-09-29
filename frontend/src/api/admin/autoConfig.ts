@@ -1,0 +1,19 @@
+import { apiClient } from '../client'
+export interface AutoConfig {
+ enabled: boolean
+ platform: string
+ priority: number
+ load_factor: number
+ concurrency: number
+ group_ids: number[]
+ upgrade_enabled: boolean
+ upgrade_group_ids: number[]
+ successes_per_step: number
+ upgrade_step: number
+ max_concurrency: number
+ cooldown_seconds: number
+ revision: string
+ runtime_blocked?: boolean
+}
+export async function getAutoConfig(): Promise<AutoConfig> { return (await apiClient.get('/admin/account-ops/auto-config')).data }
+export async function saveAutoConfig(config: AutoConfig): Promise<AutoConfig> { return (await apiClient.put('/admin/account-ops/auto-config', config)).data }

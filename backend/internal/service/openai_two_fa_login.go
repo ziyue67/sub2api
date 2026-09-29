@@ -30,6 +30,17 @@ func ValidateOpenAITwoFALogin(entry AccountTokenGuardReloginAccount) error {
 }
 
 func (s *AccountTokenGuardService) StartTwoFALogin(ctx context.Context, entry AccountTokenGuardReloginAccount) (*OpenAITwoFALoginJob, error) {
+	return s.startTwoFALogin(ctx, entry, true)
+}
+
+// Operations imports save their login method through the encrypted per-account
+// API after identity deduplication returns the account ID. Do not also enroll
+// them in the legacy guard's plaintext settings.
+func (s *AccountTokenGuardService) StartTwoFALoginForOperations(ctx context.Context, entry AccountTokenGuardReloginAccount) (*OpenAITwoFALoginJob, error) {
+	return s.startTwoFALogin(ctx, entry, false)
+}
+
+func (s *AccountTokenGuardService) startTwoFALogin(ctx context.Context, entry AccountTokenGuardReloginAccount, saveToLegacyGuard bool) (*OpenAITwoFALoginJob, error) {
 	if err := ValidateOpenAITwoFALogin(entry); err != nil {
 		return nil, err
 	}
@@ -70,9 +81,11 @@ func (s *AccountTokenGuardService) StartTwoFALogin(ctx context.Context, entry Ac
 		}
 		// Persist verified login credentials before the client imports tokens and
 		// clears its password/MFA input. Never report success on a failed save.
-		if err := s.saveTwoFALoginAccount(loginCtx, entry); err != nil {
-			job.Status = "failed"
-			return
+		if saveToLegacyGuard {
+			if err := s.saveTwoFALoginAccount(loginCtx, entry); err != nil {
+				job.Status = "failed"
+				return
+			}
 		}
 		job.Credential = twoFALoginCredential(credential, entry.Email)
 		job.Status = "succeeded"

@@ -128,6 +128,26 @@ function getBulkUpdateConfirm(wrapper: ReturnType<typeof mountModal>) {
 }
 
 describe('BulkEditAccountModal', () => {
+  it('applies only the independent cost multiplier when selected', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    expect(wrapper.get<HTMLInputElement>('#bulk-edit-cost-multiplier').element.value).toBe('0.1')
+    expect(wrapper.get<HTMLInputElement>('#bulk-edit-cost-multiplier').element.disabled).toBe(true)
+    await wrapper.get('#bulk-edit-cost-multiplier-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-cost-multiplier').setValue(0)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { extra: { cost_multiplier: 0 } })
+    wrapper.unmount()
+  })
+  it('blocks an invalid cost without issuing a batch request', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('#bulk-edit-cost-multiplier-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-cost-multiplier').setValue(-1)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenLastCalledWith('admin.accounts.costMultiplierInvalid')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     authIsSimpleMode.value = true
     vi.mocked(adminAPI.accounts.bulkUpdate).mockReset()

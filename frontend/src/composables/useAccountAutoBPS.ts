@@ -46,7 +46,9 @@ export function useAccountAutoBPS() {
 
   // 开关打开时才校验设置；返回 i18n key，空串表示通过。
   function validate(): string {
-    return draft.value.enabled && !conflictingRule.value ? qualityBPSError(draft.value.bps) : ''
+    if (!draft.value.enabled || conflictingRule.value || loading.value || loadError.value) return ''
+    if (!draft.value.cronExpression.trim()) return 'qualityOps.scheduleRequired'
+    return qualityBPSError(draft.value.bps)
   }
 
   // 新建账号后逐个建规则；单个失败不影响其它账号，返回没建成的账号。

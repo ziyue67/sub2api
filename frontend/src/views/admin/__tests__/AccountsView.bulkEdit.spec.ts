@@ -98,10 +98,12 @@ const DataTableStub = {
 }
 
 const ProbeDataTableStub = {
-  props: ['data'],
+  props: ['data', 'loading'],
   template: `
     <div>
-      <div v-for="row in data" :key="row.id">
+      <div v-if="loading" data-test="table-loading">loading</div>
+      <div v-for="row in loading ? [] : data" :key="row.id" :data-account-id="row.id">
+        <div data-test="select-row"><slot name="cell-select" :row="row" /></div>
         <div data-test="account-rate"><slot name="cell-rate_multiplier" :row="row" /></div>
         <slot name="cell-upstream_billing_rate" :row="row" />
       </div>
@@ -130,6 +132,46 @@ const BulkEditAccountModalStub = {
   props: ['show', 'target'],
   template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
 }
+
+const makeProbeAccount = (id: number, rate = 0.25) => ({
+  id, name: 'account-' + id, platform: 'openai', type: 'apikey',
+  status: 'active', schedulable: true, rate_multiplier: rate,
+  extra: { upstream_billing_probe_enabled: true },
+  created_at: '2026-07-13T00:00:00Z', updated_at: '2026-07-13T00:00:00Z'
+})
+
+const probeSnapshot = {
+  status: 'ok', data: { effective_rate_multiplier: 0.065 },
+  synced_rate_multiplier: 0.065, last_attempt_at: '2026-07-13T00:01:00Z'
+}
+
+const probePage = (ids: number[], total = ids.length, page = 1) => ({
+  items: ids.map(id => makeProbeAccount(id)), total, page, page_size: 20, pages: Math.ceil(total / 20)
+})
+
+const mockRatePage = (ids: number[], total = ids.length) => {
+  getUpstreamBillingRatesWithEtag.mockResolvedValue({
+    notModified: false, etag: 'rates-etag',
+    data: { items: ids.map(account_id => ({ account_id, snapshot: probeSnapshot })), total, page: 1, page_size: 20 }
+  })
+}
+
+const mountProbeView = () => mount(AccountsView, {
+  global: {
+    stubs: {
+      AppLayout: { template: '<div><slot /></div>' },
+      TablePageLayout: { template: '<div><slot name="table" /><slot name="pagination" /></div>' },
+      DataTable: ProbeDataTableStub, Pagination: PaginationStub,
+      AccountBulkActionsBar: AccountBulkActionsBarStub, AccountTableActions: true, AccountTableFilters: true,
+      AccountActionMenu: true, ConfirmDialog: true, ImportDataModal: true, ReAuthAccountModal: true,
+      AccountTestModal: true, AccountStatsModal: true, ScheduledTestsPanel: true, SyncFromCrsModal: true,
+      TempUnschedStatusModal: true, ErrorPassthroughRulesModal: true, TLSFingerprintProfilesModal: true,
+      CreateAccountModal: true, EditAccountModal: true, BulkEditAccountModal: true,
+      PlatformTypeBadge: true, AccountCapacityCell: true, AccountStatusIndicator: true,
+      AccountTodayStatsCell: true, AccountGroupsCell: true, AccountUsageCell: true, Icon: true
+    }
+  }
+})
 
 describe('admin AccountsView bulk edit scope', () => {
   beforeEach(() => {
@@ -774,5 +816,137 @@ describe('admin AccountsView bulk edit scope', () => {
     expect(probeUpstreamBilling).toHaveBeenCalledWith(7)
     expect(listAccounts).toHaveBeenCalledTimes(1)
     expect(wrapper.get('[data-test="account-rate"]').text()).toBe('0.065x')
+  })
+
+  it.each(['last_used_at', 'name', 'status'])('does not reconcile unrelated %s sorting after a probe', async (sortBy) => {
+    localStorage.setItem('account-table-sort', JSON.stringify({ key: sortBy, order: 'desc' }))
+    listAccounts.mockResolvedValue(probePage([7, 11]))
+    probeUpstreamBilling.mockResolvedValue({ account_id: 7, snapshot: probeSnapshot })
+    mockRatePage([11, 7])
+    const wrapper = mountProbeView()
+    await flushPromises()
+    const row = wrapper.get('[data-account-id="11"]').element
+    const statsCalls = getBatchTodayStats.mock.calls.length
+
+    await wrapper.get('[data-account-id="7"] [data-testid="upstream-billing-probe"]').trigger('click')
+    await flushPromises()
+
+    expect(getUpstreamBillingRatesWithEtag).not.toHaveBeenCalled()
+    expect(listAccounts).toHaveBeenCalledTimes(1)
+    expect(getBatchTodayStats).toHaveBeenCalledTimes(statsCalls)
+    expect(wrapper.get('[data-account-id="11"]').element).toBe(row)
+    expect(wrapper.get('[data-account-id="7"] [data-test="account-rate"]').text()).toBe('0.065x')
+    wrapper.unmount()
+  })
+
+  it.each(['upstream_billing_rate', 'rate_multiplier'])('reorders the existing %s page without remounting rows', async (sortBy) => {
+    localStorage.setItem('account-table-sort', JSON.stringify({ key: sortBy, order: 'asc' }))
+    listAccounts.mockResolvedValue(probePage([7, 11]))
+    probeUpstreamBilling.mockResolvedValue({ account_id: 7, snapshot: probeSnapshot })
+    mockRatePage([11, 7])
+    const wrapper = mountProbeView()
+    await flushPromises()
+    const row = wrapper.get('[data-account-id="11"]').element
+
+    await wrapper.get('[data-account-id="7"] [data-testid="upstream-billing-probe"]').trigger('click')
+    await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalledTimes(1)
+    expect(wrapper.findAll('[data-account-id]').map(item => item.attributes('data-account-id'))).toEqual(['11', '7'])
+    expect(wrapper.get('[data-account-id="11"]').element).toBe(row)
+    wrapper.unmount()
+  })
+
+  it('keeps the table mounted while fetching rows that cross a rate-sorted page boundary', async () => {
+    localStorage.setItem('account-table-sort', JSON.stringify({ key: 'upstream_billing_rate', order: 'asc' }))
+    listAccounts.mockResolvedValueOnce(probePage([7, 11], 40))
+    let finishPage!: (value: ReturnType<typeof probePage>) => void
+    listAccounts.mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
+    probeUpstreamBilling.mockResolvedValue({ account_id: 7, snapshot: probeSnapshot })
+    mockRatePage([11, 13], 41)
+    const wrapper = mountProbeView()
+    await flushPromises()
+    const row = wrapper.get('[data-account-id="11"]').element
+    const statsCalls = getBatchTodayStats.mock.calls.length
+
+    await wrapper.get('[data-account-id="7"] [data-testid="upstream-billing-probe"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="table-loading"]').exists()).toBe(false)
+    expect(wrapper.get('[data-account-id="11"]').element).toBe(row)
+    expect(listAccounts).toHaveBeenLastCalledWith(1, 20, expect.objectContaining({ lite: '1', sort_by: 'upstream_billing_rate' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+
+    finishPage(probePage([11, 13], 41))
+    await flushPromises()
+    expect(wrapper.findAll('[data-account-id]').map(item => item.attributes('data-account-id'))).toEqual(['11', '13'])
+    expect(wrapper.get('[data-account-id="11"]').element).toBe(row)
+    expect(getBatchTodayStats).toHaveBeenCalledTimes(statsCalls)
+    wrapper.unmount()
+  })
+
+  it('ignores a canceled rate-page response even after navigating back to the same page', async () => {
+    localStorage.setItem('account-table-sort', JSON.stringify({ key: 'upstream_billing_rate', order: 'asc' }))
+    listAccounts.mockResolvedValueOnce(probePage([7, 11], 40))
+    let finishPage!: (value: ReturnType<typeof probePage>) => void
+    listAccounts.mockImplementationOnce(() => new Promise(resolve => { finishPage = resolve }))
+    listAccounts.mockResolvedValueOnce(probePage([21, 22], 40, 2))
+    listAccounts.mockResolvedValueOnce(probePage([17, 19], 40))
+    probeUpstreamBilling.mockResolvedValue({ account_id: 7, snapshot: probeSnapshot })
+    mockRatePage([11, 13], 40)
+    const wrapper = mountProbeView()
+    await flushPromises()
+    await wrapper.get('[data-account-id="7"] [data-testid="upstream-billing-probe"]').trigger('click')
+    await flushPromises()
+    const signal = listAccounts.mock.calls[1][3].signal as AbortSignal
+    await wrapper.get('[data-test="next-page"]').trigger('click')
+    await flushPromises()
+    expect(signal.aborted).toBe(true)
+    expect(wrapper.findAll('[data-account-id]').map(item => item.attributes('data-account-id'))).toEqual(['21', '22'])
+    wrapper.findComponent(PaginationStub).vm.$emit('update:page', 1)
+    await flushPromises()
+    finishPage(probePage([11, 13], 40))
+    await flushPromises()
+    expect(wrapper.findAll('[data-account-id]').map(item => item.attributes('data-account-id'))).toEqual(['17', '19'])
+    wrapper.unmount()
+  })
+
+  it('retains the successful probe and mounted rows when the silent page read fails', async () => {
+    localStorage.setItem('account-table-sort', JSON.stringify({ key: 'upstream_billing_rate', order: 'asc' }))
+    listAccounts.mockResolvedValueOnce(probePage([7, 11]))
+    const error = new Error('page read failed')
+    listAccounts.mockRejectedValueOnce(error)
+    probeUpstreamBilling.mockResolvedValue({ account_id: 7, snapshot: probeSnapshot })
+    mockRatePage([11, 13])
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = mountProbeView()
+    try {
+      await flushPromises()
+      const row = wrapper.get('[data-account-id="11"]').element
+      await wrapper.get('[data-account-id="7"] [data-testid="upstream-billing-probe"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.get('[data-account-id="11"]').element).toBe(row)
+      expect(wrapper.get('[data-account-id="7"] [data-test="account-rate"]').text()).toBe('0.065x')
+      expect(wrapper.find('[data-test="table-loading"]').exists()).toBe(false)
+      expect(wrapper.get('[data-account-id="7"] [data-testid="upstream-billing-probe"]').attributes('disabled')).toBeUndefined()
+      expect(consoleError).toHaveBeenCalledWith('Failed to refresh upstream billing rates:', error)
+    } finally {
+      wrapper.unmount()
+      consoleError.mockRestore()
+    }
+  })
+
+  it('does not reconcile recent-use sorting after a batch probe', async () => {
+    localStorage.setItem('account-table-sort', JSON.stringify({ key: 'last_used_at', order: 'desc' }))
+    listAccounts.mockResolvedValue(probePage([7, 11]))
+    probeUpstreamBillingBatch.mockResolvedValue([{ account_id: 7, snapshot: probeSnapshot }])
+    mockRatePage([11, 7])
+    const wrapper = mountProbeView()
+    await flushPromises()
+    await wrapper.get('[data-account-id="7"] [data-test="select-row"] input').trigger('change')
+    await wrapper.get('[data-test="probe-upstream-billing"]').trigger('click')
+    await flushPromises()
+    expect(probeUpstreamBillingBatch).toHaveBeenCalledWith([7])
+    expect(getUpstreamBillingRatesWithEtag).not.toHaveBeenCalled()
+    expect(listAccounts).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
   })
 })

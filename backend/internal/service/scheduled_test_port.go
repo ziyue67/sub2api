@@ -12,6 +12,7 @@ type PelicanTestConfig struct {
 	BPSRecoveryPending bool           `json:"-"`
 	Quality            *QualityPolicy `json:"quality,omitempty"`
 	QuestionKind       string         `json:"question_kind,omitempty"`
+	TestChannel        string         `json:"test_channel,omitempty"`
 	Prompt             string         `json:"prompt"`
 	ReasoningEffort    string         `json:"reasoning_effort"`
 	ParallelCount      int            `json:"parallel_count"`

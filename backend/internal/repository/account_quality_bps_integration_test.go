@@ -176,6 +176,50 @@ func TestQualityEnableBPSLifecycle(t *testing.T) {
 	require.Zero(t, f.events(), "conflicts and blocked rounds leave the account untouched")
 }
 
+func TestQualityBPSObservationReleasesOwnershipWithoutTogglingBPS(t *testing.T) {
+	f := newQualityBPSFixture(t, `{"unrelated":"kept"}`, &service.QualityPolicy{
+		Action: service.QualityActionEnableBPS, AutoRestore: true,
+		BPS: &service.QualityBPSPolicy{FailureThreshold: 1, AllModels: true},
+	})
+	require.Equal(t, "bps_enabled", f.apply("failed"))
+	before := f.extra()
+	require.Equal(t, true, before["openai_excel_bps"])
+	_ = f.events()
+	oldPlan := *f.plan
+	f.plan.PelicanConfig = &service.PelicanTestConfig{QuestionKind: "candy", TestChannel: "bps", Prompt: "Return 21", ReasoningEffort: "high", ParallelCount: 1,
+		Quality: &service.QualityPolicy{Action: service.QualityActionObserveOnly, ExpectedAnswer: "21", AutoRestore: true}}
+	svc := service.NewScheduledTestService(f.plans, NewScheduledTestResultRepository(integrationDB))
+	_, err := svc.CreatePlan(context.Background(), &service.ScheduledTestPlan{AccountID: f.account, ModelID: "gpt-6-astra", CronExpression: "*/30 * * * *", Enabled: false,
+		PelicanConfig: &service.PelicanTestConfig{QuestionKind: "candy", Prompt: "Return 21", ReasoningEffort: "high", ParallelCount: 1,
+			Quality: &service.QualityPolicy{Action: "disable_scheduling", ExpectedAnswer: "21"}}})
+	require.NoError(t, err)
+	updated, err := svc.UpdatePlan(context.Background(), f.plan)
+	require.NoError(t, err)
+	require.False(t, updated.PelicanConfig.Quality.AutoRestore)
+	replacement := oldPlan
+	replacement.ID, replacement.Enabled = 0, false
+	_, err = svc.CreatePlan(context.Background(), &replacement)
+	require.NoError(t, err, "BPS control remains independent of observation and quarantine")
+	require.Equal(t, 3, f.count("SELECT count(*) FROM scheduled_test_plans WHERE account_id=$1"))
+	require.Equal(t, before, f.extra(), "conversion preserves the current BPS settings")
+	require.Zero(t, f.count(`SELECT count(*) FROM account_quality_states s JOIN scheduled_test_plans p ON p.id=s.plan_id WHERE p.account_id=$1`))
+	result, err := f.plans.ApplyQualityOutcome(context.Background(), &oldPlan, f.until, "passed")
+	require.NoError(t, err)
+	require.Equal(t, "stale_run", result, "a previous native probe cannot restore after conversion")
+	require.NoError(t, f.plans.FinishPelican(context.Background(), f.plan.ID, f.until, time.Now()))
+	f.plan = updated
+	f.claim()
+	for _, outcome := range []string{"passed", "failed", "inconclusive"} {
+		require.Equal(t, "observed", f.apply(outcome))
+		require.Equal(t, before, f.extra())
+	}
+	require.Zero(t, f.events())
+	// A separate policy may turn BPS off without observation turning it back on.
+	f.exec(`UPDATE accounts SET extra=extra||'{"openai_excel_bps":false}' WHERE id=$1`)
+	require.Equal(t, "observed", f.apply("failed"))
+	require.Equal(t, false, f.extra()["openai_excel_bps"])
+}
+
 func TestQualityEnableBPSStateSurvivesActionChange(t *testing.T) {
 	f := newQualityBPSFixture(t, `{}`, &service.QualityPolicy{
 		Action: service.QualityActionEnableBPS, AutoRestore: true,

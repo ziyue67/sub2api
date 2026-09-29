@@ -73,6 +73,17 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 	if err != nil {
 		return "", err
 	}
+	if plan.PelicanConfig.Quality.Action == service.QualityActionObserveOnly {
+		// Relinquish any former action without restoring or changing account
+		// settings; observation leaves BPS lifecycle to independent policies.
+		if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, plan.ID); err != nil {
+			return "", err
+		}
+		if err = tx.Commit(); err != nil {
+			return "", err
+		}
+		return "observed", nil
+	}
 	var version time.Time
 	var schedulable bool
 	var status string

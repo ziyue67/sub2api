@@ -12,7 +12,6 @@
         <p class="text-xs text-gray-500">{{ t('priorityScheduling.batch.priorityHint') }}</p>
         <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr><th class="p-2">{{ t('priorityScheduling.batch.category') }}</th><th class="p-2">{{ t('priorityScheduling.batch.accounts') }}</th><th class="p-2">{{ t('priorityScheduling.batch.current') }}</th><th class="p-2">{{ t('priorityScheduling.batch.priority') }}</th></tr></thead><tbody><tr v-for="row in rows" :key="row.key" class="border-t border-gray-100 dark:border-dark-700"><td class="whitespace-nowrap p-2"><label><input v-model="row.selected" type="checkbox" class="mr-2" />{{ label(row) }}</label></td><td class="p-2"><details><summary class="cursor-pointer">{{ row.accounts.length }}</summary><div class="max-h-36 overflow-auto text-xs text-gray-500"><div v-for="account in row.accounts" :key="account.id">#{{ account.id }} {{ account.name }}</div></div></details></td><td class="whitespace-nowrap p-2 text-xs text-gray-500">{{ range(row, 'priority') }} / {{ range(row, 'concurrency') }} / {{ range(row, 'load_factor') }}</td><td class="p-2"><input v-model.number="row.priority" :aria-label="`${label(row)} ${t('priorityScheduling.batch.priority')}`" type="number" min="0" max="1000000" step="1" class="input w-24" /></td></tr></tbody></table></div>
         <div class="grid gap-4 sm:grid-cols-2"><label><span class="mb-2 flex items-center gap-2 text-sm"><input v-model="setConcurrency" type="checkbox" />{{ t('priorityScheduling.batch.concurrency') }}</span><input v-model.number="concurrency" :disabled="!setConcurrency" type="number" min="1" max="10000" step="1" class="input w-full" data-testid="batch-concurrency" /></label><label><span class="mb-2 flex items-center gap-2 text-sm"><input v-model="setLoadFactor" type="checkbox" />{{ t('priorityScheduling.batch.loadFactor') }}</span><input v-model.number="loadFactor" :disabled="!setLoadFactor" type="number" min="1" max="10000" step="1" class="input w-full" data-testid="batch-load-factor" /></label></div>
-        <label v-if="rows.some(row => row.kind === 'teams')" class="block"><span class="mb-2 flex items-center gap-2 text-sm"><input v-model="setTeamsStart" type="checkbox" />{{ t('priorityScheduling.teams.setStart') }}</span><input v-model="teamsStart" :disabled="!setTeamsStart" type="datetime-local" class="input max-w-full" /><small class="mt-2 block text-gray-500">{{ t('priorityScheduling.teams.startHint') }}</small></label>
         <p class="text-xs leading-5 text-gray-500">{{ t('priorityScheduling.batch.loadHint') }}</p>
         <p class="text-sm">{{ t('priorityScheduling.batch.preview', { count: selectedCount, concurrency: setConcurrency ? concurrency : t('priorityScheduling.batch.keep'), loadFactor: setLoadFactor ? loadFactor : t('priorityScheduling.batch.keep') }) }}</p>
         <button class="btn btn-primary" data-testid="apply-accounts" :disabled="!selectedCount" @click="apply">{{ t(applying ? 'priorityScheduling.saving' : 'priorityScheduling.batch.apply') }}</button>
@@ -35,7 +34,6 @@ const typeOrder = ref<PriorityAccountKind[]>([...defaultPriorityTypeOrder]), dra
 const typeLabels = { teams: 'Teams', pro: 'Pro', plus: 'Plus', api: 'API' }
 const rows = ref<PriorityAccountRow[]>([]), group = ref(''), loading = ref(false), applying = ref(false), loaded = ref(false)
 const setConcurrency = ref(false), setLoadFactor = ref(false), concurrency = ref(100), loadFactor = ref(10000)
-const setTeamsStart = ref(false), teamsStart = ref(new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16))
 const error = ref(''), notice = ref('')
 const selectedCount = computed(() => rows.value.filter(r => r.selected).reduce((count, r) => count + r.accounts.length, 0))
 let alive = true, version = 0
@@ -84,7 +82,7 @@ async function load() {
 async function apply() {
   if (applying.value || loading.value) return
   let batches: ReturnType<typeof priorityBatchPayloads>
-  try { batches = priorityBatchPayloads(rows.value, setConcurrency.value ? concurrency.value : undefined, setLoadFactor.value ? loadFactor.value : undefined, setTeamsStart.value ? new Date(teamsStart.value).toISOString() : undefined) }
+  try { batches = priorityBatchPayloads(rows.value, setConcurrency.value ? concurrency.value : undefined, setLoadFactor.value ? loadFactor.value : undefined) }
   catch { error.value = t('priorityScheduling.invalid'); return }
   const v = version; applying.value = true; error.value = notice.value = ''; let succeeded = 0
   const done = new Set<number>()

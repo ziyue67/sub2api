@@ -22,15 +22,6 @@ describe('priority account batch', () => {
   })
 })
 
-it('only writes a paid-window start to selected physical Teams accounts', () => {
-  const rows = groupPriorityAccounts([account(1, 'oauth', 'team'), account(2, 'oauth', 'pro'), { ...account(3, 'oauth', 'team'), parent_account_id: 1 }])
-  const start = '2026-09-28T10:00:00.000Z'
-  const batches = priorityBatchPayloads(rows, 100, 10000, start)
-  expect(batches).toHaveLength(2)
-  expect(batches[0].extra).toEqual({ priority_teams_window_start: start })
-  expect(batches[1]).not.toHaveProperty('extra')
-})
-
 it('supports arbitrary type order and reconstructs it from applied priorities', () => {
   const rows = groupPriorityAccounts([account(1, 'oauth', 'team'), account(2, 'oauth', 'pro'), account(3, 'oauth', 'plus'), account(4, 'apikey')])
   const sorted = orderPriorityAccountRows(rows, ['plus', 'api', 'teams', 'pro'])

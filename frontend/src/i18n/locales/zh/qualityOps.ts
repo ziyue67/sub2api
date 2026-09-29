@@ -6,7 +6,7 @@ export default {
 
   "conflictChecks": "哪些检查会阻止自动恢复？",
   "title": "质量运维",
-  "description": "定时检测账户回答质量，答错（降智）后移出指定分组、关闭调度或开启 BPS 协议。分组/调度规则与自动 BPS 规则可各配置一条，独立运行。",
+  "description": "定时检测账户回答质量。BPS 糖果检测只记录结果，启停由其他策略负责。每个账号可分别配置仅检测、分组/调度处理和自动 BPS 规则，独立运行。",
   "refresh": "刷新",
   "create": "新建检测规则",
   "edit": "编辑规则",
@@ -33,6 +33,11 @@ export default {
   "cron": "检测周期（五段 Cron，服务端时区）",
   "effort": "推理强度",
   "parallel": "每轮测试次数（全部通过才恢复）",
+  "testChannel": "检测通道",
+  "accountChannel": "按账号当前模型路由",
+  "bpsChannel": "BPS 通道（只检测、记录结果）",
+  "observeOnly": "只检测、记录结果，不处理账号",
+  "bpsObservationHint": "糖果题只检测 BPS 通道，BPS 未开启或该模型未配置走 BPS 时记录为不可检测，不回退原生通道。选择此通道会将本规则改为只记录结果，不启停 BPS、不移分组、不改调度，也不自动恢复旧设置；启停由其他策略负责。请配置题目、参考答案和判题模型。",
   "questionKind": "检测方式",
   "questionCandy": "糖果题（模型答题 + 判题模型打分）",
   "questionStateProbe": "状态探针（几秒判满血 / 降智，不需要判题模型）",
@@ -77,6 +82,7 @@ export default {
   "queued": "已加入检测队列，预计一分钟内开始。",
   "deleteConfirm": "删除此规则及检测记录？已移出的分组、关闭的调度或本规则开启的 BPS 不会自动恢复，请先在账户页处理。",
   "outcomes": {
+    "observed": "仅记录检测结果",
     "action_conflict": "等待其他规则恢复",
     "no_change": "未变更账户",
     "inconclusive": "检测或判题不确定，未执行动作",
@@ -190,6 +196,7 @@ export default {
   "discard": "放弃修改",
   "disableSchedulingShort": "关闭调度，保留分组",
   "actionHelp": {
+    "observed": "本轮仅记录回答和判题结果，没有修改账号、BPS 开关、分组或调度。",
     "action_conflict": "其他规则修改过处置类型，但仍保留本类处置的恢复记录。请先恢复或处理该规则的账号状态，本轮未覆盖其设置。",
     "no_change": "本轮没有修改账号设置。",
     "inconclusive": "请求或判题未得到明确结论，本轮没有修改账号。",
@@ -215,7 +222,7 @@ export default {
   "selectRule": "选择 {account} 的规则 {id}",
   "bulkEdit": "批量编辑",
   "bulkEditTitle": "批量编辑 {count} 条规则",
-  "bulkEditHint": "勾选需要统一修改的字段，未勾选的字段保留每条规则自己的值。初始值来自第一条已选规则；检测配置包含检测方式、题目、参考答案、推理强度、检测次数和判题模型。",
+  "bulkEditHint": "勾选需要统一修改的字段，未勾选的字段保留每条规则自己的值。初始值来自第一条已选规则；检测配置包含检测方式、检测通道、题目、参考答案、推理强度、检测次数和判题模型。",
   "bulkFields": {
     "model": "检测模型",
     "schedule": "检测频率",
@@ -234,9 +241,9 @@ export default {
   "bulkProgress": "已处理 {completed} / {total} 条规则",
   "bulkSaved": "已保存 {count} 条规则",
   "bulkPartial": "已保存 {saved} 条，失败 {failed} 条。重试仅处理剩余规则。",
-  "enableBPS": "开启 BPS 协议（按连续降智次数或账号用量触发）",
-  "enableBPSShort": "开启 BPS",
-  "bpsHint": "探针判定降智后先累计次数，达到下面的条件才给账号开启 BPS，并按下方勾选写入账号的 BPS 设置。账号已由管理员开启 BPS 时不接管；BPS 曾因 403 自动关闭的账号，需管理员手动重新开启后才会再自动开启。只适用于 OpenAI 订阅（OAuth）主账号。",
+  "enableBPS": "自动开启 BPS 协议（按连续降智次数或账号用量触发）",
+  "enableBPSShort": "自动开启 BPS",
+  "bpsHint": "本规则用状态探针检测原生通道，不检测 BPS 通道；即使规则已开启 BPS，后续探针仍绕过 BPS 判断原生通道是否恢复。探针判定降智后先累计次数，达到下面的条件才给账号开启 BPS，并按下方勾选写入账号的 BPS 设置。账号已由管理员开启 BPS 时不接管；BPS 曾因 403 自动关闭的账号，需管理员手动重新开启后才会再自动开启。只适用于 OpenAI 订阅（OAuth）主账号。",
   "bpsThreshold": "连续降智几次后开启",
   "bpsThresholdHint": "探针连续判定降智达到该次数就开启；判定满血时清零，无法判断的轮次不计入也不清零。填 0 表示不按次数开启。",
   "bpsUsage": "账号用量达到多少后开启（%）",
@@ -248,7 +255,11 @@ export default {
   "bpsTriggerUsage": "用量 ≥{n}%",
   "bpsModelsTitle": "开启 BPS 后生效的模型",
   "bpsOptions": "开启 BPS 后默认勾选的选项",
-  "bpsOptionsHint": "与账号编辑页的 BPS 选项相同。开启时按这里的勾选写入账号，未勾选的项写为关闭。",
+  "bpsOptionsHint": "开启时按这里的勾选写入账号，未勾选的项写为关闭。新规则默认勾选忽略加密消息、403 自动关闭协议和创建缓存按普通输入计费；下方说明中的“默认关闭”指手动配置账号时的默认值，已有规则保留原设置。",
+  "probeInterval": "探针检测间隔",
+  "probeEveryMinutes": "每 {minutes} 分钟",
+  "probeCustomSchedule": "自定义检测计划（Cron）",
+  "probeIntervalHint": "新规则默认每 2 分钟检测一次；已有规则保留原计划。状态探针走正常协议，不经过 BPS。自定义计划使用五段 Cron 表达式。",
   "bpsRestoreHelp": "探针始终走正常协议（门票通道，不经过 BPS）检测。勾选后，本规则开启的 BPS 在探针连续满血达到下面设置的次数后自动关闭，模型范围和选项也还原成开启前的样子。不勾选则 BPS 开启后一直保持，需到账号管理手动关闭。开启后若有人改过该账号的 BPS 设置（含 403 自动关闭），不会自动关闭，记为「待手动恢复」。",
   "bpsAutoDisable": "正常协议满血后自动关闭 BPS",
   "bpsAutoDisableShort": "满血后自动关闭 BPS",
@@ -277,5 +288,5 @@ export default {
   "bpsTriggerRequired": "请至少设置一个开启条件：连续降智次数或用量百分比",
   "bpsModelsRequired": "请选择至少一个 BPS 生效的模型，或勾选对所有模型启用",
   "bpsTargetGroupRequired": "已勾选「遇到 BPS 403 错误时自动调整分组」，请选择目标分组",
-  "bpsRequiresProbe": "开启 BPS 只能搭配「状态探针」检测方式"
+  "bpsRequiresProbe": "自动开关 BPS 策略需要原生状态探针。若要检测 BPS 回答质量，请选糖果题和「BPS 通道（只检测、记录结果）」。"
 }

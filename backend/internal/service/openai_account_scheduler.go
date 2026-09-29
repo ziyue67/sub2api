@@ -767,19 +767,17 @@ func (s *defaultOpenAIAccountScheduler) shouldEscapeStickyAccount(accountID int6
 }
 
 type openAIAccountCandidateScore struct {
-	priorityRecovery         bool
-	priorityRecoveryPressure float64
-	account                  *Account
-	loadInfo                 *AccountLoadInfo
-	loadKnown                bool
-	score                    float64
-	priority                 int
-	errorRate                float64
-	ttft                     float64
-	hasTTFT                  bool
-	rpmCurrent               int
-	rpmLimit                 int
-	rpmEnabled               bool
+	account    *Account
+	loadInfo   *AccountLoadInfo
+	loadKnown  bool
+	score      float64
+	priority   int
+	errorRate  float64
+	ttft       float64
+	hasTTFT    bool
+	rpmCurrent int
+	rpmLimit   int
+	rpmEnabled bool
 }
 
 type openAIAccountCandidateHeap []openAIAccountCandidateScore
@@ -1195,12 +1193,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 				a, b := ranked[i], ranked[j]
 				if int(a.score/200) != int(b.score/200) {
 					return a.score > b.score
-				}
-				if a.priorityRecovery != b.priorityRecovery {
-					return a.priorityRecovery
-				}
-				if a.priorityRecovery && a.priorityRecoveryPressure != b.priorityRecoveryPressure {
-					return a.priorityRecoveryPressure > b.priorityRecoveryPressure
 				}
 				if openAIAccountSchedulingPriority(a.account) != openAIAccountSchedulingPriority(b.account) {
 					return openAIAccountSchedulingPriority(a.account) < openAIAccountSchedulingPriority(b.account)

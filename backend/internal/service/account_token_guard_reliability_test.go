@@ -129,7 +129,7 @@ func TestRunCycleIgnoresCallerCancellationAfterAcceptance(t *testing.T) {
 	defer server.Close()
 
 	repo := &guardMemoryRepo{}
-	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "token"}}}}
 	svc := NewAccountTokenGuardService(nil, repo, accounts, nil, nil)
 	cfg := defaultAccountTokenGuardConfig()
@@ -157,7 +157,7 @@ func TestStartRunDeduplicatesAndCanCancel(t *testing.T) {
 	defer server.Close()
 
 	repo := &guardMemoryRepo{}
-	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "token"}}}}
 	svc := NewAccountTokenGuardService(nil, repo, accounts, nil, nil)
 	cfg := defaultAccountTokenGuardConfig()
@@ -197,7 +197,7 @@ func TestRunCycleReportsPersistenceErrors(t *testing.T) {
 	defer server.Close()
 
 	repo := &guardMemoryRepo{upsertErr: errors.New("store unavailable")}
-	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "token"}}}}
 	svc := NewAccountTokenGuardService(nil, repo, accounts, nil, nil)
 	cfg := defaultAccountTokenGuardConfig()
@@ -257,6 +257,18 @@ func (r *guardMemoryRepo) UpsertState(_ context.Context, state AccountTokenGuard
 	if r.upsertErr != nil {
 		return r.upsertErr
 	}
+	for i, previous := range r.states {
+		if previous.AccountID != state.AccountID {
+			continue
+		}
+		if state.LastFixAt == nil {
+			state.LastFixAt = previous.LastFixAt
+			state.LastFixAction = previous.LastFixAction
+			state.LastFixResult = previous.LastFixResult
+		}
+		r.states[i] = state
+		return nil
+	}
 	r.states = append(r.states, state)
 	return nil
 }
@@ -279,10 +291,7 @@ type guardMemoryAccounts struct{ items []Account }
 func (a *guardMemoryAccounts) GetByID(context.Context, int64) (*Account, error) {
 	return nil, errors.New("not implemented")
 }
-func (a *guardMemoryAccounts) ListByGroup(context.Context, int64) ([]Account, error) {
-	return a.items, nil
-}
-func (a *guardMemoryAccounts) ListByPlatform(context.Context, string) ([]Account, error) {
+func (a *guardMemoryAccounts) ListAllWithFilters(context.Context, string, string, string, string, int64, string) ([]Account, error) {
 	return a.items, nil
 }
 func (a *guardMemoryAccounts) ClearError(context.Context, int64) error           { return nil }

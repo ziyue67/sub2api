@@ -127,16 +127,30 @@ func (h *AccountTokenGuardHandler) Relogin(c *gin.Context) {
 func (h *AccountTokenGuardHandler) StartTwoFALogin(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-	var entry service.AccountTokenGuardReloginAccount
-	if err := c.ShouldBindJSON(&entry); err != nil {
+	var input struct {
+		service.AccountTokenGuardReloginAccount
+		CredentialTarget string `json:"credential_target"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
 		response.BadRequest(c, "登录凭据格式不正确")
 		return
 	}
+	entry := input.AccountTokenGuardReloginAccount
 	if err := service.ValidateOpenAITwoFALogin(entry); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	job, err := h.svc.StartTwoFALogin(c.Request.Context(), entry)
+	var job *service.OpenAITwoFALoginJob
+	var err error
+	switch input.CredentialTarget {
+	case "operations":
+		job, err = h.svc.StartTwoFALoginForOperations(c.Request.Context(), entry)
+	case "", "guard": // Preserve the contract for older clients.
+		job, err = h.svc.StartTwoFALogin(c.Request.Context(), entry)
+	default:
+		response.BadRequest(c, "登录凭据目标不合法")
+		return
+	}
 	if err != nil {
 		response.Error(c, http.StatusServiceUnavailable, err.Error())
 		return
