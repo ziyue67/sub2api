@@ -4,7 +4,7 @@ import { createPinia } from 'pinia'
 import AccountQualityView from '../AccountQualityView.vue'
 import * as accountsAPI from '@/api/admin/accounts'
 import scheduledTests from '@/api/admin/scheduledTests'
-import { listQualityPlans, listQualityOperations } from '@/api/admin/accountQuality'
+import { createQualityTemplate, deleteQualityTemplate, listQualityPlans, listQualityOperations, listQualityTemplates, updateQualityTemplate, type QualityRuleTemplate } from '@/api/admin/accountQuality'
 import { useAccountQualityStore } from '@/stores/accountQuality'
 import { useAuthStore } from '@/stores/auth'
 import type { ScheduledTestPlan } from '@/types'
@@ -17,14 +17,25 @@ vi.mock('@/stores/auth', async () => {
 })
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'), useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
-vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), runQualityPlan: vi.fn(), listQualityOperations: vi.fn().mockResolvedValue({items:[],next_cursor:0}) }))
+vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), runQualityPlan: vi.fn(), listQualityOperations: vi.fn().mockResolvedValue({items:[],next_cursor:0}),
+  listQualityTemplates: vi.fn().mockResolvedValue([]), createQualityTemplate: vi.fn(), updateQualityTemplate: vi.fn(), deleteQualityTemplate: vi.fn() }))
 vi.mock('@/api/admin/scheduledTests', () => ({ default: { create: vi.fn(), update: vi.fn(), delete: vi.fn(), listResults: vi.fn(), getResult: vi.fn() } }))
 vi.mock('@/api/admin/accounts', () => ({ list: vi.fn().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 }) }))
 vi.mock('@/api/admin/groups', () => ({ getModelAllowlistCandidates: vi.fn().mockResolvedValue(["test-judge"]), getAllIncludingInactive: vi.fn().mockResolvedValue([{ id: 21, name: 'Quality pool', status:'active', platform: 'openai' }]) }))
 vi.mock('@/components/account/ModelWhitelistSelector.vue', () => ({ default: { props: ['modelValue'], template: '<div data-testid="model-selector">{{ modelValue.join(",") }}</div>' } }))
 const mountView = () => mount(AccountQualityView, { global: { plugins: [createPinia()], stubs: { Teleport: true, AppLayout: { template: '<main><slot /></main>' } } } })
 describe('quality operations', () => {
-  beforeEach(() => { vi.clearAllMocks(); useAuthStore().user!.id = 1; vi.mocked(scheduledTests.delete).mockReset().mockResolvedValue(undefined); vi.mocked(scheduledTests.update).mockReset(); vi.mocked(accountsAPI.list).mockReset().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 } as any); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({items:[],next_cursor:0}) })
+  beforeEach(() => { vi.clearAllMocks(); useAuthStore().user!.id = 1; vi.mocked(scheduledTests.delete).mockReset().mockResolvedValue(undefined); vi.mocked(scheduledTests.update).mockReset(); vi.mocked(accountsAPI.list).mockReset().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 } as any); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({items:[],next_cursor:0})
+    vi.mocked(listQualityTemplates).mockReset().mockResolvedValue([])
+    vi.mocked(createQualityTemplate).mockReset().mockResolvedValue({ template: groupRule(), created: 0 })
+    vi.mocked(updateQualityTemplate).mockReset().mockResolvedValue({ template: groupRule(), updated: 0, failed: 0, created: 0 })
+    vi.mocked(deleteQualityTemplate).mockReset().mockResolvedValue({ deleted: 0 }) })
+  const groupRule = (): QualityRuleTemplate => ({
+    id: 7, account_filter: { group: '21', statuses: ['active'] }, model_id: 'group-model', cron_expression: '*/30 * * * *', enabled: true, max_results: 100,
+    pelican_config: { question_kind: 'state_probe', prompt: '', reasoning_effort: 'high', parallel_count: 1,
+      quality: { expected_answer: '', action: 'disable_scheduling', remove_group_ids: [], auto_restore: true } },
+    plan_ids: [1], last_synced_at: null, created_at: '', updated_at: '',
+  })
   const rules = (): ScheduledTestPlan[] => [1, 2, 3].map(id => ({
     id, account_id: id, account_name: `Account ${id}`, model_id: `model-${id}`, cron_expression: '*/30 * * * *', enabled: true,
     max_results: 100, auto_recover: false, last_run_at: null, next_run_at: null, created_at: '', updated_at: '',
@@ -201,7 +212,7 @@ describe('quality operations', () => {
     ]
     vi.mocked(accountsAPI.list).mockResolvedValue({ items: accounts, total: 4 } as any)
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
     expect(vm.selectedAccounts).toEqual([1, 2, 3, 4])
     await wrapper.get('[data-testid="quality-question-kind"]').setValue('state_probe')
@@ -336,7 +347,7 @@ describe('quality operations', () => {
     vi.mocked(accountsAPI.list).mockResolvedValue({ items: [{ id: 2, name: 'Matching account' }], total: 51 } as any)
     const wrapper = mountView(); await flushPromises()
     const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     await wrapper.get('[data-testid="quality-account-type"]').setValue(type)
     await wrapper.get('[data-testid="quality-account-group"]').setValue('21')
     await wrapper.get('#quality-account-search').setValue('  matching  ')
@@ -352,7 +363,7 @@ describe('quality operations', () => {
     vi.mocked(listQualityPlans).mockResolvedValue([{ id: 4, account_id: 1 }] as any)
     vi.mocked(accountsAPI.list).mockResolvedValue({ items: [{ id: 1, name: 'Rule exists' }, { id: 2, name: 'New account' }], total: 51 } as any)
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises(); vm.selectedAccounts = [99]
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises(); vm.selectedAccounts = [99]
     await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
     await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
     expect(vm.selectedAccounts).toEqual([99, 2])
@@ -375,7 +386,7 @@ describe('quality operations', () => {
       { id: 3, name: 'New', platform: 'openai', type: 'oauth', extra: {} }
     ], total: 3 } as any)
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
     expect(vm.selectedAccounts).toEqual([2, 3])
     vm.form.pelican_config.question_kind = 'state_probe'
@@ -393,7 +404,7 @@ describe('quality operations', () => {
   it('selects all filtered pages without duplicate IDs or accounts with rules', async () => {
     vi.mocked(listQualityPlans).mockResolvedValue([{ id: 4, account_id: 1 }] as any)
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     await wrapper.get('[data-testid="quality-account-type"]').setValue('oauth')
     await wrapper.get('[data-testid="quality-account-group"]').setValue('21'); await flushPromises()
     await wrapper.get('#quality-account-search').setValue('demo')
@@ -414,7 +425,7 @@ describe('quality operations', () => {
   })
   it('keeps the original selection if a later bulk page fails and allows retry', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises(); vm.selectedAccounts = [99]
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises(); vm.selectedAccounts = [99]
     vi.mocked(accountsAPI.list).mockResolvedValueOnce({ items: [{ id: 2 }], total: 51 } as any).mockRejectedValueOnce(new Error('Page failed'))
     await wrapper.get('[data-testid="quality-select-all"]').trigger('click'); await flushPromises()
     expect(vm.selectedAccounts).toEqual([99]); expect(wrapper.text()).toContain('Page failed')
@@ -424,14 +435,14 @@ describe('quality operations', () => {
   })
   it.each(['filter', 'clear', 'close'])('discards an in-flight bulk selection after %s', async (action) => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     let resolve!: (value: any) => void
     vi.mocked(accountsAPI.list).mockImplementationOnce(() => new Promise(done => { resolve = done }))
     await wrapper.get('[data-testid="quality-select-all"]').trigger('click')
     expect(wrapper.get('button[form="quality-rule-form"]').attributes('disabled')).toBeDefined()
     if (action === 'filter') await wrapper.get('[data-testid="quality-account-type"]').setValue('apikey')
     else if (action === 'clear') await wrapper.get('[data-testid="quality-clear-selection"]').trigger('click')
-    else { vm.closeForm(); vm.newPlan() }
+    else { vm.closeForm(); vm.newPlan(); vm.accountScope = 'manual' }
     resolve({ items: [{ id: 77 }], total: 51 }); await flushPromises()
     expect(vm.selectedAccounts).toEqual([])
     expect(vm.selectingAccounts).toBe(false)
@@ -440,7 +451,7 @@ describe('quality operations', () => {
   })
   it('ignores old list responses after filters change and clears failed results', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     let resolve!: (value: any) => void
     vi.mocked(accountsAPI.list).mockImplementationOnce(() => new Promise(done => { resolve = done }))
     await wrapper.get('[data-testid="quality-account-type"]').setValue('oauth')
@@ -458,7 +469,7 @@ describe('quality operations', () => {
   it('prefills the test model and submits it for a new rule', async () => {
     const wrapper = mountView(); await flushPromises()
     const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     expect(wrapper.find('input[placeholder="gpt-6-astra"]').element).toHaveProperty('value', 'gpt-6-astra')
     vm.selectedAccounts = [1]
     vm.form.pelican_config.quality.judge = { group_id: 21, model_id: 'test-judge', prompt: 'grade semantically' }
@@ -470,7 +481,7 @@ describe('quality operations', () => {
   it('requires explicit group selection and keeps automatic restoration opt-in', async () => {
     const wrapper = mountView(); await flushPromises()
     const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises(); vm.selectedAccounts = [1]; vm.form.pelican_config.quality.judge = {group_id:21,model_id:'test-judge',prompt:'grade semantically'}; vm.form.model_id = 'test-model'
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises(); vm.selectedAccounts = [1]; vm.form.pelican_config.quality.judge = {group_id:21,model_id:'test-judge',prompt:'grade semantically'}; vm.form.model_id = 'test-model'
     await vm.save()
     expect(scheduledTests.create).not.toHaveBeenCalled()
     expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.selectGroups')
@@ -482,7 +493,7 @@ describe('quality operations', () => {
   it('retries only accounts that were not created before a partial batch failure', async () => {
     vi.mocked(scheduledTests.create).mockResolvedValueOnce({ id: 1 } as any).mockRejectedValueOnce(new Error('failed')).mockResolvedValueOnce({ id: 2 } as any)
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); vm.selectedAccounts = [1, 2]; vm.form.pelican_config.quality.judge = {group_id:21,model_id:'test-judge',prompt:'grade semantically'}; vm.form.model_id = 'test-model'; vm.form.pelican_config.quality.action = 'disable_scheduling'
+    vm.newPlan(); vm.accountScope = 'manual'; vm.selectedAccounts = [1, 2]; vm.form.pelican_config.quality.judge = {group_id:21,model_id:'test-judge',prompt:'grade semantically'}; vm.form.model_id = 'test-model'; vm.form.pelican_config.quality.action = 'disable_scheduling'
     await vm.save(); expect(vm.selectedAccounts).toEqual([2]); expect(vm.showForm).toBe(true)
     await vm.save()
     expect(vi.mocked(scheduledTests.create).mock.calls.map(([request]) => request.account_id)).toEqual([1, 2, 2])
@@ -508,14 +519,14 @@ describe('quality operations', () => {
   })
   it('requires the operator to select a judge model and group', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); vm.selectedAccounts = [1]; vm.form.model_id = 'test-model'
+    vm.newPlan(); vm.accountScope = 'manual'; vm.selectedAccounts = [1]; vm.form.model_id = 'test-model'
     await vm.save(); expect(scheduledTests.create).not.toHaveBeenCalled()
     expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.configureJudge')
     wrapper.unmount()
   })
   it('saves a state probe rule without a question, reference answer, judge or parallel runs', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     vm.selectedAccounts = [1]; vm.form.pelican_config.parallel_count = 3
     await wrapper.find('[data-testid="quality-question-kind"]').setValue('state_probe')
     expect(wrapper.find('[data-testid="quality-probe-hint"]').exists()).toBe(true)
@@ -567,7 +578,7 @@ describe('quality operations', () => {
   })
   it('offers enable BPS only for probe rules and saves the normalized BPS policy', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises(); vm.selectedAccounts = [1]
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises(); vm.selectedAccounts = [1]
     expect(wrapper.find('[data-testid="quality-action-enable-bps"]').exists()).toBe(false)
     await wrapper.find('[data-testid="quality-question-kind"]').setValue('state_probe')
     expect((wrapper.find('[data-testid="quality-auto-restore"]').element as HTMLInputElement).checked).toBe(false)
@@ -622,7 +633,7 @@ describe('quality operations', () => {
   })
   it('validates BPS triggers and switches candy tests to BPS observation', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises(); vm.selectedAccounts = [1]
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises(); vm.selectedAccounts = [1]
     await wrapper.find('[data-testid="quality-question-kind"]').setValue('state_probe')
     await wrapper.find('[data-testid="quality-action-enable-bps"]').setValue(true)
     const alert = async () => { await vm.save(); return wrapper.find('[role="alert"]').text() }
@@ -694,7 +705,7 @@ describe('quality operations', () => {
 
   it('creates a candy BPS observation without group or lifecycle settings', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises(); vm.selectedAccounts = [1]
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises(); vm.selectedAccounts = [1]
     await wrapper.get('[data-testid="quality-test-channel"]').setValue('bps')
     expect(wrapper.find('[data-testid="quality-action-enable-bps"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="quality-auto-restore"]').exists()).toBe(false)
@@ -714,7 +725,7 @@ describe('quality operations', () => {
     ])
     vi.mocked(accountsAPI.list).mockResolvedValue({ items: [1, 2, 3].map(id => ({ id, name: 'Account', platform: 'openai', type: 'oauth' })), total: 3 } as any)
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     await wrapper.get('[data-testid="quality-test-channel"]').setValue('bps')
     await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
     expect(vm.selectedAccounts).toEqual([1, 2])
@@ -752,7 +763,7 @@ describe('quality operations', () => {
   })
   it('defaults BPS auto-disable only for new rules and places the toggle where the BPS settings are', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
-    vm.newPlan(); await flushPromises()
+    vm.newPlan(); vm.accountScope = 'manual'; await flushPromises()
     await wrapper.find('[data-testid="quality-question-kind"]').setValue('state_probe')
     await wrapper.find('[data-testid="quality-action-enable-bps"]').setValue(true)
     expect(vm.form.pelican_config.quality.auto_restore).toBe(true)
@@ -794,6 +805,195 @@ describe('quality operations', () => {
     expect(id).toBe(1)
     expect(body.pelican_config.quality).toMatchObject({ action: 'enable_bps', auto_restore: true, bps: { pass_threshold: 4, hold_on_usage: true } })
     view.unmount()
+  })
+  it('defaults new rules to normal accounts and saves the matching filter as a group rule', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    vi.mocked(accountsAPI.list).mockImplementation(async (page: number) => (page === 1
+      ? { items: [{ id: 1, name: 'Has rule', platform: 'openai', type: 'oauth' }, { id: 4, name: 'OAuth', platform: 'openai', type: 'oauth' }, { id: 5, name: 'Key', platform: 'openai', type: 'apikey' }], total: 51 }
+      : { items: [{ id: 6, name: 'Setup', platform: 'openai', type: 'setup-token' }, { id: 4, name: 'OAuth', platform: 'openai', type: 'oauth' }], total: 51 }) as any)
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    expect(accountsAPI.list).toHaveBeenLastCalledWith(1, 50, expect.objectContaining({ status: 'active' }))
+    expect((wrapper.get('[data-testid="quality-account-status-active"]').element as HTMLInputElement).checked).toBe(true)
+    expect((wrapper.get('[data-testid="quality-account-scope-all"]').element as HTMLInputElement).checked).toBe(true)
+    expect(wrapper.find('[data-testid="quality-select-all"]').exists()).toBe(false)
+    expect(wrapper.get('#quality-rule-form input[type="checkbox"][value="4"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="quality-account-count"]').text()).toBe('qualityOps.accountsMatched')
+    expect(vm.accountsTotal).toBe(51)
+    expect(wrapper.get('button[form="quality-rule-form"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.get('[data-testid="quality-account-scope-manual"]').setValue(true)
+    expect(wrapper.find('[data-testid="quality-select-all"]').exists()).toBe(true)
+    expect(wrapper.get('#quality-rule-form input[type="checkbox"][value="4"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="quality-account-count"]').text()).toBe('qualityOps.selected')
+    expect(wrapper.get('button[form="quality-rule-form"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-account-scope-all"]').setValue(true)
+
+    await wrapper.get('[data-testid="quality-question-kind"]').setValue('state_probe')
+    vm.form.pelican_config.quality.action = 'disable_scheduling'; await flushPromises()
+    vi.mocked(accountsAPI.list).mockClear()
+    vi.mocked(createQualityTemplate).mockResolvedValueOnce({ template: groupRule(), created: 2 })
+    await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
+    // 由后端按筛选给现在和之后匹配的账户建规则，前端不再翻页逐个创建。
+    expect(accountsAPI.list).not.toHaveBeenCalledWith(2, 50, expect.anything())
+    expect(scheduledTests.create).not.toHaveBeenCalled()
+    expect(createQualityTemplate).toHaveBeenCalledTimes(1)
+    const body = vi.mocked(createQualityTemplate).mock.calls[0][0]
+    expect(body.account_filter).toEqual({ group: undefined, type: undefined, search: undefined, statuses: ['active'] })
+    expect(body.pelican_config).toMatchObject({ question_kind: 'state_probe', quality: { action: 'disable_scheduling' } })
+    expect(body.cron_expression).toBeTruthy()
+    expect(wrapper.get('.workspace-message[role="status"]').text()).toContain('qualityOps.templateCreated')
+    expect(vm.showForm).toBe(false)
+    wrapper.unmount()
+  })
+  it('filters by any checked account status and by every status when none is checked', async () => {
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-account-status-rate_limited"]').setValue(true); await flushPromises()
+    expect(vm.accountStatuses).toEqual(['active', 'rate_limited'])
+    expect(accountsAPI.list).toHaveBeenLastCalledWith(1, 50, expect.objectContaining({ status: 'active,rate_limited' }))
+    await wrapper.get('[data-testid="quality-account-status-active"]').setValue(false)
+    await wrapper.get('[data-testid="quality-account-status-rate_limited"]').setValue(false); await flushPromises()
+    expect(vi.mocked(accountsAPI.list).mock.lastCall![2]).toHaveProperty('status', undefined)
+    vm.closeForm(); vm.newPlan(); await flushPromises()
+    expect(vm.accountStatuses).toEqual(['active'])
+    expect(vm.accountScope).toBe('all')
+    wrapper.unmount()
+  })
+  it('saves a group rule even when no account matches yet so later accounts get it', async () => {
+    vi.mocked(accountsAPI.list).mockResolvedValue({ items: [], total: 0 } as any)
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-account-group"]').setValue('21'); await flushPromises()
+    expect(wrapper.get('button[form="quality-rule-form"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="quality-question-kind"]').setValue('state_probe')
+    vm.form.pelican_config.quality.action = 'disable_scheduling'
+    await vm.save(); await flushPromises()
+    expect(createQualityTemplate).toHaveBeenCalledWith(expect.objectContaining({ account_filter: expect.objectContaining({ group: '21', statuses: ['active'] }) }))
+    expect(scheduledTests.create).not.toHaveBeenCalled()
+    expect(wrapper.get('.workspace-message[role="status"]').text()).toContain('qualityOps.templateCreatedNone')
+    expect(vm.showForm).toBe(false)
+    wrapper.unmount()
+  })
+  it('does not page through accounts when the form itself is incomplete', async () => {
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    vi.mocked(accountsAPI.list).mockClear()
+    await vm.save()
+    expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.configureJudge')
+    expect(accountsAPI.list).not.toHaveBeenCalled()
+    expect(createQualityTemplate).not.toHaveBeenCalled()
+    expect(vm.selectedAccounts).toEqual([])
+    wrapper.unmount()
+  })
+  it('keeps the form open when saving a group rule fails and saves on retry', async () => {
+    vi.mocked(createQualityTemplate).mockRejectedValueOnce(new Error('failed')).mockResolvedValueOnce({ template: groupRule(), created: 3 })
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-question-kind"]').setValue('state_probe')
+    vm.form.pelican_config.quality.action = 'disable_scheduling'
+    await vm.save()
+    expect(wrapper.find('[role="alert"]').text()).toContain('failed')
+    expect(vm.showForm).toBe(true)
+    await vm.save()
+    expect(createQualityTemplate).toHaveBeenCalledTimes(2)
+    expect(scheduledTests.create).not.toHaveBeenCalled()
+    expect(vm.showForm).toBe(false)
+    wrapper.unmount()
+  })
+  it('lists group rules and tags the account rules they created', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    vi.mocked(listQualityTemplates).mockResolvedValue([groupRule()])
+    const wrapper = mountView(); await flushPromises()
+    const card = wrapper.get('[data-template-id="7"]')
+    expect(card.get('[data-testid="quality-template-filter"]').text()).toBe('Quality pool · qualityOps.allAccountTypes · admin.accounts.status.active')
+    expect(card.text()).toContain('group-model')
+    expect(wrapper.find('[data-plan-id="1"] [data-testid="quality-template-tag"]').exists()).toBe(true)
+    expect(wrapper.find('[data-plan-id="2"] [data-testid="quality-template-tag"]').exists()).toBe(false)
+
+    await card.get('[data-testid="quality-template-toggle"]').trigger('click'); await flushPromises()
+    expect(updateQualityTemplate).toHaveBeenCalledWith(7, { enabled: false })
+    expect(scheduledTests.update).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+  it('shows group rules even before any account rule exists', async () => {
+    vi.mocked(listQualityTemplates).mockResolvedValue([{ ...groupRule(), plan_ids: [] }])
+    const wrapper = mountView(); await flushPromises()
+    expect(wrapper.find('[data-template-id="7"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="rules-scroll"] .panel-empty').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('edits a group rule through its filter and pushes the change to every rule it created', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    vi.mocked(listQualityTemplates).mockResolvedValue([groupRule()])
+    vi.mocked(updateQualityTemplate).mockResolvedValueOnce({ template: groupRule(), updated: 1, failed: 0, created: 0 })
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    await wrapper.get('[data-template-id="7"] [data-testid="quality-template-edit"]').trigger('click'); await flushPromises()
+    expect(wrapper.find('[data-testid="quality-template-edit-hint"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="quality-account-scope-all"]').exists()).toBe(false)
+    expect(vm.accountGroup).toBe('21')
+    expect(vm.accountStatuses).toEqual(['active'])
+    expect(vm.form.model_id).toBe('group-model')
+    expect(vm.initialForm).toBe(vm.formSnapshot())
+    vm.form.model_id = 'new-model'
+    await vm.save(); await flushPromises()
+    expect(updateQualityTemplate).toHaveBeenCalledWith(7, expect.objectContaining({ model_id: 'new-model', account_filter: expect.objectContaining({ group: '21', statuses: ['active'] }) }))
+    expect(scheduledTests.create).not.toHaveBeenCalled()
+    expect(scheduledTests.update).not.toHaveBeenCalled()
+    expect(wrapper.get('.workspace-message[role="status"]').text()).toContain('qualityOps.templateUpdated')
+    expect(vm.showForm).toBe(false)
+    wrapper.unmount()
+  })
+  it('keeps a group rule edit open when some of its rules could not be updated', async () => {
+    vi.mocked(listQualityTemplates).mockResolvedValue([groupRule()])
+    vi.mocked(updateQualityTemplate).mockResolvedValueOnce({ template: groupRule(), updated: 1, failed: 2, created: 0 })
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.editTemplate(vm.templates[0]); await flushPromises()
+    await vm.save(); await flushPromises()
+    expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.templateUpdatePartial')
+    expect(vm.showForm).toBe(true)
+    expect(vm.initialForm).toBe(vm.formSnapshot())
+    wrapper.unmount()
+  })
+  it('deletes a group rule with or without the rules it created', async () => {
+    for (const keep of [false, true]) {
+      vi.mocked(listQualityPlans).mockResolvedValue(rules())
+      vi.mocked(listQualityTemplates).mockResolvedValue([groupRule()])
+      vi.mocked(deleteQualityTemplate).mockClear().mockResolvedValueOnce({ deleted: keep ? 0 : 1 })
+      const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+      vm.editTemplate(vm.templates[0]); await flushPromises()
+      await wrapper.get('[data-testid="quality-delete-template"]').trigger('click'); await flushPromises()
+      const checkbox = wrapper.get('[data-testid="quality-delete-template-plans"]')
+      expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+      if (keep) await checkbox.setValue(false)
+      await wrapper.get('[data-testid="quality-confirm-delete-template"]').trigger('click'); await flushPromises()
+      expect(deleteQualityTemplate).toHaveBeenCalledWith(7, !keep)
+      expect(wrapper.get('.workspace-message[role="status"]').text()).toContain(keep ? 'qualityOps.templateDeletedKept' : 'qualityOps.templateDeleted')
+      expect(vm.showForm).toBe(false)
+      wrapper.unmount()
+    }
+  })
+  it('explains that an account rule belongs to a group rule when editing it', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    vi.mocked(listQualityTemplates).mockResolvedValue([groupRule()])
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.edit(vm.plans[0]); await flushPromises()
+    expect(wrapper.find('[data-testid="quality-plan-template-hint"]').exists()).toBe(true)
+    vm.showForm = false; await flushPromises()
+    vm.edit(vm.plans[1]); await flushPromises()
+    expect(wrapper.find('[data-testid="quality-plan-template-hint"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('hides the scope switch in bulk editing and lists rules on accounts in any status', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    await wrapper.get('[data-plan-id="1"] .rule-checkbox input').setValue(true)
+    await wrapper.get('[data-testid="quality-bulk-edit"]').trigger('click'); await flushPromises()
+    expect(wrapper.find('[data-testid="quality-account-scope-all"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="quality-select-all"]').exists()).toBe(true)
+    expect(vm.accountStatuses).toEqual([])
+    expect(vi.mocked(accountsAPI.list).mock.lastCall![2]).toHaveProperty('status', undefined)
+    wrapper.unmount()
   })
   it('renders returned model content as text', async () => {
     vi.mocked(scheduledTests.listResults).mockResolvedValue([{ id: 4, status: 'failed', error_message: 'answer_mismatch', quality_action: 'groups_removed' }] as any)

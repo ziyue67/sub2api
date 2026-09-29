@@ -99,5 +99,12 @@ export default {
   "statsBad": "异常账号",
   "statsRepaired": "本轮修复",
   "stateFixed": "状态自愈",
-  "scopeNote": "巡检只读取账号已有的 access_token 并用它调用测活接口，不会修改账号凭据；只有令牌失效且开启自动重登时才会写回新凭据。"
+  "scopeNote": "巡检只读取账号已有的 access_token 并用它调用测活接口，不会修改账号凭据；只有令牌失效且开启自动重登时才会写回新凭据。",
+  "managedBadge": "凭证运营托管",
+  "managedHint": "2FA 导入的账号会自动加入凭证运营，由凭证运营巡检和自动重登，这里只显示状态；需要重登或修改登录资料请到凭证运营。",
+  "managedPaused": "凭证运营中已暂停",
+  "managedReauth": "凭证运营重登",
+  "managedOpen": "去凭证运营",
+  "managedCredentialsHint": "另有 {count} 个账号的登录资料加密保存在凭证运营，不显示在这里。",
+  "managedLoadFailed": "暂时读不到凭证运营的账号，托管账号没有显示，稍后刷新重试。"
 }

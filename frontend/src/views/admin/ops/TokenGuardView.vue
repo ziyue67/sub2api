@@ -72,6 +72,7 @@
               <label class="field-label">{{ t('tokenGuard.reloginAccounts') }}</label>
               <textarea v-model="reloginText" rows="7" class="input w-full font-mono text-xs" placeholder="user@example.com----password----JBSWY3DPEHPK3PXP"></textarea>
               <p class="field-hint">{{ t('tokenGuard.reloginAccountsHint') }}</p>
+              <p v-if="managedCredentialCount" class="field-hint" data-testid="token-guard-managed-credentials">{{ t('tokenGuard.managedCredentialsHint', { count: managedCredentialCount }) }}</p>
 
               <div class="grid-2">
                 <label class="field-label">{{ t('tokenGuard.barkKey') }}<input v-model.trim="draft.bark_key" class="input w-full" placeholder="留空则不推送" /></label>
@@ -88,7 +89,9 @@
 
         <div class="stack">
           <section class="events-card">
-            <header class="events-heading"><div><h3>{{ t('tokenGuard.accounts') }}<span>{{ accounts.length }}</span></h3><p>{{ remote?.runtime.last_message || t('tokenGuard.description') }}</p></div></header>
+            <header class="events-heading"><div><h3>{{ t('tokenGuard.accounts') }}<span>{{ accounts.length + managedAccounts.length }}</span></h3><p>{{ remote?.runtime.last_message || t('tokenGuard.description') }}</p></div></header>
+            <p v-if="managedAccounts.length" class="managed-hint" data-testid="token-guard-managed-hint">{{ t('tokenGuard.managedHint') }}</p>
+            <p v-if="managedLoadFailed" class="managed-hint warn" role="alert">{{ t('tokenGuard.managedLoadFailed') }}</p>
             <div class="events-scroll">
               <table>
                 <thead><tr><th>{{ t('tokenGuard.account') }}</th><th>{{ t('tokenGuard.dbStatus') }}</th><th>{{ t('tokenGuard.schedulable') }}</th><th>{{ t('tokenGuard.probe') }}</th><th>{{ t('tokenGuard.latency') }}</th><th>{{ t('tokenGuard.lastFix') }}</th><th>{{ t('tokenGuard.actions') }}</th></tr></thead>
@@ -102,9 +105,19 @@
                     <td>{{ item.last_fix_at ? `${item.last_fix_action} · ${date(item.last_fix_at)}` : '-' }}<small>{{ item.last_fix_result }}</small></td>
                     <td><button class="link-btn" :disabled="reloginBusy === item.account_id" @click="relogin(item)">{{ t(reloginBusy === item.account_id ? 'tokenGuard.reloginBusy' : 'tokenGuard.relogin') }}</button></td>
                   </tr>
+                  <!-- 已加入凭证运营的账号（2FA 导入默认加入）由凭证运营巡检、重登，这里只读展示，避免两套守护同时重登。 -->
+                  <tr v-for="item in managedAccounts" :key="`managed-${item.account_id}`" class="managed-row" :data-managed-account-id="item.account_id">
+                    <td><strong :title="item.account_name">{{ item.account_name || '-' }}</strong><small>#{{ item.account_id }}<span class="managed-badge">{{ t('tokenGuard.managedBadge') }}</span></small></td>
+                    <td><span class="failure-badge" :class="item.account_status === 'error' ? 'danger' : ''">{{ item.account_status || '-' }}</span></td>
+                    <td>{{ t(item.schedulable ? 'tokenGuard.on' : 'tokenGuard.off') }}</td>
+                    <td><span class="failure-badge" :class="item.enabled ? probeClass(item.probe_state) : ''">{{ item.enabled ? probeLabel(item.probe_state) : t('tokenGuard.managedPaused') }}</span><small>{{ item.blocked_reason || item.probe_detail }}</small></td>
+                    <td>-</td>
+                    <td>{{ item.last_reauth_at ? `${t('tokenGuard.managedReauth')} · ${date(item.last_reauth_at)}` : '-' }}</td>
+                    <td><RouterLink class="link-btn" to="/admin/token-guard-v2">{{ t('tokenGuard.managedOpen') }}</RouterLink></td>
+                  </tr>
                 </tbody>
               </table>
-              <div v-if="!accounts.length" class="empty-state"><Icon name="shield" size="xl" /><h4>{{ t('tokenGuard.noAccounts') }}</h4></div>
+              <div v-if="!accounts.length && !managedAccounts.length" class="empty-state"><Icon name="shield" size="xl" /><h4>{{ t('tokenGuard.noAccounts') }}</h4></div>
             </div>
           </section>
 
@@ -134,6 +147,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { RouterLink } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -151,8 +165,9 @@ import {
   type TokenGuardEvent,
   type TokenGuardStatus
 } from '@/api/admin/accountTokenGuard'
+import { listTokenGuardV2Accounts, type TokenGuardV2Account } from '@/api/admin/accountTokenGuardV2'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const remote = ref<TokenGuardStatus | null>(null)
 const draft = ref<TokenGuardConfig | null>(null)
 const reloginText = ref('')
@@ -160,6 +175,7 @@ const probeHeadersText = ref('')
 const reloginHeadersText = ref('')
 const loading = ref(false), saving = ref(false), running = ref(false), reloginBusy = ref(0)
 const error = ref(''), notice = ref('')
+const managedList = ref<TokenGuardV2Account[]>([]), managedLoadFailed = ref(false)
 const groups = ref<AdminGroup[]>([])
 const groupsLoading = ref(false)
 const groupsLoadError = ref(false)
@@ -168,7 +184,13 @@ let alive = true
 
 const accounts = computed(() => remote.value?.accounts ?? [])
 const events = computed<TokenGuardEvent[]>(() => remote.value?.events ?? [])
-const badCount = computed(() => accounts.value.filter(item => item.probe_state === 'auth' || item.account_status === 'error').length)
+// 凭证运营托管的账号（后端已把它们从旧守护列表里排除，这里再按 id 去重一次）。
+const managedAccounts = computed(() => {
+  const own = new Set(accounts.value.map(item => item.account_id))
+  return managedList.value.filter(item => !own.has(item.account_id))
+})
+const managedCredentialCount = computed(() => managedAccounts.value.filter(item => item.login_config?.configured).length)
+const badCount = computed(() => [...accounts.value, ...managedAccounts.value].filter(item => item.probe_state === 'auth' || item.account_status === 'error').length)
 const selectedGroupIds = computed<number[]>({
   get: () => draft.value?.group_ids ?? [],
   set: (value) => {
@@ -229,6 +251,10 @@ function collect(): TokenGuardConfig {
     probe_headers: parseHeaders(probeHeadersText.value), relogin_headers: parseHeaders(reloginHeadersText.value) })
 }
 
+const probeLabel = (state: string) => {
+  const key = `tokenGuard.probeStates.${state || 'pending'}`
+  return te(key) ? t(key) : state
+}
 const probeClass = (state: string) => (state === 'ok' ? 'ok' : state === 'auth' ? 'danger' : '')
 const eventClass = (kind: string) => (kind === 'relogin_ok' || kind === 'state_fixed' || kind === 'probe_ok' ? 'ok' : kind === 'relogin_failed' || kind === 'state_failed' || kind === 'probe_auth' ? 'danger' : '')
 
@@ -237,8 +263,11 @@ async function load(silent = false) {
   loading.value = true
   if (!silent) error.value = ''
   try {
-    const status = await getTokenGuardStatus()
+    // 凭证运营读取失败不影响旧守护本身，只是暂时不显示托管账号。
+    const [status, managed] = await Promise.all([getTokenGuardStatus(), listTokenGuardV2Accounts().catch(() => null)])
     if (!alive) return
+    managedLoadFailed.value = !managed
+    if (managed) managedList.value = managed.accounts ?? []
     const preserveDraft = dirty.value
     remote.value = status
     if (!preserveDraft) {
@@ -394,7 +423,10 @@ td.detail { max-width: 24rem; @apply whitespace-normal leading-5 text-gray-500 d
 .failure-badge { @apply whitespace-nowrap rounded-md bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 dark:bg-amber-950/30 dark:text-amber-300; }
 .failure-badge.ok { @apply bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300; }
 .failure-badge.danger { @apply bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-300; }
-.link-btn { @apply rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-primary-600 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-600 dark:hover:bg-dark-800; }
+.managed-hint { @apply mx-5 mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs leading-relaxed text-sky-800 dark:bg-sky-950/30 dark:text-sky-200; }
+.managed-hint.warn { @apply bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300; }
+.managed-badge { @apply ml-2 rounded bg-sky-50 px-1.5 py-0.5 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300; }
+.link-btn { @apply inline-block rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-primary-600 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-dark-600 dark:hover:bg-dark-800; }
 .empty-state { @apply flex min-h-56 flex-col items-center justify-center gap-3 p-6 text-center text-gray-400; }
 .empty-state h4 { @apply text-sm font-medium; }
 .empty-state p { @apply max-w-sm text-xs leading-relaxed; }

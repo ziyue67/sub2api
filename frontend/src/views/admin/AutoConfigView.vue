@@ -9,6 +9,7 @@
       <button v-if="!draft && !loading" class="btn btn-secondary" @click="load">{{ t('autoConfig.retry') }}</button>
       <form v-if="draft" class="space-y-5" @submit.prevent="save">
         <p v-if="draft.runtime_blocked" role="alert" class="rounded-xl bg-amber-50 p-4 text-amber-800">{{ t('autoConfig.blocked') }}</p>
+        <fieldset :disabled="saving" class="min-w-0"><BPSDefaultsCard v-model="draft.excel_bps" :groups="groups" /></fieldset>
         <fieldset :disabled="saving" class="grid min-w-0 gap-5 xl:grid-cols-2">
           <section class="card space-y-5">
             <header class="flex items-center justify-between gap-3"><h2 class="text-lg font-semibold">{{ t('autoConfig.initial') }}</h2><label class="flex items-center gap-2 text-sm"><input v-model="draft.enabled" data-testid="initial-enabled" type="checkbox" role="switch" />{{ t('autoConfig.enable') }}</label></header>
@@ -38,12 +39,14 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
+import BPSDefaultsCard from '@/components/admin/operations/BPSDefaultsCard.vue'
+import { defaultExcelBPSDefaults, excelBPSDefaultsError, excelBPSDefaultsPayload, type ExcelBPSDefaults } from '@/utils/excelBPSDefaults'
 import AutoConfigHistory from '@/components/admin/operations/AutoConfigHistory.vue'
 import { getAll } from '@/api/admin/groups'
 import { getAutoConfig, saveAutoConfig, type AutoConfig } from '@/api/admin/autoConfig'
 import type { Group } from '@/types'
 const { t } = useI18n(), auth = useAuthStore()
-const draft = ref<AutoConfig | null>(null), groups = ref<Group[]>([])
+const draft = ref<(AutoConfig & { excel_bps: ExcelBPSDefaults }) | null>(null), groups = ref<Group[]>([])
 const loading = ref(false), saving = ref(false), error = ref(''), notice = ref('')
 const historyRefreshKey = ref(0)
 let generation = 0, alive = true
@@ -54,16 +57,18 @@ const upgradeFields = [{ key: 'successes_per_step', max: 100000 }, { key: 'upgra
 const initialGroups = computed(() => groups.value.filter(g => g.platform === draft.value?.platform))
 async function load() {
  const v = generation; loading.value = true; error.value = ''
- try { const [config, available] = await Promise.all([getAutoConfig(), getAll()]); if (validGeneration(v)) { draft.value = config; groups.value = available.filter(g => g.status === 'active') } }
+ try { const [config, available] = await Promise.all([getAutoConfig(), getAll()]); if (validGeneration(v)) { draft.value = { ...config, excel_bps: config.excel_bps ?? defaultExcelBPSDefaults() }; groups.value = available.filter(g => g.status === 'active') } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.loadFailed') }
  finally { if (validGeneration(v)) loading.value = false }
 }
 async function save() {
  if (!draft.value || saving.value) return
  const c = draft.value
+ const bpsError = excelBPSDefaultsError(c.excel_bps)
+ if (bpsError) { error.value = t(bpsError); return }
  if (c.enabled && !c.group_ids.length || c.upgrade_enabled && !c.upgrade_group_ids.length || [...initialFields, ...upgradeFields].some(f => !Number.isInteger(c[f.key]) || c[f.key] < ('min' in f ? f.min : 1) || c[f.key] > ('max' in f ? f.max : 10000))) { error.value = t('autoConfig.invalid'); return }
  const v = generation; saving.value = true; error.value = ''; notice.value = ''
- try { const { runtime_blocked: _blocked, ...payload } = c; const result = await saveAutoConfig(payload); if (validGeneration(v)) { draft.value = result; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
+ try { const { runtime_blocked: _blocked, ...payload } = c; const result = await saveAutoConfig({ ...payload, excel_bps: excelBPSDefaultsPayload(c.excel_bps) }); if (validGeneration(v)) { draft.value = { ...result, excel_bps: result.excel_bps ?? defaultExcelBPSDefaults() }; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.saveFailed') }
  finally { if (validGeneration(v)) saving.value = false }
 }

@@ -1,14 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { useAuthStore } from './auth'
-import { listQualityPlans, listQualityOperations, type QualityOperation } from '@/api/admin/accountQuality'
+import { listQualityPlans, listQualityOperations, listQualityTemplates, type QualityOperation, type QualityRuleTemplate } from '@/api/admin/accountQuality'
 import { getAllIncludingInactive } from '@/api/admin/groups'
 import type { AdminGroup, ScheduledTestPlan } from '@/types'
 
 // Session-only summaries survive route navigation. Answer bodies stay in the detail drawer.
 export const useAccountQualityStore = defineStore('accountQuality', () => {
   const auth = useAuthStore()
-  const plans = ref<ScheduledTestPlan[]>([]), groups = ref<AdminGroup[]>([])
+  const plans = ref<ScheduledTestPlan[]>([]), groups = ref<AdminGroup[]>([]), templates = ref<QualityRuleTemplate[]>([])
   const operations = ref<QualityOperation[]>([]), cursor = ref(0)
   const rulesLoaded = ref(false), operationsLoaded = ref(false)
   const rulesLoading = ref(false), operationsLoading = ref(false), moreLoading = ref(false)
@@ -21,7 +21,7 @@ export const useAccountQualityStore = defineStore('accountQuality', () => {
 
   function reset() {
     ruleVersion++; operationVersion++; groupVersion++
-    plans.value = []; groups.value = []; operations.value = []; cursor.value = 0
+    plans.value = []; groups.value = []; templates.value = []; operations.value = []; cursor.value = 0
     rulesLoaded.value = operationsLoaded.value = false
     rulesLoading.value = operationsLoading.value = moreLoading.value = false
     rulesError.value = operationsError.value = groupsError.value = ''
@@ -36,9 +36,10 @@ export const useAccountQualityStore = defineStore('accountQuality', () => {
     rulesLoading.value = true; rulesError.value = ''
     const flight = (async () => {
       try {
-        const data = await listQualityPlans()
+        // 分组规则和它建出的账号规则一起刷新，卡片上的覆盖数和规则列表不会对不上。
+        const [data, groupRules] = await Promise.all([listQualityPlans(), listQualityTemplates()])
         if (version !== ruleVersion) return
-        plans.value = data; rulesLoaded.value = true
+        plans.value = data; templates.value = groupRules; rulesLoaded.value = true
         if (selectedPlanId.value && !data.some(p => p.id === selectedPlanId.value)) selectedPlanId.value = null
         updatedAt.value = Date.now()
       } catch (e) { if (version === ruleVersion) rulesError.value = errorText(e) }
@@ -78,7 +79,7 @@ export const useAccountQualityStore = defineStore('accountQuality', () => {
   async function refresh() {
     await Promise.all([refreshRules(), refreshGroups(), refreshOperations()])
   }
-  return { plans, groups, operations, cursor, rulesLoaded, operationsLoaded, rulesLoading, operationsLoading, moreLoading,
+  return { plans, groups, templates, operations, cursor, rulesLoaded, operationsLoaded, rulesLoading, operationsLoading, moreLoading,
     rulesError, operationsError, groupsError, updatedAt, search, selectedPlanId, operationFilter,
     refresh, refreshRules, refreshGroups, refreshOperations, reset }
 })

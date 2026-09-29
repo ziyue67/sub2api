@@ -20,7 +20,16 @@ func NewScheduledTestPlanRepository(db *sql.DB) service.ScheduledTestPlanReposit
 }
 
 func (r *scheduledTestPlanRepository) Create(ctx context.Context, plan *service.ScheduledTestPlan) (*service.ScheduledTestPlan, error) {
-	row := r.db.QueryRowContext(ctx, `
+	return insertScheduledTestPlan(ctx, r.db, plan)
+}
+
+type planRowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// insertScheduledTestPlan is shared with group rules, which insert inside their own transaction.
+func insertScheduledTestPlan(ctx context.Context, q planRowQuerier, plan *service.ScheduledTestPlan) (*service.ScheduledTestPlan, error) {
+	row := q.QueryRowContext(ctx, `
 		INSERT INTO scheduled_test_plans (account_id, model_id, cron_expression, enabled, max_results, auto_recover, next_run_at, created_at, updated_at, pelican_config)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)
 		RETURNING id, account_id, model_id, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, pelican_config, running_until

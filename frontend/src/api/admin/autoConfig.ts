@@ -1,5 +1,7 @@
 import { apiClient } from '../client'
+import type { ExcelBPSDefaults } from '@/utils/excelBPSDefaults'
 export interface AutoConfig {
+ excel_bps?: ExcelBPSDefaults
  enabled: boolean
  platform: string
  priority: number

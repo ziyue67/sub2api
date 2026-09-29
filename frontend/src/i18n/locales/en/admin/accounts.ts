@@ -745,15 +745,15 @@ export default {
         excelBPS403TargetGroup: 'Group action after a 403',
         excelBPS403SelectTarget: 'Select a destination group or leave all groups',
         excelBPS403LeaveAllGroups: 'Leave all groups',
-        excelBPSAutoDisableOn403Desc: 'Disabled by default. Turn off this account’s Excel / BPS protocol when the BPS upstream returns HTTP 403 mapped to basispoints_upstream_error. The account stays enabled and the current request is not retried. Model access errors do not trigger this option, and a 403 does not confirm a ban. After an automatic shutdown, the account list shows a “BPS 403: Excel possibly banned” badge under the account name until the protocol is turned back on.',
+        excelBPSAutoDisableOn403Desc: 'Turn off this account’s Excel / BPS protocol when the BPS upstream returns HTTP 403 mapped to basispoints_upstream_error. The account stays enabled and the current request is not retried. Model access errors do not trigger this option, and a 403 does not confirm a ban. After an automatic shutdown, the account list shows a “BPS 403: Excel possibly banned” badge under the account name until the protocol is turned back on.',
         excelBPS403Badge: 'BPS 403: Excel possibly banned',
         excelBPS403BadgeNote: 'Excel / BPS returned HTTP 403 (not a confirmed ban). Automatic actions taken:',
         excelBPS403BadgeDisabled: '{time} turned off the Excel / BPS protocol; clears when the protocol is turned back on',
         excelBPS403BadgeMoved: '{time} moved to group “{group}”; clears when the account’s groups change',
         excelBPS403BadgeLeftGroups: '{time} left all groups; clears when the account’s groups change',
         excelBPSIgnoreEncryptedContent: 'Ignore encrypted content in history',
-        excelBPSIgnoreEncryptedContentDesc: 'Disabled by default. Old Codex conversations that used multi-agent collaboration carry sub-agent messages as ciphertext that only the native Codex channel can read. BPS cannot forward it, so the whole conversation fails on every turn with an encrypted_content error. When enabled, encrypted parts of messages and tool results are replaced with a fixed omission notice before forwarding, keeping the remaining text, message order and tool call pairing so the conversation can continue. The model cannot see omitted content; plaintext messages, such as a sub-agent’s final answer, and reasoning items are not affected.',
-        excelBPSCacheCreationAsInputDesc: 'Disabled by default. Bill BPS cache creation tokens as regular input and report zero cache creation usage downstream. Total input and cache reads stay unchanged. This does not disable upstream caching.',
+        excelBPSIgnoreEncryptedContentDesc: 'Old Codex conversations that used multi-agent collaboration carry sub-agent messages as ciphertext that only the native Codex channel can read. BPS cannot forward it, so the whole conversation fails on every turn with an encrypted_content error. When enabled, encrypted parts of messages and tool results are replaced with a fixed omission notice before forwarding, keeping the remaining text, message order and tool call pairing so the conversation can continue. The model cannot see omitted content; plaintext messages, such as a sub-agent’s final answer, and reasoning items are not affected.',
+        excelBPSCacheCreationAsInputDesc: 'Bill BPS cache creation tokens as regular input and report zero cache creation usage downstream. Total input and cache reads stay unchanged. This does not disable upstream caching.',
         excelBPSDesc: 'Forward Responses through Excel using this account’s existing ChatGPT OAuth credentials. No GitHub login or sidecar. Disable to restore Codex routing.',
         excelBPSAllModels: 'Enable for all models (legacy behavior)',
         excelBPSModels: 'Select models for Excel / BPS',
@@ -783,6 +783,9 @@ export default {
         responsesWebsocketsV2Desc:
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',
         wsMode: 'WS mode',
+        wsSseAcceleration: 'HTTP streaming over WS',
+        wsSseAccelerationDesc:
+          'Off by default. Stream Responses through the upstream WS pool for ordinary OAuth accounts, delivering early SSE events immediately. Use Context Pool mode and disable automatic passthrough. Global WS gates still apply and bound transport plugins take precedence. Only handshake failures fall back to HTTP; sent requests are not replayed. Early events do not mean text generation has started.',
         wsModeDesc:
           'Applies only to the current OpenAI account type. Select Off to disable WS. Other modes use the selected connection method only when gateway.openai_ws.mode_router_v2_enabled=true; otherwise, they use the context pool.',
         wsModeOff: 'Off (off)',

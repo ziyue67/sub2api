@@ -99,5 +99,12 @@ export default {
   "statsBad": "Issues",
   "statsRepaired": "Repaired",
   "stateFixed": "State recovered",
-  "scopeNote": "The guard only reads the stored access token to call the probe endpoint; credentials are written back only when a token is invalid and auto re-login is enabled."
+  "scopeNote": "The guard only reads the stored access token to call the probe endpoint; credentials are written back only when a token is invalid and auto re-login is enabled.",
+  "managedBadge": "Credential Operations",
+  "managedHint": "Accounts imported with 2FA join Credential Operations automatically, which probes and re-logs them in. They are listed here read-only; re-login or edit their login details in Credential Operations.",
+  "managedPaused": "Paused in Credential Operations",
+  "managedReauth": "Re-login by Credential Operations",
+  "managedOpen": "Open Credential Operations",
+  "managedCredentialsHint": "Login details for {count} more accounts are stored encrypted in Credential Operations and are not shown here.",
+  "managedLoadFailed": "Credential Operations accounts could not be loaded, so managed accounts are hidden. Refresh to retry."
 }

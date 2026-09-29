@@ -20,7 +20,12 @@ func (h *AccountOpsHandler) GetAutoConfig(c *gin.Context) {
 	}{cfg, h.svc.AutoConfigBlocked()})
 }
 func (h *AccountOpsHandler) SaveAutoConfig(c *gin.Context) {
-	var cfg service.OAuthAutoConfig
+	// Preserve fields unknown to older clients, including the BPS template.
+	cfg, err := h.svc.GetOAuthAutoConfig(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "Automatic configuration unavailable")
+		return
+	}
 	if c.ShouldBindJSON(&cfg) != nil {
 		response.BadRequest(c, "Invalid automatic configuration")
 		return

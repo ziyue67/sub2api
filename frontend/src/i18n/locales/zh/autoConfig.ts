@@ -1,6 +1,6 @@
 export default {
   "title": "自动配置",
-  "description": "统一设置新 OAuth 账号，并根据真实请求表现逐步提升账号并发。",
+  "description": "统一管理 BPS 默认配置、新 OAuth 账号初始化和并发升级。",
   "initial": "OAuth 账户首次配置",
   "enable": "启用",
   "initialHint": "仅对所选平台的新 OAuth 账号生效，四项模板值优先于导入值。已有账号、重新授权和手动编辑不触发首次配置。",
@@ -19,7 +19,7 @@ export default {
   "cooldown_seconds": "失败 / 升档后冷却（秒）",
   "upgradeGroups": "允许升级的账号分组",
   "rule": "连续成功 {count} 次后提升 {step} 并发，最多升至 {max}。",
-  "saveHint": "两个开关独立，默认关闭。保存后从新一轮请求开始计数。",
+  "saveHint": "保存后生效；各开关独立控制。现有账号不会被默认模板批量覆盖。",
   "saving": "保存中…",
   "saved": "自动配置已保存",
   "retry": "重新加载",
@@ -62,5 +62,37 @@ export default {
       "concurrency_upgraded": "并发已升级",
       "failure_cooldown": "失败冷却"
     }
+  },
+  "bps": {
+    "title": "Excel / BPS 默认配置",
+    "subtitle": "在账号里选择“使用默认配置”开启 BPS 时，填入这里保存的模型和选项。",
+    "scopeHint": "这里只保存默认模板。账号内提供“使用默认配置”和“使用初始配置”两种开启方式；新建、导入和同步账号不会自动开启 BPS。",
+    "models": "默认使用的模型",
+    "options": "默认勾选的选项",
+    "reset": "恢复推荐选项",
+    "advanced": "更多选项",
+    "advancedHint": "工具、图片、403 恢复与会话代理",
+    "ignore_encrypted_contentHint": "跳过 BPS 无法读取的历史加密内容，保留明文与工具调用关系。",
+    "auto_disable_on_403Hint": "收到符合条件的上游 403 时关闭 BPS，账号仍可使用原 Codex 通道。",
+    "cache_creation_as_inputHint": "缓存创建 token 按普通输入单价计费，上游缓存行为不变。",
+    "omit_unsupported_toolsHint": "省略 BPS 不支持的托管工具；实时搜索和图片生成将不可用。",
+    "ignore_imagesHint": "系统关闭 BPS 图片支持时，将图片替换为提示，保留其余对话。",
+    "auto_recover_on_403Hint": "需要开启 403 自动关闭。按间隔发送文本探测，成功后重新开启 BPS，会消耗少量额度。",
+    "auto_move_on_403Hint": "遇到符合条件的 403 时移入目标分组；可选择退出全部分组。",
+    "session_proxyHint": "需要已配置可用的 Mihomo 或 IP 管理代理池；出口不稳定会影响请求。",
+    "modelsRequired": "请至少选择一个默认 BPS 模型，或启用全部模型。",
+    "applying": "读取默认配置…",
+    "loadFailed": "默认配置读取失败，原设置未改动。请再次点击默认配置开关重试。",
+    "manage": "管理默认配置",
+    "mode": {
+      "defaults": "使用默认配置开启",
+      "defaultsHint": "打开时填入已保存的默认模型和勾选项，可继续调整。",
+      "initial": "使用初始配置开启",
+      "initialHint": "打开时使用原始模型选项，附加功能不勾选，再自行配置。",
+      "defaultsApplied": "已填入默认配置，保存账号后生效。",
+      "initialApplied": "已填入初始配置，可自行勾选，保存账号后生效。"
+    },
+    "modeHint": "两种方式互斥；切换会重新填入模型和选项，关闭当前开关即关闭 BPS。",
+    "adminOnly": "默认模板仅管理员可用，仍可使用初始配置并手动调整。"
   }
 }

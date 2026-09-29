@@ -863,15 +863,15 @@ export default {
         excelBPS403TargetGroup: '触发后的分组',
         excelBPS403SelectTarget: '请选择目标分组, 或选择退出所有分组',
         excelBPS403LeaveAllGroups: '退出所有分组',
-        excelBPSAutoDisableOn403Desc: '默认关闭. 勾选后, 当 Excel / BPS 上游返回 HTTP 403 且错误为 basispoints_upstream_error 时, 自动关闭此账号的 Excel / BPS 协议. 不禁用账号, 不重试当前请求. 模型权限错误不触发, 403 也不代表已确认封禁. 自动关闭后, 账号列表的名称下方显示「BPS 403疑似被封excel」标签, 重新开启协议后消失.',
+        excelBPSAutoDisableOn403Desc: '勾选后, 当 Excel / BPS 上游返回 HTTP 403 且错误为 basispoints_upstream_error 时, 自动关闭此账号的 Excel / BPS 协议. 不禁用账号, 不重试当前请求. 模型权限错误不触发, 403 也不代表已确认封禁. 自动关闭后, 账号列表的名称下方显示「BPS 403疑似被封excel」标签, 重新开启协议后消失.',
         excelBPS403Badge: 'BPS 403疑似被封excel',
         excelBPS403BadgeNote: 'Excel / BPS 上游返回 HTTP 403（不代表已确认封禁），已按设置自动处理：',
         excelBPS403BadgeDisabled: '{time} 关闭 Excel / BPS 协议，重新开启协议后解除',
         excelBPS403BadgeMoved: '{time} 移入分组「{group}」，调整分组后解除',
         excelBPS403BadgeLeftGroups: '{time} 退出所有分组，调整分组后解除',
         excelBPSIgnoreEncryptedContent: '忽略历史中的加密消息内容',
-        excelBPSIgnoreEncryptedContentDesc: '默认关闭。用过多代理协作的旧 Codex 会话里，子代理的中间消息是只有原生 Codex 能读取的密文，BPS 无法转发，整个会话每轮都会报 encrypted_content 错误。勾选后，转发前把消息和工具结果中的加密内容替换为固定的已省略提示，保留其余文本、消息顺序和工具调用关系，使旧会话可以继续。模型看不到被省略的内容；明文消息（如子代理的最终结论）和推理记录不受影响。',
-        excelBPSCacheCreationAsInputDesc: '默认关闭. 勾选后, BPS 缓存创建 token 计入普通输入并按输入价格计费, 返回下游的缓存创建用量同步归零. 总输入和缓存读取不变, 不影响上游实际缓存.',
+        excelBPSIgnoreEncryptedContentDesc: '用过多代理协作的旧 Codex 会话里，子代理的中间消息是只有原生 Codex 能读取的密文，BPS 无法转发，整个会话每轮都会报 encrypted_content 错误。勾选后，转发前把消息和工具结果中的加密内容替换为固定的已省略提示，保留其余文本、消息顺序和工具调用关系，使旧会话可以继续。模型看不到被省略的内容；明文消息（如子代理的最终结论）和推理记录不受影响。',
+        excelBPSCacheCreationAsInputDesc: '勾选后, BPS 缓存创建 token 计入普通输入并按输入价格计费, 返回下游的缓存创建用量同步归零. 总输入和缓存读取不变, 不影响上游实际缓存.',
         excelBPSDesc: '使用本账号已有的 ChatGPT OAuth 凭据，经 Excel 接口转发 Responses 请求。无需 GitHub 登录或 sidecar；关闭后恢复原 Codex 路径。',
         excelBPSAllModels: '对所有模型启用（兼容原设置）',
         excelBPSModels: '勾选使用 Excel / BPS 的模型',
@@ -900,6 +900,9 @@ export default {
         responsesWebsocketsV2Desc:
           '默认关闭。开启后可启用 responses_websockets_v2 协议能力（受网关全局开关与账号类型开关约束）。',
         wsMode: 'WS mode',
+        wsSseAcceleration: 'HTTP 流式 WS 加速',
+        wsSseAccelerationDesc:
+          '默认关闭。普通 OAuth 账号的流式 Responses 可通过上游 WS 连接池返回 SSE，并立即发送前置事件。建议选择上下文池模式，需关闭自动透传；全局 WS 开关仍生效，已绑定的传输插件优先。仅握手失败时回退 HTTP，请求发送后不自动重放。前置事件不代表正文已开始生成。',
         wsModeDesc:
           '仅对当前 OpenAI 账号类型生效。选择“关闭”可禁用 WS；其余模式需全局 gateway.openai_ws.mode_router_v2_enabled=true 才按所选方式连接，未开启时统一使用上下文池。',
         wsModeOff: '关闭（off）',
