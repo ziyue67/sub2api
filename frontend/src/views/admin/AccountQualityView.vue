@@ -21,7 +21,10 @@
             <label class="rule-check-all"><input type="checkbox" data-testid="quality-select-rules" :checked="allFilteredSelected" :indeterminate="someFilteredSelected && !allFilteredSelected" :disabled="!filteredPlans.length || busy" @change="toggleFilteredSelection" />{{ t('qualityOps.selectFilteredRules') }}</label>
             <span aria-live="polite">{{ t('qualityOps.rulesSelected', { count: selectedRuleIds.length }) }}</span>
             <button v-if="selectedRuleIds.length" :disabled="busy" data-testid="quality-clear-rules" @click="selectedRuleIds = []">{{ t('qualityOps.clearAccountSelection') }}</button>
-            <button class="btn btn-primary bulk-edit-button" data-testid="quality-bulk-edit" :disabled="!plans.length || busy || selectedRulesPending" @click="editSelectedRules"><Icon name="edit" size="sm" />{{ t('qualityOps.bulkEdit') }}</button>
+            <div class="rule-bulk-actions">
+              <button class="btn btn-primary bulk-edit-button" data-testid="quality-bulk-edit" :disabled="!plans.length || busy || selectedRulesPending" @click="editSelectedRules"><Icon name="edit" size="sm" />{{ t('qualityOps.bulkEdit') }}</button>
+              <button class="btn bulk-delete-button" data-testid="quality-bulk-delete" :disabled="!selectedRuleIds.length || busy || selectedRulesPending" @click="requestDelete(selectedRuleIds)">{{ t('qualityOps.bulkDelete') }}</button>
+            </div>
           </div>
           <button class="all-accounts" :class="{ selected: store.selectedPlanId === null }" :aria-pressed="store.selectedPlanId === null" @click="store.selectedPlanId = null"><Icon name="users" size="sm" />{{ t('qualityOps.allAccounts') }}<span>{{ plans.length }}</span></button>
           <div class="rules-scroll" data-testid="rules-scroll" :aria-busy="store.rulesLoading">
@@ -61,7 +64,7 @@
     </div>
 
     <!-- Existing rule editor moves into a focused drawer instead of shifting both lists. -->
-    <BaseDialog :show="showForm" :title="bulkEditing ? t('qualityOps.bulkEditTitle', { count: bulkRuleIds.length }) : editing ? t('qualityOps.edit') : t('qualityOps.create')" placement="right" width="wide" :close-on-escape="!busy && !deleteTarget && !discardPrompt" @close="closeForm">
+    <BaseDialog :show="showForm" :title="bulkEditing ? t('qualityOps.bulkEditTitle', { count: bulkRuleIds.length }) : editing ? t('qualityOps.edit') : t('qualityOps.create')" placement="right" width="wide" :close-on-escape="!busy && !deleteTargets.length && !discardPrompt" @close="closeForm">
       <p v-if="error" role="alert" class="editor-error">{{ error }}</p>
       <p v-if="store.groupsError" role="alert" class="editor-error">{{ store.groupsError }} <button class="underline" @click="store.refreshGroups">{{ t('qualityOps.retry') }}</button></p>
             <form id="quality-rule-form" class="quality-editor space-y-5" @submit.prevent="save"><fieldset :disabled="busy" class="space-y-5">
@@ -133,7 +136,7 @@
         </template>
         <label v-if="editsField('enabled')" class="flex items-center gap-2"><input v-model="form.enabled" type="checkbox" />{{ t('qualityOps.enabled') }}</label>
       </fieldset></form>
-      <template #footer><div class="editor-footer"><button v-if="editing" type="button" class="delete-rule" :disabled="busy" @click="deleteTarget = plans.find(p => p.id === editing) || null">{{ t('qualityOps.delete') }}</button><span class="flex-1" /><button class="btn btn-secondary" :disabled="busy" @click="closeForm">{{ t('qualityOps.cancel') }}</button><button form="quality-rule-form" type="submit" class="btn btn-primary" :disabled="busy || selectingAccounts || (bulkEditing ? !bulkFields.length || !bulkRuleIds.length : !editing && !selectedAccounts.length)">{{ busy ? t('qualityOps.saving') : bulkEditing ? t('qualityOps.applyToRules', { count: bulkRuleIds.length }) : t('qualityOps.save') }}</button></div></template>
+      <template #footer><div class="editor-footer"><button v-if="editing || bulkEditing" type="button" class="delete-rule" data-testid="quality-editor-delete" :disabled="busy || selectingAccounts || (bulkEditing && !bulkRuleIds.length)" @click="requestDelete(bulkEditing ? bulkRuleIds : editing ? [editing] : [])">{{ bulkEditing ? t('qualityOps.bulkDelete') : t('qualityOps.delete') }}</button><span class="flex-1" /><button class="btn btn-secondary" :disabled="busy" @click="closeForm">{{ t('qualityOps.cancel') }}</button><button form="quality-rule-form" type="submit" class="btn btn-primary" :disabled="busy || selectingAccounts || (bulkEditing ? !bulkFields.length || !bulkRuleIds.length : !editing && !selectedAccounts.length)">{{ busy ? t('qualityOps.saving') : bulkEditing ? t('qualityOps.applyToRules', { count: bulkRuleIds.length }) : t('qualityOps.save') }}</button></div></template>
     </BaseDialog>
     <BaseDialog :show="!!historyPlan" :title="detailOperation ? t('qualityOps.roundDetail') : t('qualityOps.history')" placement="right" width="extra-wide" close-on-click-outside @close="closeDetails">
       <template v-if="historyPlan">
@@ -160,7 +163,13 @@
       </template>
       <template #footer><div class="detail-footer"><button class="btn btn-secondary" :disabled="operationIndex <= 0 || !detailOperation" @click="navigateOperation(-1)"><Icon name="arrowLeft" size="sm" />{{ t('qualityOps.previousRound') }}</button><span>{{ detailOperation ? `${operationIndex + 1} / ${filteredOperations.length}` : t('qualityOps.history') }}</span><button class="btn btn-secondary" :disabled="!detailOperation || operationIndex < 0 || operationIndex >= filteredOperations.length - 1" @click="navigateOperation(1)">{{ t('qualityOps.nextRound') }}<Icon name="arrowRight" size="sm" /></button></div></template>
     </BaseDialog>
-    <BaseDialog :show="!!deleteTarget" :title="t('qualityOps.delete')" width="narrow" :close-on-escape="!deleting" @close="!deleting && (deleteTarget = null)"><p class="text-sm text-gray-600 dark:text-gray-300">{{ t('qualityOps.deleteConfirm') }}</p><p class="mt-3 font-medium">{{ deleteTarget ? name(deleteTarget) : '' }}</p><template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="deleting" @click="deleteTarget = null">{{ t('qualityOps.cancel') }}</button><button class="btn bg-red-600 text-white hover:bg-red-700" :disabled="deleting" @click="confirmDelete">{{ t('qualityOps.delete') }}</button></div></template></BaseDialog>
+    <BaseDialog :show="!!deleteTargets.length" :title="t('qualityOps.deleteRulesTitle', { count: deleteTargets.length })" width="narrow" :close-on-escape="!deleting" :show-close-button="!deleting" @close="!deleting && (deleteTargets = [])">
+      <p class="text-sm text-gray-600 dark:text-gray-300">{{ deleteTargets.length > 1 ? t('qualityOps.bulkDeleteConfirm', { count: deleteTargets.length }) : t('qualityOps.deleteConfirm') }}</p>
+      <ul class="mt-3 max-h-48 space-y-1 overflow-auto break-words text-sm" data-testid="quality-delete-targets"><li v-for="plan in deleteTargets" :key="plan.id">{{ name(plan) }} · {{ t('qualityOps.rule') }} #{{ plan.id }}</li></ul>
+      <p v-if="deleteProgress" class="mt-3 text-sm" role="status">{{ deleteProgress }}</p>
+      <p v-if="deleteError" class="editor-error mt-3" role="alert" data-testid="quality-delete-error">{{ deleteError }}</p>
+      <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" :disabled="deleting" data-testid="quality-cancel-delete" @click="deleteTargets = []">{{ t('qualityOps.cancel') }}</button><button class="btn bg-red-600 text-white hover:bg-red-700" :disabled="deleting" data-testid="quality-confirm-delete" @click="confirmDelete">{{ deleting ? t('qualityOps.deleting') : t('qualityOps.delete') }}</button></div></template>
+    </BaseDialog>
     <BaseDialog :show="discardPrompt" :title="t('qualityOps.unsavedTitle')" width="narrow" @close="discardPrompt = false"><p>{{ t('qualityOps.unsavedHint') }}</p><template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" @click="discardPrompt = false">{{ t('qualityOps.keepEditing') }}</button><button class="btn btn-primary" @click="discardPrompt = false; showForm = false">{{ t('qualityOps.discard') }}</button></div></template></BaseDialog>
   </AppLayout>
 </template>
@@ -241,7 +250,8 @@ const knownAccounts = new Map<number, AccountListItem>()
 function rememberAccounts(items: AccountListItem[]) { for (const account of items) knownAccounts.set(account.id, account) }
 const busy = ref(false), error = ref(''), notice = ref(''), showForm = ref(false)
 watch(showAccountPicker, (show) => { if (!show) invalidateAccountRequests() }, { flush: 'sync' })
-const pending = ref<Record<number, string>>({}), deleteTarget = ref<ScheduledTestPlan | null>(null), deleting = ref(false)
+const pending = ref<Record<number, string>>({}), deleteTargets = ref<ScheduledTestPlan[]>([]), deleting = ref(false)
+const deleteError = ref(''), deleteProgress = ref('')
 const discardPrompt = ref(false), initialForm = ref('')
 const judgeModels = ref<string[]>([])
 let judgeModelsRequest = 0, accountRequest = 0, detailRequest = 0, answerRequest = 0
@@ -419,6 +429,7 @@ async function selectMatchingAccounts() {
   finally { if (request === accountSelectionRequest) selectingAccounts.value = false }
 }
 function newPlan() {
+  if (busy.value) return
   bulkEditing.value = false; bulkRuleIds.value = []; bulkFields.value = []; bulkProgress.value = ''
   closeDetails(); invalidateAccountRequests(); error.value = ''; editing.value = null; form.value = defaults()
   selectedAccounts.value = []; search.value = ''; accountGroup.value = ''; accountType.value = ''
@@ -426,6 +437,7 @@ function newPlan() {
   if (!groups.value.length) void store.refreshGroups()
 }
 function edit(plan: ScheduledTestPlan) {
+  if (busy.value || pending.value[plan.id]) return
   bulkEditing.value = false; bulkRuleIds.value = []; bulkFields.value = []; bulkProgress.value = ''
   closeDetails(); error.value = ''; editing.value = plan.id; selectedAccounts.value = []
   form.value = { ...defaults(), model_id: plan.model_id, cron_expression: plan.cron_expression, enabled: plan.enabled, max_results: plan.max_results, pelican_config: { ...defaults().pelican_config, ...JSON.parse(JSON.stringify(plan.pelican_config || {})) } }
@@ -448,7 +460,7 @@ function editSelectedRules() {
   initialForm.value = formSnapshot()
 }
 function closeForm() {
-  if (busy.value) return
+  if (busy.value || deleteTargets.value.length) return
   if (initialForm.value !== formSnapshot()) { discardPrompt.value = true; return }
   showForm.value = false
 }
@@ -578,7 +590,7 @@ async function saveBulkRules() {
   } finally { busy.value = false }
 }
 async function planAction(plan: ScheduledTestPlan, kind: string, fn: () => Promise<unknown>) {
-  if (pending.value[plan.id]) return
+  if (busy.value || pending.value[plan.id]) return
   pending.value[plan.id] = kind; error.value = ''; notice.value = ''
   const scope = identity()
   try {
@@ -591,17 +603,48 @@ async function planAction(plan: ScheduledTestPlan, kind: string, fn: () => Promi
 }
 async function toggle(plan: ScheduledTestPlan) { await planAction(plan, 'toggle', () => scheduledTests.update(plan.id, { enabled: !plan.enabled })) }
 async function run(plan: ScheduledTestPlan) { await planAction(plan, 'run', () => runQualityPlan(plan.id)) }
+function requestDelete(ids: number[]) {
+  if (busy.value || selectingAccounts.value || ids.some(id => pending.value[id])) return
+  // Keep the confirmation scope fixed even if selection or search changes.
+  const selected = new Set(ids)
+  deleteTargets.value = plans.value.filter(plan => selected.has(plan.id))
+  deleteError.value = deleteProgress.value = ''
+}
 async function confirmDelete() {
-  if (!deleteTarget.value || deleting.value) return
-  deleting.value = true
-  const id = deleteTarget.value.id, scope = identity()
+  if (!deleteTargets.value.length || deleting.value || busy.value || deleteTargets.value.some(plan => pending.value[plan.id])) return
+  deleting.value = busy.value = true
+  deleteError.value = deleteProgress.value = error.value = notice.value = ''
+  const targets = [...deleteTargets.value], scope = identity()
+  const failed: ScheduledTestPlan[] = [], failures: string[] = []
+  let completed = 0
   try {
-    await scheduledTests.delete(id)
-    if (!alive || scope !== identity()) return
-    deleteTarget.value = null; showForm.value = false; if (historyPlan.value?.id === id) closeDetails()
+    for (const plan of targets) {
+      if (!alive || scope !== identity()) return
+      try {
+        await scheduledTests.delete(plan.id)
+        if (!alive || scope !== identity()) return
+        selectedRuleIds.value = selectedRuleIds.value.filter(id => id !== plan.id)
+        bulkRuleIds.value = bulkRuleIds.value.filter(id => id !== plan.id)
+        store.plans = plans.value.filter(item => item.id !== plan.id)
+        store.operations = operations.value.filter(item => item.plan_id !== plan.id)
+        if (store.selectedPlanId === plan.id) store.selectedPlanId = null
+        if (historyPlan.value?.id === plan.id) closeDetails()
+      } catch (e) {
+        if (!alive || scope !== identity()) return
+        failed.push(plan); failures.push(`#${plan.id}: ${message(e)}`)
+      }
+      completed++
+      deleteProgress.value = t('qualityOps.bulkProgress', { completed, total: targets.length })
+    }
+    deleteTargets.value = failed
+    if (failed.length) {
+      deleteError.value = `${t('qualityOps.bulkDeletePartial', { deleted: targets.length - failed.length, failed: failed.length })} ${failures.join(' / ')}`
+    } else {
+      showForm.value = false
+      notice.value = t('qualityOps.rulesDeleted', { count: targets.length })
+    }
     await Promise.all([store.refreshRules(true), store.refreshOperations()])
-  } catch (e) { error.value = message(e) }
-  finally { deleting.value = false }
+  } finally { deleting.value = busy.value = false }
 }
 async function loadJudgeModels() {
   const request = ++judgeModelsRequest
@@ -649,10 +692,10 @@ function retryDetails() {
   else if (historyPlan.value) void history(historyPlan.value)
 }
 function navigateOperation(offset: number) { const next = filteredOperations.value[operationIndex.value + offset]; if (next) void operationDetails(next) }
-watch(() => identity(), () => { error.value = notice.value = ''; closeDetails(); showForm.value = false; discardPrompt.value = false; deleteTarget.value = null; accounts.value = []; knownAccounts.clear(); selectedRuleIds.value = []; bulkRuleIds.value = []; bulkEditing.value = false; accountRequest++; judgeModelsRequest++ })
+watch(() => identity(), () => { error.value = notice.value = ''; closeDetails(); showForm.value = false; discardPrompt.value = false; deleteTargets.value = []; deleteError.value = deleteProgress.value = ''; accounts.value = []; knownAccounts.clear(); selectedRuleIds.value = []; bulkRuleIds.value = []; bulkEditing.value = false; accountRequest++; judgeModelsRequest++ })
 onMounted(() => {
   void load()
-  poll = setInterval(() => { if (document.visibilityState === 'visible' && !refreshing.value) { void store.refreshRules(); void store.refreshOperations() } }, 30_000)
+  poll = setInterval(() => { if (document.visibilityState === 'visible' && !refreshing.value && !deleting.value) { void store.refreshRules(); void store.refreshOperations() } }, 30_000)
 })
 onBeforeUnmount(() => { alive = false; accountSelectionRequest++; detailRequest++; answerRequest++; accountRequest++; judgeModelsRequest++; if (poll) clearInterval(poll); loadedAnswers.clear() })
 </script>
@@ -693,8 +736,10 @@ onBeforeUnmount(() => { alive = false; accountSelectionRequest++; detailRequest+
 .all-accounts { @apply mx-4 mb-3 flex shrink-0 items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm text-gray-500 dark:text-gray-400; }
 .rule-selection-toolbar { @apply mx-4 mb-3 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-gray-500 dark:text-gray-400; }
 .rule-check-all { @apply flex cursor-pointer items-center gap-2; }
-.rule-selection-toolbar > button:not(.bulk-edit-button) { @apply text-primary-600; }
-.bulk-edit-button { @apply ml-auto inline-flex items-center gap-1.5 px-3 py-2 text-xs; }
+.rule-selection-toolbar > button { @apply text-primary-600; }
+.rule-bulk-actions { @apply ml-auto flex items-center gap-2; }
+.bulk-edit-button { @apply inline-flex items-center gap-1.5 px-3 py-2 text-xs; }
+.bulk-delete-button { @apply px-3 py-2 text-xs text-red-600 dark:text-red-400; }
 .rule-checkbox { @apply flex h-8 shrink-0 cursor-pointer items-center; }
 .rule-checkbox input, .rule-check-all input, .bulk-fields input { @apply h-4 w-4 shrink-0 cursor-pointer accent-primary-600; }
 .bulk-editor-intro { @apply space-y-3 rounded-xl border border-primary-100 bg-primary-50/50 p-4 text-sm dark:border-primary-900 dark:bg-primary-950/20; }

@@ -30,5 +30,37 @@ export default {
   "progress": "本档成功 {count}/{required}，下一档 {next}",
   "tier": "并发档位 {current}/{max}",
   "history": "自动升级记录",
-  "cooling": "冷却至 {time}"
+  "cooling": "冷却至 {time}",
+  "logs": {
+    "title": "近期日志",
+    "description": "查看配置保存、OAuth 首次配置及账号并发变化，按最新记录排序。",
+    "filter": "筛选日志类型",
+    "all": "全部类型",
+    "refresh": "刷新",
+    "time": "时间",
+    "account": "账号 / 范围",
+    "event": "事件",
+    "detail": "变更详情",
+    "snapshot": "查看配置快照",
+    "savedRule": "升档规则：连续成功 {count} 次，提升 {step} 并发，上限 {max}，冷却 {seconds} 秒。",
+    "global": "全局配置",
+    "empty": "暂无自动配置日志",
+    "emptyFiltered": "暂无此类日志",
+    "emptyHint": "保存配置、首次应用或触发并发变化后，可在这里查看记录。",
+    "scopeHint": "仅记录此功能上线后的操作；正常请求进度与同一冷却期内的重复失败不逐条记录。",
+    "more": "加载更多",
+    "loadFailed": "日志加载失败，请重试。已加载的记录会保留。",
+    "on": "开启",
+    "off": "关闭",
+    "savedDetail": "首次配置：{initial}；并发升级：{upgrade}。初始并发 {concurrency}，优先级 {priority}，负载因子 {load}。",
+    "initialDetail": "并发 {concurrency}，优先级 {priority}，负载因子 {load}；加入分组 {groups}。",
+    "upgradeDetail": "并发 {before} → {after}，进入 {seconds} 秒冷却。",
+    "cooldownDetail": "请求失败，成功进度已清零，冷却 {seconds} 秒；并发保持 {concurrency}。",
+    "kinds": {
+      "config_saved": "配置已保存",
+      "initial_applied": "首次配置已应用",
+      "concurrency_upgraded": "并发已升级",
+      "failure_cooldown": "失败冷却"
+    }
+  }
 }

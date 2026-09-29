@@ -1,3 +1,8 @@
+
+vi.mock('@/api/admin/credentialEncryption', () => ({
+  getCredentialEncryption: vi.fn().mockResolvedValue({ configured: true, source: 'server_config' }),
+  initializeCredentialEncryption: vi.fn(),
+}))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 

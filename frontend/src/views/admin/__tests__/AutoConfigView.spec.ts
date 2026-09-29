@@ -8,6 +8,7 @@ import type { Group } from '@/types'
 const state = vi.hoisted(() => ({ auth: null as any }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => state.auth }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
+vi.mock('@/components/admin/operations/AutoConfigHistory.vue', () => ({ default: { props: ['refreshKey'], template: '<section data-testid="history" :data-refresh="refreshKey" />' } }))
 vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { template: '<nav />' } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin/autoConfig', () => ({ getAutoConfig: vi.fn(), saveAutoConfig: vi.fn() }))
@@ -25,6 +26,7 @@ describe('AutoConfigView', () => {
   await w.get('[data-testid="priority"]').setValue(0); await w.get('[data-testid="load_factor"]').setValue(90); await w.get('[data-testid="concurrency"]').setValue(7)
   expect(w.find('[data-testid="initial-group-6"]').exists()).toBe(false)
   await w.get('form').trigger('submit'); await flushPromises()
+  expect(w.get('[data-testid="history"]').attributes('data-refresh')).toBe('1')
   expect(saveAutoConfig).toHaveBeenCalledWith({ ...config, enabled: true, priority: 0, load_factor: 90, concurrency: 7, group_ids: [5] }); w.unmount()
  })
  it('enables upgrades independently and validates scope', async () => {
@@ -45,6 +47,7 @@ describe('AutoConfigView', () => {
  it('preserves draft after a save error', async () => {
   const w = mount(AutoConfigView); await flushPromises(); vi.mocked(saveAutoConfig).mockRejectedValueOnce(new Error('offline'))
   await w.get('[data-testid="concurrency"]').setValue(12); await w.get('form').trigger('submit'); await flushPromises()
+  expect(w.get('[data-testid="history"]').attributes('data-refresh')).toBe('0')
   expect((w.get('[data-testid="concurrency"]').element as HTMLInputElement).value).toBe('12'); expect(w.get('[role="alert"]').text()).toContain('saveFailed'); w.unmount()
  })
  it('discards a pending settings response after logout', async () => {

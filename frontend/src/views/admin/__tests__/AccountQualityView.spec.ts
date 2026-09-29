@@ -6,10 +6,15 @@ import * as accountsAPI from '@/api/admin/accounts'
 import scheduledTests from '@/api/admin/scheduledTests'
 import { listQualityPlans, listQualityOperations } from '@/api/admin/accountQuality'
 import { useAccountQualityStore } from '@/stores/accountQuality'
+import { useAuthStore } from '@/stores/auth'
 import type { ScheduledTestPlan } from '@/types'
 import { defaultQualityBPS } from '@/utils/qualityRulePatch'
 vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { template: '<nav />' } }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1, role: 'admin' } }) }))
+vi.mock('@/stores/auth', async () => {
+  const { reactive } = await import('vue')
+  const auth = reactive({ user: { id: 1, role: 'admin' } })
+  return { useAuthStore: () => auth }
+})
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'), useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
 vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), runQualityPlan: vi.fn(), listQualityOperations: vi.fn().mockResolvedValue({items:[],next_cursor:0}) }))
@@ -19,13 +24,128 @@ vi.mock('@/api/admin/groups', () => ({ getModelAllowlistCandidates: vi.fn().mock
 vi.mock('@/components/account/ModelWhitelistSelector.vue', () => ({ default: { props: ['modelValue'], template: '<div data-testid="model-selector">{{ modelValue.join(",") }}</div>' } }))
 const mountView = () => mount(AccountQualityView, { global: { plugins: [createPinia()], stubs: { Teleport: true, AppLayout: { template: '<main><slot /></main>' } } } })
 describe('quality operations', () => {
-  beforeEach(() => { vi.clearAllMocks(); vi.mocked(scheduledTests.update).mockReset(); vi.mocked(accountsAPI.list).mockReset().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 } as any); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({items:[],next_cursor:0}) })
+  beforeEach(() => { vi.clearAllMocks(); useAuthStore().user!.id = 1; vi.mocked(scheduledTests.delete).mockReset().mockResolvedValue(undefined); vi.mocked(scheduledTests.update).mockReset(); vi.mocked(accountsAPI.list).mockReset().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 } as any); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({items:[],next_cursor:0}) })
   const rules = (): ScheduledTestPlan[] => [1, 2, 3].map(id => ({
     id, account_id: id, account_name: `Account ${id}`, model_id: `model-${id}`, cron_expression: '*/30 * * * *', enabled: true,
     max_results: 100, auto_recover: false, last_run_at: null, next_run_at: null, created_at: '', updated_at: '',
     pelican_config: { question_kind: 'state_probe', prompt: '', reasoning_effort: 'high', parallel_count: 1,
       quality: { expected_answer: '', action: 'remove_groups', remove_group_ids: [id], auto_restore: false } },
   }))
+
+  it('confirms and deletes checked rules including hidden search selections', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    const wrapper = mountView(); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-bulk-delete"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-plan-id="1"] .rule-checkbox input').setValue(true)
+    await wrapper.get('.rule-search input').setValue('Account 2')
+    await wrapper.get('[data-testid="quality-select-rules"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bulk-delete"]').trigger('click')
+    const targets = wrapper.get('[data-testid="quality-delete-targets"]')
+    expect(targets.text()).toContain('Account 1')
+    expect(targets.text()).toContain('Account 2')
+    expect(targets.text()).not.toContain('Account 3')
+    expect(scheduledTests.delete).not.toHaveBeenCalled()
+    vi.mocked(listQualityPlans).mockResolvedValue([rules()[2]])
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(vi.mocked(scheduledTests.delete).mock.calls).toEqual([[1], [2]])
+    expect(wrapper.find('[data-testid="quality-delete-targets"]').exists()).toBe(false)
+    expect((wrapper.vm as any).selectedRuleIds).toEqual([])
+    expect(listQualityOperations).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('deletes rules selected in the bulk account picker without checking edit fields', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    vi.mocked(accountsAPI.list).mockResolvedValue({ items: [{ id: 2, name: 'Account 2' }, { id: 3, name: 'Account 3' }], total: 2 } as any)
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-testid="quality-bulk-edit"]').trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-editor-delete"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
+    expect(wrapper.get('button[form="quality-rule-form"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-editor-delete"]').trigger('click')
+    vi.mocked(listQualityPlans).mockResolvedValue([rules()[0]])
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(vi.mocked(scheduledTests.delete).mock.calls).toEqual([[2], [3]])
+    expect(scheduledTests.update).not.toHaveBeenCalled()
+    expect(wrapper.find('#quality-rule-form').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('continues batch deletion after an error and retries only failed rules', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    vi.mocked(scheduledTests.delete).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('delete denied')).mockResolvedValueOnce(undefined)
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-testid="quality-select-rules"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bulk-delete"]').trigger('click')
+    vi.mocked(listQualityPlans).mockResolvedValue([rules()[1]])
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(vi.mocked(scheduledTests.delete).mock.calls).toEqual([[1], [2], [3]])
+    expect(wrapper.get('[data-testid="quality-delete-error"]').text()).toContain('#2: delete denied')
+    expect((wrapper.vm as any).selectedRuleIds).toEqual([2])
+    expect(wrapper.get('[data-testid="quality-delete-targets"]').findAll('li')).toHaveLength(1)
+    vi.mocked(listQualityPlans).mockResolvedValue([])
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(vi.mocked(scheduledTests.delete).mock.calls).toEqual([[1], [2], [3], [2]])
+    expect(wrapper.find('[data-testid="quality-delete-targets"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('can cancel deletion and still delete a single rule from its editor', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    const wrapper = mountView(); await flushPromises()
+    const vm = wrapper.vm as any
+    vm.edit(rules()[0]); await flushPromises()
+    await wrapper.get('[data-testid="quality-editor-delete"]').trigger('click')
+    await wrapper.get('[data-testid="quality-cancel-delete"]').trigger('click')
+    expect(scheduledTests.delete).not.toHaveBeenCalled()
+    expect(wrapper.find('#quality-rule-form').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="quality-delete-targets"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="quality-editor-delete"]').trigger('click')
+    vi.mocked(listQualityPlans).mockRejectedValueOnce(new Error('refresh failed'))
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(vi.mocked(scheduledTests.delete).mock.calls).toEqual([[1]])
+    expect(useAccountQualityStore().plans.map(plan => plan.id)).toEqual([2, 3])
+    expect(wrapper.find('#quality-rule-form').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the confirmed rule IDs fixed if selection changes', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-plan-id="1"] .rule-checkbox input').setValue(true)
+    await wrapper.get('[data-testid="quality-bulk-delete"]').trigger('click')
+    const vm = wrapper.vm as any
+    vm.selectedRuleIds = [2, 3]
+    vi.mocked(listQualityPlans).mockResolvedValue(rules().slice(1))
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(vi.mocked(scheduledTests.delete).mock.calls).toEqual([[1]])
+    expect(vm.selectedRuleIds).toEqual([2, 3])
+    wrapper.unmount()
+  })
+
+  it.each(['unmount', 'identity'])('prevents duplicate submissions and stops deletion after %s changes', async (change) => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    let finish!: () => void
+    vi.mocked(scheduledTests.delete).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-testid="quality-select-rules"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bulk-delete"]').trigger('click')
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-confirm-delete"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="quality-cancel-delete"]').attributes('disabled')).toBeDefined()
+    await (wrapper.vm as any).confirmDelete()
+    expect(scheduledTests.delete).toHaveBeenCalledTimes(1)
+    if (change === 'unmount') wrapper.unmount()
+    else { useAuthStore().user!.id = 2; await flushPromises() }
+    finish(); await flushPromises()
+    expect(vi.mocked(scheduledTests.delete).mock.calls).toEqual([[1]])
+    expect(listQualityOperations).toHaveBeenCalledTimes(1)
+    if (change === 'identity') {
+      expect(wrapper.find('[data-testid="quality-delete-targets"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="quality-delete-error"]').exists()).toBe(false)
+      wrapper.unmount()
+    }
+  })
 
   it('selects search matches independently of the history filter and preserves hidden selections', async () => {
     vi.mocked(listQualityPlans).mockResolvedValue(rules())

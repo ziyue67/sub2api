@@ -29,23 +29,23 @@ func DefaultImageRelayLimits() ImageRelayLimits {
 }
 
 func (l ImageRelayLimits) Validate() error {
-	if l.MaxImageMiB < 1 || l.MaxImageMiB > 128 {
-		return fmt.Errorf("image relay max_image_mib must be 1-128")
+	if l.MaxImageMiB < 1 || l.MaxImageMiB > MaxRelayImageMiB {
+		return fmt.Errorf("image relay max_image_mib must be 1-%d", MaxRelayImageMiB)
 	}
-	if l.MaxImages < 1 || l.MaxImages > 4096 {
-		return fmt.Errorf("image relay max_images must be 1-4096")
+	if l.MaxImages < 1 || l.MaxImages > MaxRelayImages {
+		return fmt.Errorf("image relay max_images must be 1-%d", MaxRelayImages)
 	}
-	if l.MaxTotalMiB < 1 || l.MaxTotalMiB > 128 {
-		return fmt.Errorf("image relay max_total_mib must be 1-128")
+	if l.MaxTotalMiB < 1 || l.MaxTotalMiB > MaxRelayRequestMiB {
+		return fmt.Errorf("image relay max_total_mib must be 1-%d", MaxRelayRequestMiB)
 	}
-	if l.StorageMiB < 1 || l.StorageMiB > 16384 {
-		return fmt.Errorf("image relay storage_mib must be 1-16384")
+	if l.StorageMiB < 1 || l.StorageMiB > MaxRelayStorageMiB {
+		return fmt.Errorf("image relay storage_mib must be 1-%d", MaxRelayStorageMiB)
 	}
-	if l.StorageEntries < 1 || l.StorageEntries > 65536 {
-		return fmt.Errorf("image relay storage_entries must be 1-65536")
+	if l.StorageEntries < 1 || l.StorageEntries > MaxRelayStorageEntries {
+		return fmt.Errorf("image relay storage_entries must be 1-%d", MaxRelayStorageEntries)
 	}
-	if l.TTLMinutes < 1 || l.TTLMinutes > 1440 {
-		return fmt.Errorf("image relay ttl_minutes must be 1-1440")
+	if l.TTLMinutes < 1 || l.TTLMinutes > MaxRelayTTLMinutes {
+		return fmt.Errorf("image relay ttl_minutes must be 1-%d", MaxRelayTTLMinutes)
 	}
 	if l.MaxTotalMiB < l.MaxImageMiB {
 		return fmt.Errorf("image relay request image size limit must cover a single image")

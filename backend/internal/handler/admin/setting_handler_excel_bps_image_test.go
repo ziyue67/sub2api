@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -57,7 +58,7 @@ func TestSettingsExcelBPSImagesRoundTripAndOmission(t *testing.T) {
 		rec = doUpdateSettings(t, h, map[string]any{field: 0}, nil)
 		require.Equal(t, http.StatusBadRequest, rec.Code, field)
 	}
-	rec = doUpdateSettings(t, h, map[string]any{"excel_bps_image_max_requests": 513}, nil)
+	rec = doUpdateSettings(t, h, map[string]any{"excel_bps_image_max_requests": basispoints.MaxImageRequests + 1}, nil)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Equal(t, "512", repo.values[service.SettingKeyExcelBPSImageMaxRequests])
 	require.Equal(t, "32", repo.values[service.SettingKeyExcelBPSImageBodyLimitMiB])
@@ -116,11 +117,11 @@ func TestSettingsExcelBPSImageLimitsValidationAndPreservation(t *testing.T) {
 		require.EqualValues(t, v, gjson.Get(rec.Body.String(), "data."+k).Int())
 	}
 	for _, bad := range []map[string]any{
-		{"excel_bps_image_max_images": 0}, {"excel_bps_image_max_images": 4097},
-		{"excel_bps_image_max_image_mib": 129}, {"excel_bps_image_max_total_mib": 20},
-		{"excel_bps_image_storage_mib": 32}, {"excel_bps_image_storage_mib": 16385},
-		{"excel_bps_image_storage_entries": 99}, {"excel_bps_image_storage_entries": 65537},
-		{"excel_bps_image_ttl_minutes": 1441}, {"excel_bps_image_ttl_minutes": -1},
+		{"excel_bps_image_max_images": 0}, {"excel_bps_image_max_images": basispoints.MaxRelayImages + 1},
+		{"excel_bps_image_max_image_mib": basispoints.MaxRelayImageMiB + 1}, {"excel_bps_image_max_total_mib": 20},
+		{"excel_bps_image_storage_mib": 32}, {"excel_bps_image_storage_mib": basispoints.MaxRelayStorageMiB + 1},
+		{"excel_bps_image_storage_entries": 99}, {"excel_bps_image_storage_entries": basispoints.MaxRelayStorageEntries + 1},
+		{"excel_bps_image_ttl_minutes": basispoints.MaxRelayTTLMinutes + 1}, {"excel_bps_image_ttl_minutes": -1},
 		{"excel_bps_image_max_images": 1.5},
 	} {
 		rec = doUpdateSettings(t, h, bad, nil)
@@ -151,4 +152,48 @@ func TestSettingsExcelBPSImagePolicyPreservesOmittedAndRejectsInvalid(t *testing
 	h.GetSettings(c)
 	require.Equal(t, "warn", gjson.Get(rec.Body.String(), "data.excel_bps_image_limit_policy").String())
 	require.EqualValues(t, 9, gjson.Get(rec.Body.String(), "data.excel_bps_image_warning_remaining").Int())
+}
+
+// Exercise the actual admin save, omitted-field merge, and per-request reader.
+func TestSettingsExcelBPSExpandedCapacityRoundTrip(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
+	values := map[string]any{
+		"excel_bps_image_relay_enabled":     true,
+		"excel_bps_image_base_url":          "https://images.example",
+		"excel_bps_image_body_limit_mib":    basispoints.MaxImageBodyMiB,
+		"excel_bps_image_budget_mib":        basispoints.MaxImageBudgetMiB,
+		"excel_bps_image_max_requests":      basispoints.MaxImageRequests,
+		"excel_bps_image_max_image_mib":     basispoints.MaxRelayImageMiB,
+		"excel_bps_image_max_total_mib":     basispoints.MaxRelayRequestMiB,
+		"excel_bps_image_max_images":        basispoints.MaxRelayImages,
+		"excel_bps_image_storage_mib":       basispoints.MaxRelayStorageMiB,
+		"excel_bps_image_storage_entries":   basispoints.MaxRelayStorageEntries,
+		"excel_bps_image_ttl_minutes":       basispoints.MaxRelayTTLMinutes,
+		"excel_bps_image_warning_remaining": basispoints.MaxRelayImages,
+		"excel_bps_image_compact_reserve":   basispoints.MaxRelayImages,
+	}
+	rec := doUpdateSettings(t, h, values, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = doUpdateSettings(t, h, map[string]any{"site_name": "preserve expanded limits"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for key, value := range values {
+		if n, ok := value.(int); ok {
+			require.EqualValues(t, n, gjson.Get(rec.Body.String(), "data."+key).Int(), key)
+			// Every explicit maximum must reject max+1 without modifying saved state.
+			rejected := doUpdateSettings(t, h, map[string]any{key: n + 1}, nil)
+			require.Equal(t, http.StatusBadRequest, rejected.Code, key)
+			require.EqualValues(t, n, gjson.Parse(repo.values[key]).Int(), key)
+		}
+	}
+	runtime, err := h.settingService.GetExcelBPSImageRelaySettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, basispoints.MaxImageBodyMiB, runtime.BodyLimitMiB)
+	require.Equal(t, basispoints.MaxImageBudgetMiB, runtime.BudgetMiB)
+	require.Equal(t, basispoints.MaxImageRequests, runtime.MaxRequests)
+	require.Equal(t, basispoints.MaxRelayImageMiB, runtime.Limits.MaxImageMiB)
+	require.Equal(t, basispoints.MaxRelayRequestMiB, runtime.Limits.MaxTotalMiB)
+	require.Equal(t, basispoints.MaxRelayImages, runtime.Limits.MaxImages)
+	require.Equal(t, basispoints.MaxRelayStorageMiB, runtime.Limits.StorageMiB)
+	require.Equal(t, basispoints.MaxRelayStorageEntries, runtime.Limits.StorageEntries)
+	require.Equal(t, basispoints.MaxRelayTTLMinutes, runtime.Limits.TTLMinutes)
 }

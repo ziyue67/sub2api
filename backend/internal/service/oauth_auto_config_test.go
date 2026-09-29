@@ -160,3 +160,32 @@ func TestAutoConfigCanDisableAfterGroupDeleted(t *testing.T) {
 	_, err := s.SaveOAuthAutoConfig(context.Background(), cfg)
 	require.NoError(t, err, "disabling must remain possible after a target group is deleted")
 }
+
+func TestAutoConfigImportedMarkerCannotCreateHistory(t *testing.T) {
+	original := map[string]any{"auto_config_initial_revision": "imported", "keep": true}
+	input := &CreateAccountInput{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: original}
+	svc := &adminServiceImpl{}
+	require.NoError(t, svc.ApplyOAuthAutoConfig(context.Background(), input))
+	require.NotContains(t, input.Extra, "auto_config_initial_revision")
+	require.Equal(t, true, input.Extra["keep"])
+	require.Equal(t, "imported", original["auto_config_initial_revision"], "do not mutate the caller's map")
+}
+
+type autoConfigHistoryAccountRepo struct {
+	*autoConfigAccountRepo
+	recorded int
+}
+
+func (r *autoConfigHistoryAccountRepo) RecordAutoConfigInitial(_ context.Context, _ *Account, _ []int64) error {
+	r.recorded++
+	return nil
+}
+func TestAutoConfigInitialHistoryOnlyAfterNewAccount(t *testing.T) {
+	repo := &autoConfigHistoryAccountRepo{autoConfigAccountRepo: &autoConfigAccountRepo{}}
+	a := &Account{ID: 7, Extra: map[string]any{"keep": true}}
+	recordAutoConfigInitial(context.Background(), repo, a, []int64{3})
+	require.Zero(t, repo.recorded)
+	a.Extra["auto_config_initial_revision"] = "r1"
+	recordAutoConfigInitial(context.Background(), repo, a, []int64{3})
+	require.Equal(t, 1, repo.recorded)
+}

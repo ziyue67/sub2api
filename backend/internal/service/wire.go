@@ -125,7 +125,7 @@ func ProvideOpenAIOAuthReauthService(
 	adminService AdminService,
 	accountRepo AccountRepository,
 	openaiOAuthService *OpenAIOAuthService,
-	secretEncryptor SecretEncryptor,
+	secretEncryptor OpenAICredentialEncryptor,
 	cfg *config.Config,
 	tokenCacheInvalidator TokenCacheInvalidator,
 	runtimeBlocker AccountRuntimeBlocker,

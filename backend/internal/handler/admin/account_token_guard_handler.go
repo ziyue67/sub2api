@@ -11,11 +11,12 @@ import (
 
 // AccountTokenGuardHandler 提供智能运维 → 凭证守护的状态、配置、日志与手动操作接口。
 type AccountTokenGuardHandler struct {
-	svc *service.AccountTokenGuardService
+	svc    *service.AccountTokenGuardService
+	reauth *service.OpenAIOAuthReauthService
 }
 
-func NewAccountTokenGuardHandler(svc *service.AccountTokenGuardService) *AccountTokenGuardHandler {
-	return &AccountTokenGuardHandler{svc: svc}
+func NewAccountTokenGuardHandler(svc *service.AccountTokenGuardService, reauth *service.OpenAIOAuthReauthService) *AccountTokenGuardHandler {
+	return &AccountTokenGuardHandler{svc: svc, reauth: reauth}
 }
 
 func (h *AccountTokenGuardHandler) Status(c *gin.Context) {
@@ -144,6 +145,15 @@ func (h *AccountTokenGuardHandler) StartTwoFALogin(c *gin.Context) {
 	var err error
 	switch input.CredentialTarget {
 	case "operations":
+		status, statusErr := h.reauth.CredentialEncryptionStatus()
+		if statusErr != nil {
+			response.ErrorFrom(c, statusErr)
+			return
+		}
+		if !status.Configured {
+			response.BadRequest(c, "请先在凭证运营中启用凭据加密，再进行 2FA 导入")
+			return
+		}
 		job, err = h.svc.StartTwoFALoginForOperations(c.Request.Context(), entry)
 	case "", "guard": // Preserve the contract for older clients.
 		job, err = h.svc.StartTwoFALogin(c.Request.Context(), entry)

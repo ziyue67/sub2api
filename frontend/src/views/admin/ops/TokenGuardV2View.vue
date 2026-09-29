@@ -12,12 +12,14 @@
           <button class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="load()">
             <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />{{ t('tokenGuardV2.refresh') }}
           </button>
-          <button class="btn btn-primary" @click="openCreate">{{ t('tokenGuardV2.addAccount') }}</button>
+          <button class="btn btn-primary" :disabled="!encryptionReady" @click="openCreate">{{ t('tokenGuardV2.addAccount') }}</button>
         </div>
       </header>
 
       <p v-if="error && !editorOpen" role="alert" class="error-banner">{{ error }}</p>
       <p v-if="notice" role="status" class="success-banner">{{ notice }}</p>
+
+      <CredentialEncryptionSetup class="mb-5" @ready="encryptionReady = $event" />
 
       <section class="summary-grid">
         <article class="summary-card"><span>{{ t('tokenGuardV2.monitored') }}</span><strong>{{ accounts.length }}</strong><small>{{ t('tokenGuardV2.intervalHint', { minutes: Math.round(status.probe_interval_seconds / 60) }) }}</small></article>
@@ -121,6 +123,7 @@
       <BaseDialog :show="editorOpen" :title="editing ? t('tokenGuardV2.editTitle') : t('tokenGuardV2.addTitle')" width="wide" @close="closeEditor">
         <form id="token-guard-v2-editor" class="editor-form" @submit.prevent="save">
           <p v-if="error" role="alert" class="error-banner">{{ error }}</p>
+          <p v-if="!encryptionReady" role="alert" class="error-banner">{{ t('tokenGuardV2.encryption.editorHint') }}</p>
           <div v-if="!editing" class="account-picker">
             <label class="search-box picker-search">
               <Icon name="search" size="sm" />
@@ -157,7 +160,7 @@
 
           <template v-if="draft.credential_mode === 'password_totp'">
             <label class="field-label">{{ t('tokenGuardV2.password') }}<input v-model="draft.password" class="input w-full" type="password" :placeholder="editing?.login_config?.password_configured ? t('tokenGuardV2.keepSecret') : ''" :required="!editing?.login_config?.password_configured" autocomplete="new-password" /></label>
-            <label class="field-label">{{ t('tokenGuardV2.totpSecret') }}<input v-model.trim="draft.totp_secret" class="input w-full" type="password" :placeholder="editing?.login_config?.totp_configured ? t('tokenGuardV2.keepSecret') : t('tokenGuardV2.optional')" autocomplete="off" /></label>
+            <label class="field-label">{{ t('tokenGuardV2.totpSecret') }}<input v-model.trim="draft.totp_secret" class="input w-full" type="password" :placeholder="editing?.login_config?.totp_configured ? t('tokenGuardV2.keepSecret') : t('tokenGuardV2.totpOptionalHint')" autocomplete="off" /></label>
             <label v-if="editing?.login_config?.totp_configured" class="check-row"><input v-model="draft.clear_totp" type="checkbox" />{{ t('tokenGuardV2.clearTotp') }}</label>
           </template>
           <label v-else class="field-label">{{ t('tokenGuardV2.otpUrl') }}<input v-model.trim="draft.otp_url" class="input w-full" type="url" :placeholder="editing?.login_config?.otp_url_masked ? `${editing.login_config.otp_url_masked} · ${t('tokenGuardV2.keepSecret')}` : 'https://mail.example.com/latest'" :required="editing?.login_config?.credential_mode !== 'email_otp_url' || !editing?.login_config?.otp_url_masked" /></label>
@@ -169,7 +172,7 @@
         </form>
         <template #footer>
           <button type="button" class="btn btn-secondary" :disabled="saving" @click="closeEditor">{{ t('tokenGuardV2.cancel') }}</button>
-          <button type="submit" form="token-guard-v2-editor" class="btn btn-primary" :disabled="saving || !draft.account_id">{{ saving ? t('tokenGuardV2.saving') : t('tokenGuardV2.save') }}</button>
+          <button type="submit" form="token-guard-v2-editor" class="btn btn-primary" :disabled="saving || !draft.account_id || !encryptionReady">{{ saving ? t('tokenGuardV2.saving') : t('tokenGuardV2.save') }}</button>
         </template>
       </BaseDialog>
     </div>
@@ -180,6 +183,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import CredentialEncryptionSetup from '@/components/account/CredentialEncryptionSetup.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { BaseDialog, Pagination } from '@/components/common'
@@ -206,6 +210,7 @@ import {
 } from '@/api/admin/accountTokenGuardV2'
 
 const { t } = useI18n()
+const encryptionReady = ref(false)
 const emptyStatus = (): TokenGuardV2Status => ({
   accounts: [],
   probe_interval_seconds: 1800,
@@ -422,7 +427,7 @@ async function saveRulesConfig() {
 }
 
 async function save() {
-  if (saving.value || !draft.account_id) return
+  if (saving.value || !draft.account_id || !encryptionReady.value) return
   saving.value = true; error.value = ''; notice.value = ''
   try {
     const payload = { ...draft }

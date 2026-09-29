@@ -1609,7 +1609,10 @@ func (s *CRSSyncService) createSyncedAccount(ctx context.Context, a *Account) er
 		return err
 	}
 	if len(groups) > 0 {
-		return s.accountRepo.BindGroups(ctx, a.ID, groups)
+		if err := s.accountRepo.BindGroups(ctx, a.ID, groups); err != nil {
+			return err
+		}
 	}
+	recordAutoConfigInitial(ctx, s.accountRepo, a, groups)
 	return nil
 }

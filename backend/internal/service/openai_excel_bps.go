@@ -706,6 +706,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	var completed []byte
 	terminal := ""
+	terminalSuccessful := false
 	cacheCreationAsInput := account.IsExcelBPSCacheCreationAsInputEnabled()
 	for scanner.Next(ctx, 0, heartbeat.C, keepalive) {
 		line := scanner.Text()
@@ -733,6 +734,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 					lease.ReportSuccess()
 				}
 				terminal = kind
+				terminalSuccessful = IsSuccessfulStreamTerminal(payload)
 				completed = []byte(gjson.GetBytes(payload, "response").Raw)
 				result.ResponseID = gjson.GetBytes(payload, "response.id").String()
 				result.UpstreamResponseModel = gjson.GetBytes(payload, "response.model").String()
@@ -793,6 +795,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	imagePolicy.finish(ctx, imagePolicy.compact || len(compactOutput) > 0 || (imagePolicy.history != nil && imagePolicy.history.Count < imageSettings.Limits.MaxImages-imageSettings.WarningRemaining))
 	s.bindHTTPResponseAccount(ctx, c, account, result.ResponseID)
+	if stream && terminalSuccessful && !result.ClientDisconnect {
+		MarkOpsStreamCompleted(c, account.ID)
+	}
 	return result, nil
 }
 

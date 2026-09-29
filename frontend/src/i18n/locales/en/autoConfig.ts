@@ -30,5 +30,37 @@ export default {
   "progress": "Tier successes {count}/{required}; next tier {next}",
   "tier": "Concurrency tier {current}/{max}",
   "history": "Auto-upgrade record",
-  "cooling": "Cooling down until {time}"
+  "cooling": "Cooling down until {time}",
+  "logs": {
+    "title": "Recent logs",
+    "description": "Configuration saves, initial OAuth setup and concurrency changes, newest first.",
+    "filter": "Filter log type",
+    "all": "All types",
+    "refresh": "Refresh",
+    "time": "Time",
+    "account": "Account / scope",
+    "event": "Event",
+    "detail": "Change details",
+    "snapshot": "View saved settings",
+    "savedRule": "Upgrade rule: {count} consecutive successes, add {step} concurrency, maximum {max}, cooldown {seconds} seconds.",
+    "global": "Global configuration",
+    "empty": "No automatic configuration logs yet",
+    "emptyFiltered": "No logs of this type",
+    "emptyHint": "Records appear after saving settings, applying initial setup or changing concurrency automatically.",
+    "scopeHint": "Only operations after this feature is installed are recorded. Routine progress and repeated failures during the same cooldown are not logged individually.",
+    "more": "Load more",
+    "loadFailed": "Could not load logs. Please retry. Previously loaded records are retained.",
+    "on": "On",
+    "off": "Off",
+    "savedDetail": "Initial setup: {initial}; upgrades: {upgrade}. Initial concurrency {concurrency}, priority {priority}, load factor {load}.",
+    "initialDetail": "Concurrency {concurrency}, priority {priority}, load factor {load}; joined groups {groups}.",
+    "upgradeDetail": "Concurrency {before} → {after}; {seconds}-second cooldown started.",
+    "cooldownDetail": "Request failed; success progress reset and a {seconds}-second cooldown started. Concurrency remains {concurrency}.",
+    "kinds": {
+      "config_saved": "Configuration saved",
+      "initial_applied": "Initial setup applied",
+      "concurrency_upgraded": "Concurrency upgraded",
+      "failure_cooldown": "Failure cooldown"
+    }
+  }
 }

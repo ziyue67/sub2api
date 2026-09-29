@@ -35,6 +35,10 @@ func TestAutoConfigConcurrentResultsAndPreservedFields(t *testing.T) {
 	a := mustCreateAccount(t, integrationEntClient, &service.Account{Name: "auto-config-account", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Concurrency: 3, Schedulable: true, Extra: map[string]any{"keep": "value"}})
 	accountID = a.ID
 	t.Cleanup(func() {
+		_, err := integrationDB.ExecContext(ctx, "DELETE FROM account_auto_config_events WHERE account_id=$1", a.ID)
+		require.NoError(t, err)
+	})
+	t.Cleanup(func() {
 		require.NoError(t, integrationEntClient.Account.DeleteOneID(a.ID).Exec(ctx))
 	})
 	t.Cleanup(func() {
@@ -86,6 +90,9 @@ func TestAutoConfigConcurrentResultsAndPreservedFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 4, got.Concurrency)
 	require.Equal(t, "value", got.Extra["keep"])
+	var upgrades int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM account_auto_config_events WHERE account_id=$1 AND kind=$2", a.ID, service.AutoConfigEventUpgrade).Scan(&upgrades))
+	require.Equal(t, 1, upgrades, "concurrent successes must persist exactly one upgrade event")
 	// Manual settings cannot be decreased or replaced by a stale request snapshot.
 	_, err = integrationDB.ExecContext(ctx, "UPDATE accounts SET concurrency=9 WHERE id=$1", a.ID)
 	require.NoError(t, err)
@@ -97,6 +104,10 @@ func TestAutoConfigConcurrentResultsAndPreservedFields(t *testing.T) {
 	_, err = integrationDB.ExecContext(ctx, "UPDATE accounts SET status='error' WHERE id=$1", a.ID)
 	require.NoError(t, err)
 	require.NoError(t, repo.RecordConcurrencyResult(ctx, service.AccountConcurrencyResult{AccountID: a.ID, StartedAt: time.Now(), Success: false}, cfg))
+	require.NoError(t, repo.RecordConcurrencyResult(ctx, service.AccountConcurrencyResult{AccountID: a.ID, StartedAt: time.Now(), Success: false}, cfg))
+	var failures int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM account_auto_config_events WHERE account_id=$1 AND kind=$2", a.ID, service.AutoConfigEventCooldown).Scan(&failures))
+	require.Equal(t, 1, failures, "first failure is recorded even during upgrade/manual cooldown; repeated failures are coalesced")
 	got, err = repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	state, ok := got.Extra[service.AutoConfigConcurrencyExtraKey].(map[string]any)
