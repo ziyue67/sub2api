@@ -123,6 +123,9 @@
         </template>
 
         <template #cell-message="{ row }">
+          <span v-if="balanceErrorSource(row)" class="block text-sm font-medium text-amber-700 dark:text-amber-300" data-testid="balance-source">
+            {{ t(`admin.ops.balanceError.${balanceErrorSource(row)}`) }}
+          </span>
           <span
             v-if="row.message"
             class="block max-w-[280px] truncate text-sm text-gray-600 dark:text-gray-400"
@@ -180,6 +183,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { balanceErrorSource } from '../utils/balanceError'
 import { useI18n } from 'vue-i18n'
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'

@@ -2414,15 +2414,54 @@ describe('independent account cost multiplier', () => {
     await wrapper.get('form#edit-account-form').trigger('submit.prevent'); await flushPromises()
     expect(updateAccountMock).toHaveBeenCalledWith(1, expect.objectContaining({ rate_multiplier: 1, group_rate_multiplier: 5, extra: expect.objectContaining({ cost_multiplier: 0.25 }) }))
   })
-  it('round-trips an explicit zero cost while billing rate sync stays enabled', async () => {
+  it('preserves an unchanged zero cost while billing rate sync stays enabled', async () => {
     const account = { ...buildAccount(), extra: { cost_multiplier: 0, upstream_billing_probe_enabled: true, upstream_billing_rate_sync_enabled: true } }
     const wrapper = mountModal(account)
     expect(wrapper.get<HTMLInputElement>('[data-testid="account-cost-multiplier"]').element.value).toBe('0')
     expect(wrapper.get<HTMLInputElement>('[data-testid="account-cost-multiplier"]').element.disabled).toBe(false)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent'); await flushPromises()
     const payload = updateAccountMock.mock.calls[0][1]
-    expect(payload.extra.cost_multiplier).toBe(0)
+    expect(payload.extra.cost_multiplier).toBeUndefined()
     expect(payload).not.toHaveProperty('rate_multiplier')
+  })
+  it('shows the saved upstream cost and does not resend it on unrelated edits', async () => {
+    const account = { ...buildAccount(), extra: { cost_multiplier: 0.14 } }
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="account-cost-multiplier"]').element.value).toBe('0.14')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls.at(-1)?.[1]?.extra?.cost_multiplier).toBeUndefined()
+    await wrapper.get('[data-testid="account-cost-multiplier"]').setValue(0)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls.at(-1)?.[1]?.extra?.cost_multiplier).toBe(0)
+  })
+  it('lets an operator disable upstream cost syncing and save the actual recharge cost', async () => {
+    const account = { ...buildAccount(), extra: { cost_multiplier: 1, upstream_billing_probe_enabled: true } }
+    const wrapper = mountModal(account)
+    expect(wrapper.get('[data-testid="account-cost-auto-sync"]').attributes('aria-checked')).toBe('true')
+    await wrapper.get('[data-testid="account-cost-auto-sync"]').trigger('click')
+    await wrapper.get('[data-testid="account-cost-multiplier"]').setValue(0.2)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      cost_multiplier: 0.2, cost_multiplier_auto_sync: false
+    })
+    expect(wrapper.get('[data-testid="upstream-billing-auto-probe"]').attributes('aria-checked')).toBe('true')
+    wrapper.unmount()
+  })
+  it('preserves manual mode on unrelated edits and allows opting back into upstream costs', async () => {
+    const account = { ...buildAccount(), extra: { cost_multiplier: 0.2, cost_multiplier_auto_sync: false } }
+    const wrapper = mountModal(account)
+    expect(wrapper.get('[data-testid="account-cost-auto-sync"]').attributes('aria-checked')).toBe('false')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('cost_multiplier_auto_sync')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('cost_multiplier')
+    await wrapper.get('[data-testid="account-cost-auto-sync"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls.at(-1)?.[1]?.extra?.cost_multiplier_auto_sync).toBe(true)
+    wrapper.unmount()
   })
   it('rejects a negative cost before saving', async () => {
     const wrapper = mountModal()
@@ -2470,4 +2509,6 @@ describe('Excel BPS default template integration', () => {
     await wrapper.get('[data-testid="excel-bps-defaults-toggle"]').trigger('click'); await flushPromises()
     expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-ignore-encrypted-content"]').element.checked).toBe(true)
   })
+
+
 })

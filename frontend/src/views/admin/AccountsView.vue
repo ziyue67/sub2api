@@ -504,6 +504,7 @@
 </template>
 
 <script setup lang="ts">
+import { isValidAccountCostMultiplier } from '@/utils/accountCost'
 import { ref, reactive, computed, onMounted, onUnmounted, toRaw, watch } from 'vue'
 import { useIntervalFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
@@ -1273,9 +1274,12 @@ const applyUpstreamBillingRateSnapshots = async (
     if (!item) return account
     const nextSnapshot = item.snapshot ?? null
     const previousSnapshot = account.extra?.upstream_billing_probe ?? null
-    if (JSON.stringify(previousSnapshot) === JSON.stringify(nextSnapshot)) return account
+    const costChanged = isValidAccountCostMultiplier(item.cost_multiplier)
+      && account.extra?.cost_multiplier !== item.cost_multiplier
+    if (!costChanged && JSON.stringify(previousSnapshot) === JSON.stringify(nextSnapshot)) return account
 
     const nextExtra = { ...(account.extra ?? {}) }
+    if (costChanged) nextExtra.cost_multiplier = item.cost_multiplier
     if (nextSnapshot) nextExtra.upstream_billing_probe = nextSnapshot
     else delete nextExtra.upstream_billing_probe
     const nextAccount = {
@@ -1334,12 +1338,6 @@ const refreshUpstreamBillingRates = async (force = false) => {
     if (upstreamBillingRateAbortController === controller) upstreamBillingRateAbortController = null
     upstreamBillingRateRefreshing.value = false
   }
-}
-
-const refreshUpstreamBillingSortedList = async (force = false) => {
-  // A probe cannot change recent-use, name, or status ordering.
-  if (sortState.sort_by !== 'upstream_billing_rate' && sortState.sort_by !== 'rate_multiplier') return
-  await refreshUpstreamBillingRates(force)
 }
 
 useIntervalFn(() => { void refreshUpstreamBillingRates() }, 5 * 60_000, { immediate: false })
@@ -2339,7 +2337,8 @@ const patchUpstreamBillingSnapshot = (accountID: number, snapshot: UpstreamBilli
 }
 const refreshAccountsAfterUpstreamBillingProbe = async () => {
   enterAutoRefreshSilentWindow()
-  await refreshUpstreamBillingSortedList(true)
+  // Cost may change even when the active sort does not depend on upstream rates.
+  await refreshUpstreamBillingRates(true)
 }
 const handleProbeUpstreamBilling = async (account: Account) => {
   if (probingUpstreamBilling.has(account.id)) return

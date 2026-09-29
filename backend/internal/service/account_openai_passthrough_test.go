@@ -56,6 +56,8 @@ func TestAccount_IsExcelBPSEnabled(t *testing.T) {
 		want    bool
 	}{
 		{"oauth enabled", &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": true}}, true},
+		{"plus oauth enabled", &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "plus"}, Extra: map[string]any{"openai_excel_bps": true}}, true},
+		{"free oauth rejected", &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": " Free "}, Extra: map[string]any{"openai_excel_bps": true}}, false},
 		{"oauth disabled", &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": false}}, false},
 		{"apikey rejected", &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: map[string]any{"openai_excel_bps": true}}, false},
 		{"agent identity rejected", &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"auth_mode": OpenAIAuthModeAgentIdentity}, Extra: map[string]any{"openai_excel_bps": true}}, false},

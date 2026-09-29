@@ -124,6 +124,53 @@ func TestExcelBPSToolCorrectionPreservesRouteAndUsage(t *testing.T) {
 	}
 }
 
+func TestExcelBPSUnknownTargetDoesNotRegenerateVisibleStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, stream := range []bool{true, false} {
+		for _, kind := range []string{"response.output_text.delta", "response.reasoning_summary_text.delta"} {
+			t.Run(fmt.Sprintf("stream=%t/%s", stream, kind), func(t *testing.T) {
+				prefix := fmt.Sprintf("event: %s\ndata: {\"type\":%q,\"delta\":\"Checking tools.\"}\n\n", kind, kind)
+				first := &excelBPSRepairBody{Reader: strings.NewReader(prefix + excelBPSRepairWire(t, "original", "Run", `{"name":"missing","arguments":{}}`))}
+				fixed := &excelBPSRepairBody{Reader: strings.NewReader(excelBPSRepairWire(t, "fixed", "Run", `{"name":"shell","arguments":{"cmd":"pwd"}}`))}
+				upstream := &httpUpstreamRecorder{responses: []*http.Response{
+					{StatusCode: 200, Header: http.Header{}, Body: first},
+					{StatusCode: 200, Header: http.Header{}, Body: fixed},
+				}}
+				svc := openAIClientToolsTestService(upstream)
+				body := []byte(fmt.Sprintf(`{"model":"gpt-5.6-sol","stream":%t,"input":"test","tools":[{"type":"function","name":"shell"}]}`, stream))
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+				result, err := svc.Forward(context.Background(), c, excelAccount(), body)
+				require.NotNil(t, result)
+				require.Equal(t, http.StatusOK, rec.Code)
+				require.True(t, first.closed.Load())
+				require.Equal(t, "resp_original", result.ResponseID)
+				if stream {
+					require.Error(t, err)
+					require.Len(t, upstream.requests, 1)
+					require.Contains(t, rec.Body.String(), "event: "+kind)
+					require.Contains(t, rec.Body.String(), `"delta":"Checking tools."`)
+					require.Contains(t, rec.Body.String(), "basispoints_protocol_error")
+					require.Contains(t, rec.Body.String(), "event: response.failed")
+					require.NotContains(t, rec.Body.String(), "event: response.completed")
+					require.NotContains(t, rec.Body.String(), "function_call_arguments")
+					require.Equal(t, 10, result.Usage.InputTokens)
+					require.Equal(t, 2, result.Usage.OutputTokens)
+				} else {
+					require.NoError(t, err)
+					require.Len(t, upstream.requests, 2)
+					require.True(t, fixed.closed.Load())
+					require.Equal(t, "completed", gjson.Get(rec.Body.String(), "status").String())
+					require.Equal(t, "shell", gjson.Get(rec.Body.String(), "output.0.name").String())
+					require.Equal(t, 20, result.Usage.InputTokens)
+					require.Equal(t, 4, result.Usage.OutputTokens)
+				}
+			})
+		}
+	}
+}
+
 func TestExcelBPSToolCorrectionStopsOnHTTPRejection(t *testing.T) {
 	for _, status := range []int{403, 429, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

@@ -86,6 +86,14 @@ The gateway separately permits one regeneration when the first tool interaction 
 
 This path and the existing known-target formatting path are selected independently. A function argument schema error alone does not trigger either path.
 
+For streaming clients, first-turn regeneration stops once nonempty text, reasoning
+summary or refusal content has been forwarded. An unknown target then produces
+`response.failed` with the original response identity and usage, without tool
+dispatch or another generation. Empty lifecycle events and opaque reasoning alone
+do not block regeneration; non-streaming requests remain buffered and retain their
+one correction attempt. Known-target formatting corrections still preserve the
+original text and replace only withheld tool slots.
+
 # Optional inline image limit policies
 
 Administrator settings under Facilities → Feature switches → Excel / BPS image

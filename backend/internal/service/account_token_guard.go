@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -18,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 // 智能运维 → 凭证守护：账号令牌巡检 / 自动重登 / 错误态自愈。
@@ -1094,7 +1097,14 @@ func (s *AccountTokenGuardService) reloginAccount(ctx context.Context, cfg Accou
 	for key, value := range credential {
 		payload[key] = value
 	}
-	if _, err := s.admin.UpdateAccount(ctx, account.ID, &UpdateAccountInput{Credentials: payload}); err != nil {
+	input := &UpdateAccountInput{Credentials: payload}
+	if strings.EqualFold(guardText(credential["plan_type"]), "free") && account.Extra["openai_excel_bps"] == true {
+		// Free accounts cannot use BPS. Disable the old flag in the same write
+		// so account validation does not reject the refreshed credentials.
+		input.Extra = maps.Clone(account.Extra)
+		input.Extra["openai_excel_bps"] = false
+	}
+	if _, err := s.admin.UpdateAccount(ctx, account.ID, input); err != nil {
 		return "自动重登", fmt.Errorf("写回凭据失败: %w", err)
 	}
 	action := "重登并写回新凭据"
@@ -1257,6 +1267,15 @@ func (s *AccountTokenGuardService) relogin(ctx context.Context, cfg AccountToken
 	if credential, ok := result["credential"].(map[string]any); ok {
 		if guardText(credential["access_token"]) == "" || guardText(credential["refresh_token"]) == "" || guardText(credential["id_token"]) == "" {
 			return nil, errors.New("重登返回的凭据不完整")
+		}
+		// Re-login providers may return only tokens, leaving the stored plan_type
+		// stale when credentials are merged. As in the normal OAuth flow, prefer
+		// the new ID token's explicit plan (including Free) over provider metadata.
+		// Missing/unparseable claims must not turn an unknown plan into Free.
+		if claims, err := openai.ParseIDToken(guardText(credential["id_token"])); err == nil {
+			if plan := strings.TrimSpace(claims.GetUserInfo().PlanType); plan != "" {
+				credential["plan_type"] = plan
+			}
 		}
 		return credential, nil
 	}

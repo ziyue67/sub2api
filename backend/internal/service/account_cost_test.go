@@ -92,3 +92,63 @@ func TestPriorityConfigIgnoresRetiredPurchaseWindow(t *testing.T) {
 	require.Equal(t, 8.0, *score.Profit)
 	require.NotContains(t, score.Reasons, "teams_window_unavailable")
 }
+
+func TestUpstreamProbeCostMultiplierToSync(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name   string
+		status string
+		rate   any
+		want   float64
+		valid  bool
+	}{
+		{"success", UpstreamBillingProbeStatusOK, 0.14, 0.14, true},
+		{"zero", UpstreamBillingProbeStatusOK, 0.0, 0, true},
+		{"failed with cached data", UpstreamBillingProbeStatusFailed, 0.14, 0, false},
+		{"unsupported with cached data", UpstreamBillingProbeStatusUnsupported, 0.14, 0, false},
+		{"negative", UpstreamBillingProbeStatusOK, -1.0, 0, false},
+		{"out of range", UpstreamBillingProbeStatusOK, 1000001.0, 1000001, false},
+		{"missing", UpstreamBillingProbeStatusOK, nil, 0, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := &UpstreamBillingProbeSnapshot{Status: tt.status, LastAttemptAt: now, Data: map[string]any{
+				"billing_scope": "token", "resolved_rate_multiplier": tt.rate, "peak_rate_enabled": false,
+			}}
+			value, ok := snapshot.CostMultiplierToSync()
+			require.Equal(t, tt.valid, ok)
+			if ok {
+				require.Equal(t, tt.want, value)
+			}
+		})
+	}
+	snapshot := &UpstreamBillingProbeSnapshot{Status: UpstreamBillingProbeStatusOK, LastAttemptAt: now, Data: map[string]any{
+		"billing_scope": "token", "resolved_rate_multiplier": 0.14, "peak_rate_enabled": true,
+		"peak_start": "09:00", "peak_end": "18:00", "peak_rate_multiplier": 2.0, "timezone": "UTC",
+	}}
+	value, ok := snapshot.CostMultiplierToSync()
+	require.True(t, ok)
+	require.InDelta(t, 0.28, value, 1e-9)
+	// Profit reads only the saved cost; expiry must not restore the old default.
+	item := priorityCandidate(1, 7, 20)
+	item.account.Extra = map[string]any{AccountCostMultiplierExtraKey: value, UpstreamBillingProbeExtraKey: snapshot}
+	score := scorePriorityCandidate(DefaultPrioritySchedulingConfig(), item, PrioritySchedulingSignal{ProfitSamples: 20, Revenue: 50, BaseCost: 100}, now.Add(24*time.Hour))
+	require.InDelta(t, 28, score.TheoreticalCost, 1e-9)
+	require.Equal(t, 7.0, item.account.BillingRateMultiplier())
+}
+
+func TestAccountCostAutoSyncSetting(t *testing.T) {
+	for _, value := range []any{nil, true, false} {
+		extra := map[string]any{AccountCostAutoSyncExtraKey: value}
+		require.NoError(t, ValidateAccountCostMultiplierExtra(extra))
+		account := &Account{Extra: extra}
+		require.Equal(t, value != false, account.CostMultiplierAutoSyncEnabled())
+	}
+	for _, value := range []any{"false", 0, 1.0, map[string]any{}} {
+		extra := map[string]any{AccountCostAutoSyncExtraKey: value}
+		require.ErrorContains(t, ValidateAccountCostMultiplierExtra(extra), "cost_multiplier_auto_sync")
+		s := &adminServiceImpl{}
+		_, err := s.UpdateAccount(context.Background(), 1, &UpdateAccountInput{Extra: extra})
+		require.ErrorContains(t, err, "cost_multiplier_auto_sync")
+	}
+	require.True(t, (&Account{}).CostMultiplierAutoSyncEnabled())
+}

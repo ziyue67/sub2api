@@ -165,6 +165,7 @@ func TestQualityUsagePercentIgnoresResetWindows(t *testing.T) {
 func TestQualityBPSEligibleMatchesAccountRules(t *testing.T) {
 	parent := int64(1)
 	require.True(t, QualityBPSEligible(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}))
+	require.False(t, QualityBPSEligible(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "free"}}))
 	require.False(t, QualityBPSEligible(nil))
 	require.False(t, QualityBPSEligible(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}))
 	require.False(t, QualityBPSEligible(&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, ParentAccountID: &parent}))

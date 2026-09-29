@@ -170,6 +170,10 @@ func TestQualityEnableBPSLifecycle(t *testing.T) {
 	require.Equal(t, "bps_already_enabled", f.apply("failed"))
 	require.Equal(t, []any{"gpt-5.6-sol"}, f.extra()["openai_excel_bps_models"])
 
+	f.exec(`UPDATE accounts SET credentials='{"plan_type":"free"}', extra=extra - 'openai_excel_bps' WHERE id=$1`)
+	require.Equal(t, "bps_unsupported", f.apply("failed"))
+	require.NotContains(t, f.extra(), "openai_excel_bps")
+
 	f.exec(`UPDATE accounts SET type='apikey', extra=extra - 'openai_excel_bps' WHERE id=$1`)
 	require.Equal(t, "bps_unsupported", f.apply("failed"))
 	require.NotContains(t, f.extra(), "openai_excel_bps")

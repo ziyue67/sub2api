@@ -78,6 +78,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		gjson.GetBytes(body, "model").String(),
 	)
 	if admissionErr != nil {
+		if !agentIdentityTaskRecoveryWasTried(ctx) {
+			return nil, markOpenAIInitialAdmissionError(admissionErr)
+		}
 		return nil, admissionErr
 	}
 	account = latest

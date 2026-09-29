@@ -24,8 +24,9 @@ type OpenAITurnAdmissionReader interface {
 // OpenAITurnAdmissionError is a local, PRE-SEND rejection, not an upstream
 // failure. In particular it must not update account/proxy health or cooldown.
 type OpenAITurnAdmissionError struct {
-	Reason string
-	cause  error
+	Reason             string
+	cause              error
+	initialHTTPForward bool
 }
 
 func (e *OpenAITurnAdmissionError) Error() string { return "request admission denied: " + e.Reason }
@@ -34,6 +35,27 @@ func (e *OpenAITurnAdmissionError) Unwrap() error { return e.cause }
 func IsOpenAITurnAdmissionError(err error) bool {
 	var denied *OpenAITurnAdmissionError
 	return errors.As(err, &denied)
+}
+
+// markOpenAIInitialAdmissionError is used only at the entry to an HTTP forward,
+// before any upstream work. Later per-send/WS admission failures must stay
+// unmarked: an earlier send may already have executed the request.
+func markOpenAIInitialAdmissionError(err error) error {
+	var denied *OpenAITurnAdmissionError
+	if !errors.As(err, &denied) || denied.Reason != "account_binding_changed" {
+		return err
+	}
+	copy := *denied
+	copy.initialHTTPForward = true
+	return &copy
+}
+
+// IsOpenAIInitialAdmissionRejection identifies a route change before this HTTP
+// forward started. Callers must still check cancellation, downstream writes,
+// continuation state and their account-switch budget before reselecting.
+func IsOpenAIInitialAdmissionRejection(err error) bool {
+	var denied *OpenAITurnAdmissionError
+	return errors.As(err, &denied) && denied.initialHTTPForward
 }
 
 // invalidateOpenAIWSTurnStateAfterAdmissionFailure removes only the sticky

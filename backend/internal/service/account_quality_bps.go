@@ -158,7 +158,8 @@ func QualityBPSExtra(b *QualityBPSPolicy) map[string]any {
 // QualityBPSEligible 与账号编辑页一致：只有普通 ChatGPT OAuth 母账号能开 BPS。
 func QualityBPSEligible(account *Account) bool {
 	return account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth &&
-		!account.IsShadow() && !account.IsOpenAIAgentIdentity() && !account.IsOpenAIPersonalAccessToken()
+		!account.IsShadow() && !account.IsOpenAIAgentIdentity() && !account.IsOpenAIPersonalAccessToken() &&
+		!strings.EqualFold(strings.TrimSpace(account.GetCredential("plan_type")), "free")
 }
 
 // QualityUsagePercent 取 5h / 7d 两个窗口里较高的已用百分比；窗口已到重置时间按 0 算。

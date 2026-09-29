@@ -45,6 +45,7 @@ func TestExcelBPS403RecoveryDue(t *testing.T) {
 		{"opted out", func(a *Account) { a.Extra[ExcelBPSAutoRecoverOn403Key] = false }, false},
 		{"auto shutdown off", func(a *Account) { a.Extra["openai_excel_bps_auto_disable_on_403"] = false }, false},
 		{"already enabled", func(a *Account) { a.Extra["openai_excel_bps"] = true }, false},
+		{"free account", func(a *Account) { a.Credentials["plan_type"] = "free" }, false},
 		{"inactive", func(a *Account) { a.Status = "disabled" }, false},
 		{"paused", func(a *Account) { a.Schedulable = false }, false},
 		{"expired", func(a *Account) { at := now.Add(-time.Minute); a.ExpiresAt = &at; a.AutoPauseOnExpired = true }, false},

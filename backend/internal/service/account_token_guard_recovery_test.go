@@ -100,6 +100,9 @@ func (a *guardRecoveryAdmin) UpdateAccount(_ context.Context, id int64, input *U
 	for i := range a.accounts.items {
 		if a.accounts.items[i].ID == id {
 			a.accounts.items[i].Credentials = input.Credentials
+			if input.Extra != nil {
+				a.accounts.items[i].Extra = input.Extra
+			}
 			return &a.accounts.items[i], nil
 		}
 	}
@@ -227,6 +230,75 @@ func guardRecoveryConfig(endpoint, email string) AccountTokenGuardConfig {
 	cfg.MaxProbePerCycle = 1
 	cfg.ReloginAccounts = []AccountTokenGuardReloginAccount{{Email: email, Password: "test-password", MFASecret: "test-mfa"}}
 	return cfg
+}
+
+func TestTokenGuardRecoveryRefreshesPlanFromNewIDToken(t *testing.T) {
+	const businessPlan = "self_serve_business_prolite"
+	for _, tc := range []struct {
+		name         string
+		tokenPlan    string
+		providerPlan any
+		invalidToken bool
+		wantPlan     string
+	}{
+		{name: "business downgraded to free", tokenPlan: "free", wantPlan: "free"},
+		{name: "token overrides stale provider plan", tokenPlan: "free", providerPlan: businessPlan, wantPlan: "free"},
+		{name: "paid plan changed", tokenPlan: "plus", wantPlan: "plus"},
+		{name: "trim token plan", tokenPlan: " free ", wantPlan: "free"},
+		{name: "missing claim uses provider plan", providerPlan: "free", wantPlan: "free"},
+		{name: "missing claim preserves stored plan", wantPlan: businessPlan},
+		{name: "blank claim preserves stored plan", tokenPlan: " ", wantPlan: businessPlan},
+		{name: "invalid token preserves stored plan", invalidToken: true, wantPlan: businessPlan},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			credential := map[string]any{
+				"access_token": "new-access", "refresh_token": "new-refresh",
+				"id_token": reauthTestJWT(map[string]any{
+					"exp":                         time.Now().Add(time.Hour).Unix(),
+					"https://api.openai.com/auth": map[string]any{"chatgpt_plan_type": tc.tokenPlan},
+				}),
+			}
+			if tc.invalidToken {
+				credential["id_token"] = "unparseable-id-token"
+			}
+			if tc.providerPlan != nil {
+				credential["plan_type"] = tc.providerPlan
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/relogin" {
+					t.Errorf("unexpected request path: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"credential": credential})
+			}))
+			defer server.Close()
+			account := guardRecoveryAccount(1, StatusError)
+			account.ErrorMessage = "Token revoked (401): token_revoked"
+			account.Credentials["plan_type"] = businessPlan
+			account.Extra = map[string]any{"openai_excel_bps": true, "privacy_mode": PrivacyModeTrainingOff}
+			accounts := &guardRecoveryAccounts{items: []Account{account}}
+			admin := &guardRecoveryAdmin{accounts: accounts}
+			svc := NewAccountTokenGuardService(nil, &guardMemoryRepo{}, accounts, admin, nil)
+			svc.config.Store(guardRecoveryConfig(server.URL, account.Name))
+
+			stats, err := svc.RunCycle(context.Background(), false)
+			require.NoError(t, err)
+			require.Equal(t, 1, stats.Repaired)
+			updated := accounts.items[0]
+			require.Equal(t, tc.wantPlan, updated.GetCredential("plan_type"))
+			require.Equal(t, "new-access", updated.GetCredential("access_token"))
+			require.Equal(t, "new-refresh", updated.GetCredential("refresh_token"))
+			require.Equal(t, account.Credentials["model_mapping"], updated.Credentials["model_mapping"])
+			require.Equal(t, businessPlan, account.GetCredential("plan_type"), "do not mutate the old snapshot")
+			require.Equal(t, tc.wantPlan != "free", updated.Extra["openai_excel_bps"])
+			require.Equal(t, PrivacyModeTrainingOff, updated.Extra["privacy_mode"])
+			require.Equal(t, true, account.Extra["openai_excel_bps"], "do not mutate the old settings")
+			require.Equal(t, StatusActive, updated.Status)
+			require.True(t, updated.Schedulable)
+			require.Equal(t, tc.wantPlan != "free", updated.IsOpenAIChatGPTSubscription())
+		})
+	}
 }
 
 func TestTokenGuardRecoveryPreservesFailureThresholdAndLoginBudget(t *testing.T) {

@@ -35,7 +35,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	defer requesttiming.Observe(ctx, "forward_attempt")()
 	latest, admissionErr := s.admitOpenAITurn(ctx, c, account, extractOpenAICodexTicketModel(body))
 	if admissionErr != nil {
-		return nil, admissionErr
+		return nil, markOpenAIInitialAdmissionError(admissionErr)
 	}
 	account = latest
 	ctx = WithSelectedAccountProxyLane(ctx, account)
