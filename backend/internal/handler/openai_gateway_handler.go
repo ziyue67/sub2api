@@ -2802,13 +2802,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	// 白名单（log-only）用户跳过既有会话屏蔽查询：风控命中只记日志不拦截。
-	if !h.cyberPolicyLogOnly(c, apiKey) {
-		if cyberBlockKey := h.gatewayService.FindCyberSessionBlockedForIdentity(c.Request.Context(), firstIdentityDecision.effective); cyberBlockKey != "" {
-			writeCyberSessionBlockedWSError(c.Request.Context(), wsConn)
-			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "session blocked by cyber-security policy")
-			h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, reqModel, cyberBlockKey)
-			return
-		}
+	if cyberBlockKey := h.findBlockedCyberSessionForIdentity(c, apiKey, firstIdentityDecision.effective); cyberBlockKey != "" {
+		writeCyberSessionBlockedWSError(c.Request.Context(), wsConn)
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "session blocked by cyber-security policy")
+		h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, reqModel, cyberBlockKey)
+		return
 	}
 	cyberBlockedThisConn := false
 	cyberBlockPendingAfterFailover := false
@@ -3252,7 +3250,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					h.enqueueCyberSessionIdentityRejectedOpsEntry(c, apiKey, model, metadata)
 					return newOpenAIWSLocalAdmissionCloseError("invalid or conflicting session identity")
 				}
-				if cyberBlockKey := h.gatewayService.FindCyberSessionBlockedForIdentity(c.Request.Context(), identityDecision.effective); cyberBlockKey != "" {
+				if cyberBlockKey := h.findBlockedCyberSessionForIdentity(c, apiKey, identityDecision.effective); cyberBlockKey != "" {
 					writeCyberSessionBlockedWSError(c.Request.Context(), wsConn)
 					h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, model, cyberBlockKey)
 					return newOpenAIWSLocalAdmissionCloseError(cyberSessionBlockedClientMsg)
@@ -4661,10 +4659,7 @@ func (h *OpenAIGatewayHandler) rejectIfCyberSessionBlocked(c *gin.Context, apiKe
 		return false
 	}
 	// 白名单（log-only）用户跳过既有会话屏蔽查询：风控命中只记日志不拦截。
-	if h.cyberPolicyLogOnly(c, apiKey) {
-		return false
-	}
-	key := h.gatewayService.FindCyberSessionBlockedForIdentity(c.Request.Context(), identity)
+	key := h.findBlockedCyberSessionForIdentity(c, apiKey, identity)
 	if key == "" {
 		return false
 	}
