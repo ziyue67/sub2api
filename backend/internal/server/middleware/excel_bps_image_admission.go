@@ -10,11 +10,12 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	bpsImageMaxBodyBytes   = 128 << 20
+	bpsImageMaxBodyBytes   = basispoints.MaxImageBodyMiB << 20
 	bpsImageBudgetBytes    = service.DefaultExcelBPSImageBudgetMiB << 20
 	bpsImageBodyMultiplier = 8
 	bpsImageMinBodyBytes   = 1 << 20

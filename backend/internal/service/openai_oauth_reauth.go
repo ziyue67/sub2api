@@ -307,11 +307,15 @@ func (s *OpenAIOAuthReauthService) ensureReady() error {
 }
 
 func (s *OpenAIOAuthReauthService) ensureDurableEncryption() error {
-	if !s.encryptionKeyConfigured {
+	status, err := s.CredentialEncryptionStatus()
+	if err != nil {
+		return err
+	}
+	if !status.Configured {
 		return infraerrors.New(
 			http.StatusBadRequest,
 			"OPENAI_REAUTH_ENCRYPTION_KEY_REQUIRED",
-			"set a fixed secret encryption key before saving automatic re-login credentials",
+			"Enable credential encryption in Credential Operations before saving automatic re-login credentials",
 		)
 	}
 	return nil

@@ -42,6 +42,9 @@ func (r *settingRepository) GetValue(ctx context.Context, key string) (string, e
 }
 
 func (r *settingRepository) Set(ctx context.Context, key, value string) error {
+	if key == service.SettingKeyOAuthAutoConfig {
+		return r.saveAutoConfigWithEvent(ctx, value)
+	}
 	now := time.Now()
 	return r.client.Setting.
 		Create().

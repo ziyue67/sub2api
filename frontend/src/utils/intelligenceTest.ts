@@ -13,6 +13,7 @@ export function questionContract(kind: IntelligenceQuestion): string {
 
 // 定时测试 / 质量规则里的探针题型：不下发题目，后端跑一次门票探针判满血/降智。
 export const STATE_PROBE_QUESTION = 'state_probe'
+export const DEFAULT_STATE_PROBE_CRON = '*/2 * * * *'
 export type StateProbeVerdict = 'healthy' | 'degraded' | 'inconclusive'
 
 // 结果是纯文本（不是 HTML 动画）的题型。

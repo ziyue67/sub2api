@@ -510,6 +510,30 @@ func (s *AccountRepoSuite) TestListWithFilters() {
 			},
 		},
 		{
+			// 质量运维按「正常+限流中」一起筛：逗号分隔的多个状态任一命中即可。
+			name: "filter_by_status_comma_matches_any_of_active_and_rate_limited",
+			setup: func(client *dbent.Client) {
+				mustCreateAccount(s.T(), client, &service.Account{Name: "active-normal", Status: service.StatusActive})
+				rateLimited := mustCreateAccount(s.T(), client, &service.Account{Name: "active-rate-limited", Status: service.StatusActive})
+				err := client.Account.UpdateOneID(rateLimited.ID).
+					SetRateLimitResetAt(time.Now().Add(10 * time.Minute)).
+					Exec(context.Background())
+				s.Require().NoError(err)
+				tempUnsched := mustCreateAccount(s.T(), client, &service.Account{Name: "active-temp-unsched", Status: service.StatusActive})
+				err = client.Account.UpdateOneID(tempUnsched.ID).
+					SetTempUnschedulableUntil(time.Now().Add(15 * time.Minute)).
+					Exec(context.Background())
+				s.Require().NoError(err)
+				mustCreateAccount(s.T(), client, &service.Account{Name: "s2", Status: service.StatusDisabled})
+			},
+			status:    "active, rate_limited",
+			wantCount: 2,
+			validate: func(accounts []service.Account) {
+				names := []string{accounts[0].Name, accounts[1].Name}
+				s.Require().ElementsMatch([]string{"active-normal", "active-rate-limited"}, names)
+			},
+		},
+		{
 			name: "filter_by_status_rate_limited_excludes_temp_unschedulable",
 			setup: func(client *dbent.Client) {
 				rateLimited := mustCreateAccount(s.T(), client, &service.Account{Name: "active-rate-limited", Status: service.StatusActive})

@@ -30,16 +30,15 @@ export function groupPriorityAccounts(accounts: AccountListItem[]): PriorityAcco
   const order = { teams: 0, pro: 1, plus: 2, api: 3, oauth: 4 }
   return [...groups.values()].sort((a, b) => order[a.kind] - order[b.kind] || (a.rate ?? 0) - (b.rate ?? 0)).map((row, index) => ({ ...row, priority: index + 1 }))
 }
-export function priorityBatchPayloads(rows: PriorityAccountRow[], concurrency?: number, loadFactor?: number, teamsWindowStart?: string) {
+export function priorityBatchPayloads(rows: PriorityAccountRow[], concurrency?: number, loadFactor?: number) {
   if (concurrency !== undefined && (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 10000)) throw new Error('invalid concurrency')
   if (loadFactor !== undefined && (!Number.isInteger(loadFactor) || loadFactor < 1 || loadFactor > 10000)) throw new Error('invalid load factor')
-  if (teamsWindowStart !== undefined && !Number.isFinite(Date.parse(teamsWindowStart))) throw new Error('invalid Teams window start')
-  const batches: { extra?: { priority_teams_window_start: string }; account_ids: number[]; priority: number; concurrency?: number; load_factor?: number }[] = []
+  const batches: { account_ids: number[]; priority: number; concurrency?: number; load_factor?: number }[] = []
   const seen = new Set<number>()
   for (const row of rows.filter(row => row.selected)) {
     if (!Number.isInteger(row.priority) || row.priority < 0 || row.priority > 1000000) throw new Error('invalid priority')
     const ids = row.accounts.map(a => a.id).filter(id => { if (seen.has(id)) return false; seen.add(id); return true })
-    for (let i = 0; i < ids.length; i += 100) batches.push({ account_ids: ids.slice(i, i + 100), priority: row.priority, ...(concurrency === undefined ? {} : { concurrency }), ...(loadFactor === undefined ? {} : { load_factor: loadFactor }), ...(row.kind === 'teams' && teamsWindowStart ? { extra: { priority_teams_window_start: teamsWindowStart } } : {}) })
+    for (let i = 0; i < ids.length; i += 100) batches.push({ account_ids: ids.slice(i, i + 100), priority: row.priority, ...(concurrency === undefined ? {} : { concurrency }), ...(loadFactor === undefined ? {} : { load_factor: loadFactor }) })
   }
   return batches
 }

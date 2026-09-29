@@ -1,3 +1,9 @@
+
+vi.mock('@/api/admin/credentialEncryption', () => ({
+  getCredentialEncryption: vi.fn().mockResolvedValue({ configured: true, source: 'server_config' }),
+  initializeCredentialEncryption: vi.fn(),
+}))
+import { getCredentialEncryption, initializeCredentialEncryption } from '@/api/admin/credentialEncryption'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OpenAITwoFAImport from '../OpenAITwoFAImport.vue'
@@ -11,12 +17,14 @@ vi.mock('@/api/admin/accountTokenGuard', async importOriginal => ({
 enableAutoUnmount(afterEach)
 beforeEach(() => {
   vi.resetAllMocks()
+  vi.mocked(getCredentialEncryption).mockResolvedValue({ configured: true, source: 'server_config' })
   vi.mocked(startTwoFALogin).mockResolvedValue({ id: 'job-1', status: 'running' })
   vi.mocked(getTwoFALogin).mockResolvedValue({ id: 'job-1', status: 'succeeded', credential: { access_token: 'mock-access' } })
   vi.mocked(deleteTwoFALogin).mockResolvedValue()
 })
 
 async function start(wrapper: ReturnType<typeof mount>, input: string) {
+  await flushPromises()
   await wrapper.get('textarea').setValue(input)
   await wrapper.get('button').trigger('click')
   await flushPromises()
@@ -39,6 +47,8 @@ describe('OpenAI initial 2FA import', () => {
     expect(importCredential).toHaveBeenCalledTimes(3)
     expect(startTwoFALogin).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).not.toContain('tokenGuard.twoFA.retry')
+    expect(importCredential.mock.calls[1]?.[2]).toEqual({ email: 'b@example.com', password: 'p2', mfa_secret: 's2' })
+    expect(importCredential.mock.calls[2]?.[2]).toEqual({ email: 'b@example.com', password: 'p2', mfa_secret: 's2' })
     expect(wrapper.emitted('busy')).toEqual([[true], [false], [true], [false]])
   })
 
@@ -82,4 +92,24 @@ describe('OpenAI initial 2FA import', () => {
       vi.useRealTimers()
     }
   })
+})
+
+
+it('blocks 2FA login and account creation until encryption initialization succeeds', async () => {
+  vi.mocked(getCredentialEncryption).mockResolvedValue({ configured: false, source: 'unconfigured' })
+  vi.mocked(initializeCredentialEncryption).mockResolvedValue({ configured: true, source: 'local_file' })
+  const importCredential = vi.fn().mockResolvedValue('created')
+  const wrapper = mount(OpenAITwoFAImport, { props: { importCredential } })
+  await flushPromises()
+  await wrapper.get('textarea').setValue('a@example.com----password----secret')
+  expect(wrapper.get('[data-testid="two-fa-start"]').attributes('disabled')).toBeDefined()
+  await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
+  expect(startTwoFALogin).not.toHaveBeenCalled()
+  expect(importCredential).not.toHaveBeenCalled()
+  await wrapper.get('[data-testid="initialize-credential-encryption"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[data-testid="two-fa-start"]').attributes('disabled')).toBeUndefined()
+  await wrapper.get('[data-testid="two-fa-start"]').trigger('click')
+  await flushPromises()
+  expect(importCredential).toHaveBeenCalledTimes(1)
 })

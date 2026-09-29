@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
@@ -543,44 +545,44 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		response.BadRequest(c, "Capture retention must be 1-30 days")
 		return
 	}
-	if req.ExcelBPSImageMaxImageMiB != nil && (*req.ExcelBPSImageMaxImageMiB < 1 || *req.ExcelBPSImageMaxImageMiB > 128) {
-		response.BadRequest(c, "Image relay max_image_mib must be 1-128")
+	if req.ExcelBPSImageMaxImageMiB != nil && (*req.ExcelBPSImageMaxImageMiB < 1 || *req.ExcelBPSImageMaxImageMiB > basispoints.MaxRelayImageMiB) {
+		response.BadRequest(c, fmt.Sprintf("Image relay max_image_mib must be 1-%d", basispoints.MaxRelayImageMiB))
 		return
 	}
-	if (req.ExcelBPSImageWarningRemaining != nil && (*req.ExcelBPSImageWarningRemaining < 1 || *req.ExcelBPSImageWarningRemaining > 4096)) || (req.ExcelBPSImageCompactReserve != nil && (*req.ExcelBPSImageCompactReserve < 1 || *req.ExcelBPSImageCompactReserve > 4096)) {
-		response.BadRequest(c, "Image policy margins must be 1-4096")
+	if (req.ExcelBPSImageWarningRemaining != nil && (*req.ExcelBPSImageWarningRemaining < 1 || *req.ExcelBPSImageWarningRemaining > basispoints.MaxRelayImages)) || (req.ExcelBPSImageCompactReserve != nil && (*req.ExcelBPSImageCompactReserve < 1 || *req.ExcelBPSImageCompactReserve > basispoints.MaxRelayImages)) {
+		response.BadRequest(c, fmt.Sprintf("Image policy margins must be 1-%d", basispoints.MaxRelayImages))
 		return
 	}
-	if req.ExcelBPSImageMaxImages != nil && (*req.ExcelBPSImageMaxImages < 1 || *req.ExcelBPSImageMaxImages > 4096) {
-		response.BadRequest(c, "Image relay max_images must be 1-4096")
+	if req.ExcelBPSImageMaxImages != nil && (*req.ExcelBPSImageMaxImages < 1 || *req.ExcelBPSImageMaxImages > basispoints.MaxRelayImages) {
+		response.BadRequest(c, fmt.Sprintf("Image relay max_images must be 1-%d", basispoints.MaxRelayImages))
 		return
 	}
-	if req.ExcelBPSImageMaxTotalMiB != nil && (*req.ExcelBPSImageMaxTotalMiB < 1 || *req.ExcelBPSImageMaxTotalMiB > 128) {
-		response.BadRequest(c, "Image relay max_total_mib must be 1-128")
+	if req.ExcelBPSImageMaxTotalMiB != nil && (*req.ExcelBPSImageMaxTotalMiB < 1 || *req.ExcelBPSImageMaxTotalMiB > basispoints.MaxRelayRequestMiB) {
+		response.BadRequest(c, fmt.Sprintf("Image relay max_total_mib must be 1-%d", basispoints.MaxRelayRequestMiB))
 		return
 	}
-	if req.ExcelBPSImageStorageMiB != nil && (*req.ExcelBPSImageStorageMiB < 1 || *req.ExcelBPSImageStorageMiB > 16384) {
-		response.BadRequest(c, "Image relay storage_mib must be 1-16384")
+	if req.ExcelBPSImageStorageMiB != nil && (*req.ExcelBPSImageStorageMiB < 1 || *req.ExcelBPSImageStorageMiB > basispoints.MaxRelayStorageMiB) {
+		response.BadRequest(c, fmt.Sprintf("Image relay storage_mib must be 1-%d", basispoints.MaxRelayStorageMiB))
 		return
 	}
-	if req.ExcelBPSImageStorageEntries != nil && (*req.ExcelBPSImageStorageEntries < 1 || *req.ExcelBPSImageStorageEntries > 65536) {
-		response.BadRequest(c, "Image relay storage_entries must be 1-65536")
+	if req.ExcelBPSImageStorageEntries != nil && (*req.ExcelBPSImageStorageEntries < 1 || *req.ExcelBPSImageStorageEntries > basispoints.MaxRelayStorageEntries) {
+		response.BadRequest(c, fmt.Sprintf("Image relay storage_entries must be 1-%d", basispoints.MaxRelayStorageEntries))
 		return
 	}
-	if req.ExcelBPSImageTTLMinutes != nil && (*req.ExcelBPSImageTTLMinutes < 1 || *req.ExcelBPSImageTTLMinutes > 1440) {
-		response.BadRequest(c, "Image relay ttl_minutes must be 1-1440")
+	if req.ExcelBPSImageTTLMinutes != nil && (*req.ExcelBPSImageTTLMinutes < 1 || *req.ExcelBPSImageTTLMinutes > basispoints.MaxRelayTTLMinutes) {
+		response.BadRequest(c, fmt.Sprintf("Image relay ttl_minutes must be 1-%d", basispoints.MaxRelayTTLMinutes))
 		return
 	}
-	if req.ExcelBPSImageBodyLimitMiB != nil && (*req.ExcelBPSImageBodyLimitMiB < 1 || *req.ExcelBPSImageBodyLimitMiB > 128) {
-		response.BadRequest(c, "Image request body limit must be 1-128 MiB")
+	if req.ExcelBPSImageBodyLimitMiB != nil && (*req.ExcelBPSImageBodyLimitMiB < 1 || *req.ExcelBPSImageBodyLimitMiB > basispoints.MaxImageBodyMiB) {
+		response.BadRequest(c, fmt.Sprintf("Image request body limit must be 1-%d MiB", basispoints.MaxImageBodyMiB))
 		return
 	}
-	if req.ExcelBPSImageBudgetMiB != nil && (*req.ExcelBPSImageBudgetMiB < 512 || *req.ExcelBPSImageBudgetMiB > 2048) {
-		response.BadRequest(c, "Image request budget must be 512-2048 MiB")
+	if req.ExcelBPSImageBudgetMiB != nil && (*req.ExcelBPSImageBudgetMiB < basispoints.MinImageBudgetMiB || *req.ExcelBPSImageBudgetMiB > basispoints.MaxImageBudgetMiB) {
+		response.BadRequest(c, fmt.Sprintf("Image request budget must be %d-%d MiB", basispoints.MinImageBudgetMiB, basispoints.MaxImageBudgetMiB))
 		return
 	}
-	if req.ExcelBPSImageMaxRequests != nil && (*req.ExcelBPSImageMaxRequests < 1 || *req.ExcelBPSImageMaxRequests > 512) {
-		response.BadRequest(c, "Image concurrent requests must be 1-512")
+	if req.ExcelBPSImageMaxRequests != nil && (*req.ExcelBPSImageMaxRequests < 1 || *req.ExcelBPSImageMaxRequests > basispoints.MaxImageRequests) {
+		response.BadRequest(c, fmt.Sprintf("Image concurrent requests must be 1-%d", basispoints.MaxImageRequests))
 		return
 	}
 	auditReq := settingsAuditRequest(req)

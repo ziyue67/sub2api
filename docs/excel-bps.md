@@ -2,6 +2,8 @@
 
 在账号管理 → 编辑现有 OpenAI OAuth 账号 → 打开“Excel / BPS 协议”并保存。使用该账号已有的 ChatGPT access token/account ID，不需要 GitHub 登录、sidecar 或新建 API Key 上游账号。原有凭据刷新逻辑继续生效。默认关闭；切换后新开 Codex 会话。
 
+`credentials.plan_type` 为 `free` 的账号禁止开启 BPS（忽略大小写与首尾空格）。创建、编辑和批量编辑会拒绝保存开启配置；质量规则和 403 自动恢复也会跳过 free 账号。旧数据即使保留 BPS 开关，运行时也不会走 BPS，可通过编辑或批量编辑关闭旧开关。套餐未知的账号沿用原有规则；该限制不代表原生 Codex 通道支持相同模型。
+
 本入口面向 HTTP `/v1/responses` 和 `/v1/responses/compact`。强制上游 HTTP/SSE，优先于账号的自动透传、WS mode 和 Codex ticket 注入。保持原始模型名或显式账号映射，不因模型权限不足偷偷切换模型。现有调度、分组授权和并发额度继续生效；开关不会重新启用已停用的账号。
 
 ## 托管工具与原生回退策略

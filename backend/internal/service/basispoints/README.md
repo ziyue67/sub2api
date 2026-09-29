@@ -47,7 +47,8 @@ the final response locally. This does not provide upstream constrained decoding.
 - Preserve `detail: original` on HTTPS images and inline images rewritten by
   the relay. Let the upstream model validate its supported detail levels; do
   not silently downgrade the requested detail.
-- Enforce the existing 20-inline-image and 32 MiB per-request relay limits.
+- Enforce the saved inline-image count and byte limits; defaults remain 20
+  inline images and 32 MiB per request for the relay.
   A relay capacity error and an upstream overload are separate from a tool
   protocol error; HTTP 200 alone does not establish a successful SSE terminal.
 
@@ -84,6 +85,14 @@ the final response locally. This does not provide upstream constrained decoding.
 The gateway separately permits one regeneration when the first tool interaction ends in exactly one undeclared run_officejs target at the end of a completed response. It must have no prior tool calls/results and no dispatched client tool. This path reuses the prepared request, current catalog, account, model, proxy and attachment IDs; it does not append a fabricated executed tool result. Its corrected response must pass the current catalog, argument schema, identity and parallel-call checks. A second unknown target, invalid arguments or incomplete response fails without dispatching tools. Both attempts' reported usage is retained, including progressive usage if the correction disconnects before its terminal event.
 
 This path and the existing known-target formatting path are selected independently. A function argument schema error alone does not trigger either path.
+
+For streaming clients, first-turn regeneration stops once nonempty text, reasoning
+summary or refusal content has been forwarded. An unknown target then produces
+`response.failed` with the original response identity and usage, without tool
+dispatch or another generation. Empty lifecycle events and opaque reasoning alone
+do not block regeneration; non-streaming requests remain buffered and retain their
+one correction attempt. Known-target formatting corrections still preserve the
+original text and replace only withheld tool slots.
 
 # Optional inline image limit policies
 
@@ -139,3 +148,36 @@ remains in force; this is gateway reconciliation, not client memory cleanup.
 A manual compact resets the checkpoint chain. State expiry or a different account,
 model, key or thread can require manual compact again. Checkpoints remain useful
 if generation fails after emitting the compaction window; all usage is still billed.
+
+# Configurable image capacity
+
+Administrators can raise image limits for larger servers without changing the
+conservative defaults or existing saved settings. The settings UI, admin API,
+per-request settings reader and admission middleware use these ceilings:
+
+| Setting | Default | Maximum |
+| --- | ---: | ---: |
+| Request body | 64 MiB | 1024 MiB |
+| Shared admission budget | 1024 MiB | 65536 MiB |
+| In-flight requests | 128 | 4096 |
+| Relay image size | 20 MiB | 512 MiB |
+| Relay image bytes per request | 32 MiB | 512 MiB |
+| Images per request | 20 | 65536 |
+| Relay disk storage | 1024 MiB | 262144 MiB |
+| Relay stored images | 512 | 1048576 |
+| Relay link lifetime | 30 minutes | 10080 minutes |
+
+The budget must cover eight times the configured body limit, and its effective
+value remains at least eight MiB per in-flight slot. It is accounting capacity,
+not preallocated RAM. Storage must cover one request's image bytes and count;
+request image bytes must cover one image. Base64 expands encoded request bodies.
+The server/global body limit, gateway body limit and reverse proxy can impose
+smaller limits; to admit bodies above their defaults, adjust them explicitly.
+Higher settings do not bypass those limits or provision memory or disk.
+
+Native attachments retain their 20 MiB per-image and 32 MiB per-request size
+limits and their bounded attachment-ID cache. The per-request image count is
+configurable in both modes. Both modes retain the 64-megapixel safeguard.
+Relay download concurrency and automatic compaction checkpoint limits are
+unchanged. Large capacity settings require appropriate resource provisioning;
+these ceilings are not throughput or memory-use guarantees.

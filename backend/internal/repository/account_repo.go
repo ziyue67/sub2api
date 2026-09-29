@@ -759,6 +759,22 @@ func lockAndMergeAccountProbeExtra(
 	}
 	extra := service.MergeOpenAICodexTicketExtra(copyJSONMap(normalizeJSONMap(account.Extra)), currentExtra)
 	extra = service.MergeExcelBPS403Marker(extra, currentExtra)
+	// Omitted cost means an unrelated edit. Keep the value under the row lock,
+	// including a probe update committed after the edit form was loaded.
+	for _, key := range []string{service.AccountCostMultiplierExtraKey, service.AccountCostAutoSyncExtraKey} {
+		if _, provided := extra[key]; !provided {
+			if value, exists := currentExtra[key]; exists {
+				if extra == nil {
+					extra = make(map[string]any)
+				}
+				extra[key] = value
+			}
+		}
+	}
+	delete(extra, service.AutoConfigConcurrencyExtraKey)
+	if state, ok := currentExtra[service.AutoConfigConcurrencyExtraKey]; ok {
+		extra[service.AutoConfigConcurrencyExtraKey] = state
+	}
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
@@ -1151,6 +1167,78 @@ func (r *accountRepository) List(ctx context.Context, params pagination.Paginati
 	return r.ListWithFilters(ctx, params, "", "", "", "", 0, "")
 }
 
+// accountStatusFilterPredicate 把列表的 status 筛选换成查询条件。质量运维等场景
+// 需要一次筛多个状态（如「正常+限流中」），因此支持逗号分隔的多个值，任一命中即可；
+// 单个值的行为与原先完全一致。
+func accountStatusFilterPredicate(status string) dbpredicate.Account {
+	var predicates []dbpredicate.Account
+	for _, value := range strings.Split(status, ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			predicates = append(predicates, accountStatusPredicate(value))
+		}
+	}
+	switch len(predicates) {
+	case 0:
+		return nil
+	case 1:
+		return predicates[0]
+	}
+	return dbaccount.Or(predicates...)
+}
+
+// accountStatusPredicate 是单个状态值的查询条件。除数据库里的真实状态外，还有几个
+// 派生状态：正常 = active 且可调度且不在限流/临时不可调度中；限流中 / 临时不可调度 /
+// 不可调度分别取对应的一段。
+func accountStatusPredicate(status string) dbpredicate.Account {
+	notTempUnschedulable := dbpredicate.Account(func(s *entsql.Selector) {
+		col := s.C("temp_unschedulable_until")
+		s.Where(entsql.Or(
+			entsql.IsNull(col),
+			entsql.LTE(col, entsql.Expr("NOW()")),
+		))
+	})
+	switch status {
+	case service.StatusActive:
+		return dbaccount.And(
+			dbaccount.StatusEQ(status),
+			dbaccount.SchedulableEQ(true),
+			dbaccount.Or(
+				dbaccount.RateLimitResetAtIsNil(),
+				dbaccount.RateLimitResetAtLTE(time.Now()),
+			),
+			notTempUnschedulable,
+		)
+	case "rate_limited":
+		return dbaccount.And(
+			dbaccount.StatusEQ(service.StatusActive),
+			dbaccount.RateLimitResetAtGT(time.Now()),
+			notTempUnschedulable,
+		)
+	case "temp_unschedulable":
+		return dbaccount.And(
+			dbaccount.StatusEQ(service.StatusActive),
+			dbpredicate.Account(func(s *entsql.Selector) {
+				col := s.C("temp_unschedulable_until")
+				s.Where(entsql.And(
+					entsql.Not(entsql.IsNull(col)),
+					entsql.GT(col, entsql.Expr("NOW()")),
+				))
+			}),
+		)
+	case "unschedulable":
+		return dbaccount.And(
+			dbaccount.StatusEQ(service.StatusActive),
+			dbaccount.SchedulableEQ(false),
+			dbaccount.Or(
+				dbaccount.RateLimitResetAtIsNil(),
+				dbaccount.RateLimitResetAtLTE(time.Now()),
+			),
+			notTempUnschedulable,
+		)
+	}
+	return dbaccount.StatusEQ(status)
+}
+
 func (r *accountRepository) accountListFilteredQuery(platform, accountType, status, search string, groupID int64, privacyMode string) *dbent.AccountQuery {
 	q := r.client.Account.Query()
 
@@ -1160,66 +1248,8 @@ func (r *accountRepository) accountListFilteredQuery(platform, accountType, stat
 	if accountType != "" {
 		q = q.Where(dbaccount.TypeEQ(accountType))
 	}
-	if status != "" {
-		switch status {
-		case service.StatusActive:
-			q = q.Where(
-				dbaccount.StatusEQ(status),
-				dbaccount.SchedulableEQ(true),
-				dbaccount.Or(
-					dbaccount.RateLimitResetAtIsNil(),
-					dbaccount.RateLimitResetAtLTE(time.Now()),
-				),
-				dbpredicate.Account(func(s *entsql.Selector) {
-					col := s.C("temp_unschedulable_until")
-					s.Where(entsql.Or(
-						entsql.IsNull(col),
-						entsql.LTE(col, entsql.Expr("NOW()")),
-					))
-				}),
-			)
-		case "rate_limited":
-			q = q.Where(
-				dbaccount.StatusEQ(service.StatusActive),
-				dbaccount.RateLimitResetAtGT(time.Now()),
-				dbpredicate.Account(func(s *entsql.Selector) {
-					col := s.C("temp_unschedulable_until")
-					s.Where(entsql.Or(
-						entsql.IsNull(col),
-						entsql.LTE(col, entsql.Expr("NOW()")),
-					))
-				}),
-			)
-		case "temp_unschedulable":
-			q = q.Where(
-				dbaccount.StatusEQ(service.StatusActive),
-				dbpredicate.Account(func(s *entsql.Selector) {
-					col := s.C("temp_unschedulable_until")
-					s.Where(entsql.And(
-						entsql.Not(entsql.IsNull(col)),
-						entsql.GT(col, entsql.Expr("NOW()")),
-					))
-				}),
-			)
-		case "unschedulable":
-			q = q.Where(
-				dbaccount.StatusEQ(service.StatusActive),
-				dbaccount.SchedulableEQ(false),
-				dbaccount.Or(
-					dbaccount.RateLimitResetAtIsNil(),
-					dbaccount.RateLimitResetAtLTE(time.Now()),
-				),
-				dbpredicate.Account(func(s *entsql.Selector) {
-					col := s.C("temp_unschedulable_until")
-					s.Where(entsql.Or(
-						entsql.IsNull(col),
-						entsql.LTE(col, entsql.Expr("NOW()")),
-					))
-				}),
-			)
-		default:
-			q = q.Where(dbaccount.StatusEQ(status))
-		}
+	if predicate := accountStatusFilterPredicate(status); predicate != nil {
+		q = q.Where(predicate)
 	}
 	if search != "" {
 		q = q.Where(dbaccount.NameContainsFold(search))
@@ -3183,7 +3213,13 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 	snapshot *service.UpstreamBillingProbeSnapshot,
 	rateMultiplier *float64,
 ) error {
-	payload, err := json.Marshal(map[string]any{service.UpstreamBillingProbeExtraKey: snapshot})
+	updates := map[string]any{service.UpstreamBillingProbeExtraKey: snapshot}
+	if service.IsUpstreamBillingProbeIdentity(account.Platform, account.Type) {
+		if cost, ok := snapshot.CostMultiplierToSync(); ok {
+			updates[service.AccountCostMultiplierExtraKey] = cost
+		}
+	}
+	payload, err := json.Marshal(updates)
 	if err != nil {
 		return err
 	}
@@ -3230,7 +3266,11 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 	result, err := client.ExecContext(ctx, `
 		UPDATE accounts
 		SET
-			extra = COALESCE(extra, '{}'::jsonb) || $1::jsonb,
+			extra = COALESCE(extra, '{}'::jsonb) || CASE
+				WHEN extra @> '{"cost_multiplier_auto_sync": false}'::jsonb
+				THEN $1::jsonb - 'cost_multiplier'
+				ELSE $1::jsonb
+			END,
 			rate_multiplier = CASE
 				WHEN $10::numeric IS NOT NULL
 					AND extra @> '{"upstream_billing_probe_enabled": true}'::jsonb

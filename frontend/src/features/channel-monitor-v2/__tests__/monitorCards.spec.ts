@@ -36,6 +36,19 @@ describe('monitor card data semantics', () => {
     expect(bars[2]).toMatchObject({ state: 'unknown', observed: false })
     expect(monitorCardTimeline(row, undefined)).toEqual([])
   })
+  it('preserves sorted original bucket metrics without averaging redacted counts or medians', () => {
+    const metric = { request_count: 0, has_samples: true, error_rate: 0.1, cache_rate: 0.8, ttft: { p50_ms: 8000 } } as MonitorMetric
+    const late = { bucket_start: '2026-09-28T00:07:00Z', metrics: metric, health: { overall: 'warning' } }
+    const early = { bucket_start: '2026-09-28T00:06:00Z', metrics: { ...metric, error_rate: 0, ttft: { p50_ms: null } }, health: { overall: 'healthy' } }
+    const row = { buckets: [late, early, { ...late, bucket_start: 'invalid' }, { ...late, bucket_start: '2026-09-28T01:30:00Z' }] } as MonitorMatrixRow
+    const bars = monitorCardTimeline(row, { requested_start: '2026-09-28T00:00:00Z', requested_end: '2026-09-28T01:30:00Z' } as MonitorCoverage)
+    expect(bars[0].buckets).toEqual([])
+    expect(bars[1].buckets).toEqual([early, late])
+    expect(bars[1].buckets[1].metrics).toBe(metric)
+    expect(bars[1].state).toBe('warning')
+    expect(row.buckets[0]).toBe(late)
+    expect(bars.flatMap(bar => bar.buckets)).toHaveLength(2)
+  })
   it('distinguishes a wrong answer, failed probe, missing history and stale result', () => {
     const history: MonitorCandyHistory = { model: 'test', reasoning_effort: 'medium', interval_minutes: 1, results: [] }
     const now = Date.parse('2026-09-28T01:00:00Z')

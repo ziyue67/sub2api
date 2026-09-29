@@ -19,7 +19,10 @@
       <a href="/admin/account-quality" class="underline">{{ t('admin.accounts.openai.autoBPSManageRules') }}</a>
     </p>
     <p v-else-if="hasRule" class="mt-2 text-xs text-gray-500 dark:text-gray-400" data-testid="account-auto-bps-pause-hint">{{ t('admin.accounts.openai.autoBPSPauseHint') }}</p>
-    <QualityBPSSettings v-if="draft.enabled && !locked" v-model:bps="draft.bps" v-model:auto-restore="draft.autoRestore" class="mt-3" :target-groups="targetGroups" />
+    <div v-if="draft.enabled && !locked" class="mt-3 space-y-4">
+      <QualityProbeSchedule v-model="draft.cronExpression" />
+      <QualityBPSSettings v-model:bps="draft.bps" v-model:auto-restore="draft.autoRestore" :target-groups="targetGroups" />
+    </div>
   </div>
 </template>
 
@@ -28,6 +31,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QualityBPSSettings from '@/components/admin/operations/QualityBPSSettings.vue'
+import QualityProbeSchedule from '@/components/admin/operations/QualityProbeSchedule.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { AdminGroup } from '@/types'
 import type { AutoBPSDraft } from '@/utils/accountAutoBPS'

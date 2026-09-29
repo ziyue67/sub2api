@@ -1,5 +1,6 @@
 <template>
   <div class="space-y-4">
+    <CredentialEncryptionSetup @ready="encryptionReady = $event" />
     <p class="input-hint">{{ t('tokenGuard.twoFA.hint') }}</p>
     <a href="/admin/token-guard" target="_blank" rel="noopener noreferrer" class="text-primary-600">
       {{ t('tokenGuard.twoFA.settings') }}
@@ -18,7 +19,7 @@
       </li>
     </ul>
     <div class="flex gap-3">
-      <button v-if="!busy && (!rows.length || hasPending)" type="button" class="btn btn-primary" @click="run">
+      <button v-if="!busy && (!rows.length || hasPending)" type="button" class="btn btn-primary" :disabled="!encryptionReady" data-testid="two-fa-start" @click="run">
         {{ t(rows.length ? 'tokenGuard.twoFA.retry' : 'tokenGuard.twoFA.start') }}
       </button>
       <button v-if="busy" type="button" class="btn btn-secondary" :disabled="stopRequested" @click="stopRequested = true">
@@ -33,12 +34,13 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
+import CredentialEncryptionSetup from './CredentialEncryptionSetup.vue'
 import { useI18n } from 'vue-i18n'
 import { deleteTwoFALogin, getTwoFALogin, parseTwoFALoginText, startTwoFALogin } from '@/api/admin/accountTokenGuard'
 import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 
 const props = defineProps<{
-  importCredential: (credential: Record<string, unknown>, email: string) => Promise<'created' | 'skipped'>
+  importCredential: (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount) => Promise<'created' | 'skipped'>
 }>()
 const emit = defineEmits<{ busy: [value: boolean] }>()
 const { t } = useI18n()
@@ -49,6 +51,7 @@ type Row = {
   jobId?: string
 }
 const raw = ref('')
+const encryptionReady = ref(false)
 const error = ref('')
 const rows = ref<Row[]>([])
 const busy = ref(false)
@@ -65,7 +68,7 @@ async function discardJob(row: Row) {
 }
 
 async function run() {
-  if (busy.value) return
+  if (busy.value || !encryptionReady.value) return
   error.value = ''
   if (!rows.value.length) {
     try {
@@ -104,14 +107,16 @@ async function run() {
             throw new Error('login_failed')
           }
           row.credential = job.credential
-          row.entry.password = ''
-          row.entry.mfa_secret = ''
           await discardJob(row)
         }
         if (stopRequested.value || disposed) { row.status = 'pending'; break }
         row.status = 'importing'
-        row.status = await props.importCredential(row.credential, row.entry.email)
+        // Keep the input in memory until encrypted credential-operations
+        // enrollment succeeds. An import/enrollment retry reuses this login.
+        row.status = await props.importCredential(row.credential, row.entry.email, { ...row.entry })
         row.credential = undefined
+        row.entry.password = ''
+        row.entry.mfa_secret = ''
       } catch (cause: unknown) {
         const status = (cause as { status?: number; response?: { status?: number } })?.status ??
           (cause as { response?: { status?: number } })?.response?.status

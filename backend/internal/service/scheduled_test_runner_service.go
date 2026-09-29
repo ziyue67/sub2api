@@ -111,6 +111,12 @@ func (s *ScheduledTestRunnerService) runScheduled() {
 		s.groupTests.RunDue(ctx, now)
 	}()
 	defer groupRuns.Wait()
+	// Group rules cover accounts that started matching since the last tick.
+	if created, err := s.scheduledSvc.SyncQualityTemplates(ctx); err != nil {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] quality template sync error: %v", err)
+	} else if created > 0 {
+		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] quality templates added %d rules", created)
+	}
 	plans, err := s.planRepo.ListDue(ctx, now)
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "[ScheduledTestRunner] ListDue error: %v", err)

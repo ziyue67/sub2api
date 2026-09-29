@@ -105,6 +105,8 @@ backend/internal/web/dist/*
 
 # 后端运行时缓存数据
 backend/data/
+# 运行时 BPS 图片会话数据（单元测试会就地写入，勿提交）
+backend/internal/service/data/
 
 # ===================
 # 本地配置文件（包含敏感信息）
@@ -133,6 +135,7 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/openai-ws-sse-acceleration.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
@@ -144,6 +147,7 @@ docs/*
 !docs/releases/
 !docs/releases/*.md
 !docs/codex-credits.md
+!docs/quality-bps-observation.md
 !docs/cyber-session-blocking.md
 !docs/request-capture.md
 !docs/account-token-guard.md
@@ -152,10 +156,12 @@ docs/*
 !docs/legal/*.md
 !docs/screenshots/
 docs/screenshots/*
+!docs/screenshots/ws-sse-acceleration/
 !docs/screenshots/mobile-account-actions-menu.png
 !docs/screenshots/codex-referral-dialog.png
 !docs/screenshots/codex-referral-success.png
 !docs/screenshots/bps403-recovery/
+!docs/screenshots/account-cost-multiplier/
 .serena/
 .codex/
 frontend/coverage/
@@ -172,3 +178,12 @@ issues/
 .reasonix/
 
 !docs/codex-ticket-pinning.md
+
+!docs/account-auto-config.md
+!docs/screenshots/auto-config/
+
+# Runtime credential encryption keys must never enter source control.
+**/credential-operations.key
+**/.credential-key-*
+!docs/credential-encryption.md
+!docs/screenshots/credential-encryption/

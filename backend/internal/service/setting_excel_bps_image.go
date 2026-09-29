@@ -71,14 +71,14 @@ func normalizeExcelBPSImageRelaySettings(enabled bool, baseURL, mode string) (Ex
 }
 
 func validateExcelBPSImageCapacity(bodyLimitMiB, budgetMiB, maxRequests int) error {
-	if bodyLimitMiB < 1 || bodyLimitMiB > 128 {
-		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", "Image request body limit must be 1-128 MiB")
+	if bodyLimitMiB < 1 || bodyLimitMiB > basispoints.MaxImageBodyMiB {
+		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", fmt.Sprintf("Image request body limit must be 1-%d MiB", basispoints.MaxImageBodyMiB))
 	}
-	if budgetMiB < 512 || budgetMiB > 2048 || budgetMiB < bodyLimitMiB*8 {
-		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", "Image request budget must be 512-2048 MiB and at least eight times the body limit")
+	if budgetMiB < basispoints.MinImageBudgetMiB || budgetMiB > basispoints.MaxImageBudgetMiB || budgetMiB < bodyLimitMiB*8 {
+		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", fmt.Sprintf("Image request budget must be %d-%d MiB and at least eight times the body limit", basispoints.MinImageBudgetMiB, basispoints.MaxImageBudgetMiB))
 	}
-	if maxRequests < 1 || maxRequests > 512 {
-		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", "Image concurrent requests must be 1-512")
+	if maxRequests < 1 || maxRequests > basispoints.MaxImageRequests {
+		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", fmt.Sprintf("Image concurrent requests must be 1-%d", basispoints.MaxImageRequests))
 	}
 	return nil
 }
@@ -193,8 +193,8 @@ func validateExcelBPSImagePolicy(policy string, warning, reserve, limit int) err
 	default:
 		return fmt.Errorf("unknown image limit policy")
 	}
-	if warning < 1 || warning > 4096 || reserve < 1 || reserve > 4096 {
-		return fmt.Errorf("image policy margins must be 1-4096")
+	if warning < 1 || warning > basispoints.MaxRelayImages || reserve < 1 || reserve > basispoints.MaxRelayImages {
+		return fmt.Errorf("image policy margins must be 1-%d", basispoints.MaxRelayImages)
 	}
 	if policy == "warn" && (reserve >= warning || warning >= limit) {
 		return fmt.Errorf("image policy requires reserve < warning remaining < image limit")

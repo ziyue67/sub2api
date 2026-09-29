@@ -14,6 +14,12 @@ import (
 
 const ResponsesURL = "https://bps.openai.com/basispoints/api/responses"
 
+// ImagesGenerationsURL is the non-streaming text-to-image endpoint.
+const ImagesGenerationsURL = "https://bps.openai.com/basispoints/api/images/generations"
+
+// ImagesEditsURL is the multipart image-edit endpoint (exactly one image file).
+const ImagesEditsURL = "https://bps.openai.com/basispoints/api/images/edits"
+
 type object = map[string]any
 
 type Bridge struct {
@@ -29,6 +35,7 @@ type Bridge struct {
 	stagedReplays    *[]replayWrite
 	hasToolHistory   bool
 	disallowParallel bool
+	clientStream     bool
 }
 
 func decode(raw []byte, target any) error {
@@ -108,6 +115,7 @@ func prepare(raw []byte, scope string, replay *ReplayCache, nativeToolImages map
 		return nil, nil, err
 	}
 	b := &Bridge{nativeToolImages: nativeToolImages, RequestedEffort: requested, Effort: effort, tools: make(map[string]tool), unsupportedTools: make(map[string]bool), structured: structured, replay: replay, scope: scope}
+	b.clientStream, _ = source["stream"].(bool)
 	choice := source["tool_choice"]
 	if choice != nil && text(choice) != "auto" && text(choice) != "none" {
 		return nil, nil, fmt.Errorf("basispoints supports tool_choice auto or none only")

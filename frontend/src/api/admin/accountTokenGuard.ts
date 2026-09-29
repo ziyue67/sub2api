@@ -32,7 +32,7 @@ export interface TwoFALoginJob {
 const twoFALoginPath = '/admin/account-ops/token-guard/two-fa-login'
 
 export async function startTwoFALogin(entry: TokenGuardReloginAccount): Promise<TwoFALoginJob> {
-  return (await apiClient.post(twoFALoginPath, entry)).data
+  return (await apiClient.post(twoFALoginPath, { ...entry, credential_target: 'operations' })).data
 }
 
 export async function getTwoFALogin(id: string): Promise<TwoFALoginJob> {

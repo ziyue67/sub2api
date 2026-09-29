@@ -84,3 +84,64 @@ func TestAdminExcelBPS403GroupPartialUpdateKeepsExplicitTarget(t *testing.T) {
 		require.NotContains(t, account.Extra, ExcelBPSAutoMoveOn403Key, "validation cannot mutate shared account data")
 	}
 }
+
+func TestAdminExcelBPSFreeAccountValidationBeforeWrite(t *testing.T) {
+	for _, method := range []string{"create", "update", "extra", "bulk", "bulk downgrade"} {
+		t.Run(method, func(t *testing.T) {
+			account := excelAccount()
+			account.Credentials["plan_type"] = " Free "
+			repo := &adminExcelBPSGroupRepo{accountRepoStubForBulkUpdate: accountRepoStubForBulkUpdate{
+				getByIDAccounts: map[int64]*Account{account.ID: account}, getByIDsAccounts: []*Account{account},
+			}}
+			svc := &adminServiceImpl{accountRepo: repo}
+			extra := map[string]any{"openai_excel_bps": true}
+			ctx := context.Background()
+			var err error
+			switch method {
+			case "create":
+				_, err = svc.CreateAccount(ctx, &CreateAccountInput{Name: "free-bps", Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+					Credentials: account.Credentials, Extra: extra, SkipDefaultGroupBind: true})
+			case "update":
+				_, err = svc.UpdateAccount(ctx, account.ID, &UpdateAccountInput{Extra: extra})
+			case "extra":
+				err = svc.UpdateAccountExtra(ctx, account.ID, extra)
+			case "bulk":
+				_, err = svc.BulkUpdateAccounts(ctx, &BulkUpdateAccountsInput{AccountIDs: []int64{account.ID}, Extra: extra})
+			case "bulk downgrade":
+				account.Credentials["plan_type"] = "plus"
+				_, err = svc.BulkUpdateAccounts(ctx, &BulkUpdateAccountsInput{AccountIDs: []int64{account.ID}, Credentials: map[string]any{"plan_type": "free"}})
+				require.Equal(t, "plus", account.Credentials["plan_type"], "validation must not mutate the shared snapshot")
+			}
+			requireApplicationErrorReason(t, err, "OPENAI_EXCEL_BPS_INVALID")
+			require.Nil(t, repo.createAccount)
+			require.Empty(t, repo.updatedAccounts)
+			require.Empty(t, repo.extraUpdates)
+			require.Zero(t, repo.bulkUpdateCalls)
+		})
+	}
+}
+
+func TestAdminExcelBPSFreeAccountCanDisableLegacySettings(t *testing.T) {
+	for _, method := range []string{"update", "extra", "bulk"} {
+		t.Run(method, func(t *testing.T) {
+			account := excelAccount()
+			account.Credentials["plan_type"] = "free"
+			repo := &adminExcelBPSGroupRepo{accountRepoStubForBulkUpdate: accountRepoStubForBulkUpdate{
+				getByIDAccounts: map[int64]*Account{account.ID: account}, getByIDsAccounts: []*Account{account},
+			}}
+			svc := &adminServiceImpl{accountRepo: repo}
+			extra := map[string]any{"openai_excel_bps": false}
+			var err error
+			switch method {
+			case "update":
+				_, err = svc.UpdateAccount(context.Background(), account.ID, &UpdateAccountInput{Extra: extra})
+			case "extra":
+				err = svc.UpdateAccountExtra(context.Background(), account.ID, extra)
+			case "bulk":
+				_, err = svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{AccountIDs: []int64{account.ID}, Extra: extra})
+			}
+			require.NoError(t, err)
+			require.Equal(t, 1, len(repo.updatedAccounts)+len(repo.extraUpdates)+repo.bulkUpdateCalls)
+		})
+	}
+}

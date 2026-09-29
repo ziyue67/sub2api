@@ -49,12 +49,9 @@
         <fieldset id="bulk-edit-excel-bps-body" :disabled="!enableExcelBPS"
           :class="!enableExcelBPS && 'pointer-events-none opacity-50'"
           aria-labelledby="bulk-edit-excel-bps-label">
-          <button type="button" role="switch" :aria-checked="excelBPSEnabled"
-            :aria-label="t('admin.accounts.openai.excelBPS')" data-testid="bulk-excel-bps-toggle"
-            @click="excelBPSEnabled = !excelBPSEnabled"
-            :class="['relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2', excelBPSEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600']">
-            <span :class="['pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition', excelBPSEnabled ? 'translate-x-5' : 'translate-x-0']" />
-          </button>
+          <ExcelBPSModeSwitches :enabled="excelBPSEnabled" :mode="excelBPSMode"
+            :loading="bpsDefaults.loading.value" :failed="bpsDefaults.failed.value" :applied="bpsDefaults.applied.value"
+            :available="!authStore.isObserver" prefix="bulk-excel-bps" @toggle="bpsDefaults.toggle" />
           <div v-if="excelBPSEnabled" class="mt-3 space-y-3">
             <label class="flex items-center gap-2 text-sm">
               <input v-model="excelBPSAllModels" type="checkbox" data-testid="bulk-excel-bps-all-models" />
@@ -976,6 +973,14 @@
             <span>{{ t('admin.accounts.bulkEdit.rateSyncWarning') }}</span>
           </p>
         </div>
+        <div>
+          <div class="mb-3 flex items-center justify-between">
+            <label class="input-label mb-0" for="bulk-edit-cost-multiplier-enabled">{{ t('admin.accounts.costMultiplier') }}</label>
+            <input id="bulk-edit-cost-multiplier-enabled" v-model="enableCostMultiplier" type="checkbox" aria-controls="bulk-edit-cost-multiplier" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+          </div>
+          <input id="bulk-edit-cost-multiplier" v-model.number="costMultiplier" type="number" min="0" max="1000000" step="0.001" required :disabled="!enableCostMultiplier" :aria-label="t('admin.accounts.costMultiplier')" class="input" :class="!enableCostMultiplier && 'cursor-not-allowed opacity-50'" />
+          <p class="input-hint">{{ t('admin.accounts.costMultiplierHint') }}</p>
+        </div>
       </div>
 
       <!-- Status -->
@@ -1572,8 +1577,13 @@
 </template>
 
 <script setup lang="ts">
+import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@/utils/accountCost'
+
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
+import type { ExcelBPSMode } from '@/utils/excelBPSDefaults'
+import { useExcelBPSDefaults } from '@/composables/useExcelBPSDefaults'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, MAX_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
@@ -1768,6 +1778,8 @@ const enableProxy = ref(false)
 const enableConcurrency = ref(false)
 const enableLoadFactor = ref(false)
 const enablePriority = ref(false)
+const enableCostMultiplier = ref(false)
+const costMultiplier = ref(DEFAULT_ACCOUNT_COST_MULTIPLIER)
 const enableRateMultiplier = ref(false)
 const enableGroupRateMultiplier = ref(false)
 const groupRateMultiplier = ref(1)
@@ -1814,6 +1826,7 @@ const rateMultiplier = ref(1)
 const status = ref<'active' | 'inactive'>('active')
 const groupIds = ref<number[]>([])
 const excelBPSEnabled = ref(false)
+const excelBPSMode = ref<ExcelBPSMode>('initial')
 const excelBPSAllModels = ref(false)
 const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const excelBPSMihomo = ref(false)
@@ -1827,6 +1840,23 @@ const excelBPSIgnoreImages = ref(false)
 const excelBPSIgnoreEncryptedContent = ref(false)
 const excelBPSAutoMoveOn403 = ref(false)
 const excelBPS403TargetGroupID = ref<number | string>('')
+const bpsDefaults = useExcelBPSDefaults({
+  enabled: excelBPSEnabled,
+  mode: excelBPSMode,
+  available: () => !authStore.isObserver,
+  context: () => JSON.stringify([props.show, props.accountIds, props.selectedPlatforms, props.selectedTypes, authStore.user?.id, authStore.isObserver]),
+  fields: {
+    all_models: excelBPSAllModels, models: excelBPSModels,
+    omit_unsupported_tools: excelBPSOmitUnsupportedTools, ignore_images: excelBPSIgnoreImages,
+    ignore_encrypted_content: excelBPSIgnoreEncryptedContent,
+    auto_disable_on_403: excelBPSAutoDisableOn403, auto_recover_on_403: excelBPSAutoRecoverOn403,
+    recovery_interval_minutes: excelBPSRecoveryIntervalMinutes,
+    auto_move_on_403: excelBPSAutoMoveOn403, target_group_id: excelBPS403TargetGroupID,
+    session_proxy: excelBPSMihomo, proxy_source: excelBPSProxySource,
+    cache_creation_as_input: excelBPSCacheCreationAsInput
+  }
+})
+
 const excelBPS403GroupOptions = computed(() => [
   { value: '', label: t('admin.accounts.openai.excelBPS403SelectTarget') },
   { value: 0, label: t('admin.accounts.openai.excelBPS403LeaveAllGroups') },
@@ -2098,6 +2128,10 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     updates.priority = priority.value
   }
 
+  if (enableCostMultiplier.value) {
+    ensureExtra().cost_multiplier = costMultiplier.value
+  }
+
   if (enableRateMultiplier.value) {
     updates.rate_multiplier = rateMultiplier.value
   }
@@ -2124,6 +2158,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   if (enableExcelBPS.value && allOpenAIOAuthOnly.value) {
     const extra = ensureExtra()
     extra.openai_excel_bps = excelBPSEnabled.value
+    extra.openai_excel_bps_config_mode = excelBPSEnabled.value ? excelBPSMode.value : null
     // null explicitly removes an existing model scope; [] selects no BPS models.
     extra.openai_excel_bps_models = excelBPSEnabled.value && !excelBPSAllModels.value
       ? [...new Set(excelBPSModels.value.map(model => model.trim()).filter(Boolean))]
@@ -2360,8 +2395,11 @@ const preCheckMixedChannelRisk = async (built: Record<string, unknown>): Promise
   }
 }
 
-const handleSubmit = () => {
+// 本 Fork 保留了「提交前二次确认」流程（handleBulkUpdateConfirm），ranxi 侧为直接提交；
+// 这里同时保留两侧语义：确认弹窗的并发闸门 + 默认值加载中禁止提交。
+const handleSubmit = async () => {
   if (submitting.value || confirmingBulkUpdate.value || showBulkUpdateConfirm.value) return
+  if (bpsDefaults.loading.value) return
 
   if (targetMode.value === 'selected' && props.accountIds.length === 0) {
     appStore.showError(t('admin.accounts.bulkEdit.noSelection'))
@@ -2384,6 +2422,7 @@ const handleSubmit = () => {
     enableConcurrency.value ||
     enableLoadFactor.value ||
     enablePriority.value ||
+    enableCostMultiplier.value ||
     enableRateMultiplier.value ||
     enableGroupRateMultiplier.value ||
     enableStatus.value ||
@@ -2439,6 +2478,11 @@ const handleSubmit = () => {
       appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
       return
     }
+  }
+
+  if (enableCostMultiplier.value && !isValidAccountCostMultiplier(costMultiplier.value)) {
+    appStore.showError(t('admin.accounts.costMultiplierInvalid'))
+    return
   }
 
   const built = buildUpdatePayload()
@@ -2566,6 +2610,8 @@ watch(
       enableConcurrency.value = false
       enableLoadFactor.value = false
       enablePriority.value = false
+      enableCostMultiplier.value = false
+      costMultiplier.value = DEFAULT_ACCOUNT_COST_MULTIPLIER
       enableRateMultiplier.value = false
       enableStatus.value = false
       enableGroups.value = false
@@ -2589,6 +2635,7 @@ watch(
       // Reset all values
       baseUrl.value = ''
       excelBPSEnabled.value = false
+      excelBPSMode.value = 'initial'
       excelBPSAllModels.value = false
       excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
       excelBPSMihomo.value = false

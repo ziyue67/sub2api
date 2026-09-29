@@ -170,9 +170,66 @@ describe('EditAccountModal auto BPS switch', () => {
     await submit(wrapper)
     expect(mocks.createPlan).toHaveBeenCalledTimes(1)
     const request = mocks.createPlan.mock.calls[0][0]
-    expect(request).toMatchObject({ account_id: 7, model_id: 'gpt-6-astra', cron_expression: '*/30 * * * *', enabled: true })
-    expect(request.pelican_config).toMatchObject({ question_kind: 'state_probe', quality: { action: 'enable_bps', auto_restore: true, bps: { failure_threshold: 3 } } })
+    expect(request).toMatchObject({ account_id: 7, model_id: 'gpt-6-astra', cron_expression: '*/2 * * * *', enabled: true })
+    expect(request.pelican_config).toMatchObject({ question_kind: 'state_probe', quality: { action: 'enable_bps', auto_restore: true, bps: {
+      failure_threshold: 3, omit_unsupported_tools: false, ignore_images: false, ignore_encrypted_content: true, auto_disable_on_403: true,
+      auto_recover_on_403: false, auto_move_on_403: false, session_proxy: false, cache_creation_as_input: true,
+    } } })
     expect(mocks.updatePlan).not.toHaveBeenCalled()
+  })
+
+  it('updates the probe interval and selected options on the same rule', async () => {
+    mocks.listByAccount.mockResolvedValue([buildRule()])
+    const wrapper = mountModal()
+    await flushPromises()
+    expect(wrapper.get<HTMLSelectElement>('[data-testid="quality-probe-interval"]').element.value).toBe('*/30 * * * *')
+    await wrapper.get('[data-testid="quality-probe-interval"]').setValue('*/5 * * * *')
+    await wrapper.get('[data-testid="quality-bps-ignore_encrypted_content"]').setValue(false)
+    await wrapper.get('[data-testid="quality-bps-auto_disable_on_403"]').setValue(false)
+    await wrapper.get('[data-testid="quality-bps-cache_creation_as_input"]').setValue(false)
+    await wrapper.get('[data-testid="quality-bps-omit_unsupported_tools"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bps-ignore_images"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bps-auto_move_on_403"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bps-target-group"]').setValue('0')
+    await wrapper.get('[data-testid="quality-bps-session_proxy"]').setValue(true)
+    await wrapper.get('input[type="radio"][value="ip_pool"]').setValue()
+    await submit(wrapper)
+    expect(mocks.createPlan).not.toHaveBeenCalled()
+    expect(mocks.updatePlan).toHaveBeenCalledWith(31, expect.objectContaining({
+      cron_expression: '*/5 * * * *', pelican_config: expect.objectContaining({ quality: expect.objectContaining({ bps: expect.objectContaining({
+        ignore_encrypted_content: false, auto_disable_on_403: false, cache_creation_as_input: false,
+        omit_unsupported_tools: true, ignore_images: true, auto_move_on_403: true, target_group_id: 0, session_proxy: true, proxy_source: 'ip_pool',
+      }) }) }),
+    }))
+    expect(mocks.updateAccount.mock.calls[0][1].extra?.openai_excel_bps).not.toBe(true)
+  })
+
+  it('keeps an existing custom schedule and explicit false options when editing a condition', async () => {
+    const rule = buildRule({ cron_expression: '13 9 * * 1-5' })
+    Object.assign(rule.pelican_config.quality.bps, { ignore_encrypted_content: false, auto_disable_on_403: false, cache_creation_as_input: false })
+    mocks.listByAccount.mockResolvedValue([rule])
+    const wrapper = mountModal()
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-testid="quality-probe-cron"]').element.value).toBe('13 9 * * 1-5')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="quality-bps-auto_disable_on_403"]').element.checked).toBe(false)
+    await wrapper.get('[data-testid="quality-bps-threshold"]').setValue(4)
+    await submit(wrapper)
+    expect(mocks.updatePlan.mock.calls[0][1]).not.toHaveProperty('cron_expression')
+    expect(mocks.updatePlan.mock.calls[0][1].pelican_config.quality.bps).toMatchObject({
+      failure_threshold: 4, ignore_encrypted_content: false, auto_disable_on_403: false, cache_creation_as_input: false,
+    })
+  })
+
+  it('rejects an empty custom schedule before saving the account', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await wrapper.get(toggleSelector).trigger('click')
+    await wrapper.get('[data-testid="quality-probe-interval"]').setValue('custom')
+    await wrapper.get('[data-testid="quality-probe-cron"]').setValue('')
+    await submit(wrapper)
+    expect(mocks.showError).toHaveBeenCalledWith('qualityOps.scheduleRequired')
+    expect(mocks.updateAccount).not.toHaveBeenCalled()
+    expect(mocks.createPlan).not.toHaveBeenCalled()
   })
 
   it('blocks saving when the BPS trigger is empty', async () => {

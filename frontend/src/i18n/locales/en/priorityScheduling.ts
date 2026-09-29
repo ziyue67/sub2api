@@ -1,12 +1,4 @@
 export default {
-  teams: {
-    enabled: 'Teams fixed-cost recovery priority', cost: 'Cost per account (CNY)', hours: 'Paid window (hours)', conversion: 'CNY per billing unit', window: 'Window start',
-    sources: { explicit: 'Explicit activation time', expiry: 'Count back from account expiry', first_usage: 'First usage (persisted)' },
-    hint: 'Default: cost 50 per account, for 4 hours from its first use, in the same unit as user charges. Sum user charges across models and groups in that window. Prioritize recovery until revenue exceeds cost, then resume priority and economic ranking. Quality and concurrency limits remain active.',
-    windowHint: 'Use 1 for the same currency; for USD billing, enter CNY per USD. Set explicit activation times below. Expired windows never roll forward automatically; first-use anchors are persisted; existing accounts initialize from the earliest retained record.',
-    setStart: 'Also set activation time for selected Teams accounts', startHint: 'Only selected Teams accounts are changed. Resetting this time changes the paid window; use the actual activation time for this purchase.',
-    recovering: 'Recovering cost', recovered: 'Cost exceeded', progress: 'CNY {gap} to recover · {minutes} minutes left', windowProfit: 'Window profit CNY {profit}'
-  },
 
   profit: 'Recent profit / margin',
   economics: { usage: 'Usage records', rate: 'Rate estimate', unknown: 'Insufficient profit samples' },
@@ -29,11 +21,11 @@ export default {
   thresholds: 'Experience targets and observation window', target_ttft_ms: 'P90 first-token target (ms)', max_load_percent: 'Concurrency threshold (%)', min_quality_percent: 'Quality pass target (%)', window_minutes: 'Usage window (minutes)', min_samples: 'Minimum latency / profit samples', quality_max_age_hours: 'Quality freshness (hours)',
   groupIds: 'Group IDs', groupHint: 'Comma-separated; empty means all groups.', models: 'Models', modelHint: 'One exact requested model name per line; empty means all models.',
   rule: 'Order: targets met → insufficient data → targets missed. Within each tier, lower account priority comes first, then strategy scores. Low cost cannot override quality or congestion tiers.',
-  costHint: 'Profit = user charges − theoretical cost (account pricing or base cost × the recorded account rate). Aggregate the same group and model; margin = profit / user charges. Teams recovery uses its paid window instead. Other OAuth needs usage samples; API accounts may fall back to rate estimates.',
+  costHint: 'Profit = user charges − estimated cost. Estimated cost = account statistics price or base cost summed for the same group and model × the current account cost multiplier. Set it in account editing (default 0.1). When following is enabled, successful upstream probes update the same value. Turn it off to retain a manual cost; failures or expiry keep the saved value. Account and user billing remain independent. Changes re-estimate recent profit without rewriting usage logs. Margin = profit / user charges.',
   save: 'Save configuration', saving: 'Saving…', saved: 'Configuration saved', loading: 'Loading…', retry: 'Retry', error: 'Could not load or save. Please retry.', invalid: 'Check group IDs and parameter ranges',
   recent: 'Latest candidate scores', refresh: 'Refresh scores', empty: 'No scores yet. Eligible requests requiring free routing generate scores after enabling.', historyPending: 'History is not ready; existing scores remain active. Statistics refresh in the background every 30 seconds.',
   snapshotHint: 'Shows the latest candidate pool on this service instance, up to 100 accounts. Scores rank within protocol and subscription-priority pools, not the final selection. Live concurrency may change.',
   model: 'Model', group: 'Group', account: 'Account', score: 'Score', tier: 'Status', latency: 'P90 first token', load: 'Concurrency', rate: 'Cost rate', quality: 'Quality passed', samples: 'samples', unknown: 'Unknown',
   tiers: { eligible: 'Targets met', insufficient: 'Insufficient data', degraded: 'Targets missed' },
-  reasons: { quality_below_target: 'Quality below target', quality_unknown: 'No fresh quality result', latency_above_target: 'Latency above target', latency_insufficient: 'Insufficient latency samples', busy: 'High concurrency or queueing', load_unknown: 'Concurrency unknown', cost_unknown: 'Cost unknown', recent_errors: 'Elevated recent errors', historical_loss: 'Recent charges below theoretical cost', profit_insufficient: 'Insufficient profit samples', teams_recovery: 'Paid-window revenue has not exceeded cost', teams_window_unavailable: 'Teams paid window missing or inactive' }
+  reasons: { quality_below_target: 'Quality below target', quality_unknown: 'No fresh quality result', latency_above_target: 'Latency above target', latency_insufficient: 'Insufficient latency samples', busy: 'High concurrency or queueing', load_unknown: 'Concurrency unknown', cost_unknown: 'Cost unknown', recent_errors: 'Elevated recent errors', historical_loss: 'Recent charges below theoretical cost', profit_insufficient: 'Insufficient profit samples' }
 }

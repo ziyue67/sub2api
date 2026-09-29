@@ -66,7 +66,10 @@ func (r *repairTrackedBody) Close() error { r.closed.Add(1); return nil }
 
 func TestToolRepairKeepsOneResponseAndAtomicToolBatch(t *testing.T) {
 	cache := new(ReplayCache)
-	_, bridge := repairBridge(t, cache)
+	source := testSource()
+	source["stream"] = true
+	source["tools"] = []any{object{"type": "custom", "name": "functions.exec"}, object{"type": "function", "name": "shell"}}
+	_, bridge := mustPrepare(t, source, "repair-scope", cache)
 	code := "const value = 'literal';\ntext(value);"
 	valid := nativeCall(object{"name": "shell", "arguments": object{"cmd": "pwd"}})
 	invalid := repairCall("bad", "Run client tool", code)

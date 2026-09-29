@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { reactive } from 'vue'
 import { useAccountQualityStore } from '../accountQuality'
-import { listQualityPlans, listQualityOperations } from '@/api/admin/accountQuality'
+import { listQualityPlans, listQualityOperations, listQualityTemplates } from '@/api/admin/accountQuality'
 import { getAllIncludingInactive } from '@/api/admin/groups'
 const state = vi.hoisted(() => ({ auth: null as any }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => state.auth }))
-vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), listQualityOperations: vi.fn() }))
+vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), listQualityOperations: vi.fn(), listQualityTemplates: vi.fn() }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: vi.fn() }))
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { promise, resolve } }
-beforeEach(() => { setActivePinia(createPinia()); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.resetAllMocks(); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({ items: [], next_cursor: 0 }); vi.mocked(getAllIncludingInactive).mockResolvedValue([]) })
+beforeEach(() => { setActivePinia(createPinia()); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.resetAllMocks(); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityTemplates).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({ items: [], next_cursor: 0 }); vi.mocked(getAllIncludingInactive).mockResolvedValue([]) })
 describe('quality workspace session state', () => {
   it('loads independent panels concurrently and retains visible rules while refreshing', async () => {
     const first = deferred<any[]>(); vi.mocked(listQualityPlans).mockReturnValueOnce(first.promise)
@@ -34,6 +34,14 @@ describe('quality workspace session state', () => {
     const pending = store.refreshRules(); state.auth.user = null
     expect(store.plans).toEqual([]); request.resolve([{ id: 99 }]); await pending
     expect(store.plans).toEqual([]); expect(store.rulesLoaded).toBe(false)
+  })
+  it('loads group rules with the account rules and clears them on logout', async () => {
+    vi.mocked(listQualityTemplates).mockResolvedValueOnce([{ id: 3, plan_ids: [1] }] as any)
+    const store = useAccountQualityStore(); await store.refreshRules()
+    expect(listQualityTemplates).toHaveBeenCalledTimes(1)
+    expect(store.templates.map(t => t.id)).toEqual([3])
+    state.auth.user = null
+    expect(store.templates).toEqual([])
   })
   it('does not clear snapshots when the same user profile is refreshed', () => {
     const store = useAccountQualityStore(); store.plans = [{ id: 1 }] as any

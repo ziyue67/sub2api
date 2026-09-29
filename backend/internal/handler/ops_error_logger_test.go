@@ -1163,6 +1163,15 @@ func TestClassifyOpsLocalBusinessLimitErrorsExcludedFromSLA(t *testing.T) {
 			wantPhase:   "request",
 		},
 		{
+			name:        "explicit local user balance",
+			errType:     "billing_error",
+			message:     service.InsufficientUserBalanceMessage,
+			code:        "",
+			status:      http.StatusForbidden,
+			wantErrType: "billing_error",
+			wantPhase:   "request",
+		},
+		{
 			name:        "gemini group platform mismatch",
 			errType:     "api_error",
 			message:     "API key group platform is not gemini",
@@ -2247,4 +2256,14 @@ func TestOpsErrorLoggerMiddleware_RecordsClientClosedWhenIgnoreContextCanceledDi
 	require.Equal(t, int64(1), OpsErrorLogQueueLength())
 	job := <-opsErrorLogQueue
 	require.Equal(t, statusClientClosedRequest, job.entry.StatusCode)
+}
+
+func TestOpsBalanceFilterRecognizesExplicitUserMessage(t *testing.T) {
+	settings := &opsAdvancedSettingsRepoStub{advanced: `{"ignore_insufficient_balance_errors":true}`}
+	ops := service.NewOpsService(nil, settings, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	require.True(t, ops.OpsAdvancedSettingsSnapshot().IgnoreInsufficientBalanceErrors)
+	for _, message := range []string{"insufficient balance", "Insufficient account balance", service.InsufficientUserBalanceMessage} {
+		require.True(t, shouldSkipOpsErrorLog(context.Background(), ops, message, "", "/v1/responses"))
+		require.True(t, shouldSkipOpsErrorLog(context.Background(), ops, "", message, "/v1/responses"))
+	}
 }

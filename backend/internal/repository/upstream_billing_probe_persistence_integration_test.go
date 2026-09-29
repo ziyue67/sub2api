@@ -604,3 +604,112 @@ func TestProbeSnapshotBalanceRoundTripsThroughCASAndIdentityClear(t *testing.T) 
 	require.NoError(t, err)
 	require.NotContains(t, cleared.Extra, service.UpstreamBillingProbeExtraKey)
 }
+
+func TestProbeReplacesSavedCostMultiplier(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
+	now := time.Now().UTC()
+	for _, tt := range []struct {
+		name        string
+		status      string
+		accountType string
+		rate        float64
+		want        float64
+	}{
+		{"success without billing sync", service.UpstreamBillingProbeStatusOK, service.AccountTypeAPIKey, 0.14, 0.14},
+		{"zero upstream", service.UpstreamBillingProbeStatusOK, service.AccountTypeAPIKey, 0, 0},
+		{"failed cached result", service.UpstreamBillingProbeStatusFailed, service.AccountTypeAPIKey, 0.14, 0.1},
+		{"unsupported cached result", service.UpstreamBillingProbeStatusUnsupported, service.AccountTypeAPIKey, 0.14, 0.1},
+		{"out of range", service.UpstreamBillingProbeStatusOK, service.AccountTypeAPIKey, 1000001, 0.1},
+		{"oauth", service.UpstreamBillingProbeStatusOK, service.AccountTypeOAuth, 0.14, 0.1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			billing := 7.0
+			account := mustCreateAccount(t, tx.Client(), &service.Account{
+				Name: "cost-sync-" + tt.name, Platform: service.PlatformOpenAI, Type: tt.accountType,
+				RateMultiplier: &billing, Credentials: map[string]any{"api_key": "sk-test"},
+				Extra: map[string]any{service.AccountCostMultiplierExtraKey: 0.1, "unrelated": "keep"},
+			})
+			require.NoError(t, tx.Client().Account.UpdateOneID(account.ID).SetRateMultiplier(billing).Exec(ctx))
+			loaded, err := repo.GetByID(ctx, account.ID)
+			require.NoError(t, err)
+			snapshot := &service.UpstreamBillingProbeSnapshot{Status: tt.status, LastAttemptAt: now, Data: map[string]any{
+				"billing_scope": "token", "resolved_rate_multiplier": tt.rate, "peak_rate_enabled": false,
+			}}
+			require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, loaded, snapshot, nil))
+			got, err := repo.GetByID(ctx, account.ID)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got.Extra[service.AccountCostMultiplierExtraKey])
+			require.Equal(t, tt.want, got.CostMultiplier())
+			require.Equal(t, billing, got.BillingRateMultiplier())
+			require.Equal(t, "keep", got.Extra["unrelated"])
+			items := service.BuildUpstreamBillingRateSnapshotItems([]service.Account{*got})
+			require.Equal(t, tt.want, items[0].CostMultiplier, "background refresh returns the saved cost")
+			// A name-only save from a form opened before the probe must preserve cost.
+			delete(loaded.Extra, service.AccountCostMultiplierExtraKey)
+			loaded.Name = "renamed-" + tt.name
+			require.NoError(t, repo.Update(ctx, loaded))
+			renamed, err := repo.GetByID(ctx, account.ID)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, renamed.CostMultiplier())
+			snapshot.Status = service.UpstreamBillingProbeStatusFailed
+			require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, got, snapshot, nil))
+			afterFailure, err := repo.GetByID(ctx, account.ID)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, afterFailure.CostMultiplier(), "failed probes preserve the saved value")
+		})
+	}
+}
+
+func TestProbePreservesManualCostWhenAutoSyncDisabledDuringProbe(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
+	account := mustCreateAccount(t, tx.Client(), &service.Account{
+		Name: "manual-cost", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "sk-test"},
+		Extra:       map[string]any{service.AccountCostMultiplierExtraKey: 0.1},
+	})
+	inFlight, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.True(t, inFlight.CostMultiplierAutoSyncEnabled())
+	// A 5x recharge credit means the operator's actual cost is 0.2, even though
+	// the upstream reports 1. Complete an already-running probe after saving it.
+	require.NoError(t, repo.UpdateExtra(ctx, account.ID, map[string]any{
+		service.AccountCostMultiplierExtraKey: 0.2, service.AccountCostAutoSyncExtraKey: false,
+	}))
+	snapshot := &service.UpstreamBillingProbeSnapshot{Status: service.UpstreamBillingProbeStatusOK, LastAttemptAt: time.Now().UTC(), Data: map[string]any{
+		"billing_scope": "token", "resolved_rate_multiplier": 1.0, "peak_rate_enabled": false,
+	}}
+	require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, inFlight, snapshot, nil))
+	manual, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, 0.2, manual.CostMultiplier())
+	require.False(t, manual.CostMultiplierAutoSyncEnabled())
+	items := service.BuildUpstreamBillingRateSnapshotItems([]service.Account{*manual})
+	require.Equal(t, 0.2, items[0].CostMultiplier)
+	require.Equal(t, 1.0, items[0].Snapshot.Data["resolved_rate_multiplier"], "upstream probing still updates its snapshot")
+	// An unrelated edit from an older client must not clear either setting.
+	delete(inFlight.Extra, service.AccountCostMultiplierExtraKey)
+	inFlight.Name = "renamed"
+	require.NoError(t, repo.Update(ctx, inFlight))
+	renamed, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, 0.2, renamed.CostMultiplier())
+	require.False(t, renamed.CostMultiplierAutoSyncEnabled())
+	// Subsequent manual probes remain read-only with respect to cost.
+	require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, renamed, snapshot, nil))
+	manual, err = repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, 0.2, manual.CostMultiplier())
+	// Re-enabling only changes the mode; the next successful probe updates cost.
+	require.NoError(t, repo.UpdateExtra(ctx, account.ID, map[string]any{service.AccountCostAutoSyncExtraKey: true}))
+	enabled, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, 0.2, enabled.CostMultiplier())
+	require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, enabled, snapshot, nil))
+	synced, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1.0, synced.CostMultiplier())
+}

@@ -1,16 +1,16 @@
 import type { CreateScheduledTestPlanRequest, PelicanTestConfig, QualityBPSPolicy, ScheduledTestPlan, UpdateScheduledTestPlanRequest } from '@/types'
-import { STATE_PROBE_QUESTION } from './intelligenceTest'
+import { DEFAULT_STATE_PROBE_CRON, STATE_PROBE_QUESTION } from './intelligenceTest'
 import { defaultQualityBPS, qualityBPSForm, qualityBPSPayload } from './qualityRulePatch'
 
 // 添加/编辑账号弹窗里的「降智后自动开启 BPS」就是一条质量运维规则（状态探针 + 开启 BPS 协议）；
-// 探针频率和模型与质量运维新建规则的默认值一致，细调到质量运维改。
+// 新规则默认每 2 分钟检测；已有规则保留各自的检测计划和 BPS 设置。
 export const AUTO_BPS_PROBE_MODEL = 'gpt-6-astra'
-export const AUTO_BPS_CRON = '*/30 * * * *'
+export const AUTO_BPS_CRON = DEFAULT_STATE_PROBE_CRON
 
-export type AutoBPSDraft = { enabled: boolean; autoRestore: boolean; bps: QualityBPSPolicy }
+export type AutoBPSDraft = { enabled: boolean; autoRestore: boolean; cronExpression: string; bps: QualityBPSPolicy }
 
 export function newAutoBPSDraft(): AutoBPSDraft {
-  return { enabled: false, autoRestore: true, bps: defaultQualityBPS() }
+  return { enabled: false, autoRestore: true, cronExpression: AUTO_BPS_CRON, bps: defaultQualityBPS() }
 }
 
 export function isAutoBPSRule(plan: ScheduledTestPlan): boolean {
@@ -26,7 +26,7 @@ export function pickAutoBPSRule(plans: ScheduledTestPlan[]): ScheduledTestPlan |
 export function autoBPSDraftFromRule(rule: ScheduledTestPlan | null): AutoBPSDraft {
   if (!rule) return newAutoBPSDraft()
   const quality = rule.pelican_config?.quality
-  return { enabled: rule.enabled, autoRestore: !!quality?.auto_restore, bps: qualityBPSForm(quality?.bps) }
+  return { enabled: rule.enabled, autoRestore: !!quality?.auto_restore, cronExpression: rule.cron_expression, bps: qualityBPSForm(quality?.bps) }
 }
 
 // 与质量运维保存探针规则时的口径一致：探针不带题目和参考答案，只跑一路。
@@ -36,7 +36,7 @@ function autoBPSConfig(draft: AutoBPSDraft, base?: PelicanTestConfig): PelicanTe
 }
 
 export function autoBPSCreateRequest(accountId: number, draft: AutoBPSDraft): CreateScheduledTestPlanRequest {
-  return { account_id: accountId, model_id: AUTO_BPS_PROBE_MODEL, cron_expression: AUTO_BPS_CRON, enabled: true, max_results: 100,
+  return { account_id: accountId, model_id: AUTO_BPS_PROBE_MODEL, cron_expression: draft.cronExpression.trim(), enabled: true, max_results: 100,
     auto_recover: false, pelican_config: autoBPSConfig(draft) }
 }
 
@@ -50,5 +50,8 @@ export function autoBPSRuleChange(rule: ScheduledTestPlan | null, initial: AutoB
   if (JSON.stringify(initial) === JSON.stringify(draft)) return null
   if (!rule) return draft.enabled ? { kind: 'create', request: autoBPSCreateRequest(accountId, draft) } : null
   if (!draft.enabled) return rule.enabled ? { kind: 'update', id: rule.id, request: { enabled: false } } : null
-  return { kind: 'update', id: rule.id, request: { enabled: true, pelican_config: autoBPSConfig(draft, rule.pelican_config) } }
+  const request: UpdateScheduledTestPlanRequest = { enabled: true, pelican_config: autoBPSConfig(draft, rule.pelican_config) }
+  // 只改 BPS 选项时不回写计划，保留质量运维中设置的自定义 cron。
+  if (draft.cronExpression.trim() !== initial.cronExpression.trim()) request.cron_expression = draft.cronExpression.trim()
+  return { kind: 'update', id: rule.id, request }
 }

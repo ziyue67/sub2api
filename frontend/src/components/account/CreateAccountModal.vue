@@ -3033,6 +3033,21 @@
           <input v-model.number="form.rate_multiplier" type="number" min="0" step="0.001" class="input" />
           <p class="input-hint">{{ t('admin.accounts.billingRateMultiplierHint') }}</p>
         </div>
+        <div>
+          <label class="input-label" for="account-cost-multiplier">{{ t('admin.accounts.costMultiplier') }}</label>
+          <input
+            id="account-cost-multiplier"
+            v-model.number="costMultiplier"
+            type="number"
+            min="0"
+            max="1000000"
+            step="0.001"
+            required
+            class="input"
+            data-testid="account-cost-multiplier"
+          />
+          <p class="input-hint">{{ t('admin.accounts.costMultiplierHint') }}</p>
+        </div>
       </div>
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
@@ -3902,7 +3917,11 @@
 </template>
 
 <script setup lang="ts">
+import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@/utils/accountCost'
+
 import OpenAITwoFAImport from './OpenAITwoFAImport.vue'
+import { createTokenGuardV2Account } from '@/api/admin/accountTokenGuardV2'
+import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -4036,11 +4055,14 @@ const oauthStepTitle = computed(() => {
 
 // Platform-specific hints for API Key type
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
+const costMultiplier = ref(DEFAULT_ACCOUNT_COST_MULTIPLIER)
 const upstreamRequestIdHeader = ref('')
-const withUpstreamRequestIdHeader = <T extends Record<string, unknown> | undefined>(extra: T): T | Record<string, unknown> => {
+const withAccountExtraSettings = (extra?: Record<string, unknown>): Record<string, unknown> => {
+  if (!isValidAccountCostMultiplier(costMultiplier.value)) {
+    throw new Error(t('admin.accounts.costMultiplierInvalid'))
+  }
   const name = upstreamRequestIdHeader.value.trim()
-  if (!name) return extra
-  return { ...(extra || {}), upstream_request_id_header: name }
+  return { ...(extra || {}), cost_multiplier: costMultiplier.value, ...(name ? { upstream_request_id_header: name } : {}) }
 }
 
 const baseUrlHint = computed(() => {
@@ -5391,6 +5413,7 @@ const resetForm = () => {
   form.concurrency = 10
   form.load_factor = null
   form.priority = 1
+  costMultiplier.value = DEFAULT_ACCOUNT_COST_MULTIPLIER
   form.rate_multiplier = 1
   form.group_ids = []
   form.expires_at = null
@@ -6006,7 +6029,7 @@ const handleSubmit = async () => {
   await doCreateAccount({
     ...form,
     group_ids: form.group_ids,
-    extra: withUpstreamRequestIdHeader(extra),
+    extra: withAccountExtraSettings(extra),
     upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
@@ -6069,7 +6092,7 @@ const createAccountAndFinish = async (
     return
   }
   // Inject quota limits for apikey/bedrock accounts
-  let finalExtra = withUpstreamRequestIdHeader(extra)
+  let finalExtra = withAccountExtraSettings(extra)
   if (type === 'apikey' || type === 'bedrock') {
     const quotaExtra: Record<string, unknown> = { ...(finalExtra || {}) }
     if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {
@@ -6195,7 +6218,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           platform: 'grok',
           type: 'oauth',
           credentials,
-          extra: withUpstreamRequestIdHeader(extra),
+          extra: withAccountExtraSettings(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -6372,7 +6395,7 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
           platform: 'grok',
           type: 'oauth',
           credentials,
-          extra: withUpstreamRequestIdHeader(extra),
+          extra: withAccountExtraSettings(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -6488,7 +6511,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         platform: 'openai',
         type: 'oauth',
         credentials,
-        extra: withUpstreamRequestIdHeader(extra),
+        extra: withAccountExtraSettings(extra),
         proxy_id: form.proxy_id,
         concurrency: form.concurrency,
         load_factor: form.load_factor ?? undefined,
@@ -6570,7 +6593,7 @@ const isAgentIdentityImportContent = (content: string) => {
 }
 
 // Reuse Session import normalization and identity deduplication after 2FA login.
-const importTwoFACredential = async (credential: Record<string, unknown>, email: string): Promise<'created' | 'skipped'> => {
+const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount): Promise<'created' | 'skipped'> => {
   const credentialExtras = buildOpenAICodexImportCredentialExtras()
   if (credentialExtras === null) throw new Error('invalid_account_settings')
   const result = await adminAPI.accounts.importCodexSession({
@@ -6586,13 +6609,28 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     expires_at: form.expires_at,
     auto_pause_on_expired: autoPauseOnExpired.value,
     credential_extras: credentialExtras,
-    extra: withUpstreamRequestIdHeader(buildOpenAICodexImportExtra()),
+    extra: withAccountExtraSettings(buildOpenAICodexImportExtra()),
     update_existing: false,
     skip_existing: true
   })
   if (result.failed > 0) throw new Error('import_failed')
   if (result.created > 0) {
     await createAutoBPSRules(createdImportAccountIds(result))
+  }
+  const accountIds = [...new Set((result.items ?? [])
+    .filter(item => item.action === 'created' || item.action === 'skipped')
+    .map(item => item.account_id)
+    .filter((id): id is number => typeof id === 'number' && id > 0))]
+  if (!accountIds.length) throw new Error('import_missing_account_id')
+  for (const accountId of accountIds) {
+    await createTokenGuardV2Account({
+      account_id: accountId, login_email: login.email,
+      credential_mode: 'password_totp', proxy_source: 'account',
+      password: login.password, totp_secret: login.mfa_secret,
+      enabled: true, auto_relogin_enabled: true
+    })
+  }
+  if (result.created > 0) {
     emit('created')
     return 'created'
   }
@@ -6635,7 +6673,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra: withUpstreamRequestIdHeader(extra),
+      extra: withAccountExtraSettings(extra),
       update_existing: true
     })
     // 只给这次新建的账号建规则；已有账号被更新时不动它原有的规则。
@@ -6717,7 +6755,7 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra: withUpstreamRequestIdHeader(extra)
+      extra: withAccountExtraSettings(extra)
     })
 
     appStore.showSuccess(t('admin.accounts.accountCreated'))
@@ -6807,7 +6845,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             platform: 'openai',
             type: 'oauth',
             credentials,
-            extra: withUpstreamRequestIdHeader(extra),
+            extra: withAccountExtraSettings(extra),
             proxy_id: form.proxy_id,
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
@@ -6909,7 +6947,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           platform: 'antigravity',
           type: 'oauth',
           credentials,
-          extra: withUpstreamRequestIdHeader({}),
+          extra: withAccountExtraSettings({}),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -7282,7 +7320,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           platform: form.platform,
           type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
           credentials,
-          extra: withUpstreamRequestIdHeader(extra),
+          extra: withAccountExtraSettings(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,

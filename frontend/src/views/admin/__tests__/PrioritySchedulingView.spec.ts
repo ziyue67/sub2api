@@ -9,16 +9,17 @@ vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<mai
 vi.mock('@/components/admin/operations/PriorityAccountBatch.vue', () => ({ default: { template: '<section />' } }))
 vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { template: '<nav />' } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin/priorityScheduling', () => ({ getPriorityConfig: vi.fn(), getPrioritySnapshot: vi.fn(), savePriorityConfig: vi.fn(), defaultPriorityTeamsConfig: () => ({ enabled: false, cost_cny: 50, window_hours: 4, cny_per_billing_unit: 1, window_source: 'explicit' }) }))
-const config: PrioritySchedulingConfig = { teams: { enabled: false, cost_cny: 50, window_hours: 4, cny_per_billing_unit: 1, window_source: 'explicit' }, enabled: false, mode: 'balanced', group_ids: [], models: [], window_minutes: 60, min_samples: 5, target_ttft_ms: 3000, max_load_percent: 80, min_quality_percent: 90, quality_max_age_hours: 24, quality_weight: 30, latency_weight: 25, load_weight: 25, cost_weight: 20 }
-beforeEach(() => { vi.resetAllMocks(); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.mocked(getPriorityConfig).mockResolvedValue({ ...config, teams: { ...config.teams } }); vi.mocked(getPrioritySnapshot).mockResolvedValue(null); vi.mocked(savePriorityConfig).mockImplementation(async c => c) })
+vi.mock('@/api/admin/priorityScheduling', () => ({ getPriorityConfig: vi.fn(), getPrioritySnapshot: vi.fn(), savePriorityConfig: vi.fn() }))
+const config: PrioritySchedulingConfig = { enabled: false, mode: 'balanced', group_ids: [], models: [], window_minutes: 60, min_samples: 5, target_ttft_ms: 3000, max_load_percent: 80, min_quality_percent: 90, quality_max_age_hours: 24, quality_weight: 30, latency_weight: 25, load_weight: 25, cost_weight: 20 }
+beforeEach(() => { vi.resetAllMocks(); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.mocked(getPriorityConfig).mockResolvedValue({ ...config }); vi.mocked(getPrioritySnapshot).mockResolvedValue(null); vi.mocked(savePriorityConfig).mockImplementation(async c => c) })
 describe('priority scheduling', () => {
-  it('saves Teams cost 50 for four hours from first use in the same billing unit', async () => {
+  it('removes purchase-cost controls and saves without legacy Teams settings', async () => {
+    vi.mocked(getPriorityConfig).mockResolvedValue({ ...config, teams: { enabled: true, cost_cny: 50 } } as PrioritySchedulingConfig)
     const wrapper = mount(PrioritySchedulingView); await flushPromises()
-    await wrapper.get('[data-testid="teams-recovery"]').setValue(true)
-    await wrapper.get('[data-testid="teams-window-source"]').setValue('first_usage')
+    expect(wrapper.find('[data-testid="teams-recovery"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="teams-window-source"]').exists()).toBe(false)
     await wrapper.get('form').trigger('submit'); await flushPromises()
-    expect(savePriorityConfig).toHaveBeenCalledWith({ ...config, teams: { enabled: true, cost_cny: 50, window_hours: 4, cny_per_billing_unit: 1, window_source: 'first_usage' } })
+    expect(savePriorityConfig).toHaveBeenCalledWith(config)
     wrapper.unmount()
   })
   it('saves enabled strategy and exact group/model scope', async () => {

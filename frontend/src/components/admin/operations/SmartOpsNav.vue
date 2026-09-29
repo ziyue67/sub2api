@@ -7,5 +7,5 @@
 import { RouterLink, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n(), route = useRoute()
-const items = [{ path: '/admin/priority-scheduling', label: 'priorityScheduling.title' }, { path: '/admin/account-quality', label: 'qualityOps.title' }, { path: '/admin/account-ops', label: 'accountOps.title' }, { path: '/admin/token-guard', label: 'tokenGuard.title' }, { path: '/admin/token-guard-v2', label: 'tokenGuardV2.title' }, { path: '/admin/pelican-tests', label: 'pelicanTests.title' }]
+const items = [{ path: '/admin/auto-config', label: 'autoConfig.title' }, { path: '/admin/priority-scheduling', label: 'priorityScheduling.title' }, { path: '/admin/account-quality', label: 'qualityOps.title' }, { path: '/admin/account-ops', label: 'accountOps.title' }, { path: '/admin/token-guard', label: 'tokenGuard.title' }, { path: '/admin/token-guard-v2', label: 'tokenGuardV2.title' }, { path: '/admin/pelican-tests', label: 'pelicanTests.title' }]
 </script>

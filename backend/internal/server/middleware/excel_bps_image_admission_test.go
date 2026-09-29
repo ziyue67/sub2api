@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -412,4 +413,58 @@ func TestExcelBPSImageAdmissionBudgetReconfiguration(t *testing.T) {
 	require.True(t, ok)
 	require.False(t, reservation.resize(520<<20), "lowered budget must apply after draining")
 	reservation.release()
+}
+
+func TestExcelBPSImageAdmissionExpandedBodyCeiling(t *testing.T) {
+	// Header-only probes verify the admission boundary without allocating GiB bodies.
+	for _, tt := range []struct {
+		name             string
+		size, gatewayMax int64
+		status           int
+	}{
+		{"above old ceiling", 129 << 20, 2 << 30, http.StatusNoContent},
+		{"new ceiling", int64(basispoints.MaxImageBodyMiB) << 20, 2 << 30, http.StatusNoContent},
+		{"new ceiling exceeded", (int64(basispoints.MaxImageBodyMiB) << 20) + 1, 2 << 30, http.StatusRequestEntityTooLarge},
+		{"gateway cap still applies", 257 << 20, 256 << 20, http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				c.Set(string(ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+				c.Next()
+			})
+			r.Use(ExcelBPSImageAdmission(bpsImageTestSettings{enabled: true, bodyLimitMiB: basispoints.MaxImageBodyMiB, budgetMiB: basispoints.MaxImageBudgetMiB, maxRequests: basispoints.MaxImageRequests}, tt.gatewayMax))
+			r.POST("/responses", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			req := httptest.NewRequest(http.MethodPost, "/responses", nil)
+			req.ContentLength = tt.size
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			require.Equal(t, tt.status, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func TestBPSImageExpandedAdmissionBudget(t *testing.T) {
+	budget := &bpsImageAdmissionBudget{}
+	budget.configure(int64(basispoints.MaxImageBudgetMiB)<<20, basispoints.MaxImageRequests)
+	var reservations []*bpsImageReservation
+	for i := 0; i < basispoints.MaxImageRequests; i++ {
+		reservation, ok := budget.acquire(8 << 20)
+		require.True(t, ok, "request %d", i)
+		reservations = append(reservations, reservation)
+	}
+	_, ok := budget.acquire(8 << 20)
+	require.False(t, ok, "configured request cap must still reject overflow")
+	for _, reservation := range reservations {
+		reservation.release()
+	}
+	require.Zero(t, budget.bytes)
+	require.Zero(t, budget.requests)
+	// Exercise byte accounting above 32-bit range separately from the slot cap.
+	whole, ok := budget.acquire(int64(basispoints.MaxImageBudgetMiB) << 20)
+	require.True(t, ok)
+	_, ok = budget.acquire(1)
+	require.False(t, ok)
+	whole.release()
+	require.Zero(t, budget.bytes)
 }

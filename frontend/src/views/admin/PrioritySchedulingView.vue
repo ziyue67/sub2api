@@ -19,17 +19,6 @@
             </section>
             <section><h2 class="mb-3 font-medium">{{ t('priorityScheduling.thresholds') }}</h2><div class="grid gap-3 sm:grid-cols-2"><label v-for="field in fields" :key="field.key"><span class="field-title">{{ t(`priorityScheduling.${field.key}`) }}</span><input v-model.number="draft[field.key]" type="number" :min="field.min" :max="field.max" step="1" required class="input w-full" /></label></div></section>
           </div>
-          <section class="space-y-3 rounded-xl border border-primary-200 p-4 dark:border-primary-900">
-            <label class="flex items-center gap-2 font-medium"><input v-model="draft.teams.enabled" data-testid="teams-recovery" type="checkbox" />{{ t('priorityScheduling.teams.enabled') }}</label>
-            <p class="text-sm leading-6 text-gray-500">{{ t('priorityScheduling.teams.hint') }}</p>
-            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <label><span class="field-title">{{ t('priorityScheduling.teams.cost') }}</span><input v-model.number="draft.teams.cost_cny" type="number" min="0.01" max="1000000" step="0.01" required class="input w-full" /></label>
-              <label><span class="field-title">{{ t('priorityScheduling.teams.hours') }}</span><input v-model.number="draft.teams.window_hours" type="number" min="1" max="168" step="1" required class="input w-full" /></label>
-              <label><span class="field-title">{{ t('priorityScheduling.teams.conversion') }}</span><input v-model.number="draft.teams.cny_per_billing_unit" type="number" min="0.0001" max="10000" step="0.0001" required class="input w-full" /></label>
-              <label><span class="field-title">{{ t('priorityScheduling.teams.window') }}</span><select v-model="draft.teams.window_source" data-testid="teams-window-source" class="input w-full"><option v-for="source in ['explicit','expiry','first_usage']" :key="source" :value="source">{{ t(`priorityScheduling.teams.sources.${source}`) }}</option></select></label>
-            </div>
-            <p class="text-xs leading-5 text-gray-500">{{ t('priorityScheduling.teams.windowHint') }}</p>
-          </section>
           <div class="grid gap-5 sm:grid-cols-2"><label><span class="field-title">{{ t('priorityScheduling.groupIds') }}</span><input v-model="groups" class="input w-full" data-testid="groups" /><small class="text-gray-500">{{ t('priorityScheduling.groupHint') }}</small></label><label><span class="field-title">{{ t('priorityScheduling.models') }}</span><textarea v-model="modelsText" class="input w-full" rows="3" /><small class="text-gray-500">{{ t('priorityScheduling.modelHint') }}</small></label></div>
           <button class="btn btn-primary" type="submit">{{ t(saving ? 'priorityScheduling.saving' : 'priorityScheduling.save') }}</button>
         </fieldset>
@@ -43,7 +32,7 @@
         <template v-else>
           <p class="mb-4 text-sm text-gray-500">{{ new Date(snapshot.at).toLocaleString() }} · {{ t('priorityScheduling.model') }}: {{ snapshot.model }} · {{ t('priorityScheduling.group') }}: {{ snapshot.group_id ?? '—' }} · {{ t(`priorityScheduling.modes.${snapshot.mode}`) }}</p>
           <p v-if="!snapshot.history_ready" class="text-sm text-amber-600">{{ t('priorityScheduling.historyPending') }}</p>
-          <div v-else class="overflow-x-auto"><table class="w-full whitespace-nowrap text-left text-sm"><thead><tr><th v-for="key in ['account','tier','priority','score','quality','latency','load','rate','profit']" :key="key" class="px-3 py-3 text-xs font-medium text-gray-500">{{ t(`priorityScheduling.${key}`) }}</th></tr></thead><tbody><tr v-for="row in snapshot.candidates" :key="row.account_id" class="border-t border-gray-100 dark:border-dark-700"><td class="px-3 py-4"><strong class="font-medium">{{ row.account_name }}</strong><small class="block text-gray-400">#{{ row.account_id }}</small></td><td class="px-3 py-4"><span :class="row.tier === 'eligible' ? 'text-emerald-600' : row.tier === 'degraded' ? 'text-amber-600' : 'text-gray-500'">{{ t(`priorityScheduling.tiers.${row.tier}`) }}</span><small v-for="reason in row.reasons" :key="reason" class="block text-gray-400">{{ t(`priorityScheduling.reasons.${reason}`) }}</small></td><td class="px-3 py-4 tabular-nums">{{ row.priority }}</td><td class="px-3 py-4 tabular-nums">{{ row.score.toFixed(1) }}</td><td class="px-3 py-4">{{ row.quality_samples ? `${row.quality_passed}/${row.quality_samples}` : '—' }}</td><td class="px-3 py-4">{{ row.samples ? `${Math.round(row.p90_ttft_ms)} ms` : '—' }}<small class="block text-gray-400">{{ row.samples }} {{ t('priorityScheduling.samples') }}</small></td><td class="px-3 py-4">{{ row.load_percent == null ? '—' : `${row.load_percent}%` }}</td><td class="px-3 py-4">{{ row.rate == null ? '—' : `${row.rate.toFixed(3)}×` }}</td><td class="px-3 py-4"><template v-if="row.teams_recovery"><span :class="row.teams_recovery.needs_recovery ? 'text-amber-600' : 'text-emerald-600'">{{ t(row.teams_recovery.needs_recovery ? 'priorityScheduling.teams.recovering' : 'priorityScheduling.teams.recovered') }}</span><small class="block">¥{{ row.teams_recovery.revenue_cny.toFixed(2) }} / ¥{{ row.teams_recovery.cost_cny.toFixed(2) }}</small><small class="block text-gray-400">{{ t('priorityScheduling.teams.progress', { gap: row.teams_recovery.shortfall_cny.toFixed(2), minutes: Math.max(0, Math.ceil(row.teams_recovery.remaining_seconds / 60)) }) }}</small><small class="block text-gray-400">{{ t('priorityScheduling.teams.windowProfit', { profit: row.teams_recovery.profit_cny.toFixed(2) }) }}</small></template><template v-else-if="row.economics_source === 'usage'"><span :class="(row.profit ?? 0) < 0 ? 'text-red-600' : 'text-emerald-600'">${{ row.profit?.toFixed(4) }} · {{ row.margin == null ? '—' : `${(row.margin * 100).toFixed(1)}%` }}</span><small class="block text-gray-400">${{ row.revenue.toFixed(4) }} − ${{ row.theoretical_cost.toFixed(4) }}</small></template><span v-else class="text-xs text-gray-500">{{ t(`priorityScheduling.economics.${row.economics_source || 'unknown'}`) }}</span></td></tr></tbody></table></div>
+          <div v-else class="overflow-x-auto"><table class="w-full whitespace-nowrap text-left text-sm"><thead><tr><th v-for="key in ['account','tier','priority','score','quality','latency','load','rate','profit']" :key="key" class="px-3 py-3 text-xs font-medium text-gray-500">{{ t(`priorityScheduling.${key}`) }}</th></tr></thead><tbody><tr v-for="row in snapshot.candidates" :key="row.account_id" class="border-t border-gray-100 dark:border-dark-700"><td class="px-3 py-4"><strong class="font-medium">{{ row.account_name }}</strong><small class="block text-gray-400">#{{ row.account_id }}</small></td><td class="px-3 py-4"><span :class="row.tier === 'eligible' ? 'text-emerald-600' : row.tier === 'degraded' ? 'text-amber-600' : 'text-gray-500'">{{ t(`priorityScheduling.tiers.${row.tier}`) }}</span><small v-for="reason in row.reasons" :key="reason" class="block text-gray-400">{{ t(`priorityScheduling.reasons.${reason}`) }}</small></td><td class="px-3 py-4 tabular-nums">{{ row.priority }}</td><td class="px-3 py-4 tabular-nums">{{ row.score.toFixed(1) }}</td><td class="px-3 py-4">{{ row.quality_samples ? `${row.quality_passed}/${row.quality_samples}` : '—' }}</td><td class="px-3 py-4">{{ row.samples ? `${Math.round(row.p90_ttft_ms)} ms` : '—' }}<small class="block text-gray-400">{{ row.samples }} {{ t('priorityScheduling.samples') }}</small></td><td class="px-3 py-4">{{ row.load_percent == null ? '—' : `${row.load_percent}%` }}</td><td class="px-3 py-4">{{ row.rate == null ? '—' : `${row.rate.toFixed(3)}×` }}</td><td class="px-3 py-4"><template v-if="row.economics_source === 'usage'"><span :class="(row.profit ?? 0) < 0 ? 'text-red-600' : 'text-emerald-600'">${{ row.profit?.toFixed(4) }} · {{ row.margin == null ? '—' : `${(row.margin * 100).toFixed(1)}%` }}</span><small class="block text-gray-400">${{ row.revenue.toFixed(4) }} − ${{ row.theoretical_cost.toFixed(4) }}</small></template><span v-else class="text-xs text-gray-500">{{ t(`priorityScheduling.economics.${row.economics_source || 'unknown'}`) }}</span></td></tr></tbody></table></div>
         </template>
       </section>
     </div>
@@ -56,7 +45,7 @@ import { useAuthStore } from '@/stores/auth'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import PriorityAccountBatch from '@/components/admin/operations/PriorityAccountBatch.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
-import { getPriorityConfig, savePriorityConfig, getPrioritySnapshot, defaultPriorityTeamsConfig, type PrioritySchedulingConfig, type PrioritySnapshot } from '@/api/admin/priorityScheduling'
+import { getPriorityConfig, savePriorityConfig, getPrioritySnapshot, type PrioritySchedulingConfig, type PrioritySnapshot } from '@/api/admin/priorityScheduling'
 const { t } = useI18n(), auth = useAuthStore()
 const draft = ref<PrioritySchedulingConfig | null>(null), snapshot = ref<PrioritySnapshot | null>(null)
 const groups = ref(''), modelsText = ref(''), error = ref(''), snapshotError = ref(''), notice = ref('')
@@ -77,7 +66,8 @@ async function load() {
   try {
     const config = await getPriorityConfig()
     if (!active(version)) return
-    draft.value = { ...config, teams: config.teams ?? defaultPriorityTeamsConfig() }; groups.value = (config.group_ids ?? []).join(', '); modelsText.value = (config.models ?? []).join('\n')
+    const { teams: _legacyTeams, ...currentConfig } = config as PrioritySchedulingConfig & { teams?: unknown }
+    draft.value = currentConfig; groups.value = (config.group_ids ?? []).join(', '); modelsText.value = (config.models ?? []).join('\n')
   } catch { if (active(version)) error.value = t('priorityScheduling.error') }
   finally { if (active(version)) loading.value = false }
 }
@@ -87,7 +77,7 @@ async function save() {
   if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) { error.value = t('priorityScheduling.invalid'); return }
   const version = generation; saving.value = true; error.value = ''; notice.value = ''
   try {
-    const config = await savePriorityConfig({ ...draft.value, teams: { ...draft.value.teams }, group_ids: [...new Set(ids)], models: [...new Set(modelsText.value.split('\n').map(v => v.trim()).filter(Boolean))] })
+    const config = await savePriorityConfig({ ...draft.value, group_ids: [...new Set(ids)], models: [...new Set(modelsText.value.split('\n').map(v => v.trim()).filter(Boolean))] })
     if (active(version)) { draft.value = config; notice.value = t('priorityScheduling.saved') }
   } catch { if (active(version)) error.value = t('priorityScheduling.error') }
   finally { if (active(version)) saving.value = false }

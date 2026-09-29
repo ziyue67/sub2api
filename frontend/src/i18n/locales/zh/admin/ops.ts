@@ -1,5 +1,13 @@
 export default {
     ops: {
+      balanceError: {
+        user: '用户余额不足',
+        userHint: '本站用户余额未达到请求要求。请充值该用户余额后重试。',
+        upstream: '上游账户余额不足',
+        upstreamHint: '上游服务报告账户余额不足。请管理员检查并充值或更换上游账户。',
+        unknown: '余额不足（来源未确认）',
+        unknownHint: '这条日志缺少足够的来源信息，请结合原始错误和上游响应确认余额归属。',
+      },
       title: '运维监控',
       description: '运维监控与排障',
       // Dashboard

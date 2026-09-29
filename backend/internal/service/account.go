@@ -2284,6 +2284,9 @@ func (a *Account) IsExcelBPSEnabled() bool {
 	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
 		return false
 	}
+	if strings.EqualFold(strings.TrimSpace(a.GetCredential("plan_type")), "free") {
+		return false
+	}
 	enabled, _ := a.Extra["openai_excel_bps"].(bool)
 	return enabled
 }
@@ -2379,6 +2382,17 @@ func (a *Account) IsExcelBPSEnabledForModel(requestedModel string) bool {
 		return false
 	}
 	return a.isExcelBPSUpstreamModelEnabled(a.GetMappedModel(requestedModel))
+}
+
+// IsExcelBPSImagesEnabledForModel routes image generation through BPS only
+// when the image model is listed explicitly. Legacy account-wide routing keeps
+// images on Codex so an upgrade does not silently change the image channel.
+func (a *Account) IsExcelBPSImagesEnabledForModel(requestedModel string) bool {
+	if !a.IsExcelBPSEnabled() || a.isExcelBPSAllModelsEnabled() {
+		return false
+	}
+	model := a.GetMappedModel(requestedModel)
+	return usesCodexDirectImages(model) && excelBPSImagesSupportedModel(model) && a.isExcelBPSUpstreamModelEnabled(model)
 }
 
 func (a *Account) isExcelBPSUpstreamModelEnabled(model string) bool {

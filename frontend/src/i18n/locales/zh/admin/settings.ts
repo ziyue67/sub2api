@@ -37,7 +37,7 @@ export default {
           bodyLimit: '请求体上限 (MiB)',
           budget: '共享资源预算 (MiB)',
           maxRequests: '最大在途请求数',
-          budgetHint: '共享预算至少为请求体上限的 8 倍. 实际预算取此值与在途上限 × 8 MiB 的较大值; 512 槽对应至少 4096 MiB 预算, 不等于实际内存占用. 默认在途 128、预算 1024 MiB, 范围 1–512, 保存后立即生效.',
+          budgetHint: '共享预算至少为请求体上限的 8 倍. 实际预算取此值与在途上限 × 8 MiB 的较大值; 512 槽对应至少 4096 MiB 预算, 不等于实际内存占用. 默认在途 128、预算 1024 MiB, 范围 1–{requests}，保存后立即生效。大请求还受 server.max_request_body_size、gateway.max_body_size 和反向代理限制；提高设置不会预分配资源，请按服务器内存与磁盘容量配置。',
           requestLimitsTitle: '请求接入限制',
           imageLimitsTitle: '图片转换与暂存限制',
           limitRange: '范围：1–{max}',
@@ -51,7 +51,7 @@ export default {
           retentionHint: '支持 PNG、JPEG、GIF 和 WebP，单张仍受 64 百万像素保护。图片数量和总大小统计整份请求中的内嵌图片（含历史消息、工具截图和重复项），大小按解码后计算。保存后新转换立即使用新限制；链接有效期从最后一次提交起算，已有链接在再次提交前保留原到期时间。降低暂存上限不会删除有效图片，占用超限时拒绝新增转换。链接持有者可在有效期内读取。',
           capacityHint: '请求接入限制覆盖 OpenAI/Composite 的 Responses、Chat 和 Messages HTTP 请求, 包括纯文本. 大请求可用并发更低; 超额返回 503, 不在内存中排队. 提高预算会增加内存压力.',
           invalidBaseUrl: '请填写有效的 HTTPS 访问地址, 不包含路径, 账号密码, 查询参数或片段.',
-          invalidCapacity: '请求体上限须为 1–128 MiB, 共享预算为 512–2048 MiB 且至少为请求体的 8 倍, 在途请求数为 1–512.',
+          invalidCapacity: '请求体上限须为 1–{bodyMiB} MiB，共享预算为 {minBudgetMiB}–{budgetMiB} MiB 且至少为请求体的 8 倍，在途请求数为 1–{requests}。',
         },
         channelMonitor: {
           title: '渠道监控',

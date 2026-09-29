@@ -1542,7 +1542,7 @@ export const accountsAPI = {
 
 export default accountsAPI
 
-export async function getManagementCapabilities(): Promise<{ web_search_enabled: boolean; account_quota_notify_enabled: boolean }> {
+export async function getManagementCapabilities(): Promise<{ web_search_enabled: boolean; account_quota_notify_enabled: boolean; concurrency_upgrade_enabled?: boolean }> {
   const { data } = await apiClient.get('/admin/accounts/management-capabilities')
   return data
 }

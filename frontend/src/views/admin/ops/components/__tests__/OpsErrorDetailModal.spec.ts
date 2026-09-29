@@ -94,3 +94,23 @@ it('loads only the owned observer error and never requests correlated admin deta
   expect(mocks.listRequestErrorUpstreamErrors).not.toHaveBeenCalled()
   wrapper.unmount()
 })
+
+it.each(['user', 'upstream'])('explains %s balance failures and preserves diagnostics', async source => {
+  vi.clearAllMocks()
+  mocks.listRequestErrorUpstreamErrors.mockResolvedValue({ items: [] })
+  mocks.getRequestErrorDetail.mockResolvedValue({
+    id: 1, status_code: 403, phase: 'request',
+    error_owner: source === 'user' ? 'client' : 'provider',
+    error_source: source === 'user' ? 'client_request' : 'upstream_http',
+    user_id: 7, account_id: source === 'upstream' ? 9 : null,
+    message: 'insufficient balance', error_body: '{"error":{"message":"insufficient balance"}}',
+  })
+  const wrapper = shallowMount(OpsErrorDetailModal, {
+    props: { show: true, errorId: 1, errorType: 'request' },
+    global: { stubs: { BaseDialog: { template: '<div><slot /></div>' }, Icon: true } },
+  })
+  await flushPromises()
+  expect(wrapper.get('[data-testid="balance-source"]').text()).toContain(`admin.ops.balanceError.${source}Hint`)
+  expect(wrapper.find('pre').text()).toContain('insufficient balance')
+  wrapper.unmount()
+})
