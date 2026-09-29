@@ -51,7 +51,6 @@ function makeAccount(overrides: Partial<Account>): Account {
 }
 
 describe('AccountStatusIndicator', () => {
-
   it('shows the RPM pause reason and clears it when refreshed after reset', async () => {
     const account = makeAccount({ platform: 'openai', base_rpm: 10, current_rpm: 10, rpm_paused: true, rpm_reset_at: 1_900_000_020 })
     const wrapper = mount(AccountStatusIndicator, { props: { account }, global: { stubs: { Icon: true } } })
@@ -60,7 +59,8 @@ describe('AccountStatusIndicator', () => {
     await wrapper.setProps({ account: { ...account, current_rpm: 0, rpm_paused: false, rpm_reset_at: undefined } })
     expect(wrapper.text()).not.toContain('admin.accounts.status.rpmPaused')
   })
-  it('Claude 5 模型限流时显示 Opus 和 Sonnet 的短别名', () => {
+
+  it('Claude 5 系列模型限流时显示 Opus 和 Sonnet 的短别名', () => {
     const wrapper = mount(AccountStatusIndicator, {
       props: {
         account: makeAccount({
@@ -73,6 +73,10 @@ describe('AccountStatusIndicator', () => {
               'claude-sonnet-5': {
                 rate_limited_at: '2026-07-28T00:00:00Z',
                 rate_limit_reset_at: '2099-07-28T00:00:00Z'
+              },
+              'claude-sonnet-5-5': {
+                rate_limited_at: '2026-09-28T00:00:00Z',
+                rate_limit_reset_at: '2099-09-28T00:00:00Z'
               }
             }
           }
@@ -87,6 +91,7 @@ describe('AccountStatusIndicator', () => {
 
     expect(wrapper.text()).toContain('COpus5')
     expect(wrapper.text()).toContain('CSon5')
+    expect(wrapper.text()).toContain('CSon55')
     expect(wrapper.text()).not.toContain('claude-sonnet-5')
   })
 

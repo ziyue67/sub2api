@@ -20,6 +20,7 @@ import (
 )
 
 type openAIWSPassthroughHandlerHarness struct {
+	handler        *OpenAIGatewayHandler
 	clientConn     *coderws.Conn
 	handlerDone    <-chan struct{}
 	wsURL          string
@@ -28,8 +29,17 @@ type openAIWSPassthroughHandlerHarness struct {
 	apiKey         *service.APIKey
 }
 
-func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string) *openAIWSPassthroughHandlerHarness {
-	return newOpenAIWSPassthroughHandlerHarnessWithOptions(t, upstreamURL, http.Header{"Session_id": []string{"ws-test-session"}}, nil)
+// 上游变参形式：newOpenAIWSPassthroughHandlerHarness(t, url, overrides...)。
+// 本 Fork 另需自定义客户端请求头，故保留 WithOptions 实现并让变参壳委托给它。
+func newOpenAIWSPassthroughHandlerHarness(t *testing.T, upstreamURL string, overrides ...map[string]string) *openAIWSPassthroughHandlerHarness {
+	t.Helper()
+	extraSettings := map[string]string{}
+	for _, override := range overrides {
+		for key, value := range override {
+			extraSettings[key] = value
+		}
+	}
+	return newOpenAIWSPassthroughHandlerHarnessWithOptions(t, upstreamURL, http.Header{"Session_id": []string{"ws-test-session"}}, extraSettings)
 }
 
 func newOpenAIWSPassthroughHandlerHarnessWithOptions(t *testing.T, upstreamURL string, clientHeaders http.Header, extraSettings map[string]string) *openAIWSPassthroughHandlerHarness {
@@ -101,6 +111,7 @@ func newOpenAIWSPassthroughHandlerHarnessWithOptions(t *testing.T, upstreamURL s
 
 	apiKey := &service.APIKey{
 		ID:      1851,
+		UserID:  1751,
 		Name:    "ws-cyber-key",
 		Key:     "sk-handler-cyber-test",
 		GroupID: &groupID,
@@ -128,6 +139,7 @@ func newOpenAIWSPassthroughHandlerHarnessWithOptions(t *testing.T, upstreamURL s
 	t.Cleanup(func() { _ = clientConn.CloseNow() })
 
 	return &openAIWSPassthroughHandlerHarness{
+		handler:        h,
 		clientConn:     clientConn,
 		handlerDone:    handlerDone,
 		wsURL:          wsURL,
