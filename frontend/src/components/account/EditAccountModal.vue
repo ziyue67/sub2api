@@ -3312,7 +3312,7 @@
 <script setup lang="ts">
 import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier, readAccountCostMultiplier } from '@/utils/accountCost'
 
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ExcelBPSModeSwitches from './ExcelBPSModeSwitches.vue'
 import type { ExcelBPSMode } from '@/utils/excelBPSDefaults'
