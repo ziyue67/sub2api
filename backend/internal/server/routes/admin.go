@@ -38,6 +38,10 @@ func RegisterAdminRoutes(
 	admin.Use(h.Admin.Account.AuthorizeObserver)
 	admin.Use(middleware.AdminComplianceGuard(settingService))
 	{
+		// Optional region-to-Pod routing, configured inside Gateway settings.
+		admin.GET("/serverless", h.Admin.Setting.GetServerless)
+		admin.PUT("/serverless", h.Admin.Setting.SaveServerless)
+		admin.POST("/serverless/pods/:id/probe", h.Admin.Setting.ProbeServerless)
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)
 
@@ -495,6 +499,7 @@ func registerOpenAIOAuthReauthWorkerRoutes(v1 *gin.RouterGroup, h *handler.Handl
 	worker := v1.Group("/internal/openai-reauth")
 	{
 		worker.POST("/claim", h.Admin.OpenAIOAuthReauth.Claim)
+		worker.POST("/runtime-settings", h.Admin.OpenAIOAuthReauth.RuntimeSettings)
 		worker.POST("/:task_id/progress", h.Admin.OpenAIOAuthReauth.Progress)
 		worker.POST("/:task_id/callback", h.Admin.OpenAIOAuthReauth.Callback)
 		worker.POST("/:task_id/credentials", h.Admin.OpenAIOAuthReauth.Credentials)
@@ -835,6 +840,8 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.POST("/account-ops/token-guard-v2/encryption/initialize", h.Admin.AccountTokenGuard.InitializeCredentialEncryption)
 	admin.GET("/account-ops/token-guard-v2/accounts", h.Admin.AccountTokenGuardV2.List)
 	admin.PUT("/account-ops/token-guard-v2/rules", h.Admin.AccountTokenGuardV2.SaveRules)
+	admin.PUT("/account-ops/token-guard-v2/runtime", h.Admin.AccountTokenGuardV2.SaveRuntime)
+	admin.PATCH("/account-ops/token-guard-v2/accounts/:id/switches", h.Admin.AccountTokenGuardV2.UpdateSwitches)
 	admin.POST("/account-ops/token-guard-v2/accounts", h.Admin.AccountTokenGuardV2.Create)
 	admin.PUT("/account-ops/token-guard-v2/accounts/:id", h.Admin.AccountTokenGuardV2.Update)
 	admin.DELETE("/account-ops/token-guard-v2/accounts/:id", h.Admin.AccountTokenGuardV2.Delete)

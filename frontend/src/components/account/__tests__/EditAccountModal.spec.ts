@@ -332,6 +332,15 @@ function mountModal(account = buildAccount(), renderGroupSelector = false) {
 }
 
 describe('EditAccountModal', () => {
+  it('round-trips OAuth alias scope and lets an operator restore a whitelist', async () => {
+    const account = { ...buildAccount(), type: 'oauth', credentials: { model_mapping_mode: 'aliases', model_mapping: { 'gpt-5.4': 'gpt-5.6-sol' } } }
+    const wrapper = mountModal(account); await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-testid="openai-model-aliases"]').element.checked).toBe(true)
+    await wrapper.get('[data-testid="openai-model-aliases"]').setValue(false)
+    await wrapper.get('#edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(updateAccountMock).toHaveBeenCalledWith(1, expect.objectContaining({ credentials: expect.objectContaining({ model_mapping_mode: 'whitelist', model_mapping: { 'gpt-5.4': 'gpt-5.6-sol' } }) }))
+    wrapper.unmount()
+  })
   it('defaults WS SSE acceleration off and persists the OAuth opt-in across edits', async () => {
     const account = buildOpenAIOAuthParentAccount()
     account.extra = { unrelated: 'preserve' }
@@ -646,7 +655,7 @@ describe('EditAccountModal', () => {
     const options = {
       openai_excel_bps_403_recovery_interval_minutes: 360,
       openai_excel_bps_models: ['gpt-6-astra'], openai_excel_bps_mihomo: true,
-      openai_excel_bps_proxy_source: 'ip_pool', openai_excel_bps_ignore_images: true,
+      openai_excel_bps_proxy_source: 'ip_pool',
       openai_excel_bps_ignore_encrypted_content: true, openai_excel_bps_cache_creation_as_input: true,
       openai_excel_bps_auto_move_on_403: true, openai_excel_bps_403_target_group_id: 0
     }

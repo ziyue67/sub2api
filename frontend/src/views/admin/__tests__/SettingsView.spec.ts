@@ -1,7 +1,7 @@
 import { excelBPSImageLimits } from "@/utils/excelBPSImageLimits";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { defineComponent, h } from "vue";
-import { flushPromises, mount } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defineComponent, h, reactive } from "vue";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 
 import enCommon from "@/i18n/locales/en/common";
 import enSettings from "@/i18n/locales/en/admin/settings";
@@ -9,6 +9,20 @@ import zhCommon from "@/i18n/locales/zh/common";
 import zhSettings from "@/i18n/locales/zh/admin/settings";
 import SettingsView from "../SettingsView.vue";
 import { apiClient } from "@/api/client";
+
+enableAutoUnmount(afterEach);
+
+const settingsRoute = reactive({ query: {} as Record<string, unknown>, hash: '' });
+vi.mock('vue-router', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-router')>(),
+  useRoute: () => settingsRoute,
+  useRouter: () => ({ replace: vi.fn(async (location) => Object.assign(settingsRoute, location)) }),
+}));
+beforeEach(() => {
+  settingsRoute.query = {};
+  settingsRoute.hash = '';
+  Element.prototype.scrollIntoView = vi.fn();
+});
 
 const {
   getSettings,
@@ -401,8 +415,8 @@ const baseSettingsResponse = {
   doc_url: "",
   home_content: "",
   compact_home_enabled: false,
-  excel_bps_image_mode: 'relay',
-  excel_bps_image_relay_enabled: false,
+  excel_bps_image_mode: 'native',
+  excel_bps_image_relay_enabled: true,
   excel_bps_image_base_url: '',
   excel_bps_image_max_image_mib: 20,
   excel_bps_image_max_images: 20,
@@ -746,6 +760,40 @@ describe("admin SettingsView payment visible method controls", () => {
     adminSettingsFetch.mockResolvedValue(undefined);
   });
 
+  it("opens the risk settings from a deep link after loading without changing switches", async () => {
+    settingsRoute.query = { tab: 'features' };
+    settingsRoute.hash = '#settings-section-features-risk-control';
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, risk_control_enabled: false, cyber_session_block_enabled: false });
+    const wrapper = mountView();
+    document.body.appendChild(wrapper.element);
+    await flushPromises();
+    expect(wrapper.get('#settings-tab-features').attributes('aria-selected')).toBe('true');
+    const heading = wrapper.get('#settings-section-features-risk-control');
+    expect(heading.isVisible()).toBe(true);
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    const vm = wrapper.vm as unknown as { form: { risk_control_enabled: boolean; cyber_session_block_enabled: boolean } };
+    expect(vm.form.risk_control_enabled).toBe(false);
+    expect(vm.form.cyber_session_block_enabled).toBe(false);
+    expect(updateSettings).not.toHaveBeenCalled();
+
+    await wrapper.get('#settings-tab-general').trigger('click');
+    await flushPromises();
+    expect(settingsRoute.hash).toBe('');
+    settingsRoute.query = { tab: 'features' };
+    settingsRoute.hash = '#settings-section-features-risk-control';
+    await flushPromises();
+    expect(heading.isVisible()).toBe(true);
+    expect(document.activeElement).toBe(heading.element);
+
+    settingsRoute.query = { tab: 'invalid' };
+    settingsRoute.hash = '#unknown';
+    await flushPromises();
+    expect(wrapper.get('#settings-tab-general').attributes('aria-selected')).toBe('true');
+    expect(updateSettings).not.toHaveBeenCalled();
+    wrapper.unmount();
+    document.body.innerHTML = '';
+  });
+
   it("points to Smart Ops for the Pelican showcase and never saves its settings", async () => {
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,
@@ -768,6 +816,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("saves expanded image capacity and rejects values above each ceiling", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay' });
     const wrapper = mountView();
     await flushPromises();
     await wrapper.get('#excel-bps-image-enabled').setValue(true);
@@ -809,6 +858,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("saves Excel BPS image relay from the feature switches tab", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay', excel_bps_image_relay_enabled: false });
     const wrapper = mountView();
     await flushPromises();
     const tab = wrapper.findAll('button').find((node) => node.text().includes('admin.settings.tabs.features'));
@@ -850,11 +900,15 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
-  it("saves native image uploads without a public origin and reloads the mode", async () => {
+  it("defaults to native image uploads without a public origin and reloads the mode", async () => {
+    const settings: Partial<typeof baseSettingsResponse> = { ...baseSettingsResponse };
+    delete settings.excel_bps_image_mode;
+    delete settings.excel_bps_image_relay_enabled;
+    getSettings.mockResolvedValueOnce(settings);
     const wrapper = mountView();
     await flushPromises();
-    await wrapper.get('#excel-bps-image-enabled').setValue(true);
-    await wrapper.get('#excel-bps-image-mode').setValue('native');
+    expect((wrapper.get('#excel-bps-image-enabled').element as HTMLInputElement).checked).toBe(true);
+    expect((wrapper.get('#excel-bps-image-mode').element as HTMLSelectElement).value).toBe('native');
     expect(wrapper.find('#excel-bps-image-base-url').exists()).toBe(false);
     expect(wrapper.find('#excel-bps-image-max-images').exists()).toBe(true);
     expect(wrapper.find('#excel-bps-image-storage-mib').exists()).toBe(false);
@@ -872,6 +926,18 @@ describe("admin SettingsView payment visible method controls", () => {
     await loaded.get('#excel-bps-image-mode').setValue('relay');
     expect(loaded.find('#excel-bps-image-max-images').exists()).toBe(true);
     loaded.unmount();
+  });
+
+  it("preserves explicitly disabled BPS image support", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_relay_enabled: false });
+    const wrapper = mountView();
+    await flushPromises();
+    expect((wrapper.get('#excel-bps-image-enabled').element as HTMLInputElement).checked).toBe(false);
+    expect(wrapper.find('#excel-bps-image-mode').exists()).toBe(false);
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0]).toMatchObject({ excel_bps_image_relay_enabled: false });
+    wrapper.unmount();
   });
 
   it("defaults the image policy off and saves auto compaction", async () => {
@@ -916,7 +982,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("loads saved Excel BPS image settings and preserves the address when disabled", async () => {
-    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_relay_enabled: true, excel_bps_image_base_url: 'https://saved.example', excel_bps_image_body_limit_mib: 24, excel_bps_image_budget_mib: 896, excel_bps_image_max_requests: 40 });
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay', excel_bps_image_relay_enabled: true, excel_bps_image_base_url: 'https://saved.example', excel_bps_image_body_limit_mib: 24, excel_bps_image_budget_mib: 896, excel_bps_image_max_requests: 40 });
     const wrapper = mountView();
     await flushPromises();
     expect((wrapper.get('#excel-bps-image-base-url').element as HTMLInputElement).value).toBe('https://saved.example');
@@ -931,7 +997,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("rejects inconsistent image limits and preserves saved limits when disabling", async () => {
-    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_relay_enabled: true, excel_bps_image_base_url: 'https://images.example', excel_bps_image_max_images: 100, excel_bps_image_ttl_minutes: 60 });
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay', excel_bps_image_relay_enabled: true, excel_bps_image_base_url: 'https://images.example', excel_bps_image_max_images: 100, excel_bps_image_ttl_minutes: 60 });
     const wrapper = mountView();
     await flushPromises();
     expect((wrapper.get('#excel-bps-image-max-images').element as HTMLInputElement).value).toBe('100');
@@ -954,6 +1020,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("rejects missing or unsafe Excel BPS image origins before saving", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay' });
     const wrapper = mountView();
     await flushPromises();
     await wrapper.get('#excel-bps-image-enabled').setValue(true);
@@ -968,6 +1035,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("rejects out-of-range image relay capacity before saving", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay' });
     const wrapper = mountView();
     await flushPromises();
     await wrapper.get('#excel-bps-image-enabled').setValue(true);
@@ -2100,8 +2168,10 @@ describe("admin SettingsView payment visible method controls", () => {
         },
       },
       setup(props) {
-        receivedProviders = props.providers as Array<Record<string, unknown>>;
-        return () => h("div", { class: "provider-list-capture" });
+        return () => {
+          receivedProviders = props.providers as Array<Record<string, unknown>>;
+          return h("div", { class: "provider-list-capture" });
+        };
       },
     });
 

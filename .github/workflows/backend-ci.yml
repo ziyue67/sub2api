@@ -86,3 +86,17 @@ jobs:
           # Skip `golangci-lint config verify`: it fetches the JSON schema from
           # golangci-lint.run at runtime and flakes on network timeouts.
           verify: false
+
+  # 发布工具链与升级脚本校验（来自 ranxi/production）。
+  release-helpers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r .github/release-tools/requirements-release.txt
+      - run: python -m unittest discover -s .github/release-tools -p 'test_release_matrix.py'
+      - run: bash -n .github/release-tools/release-images.sh
+      - run: bash -n deploy/upgrade-k3s.sh
+      - run: python -m unittest discover -s deploy/tests -p 'test_upgrade_k3s.py'

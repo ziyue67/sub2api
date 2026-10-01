@@ -19,7 +19,34 @@
       <p v-if="error && !editorOpen" role="alert" class="error-banner">{{ error }}</p>
       <p v-if="notice" role="status" class="success-banner">{{ notice }}</p>
 
-      <CredentialEncryptionSetup class="mb-5" @ready="encryptionReady = $event" />
+      <CredentialEncryptionSetup class="mb-5" @ready="encryptionReady = $event">
+        <div class="mt-4 border-t border-gray-200 pt-4 dark:border-dark-600" data-testid="credential-runtime-controls" :aria-busy="runtimeSaving">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <label class="field-label">{{ t('tokenGuardV2.reloginEngine') }}
+              <select id="token-guard-v2-engine" :value="runtimeDraft.engine" class="input w-full" :disabled="runtimeSaving || loading || !runtimeLoaded" @change="changeRuntime('engine', $event)">
+                <option v-if="!runtimeDraft.engine" value="" disabled>{{ t('tokenGuardV2.legacyEngine') }}</option>
+                <option value="local_worker">{{ t('tokenGuardV2.localWorkerEngine') }}</option>
+                <option value="session_studio">{{ t('tokenGuardV2.sessionStudioEngine') }}</option>
+              </select>
+            </label>
+            <label class="field-label">{{ t('tokenGuardV2.workerConcurrency') }}
+              <select id="token-guard-v2-concurrency" :value="runtimeDraft.worker_concurrency" class="input w-full" :disabled="runtimeSaving || loading || !runtimeLoaded" @change="changeRuntime('worker_concurrency', $event)">
+                <option v-for="count in 16" :key="count" :value="count">{{ count }}</option>
+              </select>
+            </label>
+          </div>
+          <p class="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t(runtimeDraft.engine === 'session_studio' ? 'tokenGuardV2.sessionStudioGlobalHint' : runtimeDraft.engine === 'local_worker' ? 'tokenGuardV2.localWorkerEngineHint' : 'tokenGuardV2.legacyEngineHint') }}</p>
+          <p class="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ t('tokenGuardV2.workerConcurrencyHint') }}</p>
+          <p v-if="runtimeSaving" role="status" class="mt-2 text-xs">{{ t('tokenGuardV2.saving') }}</p>
+        </div>
+      </CredentialEncryptionSetup>
+
+      <section v-if="status.worker" class="mb-5 rounded-xl border border-gray-200 p-4 dark:border-gray-700" data-testid="reauth-runtime-status" role="status">
+        <strong>{{ t('tokenGuardV2.runtimeTitle') }}</strong>
+        <p>{{ t(`tokenGuardV2.runtimeStates.${runtimeState}`) }}</p>
+        <p v-if="runtimeReason">{{ t(`tokenGuardV2.runtimeReasons.${runtimeReason}`) }}</p>
+        <small>{{ t(status.worker.mode === 'external' ? 'tokenGuardV2.runtimeExternal' : 'tokenGuardV2.runtimeManaged') }}</small>
+      </section>
 
       <section class="summary-grid">
         <article class="summary-card"><span>{{ t('tokenGuardV2.monitored') }}</span><strong>{{ accounts.length }}</strong><small>{{ t('tokenGuardV2.intervalHint', { minutes: Math.round(status.probe_interval_seconds / 60) }) }}</small></article>
@@ -52,6 +79,7 @@
                 <th>{{ t('tokenGuardV2.account') }}</th>
                 <th>{{ t('tokenGuardV2.loginMode') }}</th>
                 <th>{{ t('tokenGuardV2.configuration') }}</th>
+                <th>{{ t('tokenGuardV2.automation') }}</th>
                 <th>{{ t('tokenGuardV2.inspection') }}</th>
                 <th>{{ t('tokenGuardV2.failureStreak') }}</th>
                 <th>{{ t('tokenGuardV2.lastInspection') }}</th>
@@ -64,6 +92,12 @@
                 <td><strong>{{ item.account_name || `#${item.account_id}` }}</strong><small>#{{ item.account_id }} · {{ item.account_status }}</small></td>
                 <td>{{ modeLabel(item.login_config?.credential_mode) }}<small>{{ item.login_config?.login_email || '-' }}</small></td>
                 <td><span class="badge" :class="item.login_config?.configured ? 'ok' : 'danger'">{{ item.login_config?.configured ? t('tokenGuardV2.configured') : t('tokenGuardV2.incomplete') }}</span><small>{{ configurationDetail(item) }}</small></td>
+                <td>
+                  <div class="flex flex-col gap-2">
+                    <label class="inline-flex items-center gap-2" :title="t('tokenGuardV2.autoInspectHint')"><input type="checkbox" role="switch" class="automation-switch" :checked="item.enabled" :aria-label="t('tokenGuardV2.autoInspect')" :data-testid="'auto-inspect-' + item.account_id" :disabled="busyId !== 0 || loading" @change="toggleSwitch(item, 'enabled', $event)" />{{ t('tokenGuardV2.autoInspect') }}</label>
+                    <label class="inline-flex items-center gap-2" :title="t('tokenGuardV2.autoReloginHint')"><input type="checkbox" role="switch" class="automation-switch" :checked="item.auto_relogin_enabled" :aria-label="t('tokenGuardV2.autoRelogin')" :data-testid="'auto-relogin-' + item.account_id" :disabled="busyId !== 0 || loading" @change="toggleSwitch(item, 'auto_relogin_enabled', $event)" />{{ t('tokenGuardV2.autoRelogin') }}</label>
+                  </div>
+                </td>
                 <td><span class="badge" :class="probeClass(item.probe_state)">{{ t(`tokenGuardV2.probeStates.${item.probe_state || 'pending'}`) }}</span><small>{{ item.blocked_reason || item.probe_detail || '-' }}</small></td>
                 <td class="tabular-nums">{{ item.fail_streak }}</td>
                 <td>{{ date(item.last_probe_at) }}<small v-if="item.enabled">{{ t('tokenGuardV2.next') }} {{ date(item.next_probe_at) }}</small><small v-else>{{ t('tokenGuardV2.paused') }}</small></td>
@@ -73,7 +107,6 @@
                     <button class="link-btn" @click="openEdit(item)">{{ t('tokenGuardV2.edit') }}</button>
                     <button class="link-btn" :disabled="busyId === item.account_id" @click="probe(item)">{{ t('tokenGuardV2.inspectNow') }}</button>
                     <button class="link-btn" :disabled="busyId === item.account_id" @click="relogin(item)">{{ t('tokenGuardV2.reloginNow') }}</button>
-                    <button class="link-btn" :disabled="busyId === item.account_id" @click="toggle(item)">{{ item.enabled ? t('tokenGuardV2.pause') : t('tokenGuardV2.resume') }}</button>
                     <button class="link-btn danger-text" :disabled="busyId === item.account_id" @click="remove(item)">{{ t('tokenGuardV2.remove') }}</button>
                   </div>
                 </td>
@@ -145,7 +178,7 @@
           <div v-else class="selected-account"><span>{{ t('tokenGuardV2.account') }}</span><strong>{{ editing.account_name }} (#{{ editing.account_id }})</strong></div>
           <label class="field-label">{{ t('tokenGuardV2.loginEmail') }}<input v-model.trim="draft.login_email" class="input w-full" type="email" required /></label>
           <label class="field-label">{{ t('tokenGuardV2.loginProxy') }}
-            <select id="token-guard-v2-proxy" v-model="proxyChoice" class="input w-full">
+            <select id="token-guard-v2-proxy" v-model="proxyChoice" :disabled="editorEngine === 'session_studio'" class="input w-full">
               <option value="account">{{ t('tokenGuardV2.accountProxyDefault') }}</option>
               <option value="mihomo">{{ t('tokenGuardV2.mihomoManagedPool') }}</option>
               <option v-for="proxy in proxies" :key="proxy.id" :value="`proxy:${proxy.id}`">{{ proxyOptionLabel(proxy) }}</option>
@@ -157,7 +190,6 @@
             <label class="mode-option"><input v-model="draft.credential_mode" type="radio" value="password_totp" /><span><strong>{{ t('tokenGuardV2.passwordMode') }}</strong><small>{{ t('tokenGuardV2.passwordModeHint') }}</small></span></label>
             <label class="mode-option"><input v-model="draft.credential_mode" type="radio" value="email_otp_url" /><span><strong>{{ t('tokenGuardV2.mailboxMode') }}</strong><small>{{ t('tokenGuardV2.mailboxModeHint') }}</small></span></label>
           </fieldset>
-
           <template v-if="draft.credential_mode === 'password_totp'">
             <label class="field-label">{{ t('tokenGuardV2.password') }}<input v-model="draft.password" class="input w-full" type="password" :placeholder="editing?.login_config?.password_configured ? t('tokenGuardV2.keepSecret') : ''" :required="!editing?.login_config?.password_configured" autocomplete="new-password" /></label>
             <label class="field-label">{{ t('tokenGuardV2.totpSecret') }}<input v-model.trim="draft.totp_secret" class="input w-full" type="password" :placeholder="editing?.login_config?.totp_configured ? t('tokenGuardV2.keepSecret') : t('tokenGuardV2.totpOptionalHint')" autocomplete="off" /></label>
@@ -165,10 +197,7 @@
           </template>
           <label v-else class="field-label">{{ t('tokenGuardV2.otpUrl') }}<input v-model.trim="draft.otp_url" class="input w-full" type="url" :placeholder="editing?.login_config?.otp_url_masked ? `${editing.login_config.otp_url_masked} · ${t('tokenGuardV2.keepSecret')}` : 'https://mail.example.com/latest'" :required="editing?.login_config?.credential_mode !== 'email_otp_url' || !editing?.login_config?.otp_url_masked" /></label>
 
-          <div class="toggle-grid">
-            <label class="toggle-row"><input v-model="draft.enabled" type="checkbox" /><span><strong>{{ t('tokenGuardV2.autoInspect') }}</strong><small>{{ t('tokenGuardV2.autoInspectHint') }}</small></span></label>
-            <label class="toggle-row"><input v-model="draft.auto_relogin_enabled" type="checkbox" /><span><strong>{{ t('tokenGuardV2.autoRelogin') }}</strong><small>{{ t('tokenGuardV2.autoReloginHint') }}</small></span></label>
-          </div>
+
         </form>
         <template #footer>
           <button type="button" class="btn btn-secondary" :disabled="saving" @click="closeEditor">{{ t('tokenGuardV2.cancel') }}</button>
@@ -199,10 +228,14 @@ import {
   probeTokenGuardV2Account,
   reloginTokenGuardV2Account,
   saveTokenGuardV2Rules,
+  saveTokenGuardV2Runtime,
+  updateTokenGuardV2Switches,
+  type TokenGuardV2RuntimeSettings,
   updateTokenGuardV2Account,
   type SaveTokenGuardV2Account,
   type TokenGuardV2Account,
   type TokenGuardV2CredentialMode,
+  type TokenGuardV2Engine,
   type TokenGuardV2ProxySource,
   type TokenGuardV2Rules,
   type TokenGuardV2Status,
@@ -231,6 +264,9 @@ const accountFilter = ref<'all' | 'healthy' | 'attention' | 'paused'>('all')
 const searchQuery = ref('')
 const accountPage = ref(1)
 const accountPageSize = ref(20)
+const runtimeDraft = reactive<TokenGuardV2RuntimeSettings>({ engine: '', worker_concurrency: 3 })
+const runtimeSaving = ref(false)
+const runtimeLoaded = ref(false)
 const rulesSaving = ref(false)
 const rulesDirty = ref(false)
 const error = ref(''), notice = ref('')
@@ -245,9 +281,7 @@ const blankDraft = (): SaveTokenGuardV2Account => ({
   password: '',
   totp_secret: '',
   otp_url: '',
-  clear_totp: false,
-  enabled: true,
-  auto_relogin_enabled: true
+  clear_totp: false
 })
 const draft = reactive<SaveTokenGuardV2Account>(blankDraft())
 const rulesDraft = reactive({
@@ -269,6 +303,14 @@ const accountGroupNames = (account: AccountListItem) => groups.value
   .filter(group => account.group_ids?.includes(group.id))
   .map(group => group.name)
   .join(' ')
+const runtimeReason = computed(() => {
+  const reason = status.worker?.reason || ''
+  return ['unsupported_platform', 'release_required', 'runtime_install_failed', 'worker_start_failed', 'worker_exited', 'external_not_configured', 'external_offline', 'api_unreachable'].includes(reason) ? reason : ''
+})
+const runtimeState = computed(() => {
+  const state = status.worker?.state || 'idle'
+  return ['idle', 'preparing', 'running', 'unavailable', 'stopped'].includes(state) ? state : 'unavailable'
+})
 const accounts = computed(() => status.accounts)
 const enabledCount = computed(() => accounts.value.filter(item => item.enabled).length)
 const healthyCount = computed(() => accounts.value.filter(item => item.probe_state === 'ok').length)
@@ -324,6 +366,9 @@ const selectableAccounts = computed(() => {
 const message = (value: unknown) => (value as { message?: string })?.message || t('tokenGuardV2.error')
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '-'
 const modeLabel = (mode?: TokenGuardV2CredentialMode) => !mode ? '-' : mode === 'password_totp' ? t('tokenGuardV2.passwordMode') : t('tokenGuardV2.mailboxMode')
+const engineLabel = (engine?: TokenGuardV2Engine) => engine === 'session_studio' ? t('tokenGuardV2.sessionStudioEngine') : t('tokenGuardV2.localWorkerEngine')
+const effectiveEngine = (config?: TokenGuardV2Account['login_config']) => config?.credential_mode === 'email_otp_url' ? 'local_worker' : runtimeDraft.engine || config?.engine || 'local_worker'
+const editorEngine = computed(() => draft.credential_mode === 'email_otp_url' ? 'local_worker' : runtimeDraft.engine || editing.value?.login_config?.engine || 'local_worker')
 const proxyChoice = computed({
   get: () => draft.proxy_source === 'managed_proxy' && draft.proxy_id ? `proxy:${draft.proxy_id}` : draft.proxy_source,
   set: (value: string) => {
@@ -351,7 +396,8 @@ const configurationDetail = (item: TokenGuardV2Account) => {
   const credentials = config.credential_mode === 'email_otp_url'
     ? config.otp_url_masked || '-'
     : [config.password_configured ? t('tokenGuardV2.passwordSaved') : '', config.totp_configured ? t('tokenGuardV2.totpSaved') : ''].filter(Boolean).join(' · ') || '-'
-  return `${credentials} · ${t('tokenGuardV2.loginProxy')}: ${proxyLabel(config.proxy_source, config.proxy_id)}`
+  if (effectiveEngine(config) === 'session_studio') return `${credentials} · ${engineLabel(effectiveEngine(config))} · ${t('tokenGuardV2.remoteEngineEgress')}`
+  return `${credentials} · ${engineLabel(effectiveEngine(config))} · ${t('tokenGuardV2.loginProxy')}: ${proxyLabel(config.proxy_source, config.proxy_id)}`
 }
 
 function resetDraft() { Object.assign(draft, blankDraft()) }
@@ -374,16 +420,14 @@ function openEdit(item: TokenGuardV2Account) {
     login_email: item.login_config?.login_email || '',
     credential_mode: item.login_config?.credential_mode || 'password_totp',
     proxy_source: item.login_config?.proxy_source || (item.login_config?.proxy_id ? 'managed_proxy' : 'account'),
-    proxy_id: item.login_config?.proxy_id ?? null,
-    enabled: item.enabled,
-    auto_relogin_enabled: item.auto_relogin_enabled
+    proxy_id: item.login_config?.proxy_id ?? null
   })
   editorOpen.value = true
 }
 function closeEditor() { if (!saving.value) editorOpen.value = false }
 
 async function load(silent = false) {
-  if (loading.value) return
+  if (loading.value || runtimeSaving.value || busyId.value) return
   loading.value = true
   if (!silent) error.value = ''
   try {
@@ -394,6 +438,10 @@ async function load(silent = false) {
       listGroups('openai')
     ])
     Object.assign(status, guard)
+    if (guard.runtime_settings && !runtimeSaving.value) {
+      Object.assign(runtimeDraft, guard.runtime_settings)
+      runtimeLoaded.value = true
+    }
     if (!rulesDirty.value) syncRulesDraft(guard)
     candidates.value = accountPage.items.filter(item => !item.parent_account_id)
     proxies.value = managedProxies
@@ -459,18 +507,43 @@ async function act(item: TokenGuardV2Account, action: () => Promise<unknown>, su
 
 const probe = (item: TokenGuardV2Account) => act(item, () => probeTokenGuardV2Account(item.account_id), 'tokenGuardV2.inspectionQueued')
 const relogin = (item: TokenGuardV2Account) => act(item, () => reloginTokenGuardV2Account(item.account_id), 'tokenGuardV2.reloginQueued')
-const toggle = (item: TokenGuardV2Account) => act(item, () => updateTokenGuardV2Account(item.account_id, {
-  login_email: item.login_config?.login_email || '',
-  credential_mode: item.login_config?.credential_mode || 'password_totp',
-  proxy_source: item.login_config?.proxy_source || (item.login_config?.proxy_id ? 'managed_proxy' : 'account'),
-  proxy_id: item.login_config?.proxy_id ?? null,
-  enabled: !item.enabled,
-  auto_relogin_enabled: item.auto_relogin_enabled
-}), item.enabled ? 'tokenGuardV2.pausedNotice' : 'tokenGuardV2.resumedNotice')
+async function toggleSwitch(item: TokenGuardV2Account, field: 'enabled' | 'auto_relogin_enabled', event: Event) {
+  const input = event.target as HTMLInputElement
+  if (busyId.value) { input.checked = item[field]; return }
+  busyId.value = item.account_id; error.value = ''; notice.value = ''
+  try {
+    const saved = await updateTokenGuardV2Switches(item.account_id, { [field]: !item[field] })
+    Object.assign(item, saved)
+    notice.value = t('tokenGuardV2.switchSaved')
+  } catch (value) {
+    error.value = message(value)
+  } finally {
+    input.checked = item[field]
+    busyId.value = 0
+  }
+}
+
+async function changeRuntime(field: keyof TokenGuardV2RuntimeSettings, event: Event) {
+  const select = event.target as HTMLSelectElement
+  if (runtimeSaving.value || !runtimeLoaded.value) return
+  const input = { ...runtimeDraft, [field]: field === 'worker_concurrency' ? Number(select.value) : select.value }
+  runtimeSaving.value = true; error.value = ''; notice.value = ''
+  try {
+    Object.assign(runtimeDraft, await saveTokenGuardV2Runtime(input))
+    notice.value = t('tokenGuardV2.runtimeSaved')
+  } catch (value) {
+    error.value = message(value)
+  } finally {
+    select.value = String(runtimeDraft[field])
+    runtimeSaving.value = false
+  }
+}
+
 const remove = async (item: TokenGuardV2Account) => {
   if (!window.confirm(t('tokenGuardV2.removeConfirm', { account: item.account_name }))) return
   await act(item, () => deleteTokenGuardV2Account(item.account_id), 'tokenGuardV2.removedNotice')
 }
+
 
 watch([accountFilter, searchQuery], () => { accountPage.value = 1 })
 watch(() => filteredAccounts.value.length, (total) => {
@@ -561,7 +634,9 @@ tbody tr:hover { @apply bg-gray-50/70 dark:bg-dark-800/50; }
 .mode-option input,.toggle-row input,.check-row input { @apply mt-1 rounded text-primary-600; }
 .mode-option strong,.toggle-row strong { @apply block text-sm font-medium; }
 .mode-option small,.toggle-row small { @apply mt-1 block text-xs leading-5 text-gray-400; }
-.toggle-grid { @apply grid gap-3 sm:grid-cols-2; }
+.automation-switch { @apply relative h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full border-0 bg-gray-300 transition-colors checked:bg-primary-600 disabled:cursor-wait dark:bg-dark-600 dark:checked:bg-primary-500; }
+.automation-switch::after { content:''; @apply absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform; }
+.automation-switch:checked::after { @apply translate-x-4; }
 .check-row { @apply flex items-center gap-2 text-xs text-gray-500; }
 .error-banner { @apply mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300; }
 .success-banner { @apply mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300; }

@@ -21,6 +21,7 @@ type accountTokenGuardV2SaveRequest struct {
 	AccountID          int64  `json:"account_id"`
 	LoginEmail         string `json:"login_email" binding:"required"`
 	CredentialMode     string `json:"credential_mode" binding:"required"`
+	Engine             string `json:"engine"`
 	ProxySource        string `json:"proxy_source"`
 	ProxyID            *int64 `json:"proxy_id"`
 	Password           string `json:"password"`
@@ -42,7 +43,9 @@ func (r accountTokenGuardV2SaveRequest) input() service.AccountTokenGuardV2Accou
 		autoRelogin = *r.AutoReloginEnabled
 	}
 	return service.AccountTokenGuardV2AccountInput{
+		PreserveEnabled: r.Enabled == nil, PreserveAutoRelogin: r.AutoReloginEnabled == nil,
 		LoginEmail: r.LoginEmail, CredentialMode: r.CredentialMode,
+		Engine:      r.Engine,
 		ProxySource: r.ProxySource, ProxyID: r.ProxyID,
 		Password: r.Password, TOTPSecret: r.TOTPSecret, OTPURL: r.OTPURL,
 		ClearPassword: r.ClearPassword, ClearTOTP: r.ClearTOTP,
@@ -70,13 +73,55 @@ func (h *AccountTokenGuardV2Handler) List(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	runtimeSettings, err := h.service.GetRuntimeSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	response.Success(c, gin.H{
+		"runtime_settings":         runtimeSettings,
 		"accounts":                 accounts,
+		"worker":                   h.service.WorkerStatus(),
 		"probe_interval_seconds":   rules.ProbeIntervalSeconds,
 		"retry_interval_seconds":   rules.RetryIntervalSeconds,
 		"relogin_cooldown_seconds": rules.ReloginCooldownSeconds,
 		"fail_streak_threshold":    rules.FailStreakThreshold,
 	})
+}
+
+func (h *AccountTokenGuardV2Handler) SaveRuntime(c *gin.Context) {
+	var cfg service.OpenAIOAuthReauthRuntimeSettings
+	if err := c.ShouldBindJSON(&cfg); err != nil {
+		response.BadRequest(c, "Invalid re-login settings")
+		return
+	}
+	saved, err := h.service.SaveRuntimeSettings(c.Request.Context(), cfg)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, saved)
+}
+
+func (h *AccountTokenGuardV2Handler) UpdateSwitches(c *gin.Context) {
+	id, ok := parseTokenGuardV2AccountID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Enabled            *bool `json:"enabled"`
+		AutoReloginEnabled *bool `json:"auto_relogin_enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid automation switches")
+		return
+	}
+	saved, err := h.service.UpdateSwitches(c.Request.Context(), id, req.Enabled, req.AutoReloginEnabled)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, saved)
 }
 
 func (h *AccountTokenGuardV2Handler) SaveRules(c *gin.Context) {

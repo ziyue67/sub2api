@@ -1,3 +1,9 @@
+# Process role: full retains the dashboard and global background jobs (default).
+# gateway exposes model gateway APIs only and keeps request-local workers running.
+# Keep exactly one full instance until every enabled global job has a shared lease.
+runtime:
+  role: "full"
+
 # Sub2API Configuration File
 # Sub2API 配置文件
 #
@@ -11,6 +17,11 @@
 # 服务器配置
 # =============================================================================
 server:
+  # HTTP/WS request drain budget after load-balancer withdrawal (seconds).
+  # Default 5 preserves existing deployments; Kubernetes example uses 240.
+  graceful_shutdown_timeout: 5
+  # Fail readiness/reject new work, then wait for endpoint propagation.
+  shutdown_drain_delay: 0
   # Bind address (0.0.0.0 for all interfaces)
   # 绑定地址（0.0.0.0 表示监听所有网络接口）
   host: "0.0.0.0"

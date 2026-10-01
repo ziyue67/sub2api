@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -606,73 +607,79 @@ func TestOpenAINativeFirstOutputTimeoutDisabledKeepsPreamblePrivateAcrossKeepali
 }
 
 func TestOpenAINativeFirstOutputFailoverKeepsAttemptHeadersPrivateAfterKeepaliveCommit(t *testing.T) {
-	cfg := &config.Config{Gateway: config.GatewayConfig{
-		OpenAIFirstOutputTimeoutSeconds: 2,
-		StreamKeepaliveInterval:         1,
-		MaxLineSize:                     defaultMaxLineSize,
-	}}
-	svc := &OpenAIGatewayService{
-		cfg:                  cfg,
-		responseHeaderFilter: compileResponseHeaderFilter(cfg),
-	}
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	firstBody, firstWriter := io.Pipe()
-	trackedFirstBody := &firstOutputCloseTrackingBody{ReadCloser: firstBody, closed: make(chan struct{})}
-	firstWriterDone := make(chan struct{})
-	go func() {
-		defer close(firstWriterDone)
-		defer func() { _ = firstWriter.Close() }()
-		_, _ = firstWriter.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_first\"}}\n\n"))
-		select {
-		case <-trackedFirstBody.closed:
-		case <-time.After(4 * time.Second):
+	// This assertion needs a keepalive committed before the first-output timeout.
+	// A real ticker may wake just before the separately recorded idle timestamp
+	// reaches one second, then lose the next tick to the two-second timeout.
+	// Virtual time preserves the actual stream/header path without that race.
+	synctest.Test(t, func(t *testing.T) {
+		cfg := &config.Config{Gateway: config.GatewayConfig{
+			OpenAIFirstOutputTimeoutSeconds: 2,
+			StreamKeepaliveInterval:         1,
+			MaxLineSize:                     defaultMaxLineSize,
+		}}
+		svc := &OpenAIGatewayService{
+			cfg:                  cfg,
+			responseHeaderFilter: compileResponseHeaderFilter(cfg),
 		}
-	}()
-	firstResp := &http.Response{
-		StatusCode: http.StatusOK,
-		Header: http.Header{
-			"Content-Type":                   []string{"text/event-stream"},
-			"X-Request-Id":                   []string{"request-first"},
-			"X-Ratelimit-Remaining-Requests": []string{"1"},
-		},
-		Body: trackedFirstBody,
-	}
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		firstBody, firstWriter := io.Pipe()
+		trackedFirstBody := &firstOutputCloseTrackingBody{ReadCloser: firstBody, closed: make(chan struct{})}
+		firstWriterDone := make(chan struct{})
+		go func() {
+			defer close(firstWriterDone)
+			defer func() { _ = firstWriter.Close() }()
+			_, _ = firstWriter.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_first\"}}\n\n"))
+			select {
+			case <-trackedFirstBody.closed:
+			case <-time.After(4 * time.Second):
+			}
+		}()
+		firstResp := &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type":                   []string{"text/event-stream"},
+				"X-Request-Id":                   []string{"request-first"},
+				"X-Ratelimit-Remaining-Requests": []string{"1"},
+			},
+			Body: trackedFirstBody,
+		}
 
-	_, firstErr := svc.handleStreamingResponse(c.Request.Context(), firstResp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
-	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, firstErr, &failoverErr)
-	require.Contains(t, rec.Body.String(), ":\n\n", "first attempt should have committed only a stable keepalive")
-	require.NotContains(t, rec.Body.String(), "resp_first")
+		_, firstErr := svc.handleStreamingResponse(c.Request.Context(), firstResp, c, &Account{ID: 1, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+		var failoverErr *UpstreamFailoverError
+		require.ErrorAs(t, firstErr, &failoverErr)
+		require.Contains(t, rec.Body.String(), ":\n\n", "first attempt should have committed only a stable keepalive")
+		require.NotContains(t, rec.Body.String(), "resp_first")
 
-	secondResp := &http.Response{
-		StatusCode: http.StatusOK,
-		Header: http.Header{
-			"Content-Type":                   []string{"text/event-stream"},
-			"X-Request-Id":                   []string{"request-second"},
-			"X-Ratelimit-Remaining-Requests": []string{"99"},
-		},
-		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
-			`data: {"type":"response.output_text.delta","delta":"hello"}`,
-			"",
-			`data: {"type":"response.completed","response":{"id":"resp_second","usage":{"input_tokens":1,"output_tokens":1}}}`,
-			"",
-		}, "\n"))),
-	}
-	result, secondErr := svc.handleStreamingResponse(c.Request.Context(), secondResp, c, &Account{ID: 2, Platform: PlatformOpenAI}, time.Now(), "model", "model")
+		secondResp := &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type":                   []string{"text/event-stream"},
+				"X-Request-Id":                   []string{"request-second"},
+				"X-Ratelimit-Remaining-Requests": []string{"99"},
+			},
+			Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+				`data: {"type":"response.output_text.delta","delta":"hello"}`,
+				"",
+				`data: {"type":"response.completed","response":{"id":"resp_second","usage":{"input_tokens":1,"output_tokens":1}}}`,
+				"",
+			}, "\n"))),
+		}
+		result, secondErr := svc.handleStreamingResponse(c.Request.Context(), secondResp, c, &Account{ID: 2, Platform: PlatformOpenAI}, time.Now(), "model", "model")
 
-	require.NoError(t, secondErr)
-	require.NotNil(t, result)
-	require.Contains(t, rec.Body.String(), "resp_second")
-	wireHeaders := rec.Result().Header
-	require.Empty(t, wireHeaders.Values("X-Request-Id"))
-	require.Empty(t, wireHeaders.Values("X-Ratelimit-Remaining-Requests"))
-	require.Empty(t, rec.Header().Values("X-Request-Id"))
-	require.Empty(t, rec.Header().Values("X-Ratelimit-Remaining-Requests"))
-	select {
-	case <-firstWriterDone:
-	case <-time.After(time.Second):
-		t.Fatal("first account writer did not exit after timeout")
-	}
+		require.NoError(t, secondErr)
+		require.NotNil(t, result)
+		require.Contains(t, rec.Body.String(), "resp_second")
+		wireHeaders := rec.Result().Header
+		require.Empty(t, wireHeaders.Values("X-Request-Id"))
+		require.Empty(t, wireHeaders.Values("X-Ratelimit-Remaining-Requests"))
+		require.Empty(t, rec.Header().Values("X-Request-Id"))
+		require.Empty(t, rec.Header().Values("X-Ratelimit-Remaining-Requests"))
+		select {
+		case <-firstWriterDone:
+		case <-time.After(time.Second):
+			t.Fatal("first account writer did not exit after timeout")
+		}
+	})
 }

@@ -294,3 +294,22 @@ func TestGetSecurityClientIPRequestSnapshotOverridesLiveFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestVerifiedForwardedIPRejectsMalformedContextValue(t *testing.T) {
+	for _, value := range []any{nil, 42, struct{}{}, ""} {
+		router := gin.New()
+		require.NoError(t, router.SetTrustedProxies(nil))
+		router.GET("/t", func(c *gin.Context) {
+			SetForwardedIPSettings(c, false, nil)
+			c.Set("sub2api.verified_forwarded_ip", value)
+			require.Equal(t, "203.0.113.9", GetTrustedClientIP(c))
+			require.Equal(t, "203.0.113.9", GetClientIP(c))
+			c.Status(200)
+		})
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/t", nil)
+		req.RemoteAddr = "203.0.113.9:1234"
+		router.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code)
+	}
+}

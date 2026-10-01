@@ -29,6 +29,8 @@ from tools.openai_oauth_reauth_worker import (
     extract_otp,
     sanitize_error,
     validate_otp_url,
+    main,
+    terminate_worker,
 )
 
 
@@ -46,6 +48,61 @@ class OTPHandler(BaseHTTPRequestHandler):
 
 
 class OpenAIOAuthReauthWorkerTest(unittest.TestCase):
+    def test_parent_death_terminates_managed_protocol_descendants(self):
+        with patch("os.getpgrp", return_value=123), patch("os.getpid", return_value=123), patch("os.killpg") as kill:
+            with self.assertRaises(SystemExit):
+                terminate_worker(15, None)
+            kill.assert_called_once_with(123, 9)
+
+    def test_external_worker_does_not_signal_unrelated_process_group(self):
+        with patch("os.getpgrp", return_value=100), patch("os.getpid", return_value=123), patch("os.killpg") as kill:
+            with self.assertRaises(SystemExit):
+                terminate_worker(15, None)
+            kill.assert_not_called()
+
+    def test_password_only_config_does_not_require_email_protocol(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "src"
+            source.mkdir()
+            (source / "protocol-login.mjs").touch()
+            (source / "tls-transport.mjs").touch()
+            env = {"OPENAI_REAUTH_WORKER_TOKEN": "x" * 32, "TOSUB2_ROOT": root}
+            with patch.dict(os.environ, env, clear=True):
+                config = WorkerConfig.from_env()
+                self.assertIsNone(config.protocol_root)
+                self.assertEqual(config.tosub2_root, Path(root))
+
+    def test_rejects_missing_login_runtimes(self):
+        with patch.dict(os.environ, {"OPENAI_REAUTH_WORKER_TOKEN": "x" * 32}, clear=True):
+            with self.assertRaisesRegex(WorkerError, "configure TOSUB2_ROOT"):
+                WorkerConfig.from_env()
+
+    def test_explicit_invalid_email_protocol_is_not_silently_ignored(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "src"
+            source.mkdir()
+            (source / "protocol-login.mjs").touch()
+            (source / "tls-transport.mjs").touch()
+            env = {"OPENAI_REAUTH_WORKER_TOKEN": "x" * 32, "TOSUB2_ROOT": root, "CODEX_PROTOCOL_ROOT": root}
+            with patch.dict(os.environ, env, clear=True):
+                with self.assertRaisesRegex(WorkerError, "pure protocol and Sentinel assets"):
+                    WorkerConfig.from_env()
+
+    def test_email_claim_without_protocol_has_explicit_failure(self):
+        with self.assertRaisesRegex(WorkerError, "email OTP re-login requires"):
+            process_claim(SimpleNamespace(), None, {"credential_mode": "email_otp_url"})
+
+    def test_check_does_not_load_email_protocol_or_claim_tasks(self):
+        config = WorkerConfig("http://127.0.0.1:4040", "x" * 32, "check", None, Path("tosub2"))
+        with patch("sys.argv", ["worker", "--check"]), patch.object(WorkerConfig, "from_env", return_value=config), patch(
+            "tools.openai_oauth_reauth_worker.shutil.which", return_value="node"
+        ), patch("tools.openai_oauth_reauth_worker.load_protocol") as protocol, patch(
+            "tools.openai_oauth_reauth_worker.run_once"
+        ) as run:
+            self.assertEqual(main(), 0)
+            protocol.assert_not_called()
+            run.assert_not_called()
+
     def test_password_runner_does_not_inherit_worker_token_or_expose_output(self):
         api = SimpleNamespace(
             config=SimpleNamespace(tosub2_root=Path("synthetic-tosub2")),
@@ -436,6 +493,8 @@ class OpenAIOAuthReauthWorkerTest(unittest.TestCase):
                     return {"status": "succeeded"}
 
             def fake_run(command, **kwargs):
+                self.assertEqual(Path(kwargs["cwd"]), Path(command[command.index("--sub2api-out") + 1]).parent)
+                self.assertNotEqual(Path(kwargs["cwd"]), root)
                 self.assertEqual(kwargs["env"]["CHATGPT_LOGIN_PASSWORD"], "password-secret")
                 self.assertEqual(kwargs["env"]["CHATGPT_TOTP_SECRET"], "totp-secret")
                 output_path = Path(command[command.index("--sub2api-out") + 1])
@@ -470,7 +529,7 @@ class OpenAIOAuthReauthWorkerTest(unittest.TestCase):
                 process_claim(FakeAPI(), None, claim)
 
         stages = [event[2] for event in events if event[0] == "progress"]
-        self.assertEqual(stages, ["starting", "protocol_connecting", "password_submitted", "mfa_submitted"])
+        self.assertEqual(stages, ["starting", "protocol_connecting", "applying_credentials"])
         credential_event = next(event for event in events if event[0] == "credentials")
         self.assertEqual(credential_event[2]["access_token"], "access-secret")
         self.assertEqual(credential_event[3]["client_id"], "client-id")

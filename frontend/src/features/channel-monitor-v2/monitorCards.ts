@@ -1,4 +1,11 @@
-import type { HealthState, MonitorCandyHistory, MonitorCoverage, MonitorMatrixBucket, MonitorMatrixRow, MonitorMetric } from '@/api/channelMonitorV2'
+import type { HealthState, MonitorCandyHistory, MonitorCandyResult, MonitorCoverage, MonitorMatrixBucket, MonitorMatrixRow, MonitorMetric } from '@/api/channelMonitorV2'
+
+export const CANDY_HISTORY_LIMIT = 100
+
+export function candyHistorySlots(history: MonitorCandyHistory): Array<MonitorCandyResult | null> {
+  const results = history.results.slice(-CANDY_HISTORY_LIMIT)
+  return [...Array<null>(CANDY_HISTORY_LIMIT - results.length).fill(null), ...results]
+}
 
 export function hasMonitorSamples(metric: MonitorMetric): boolean {
   return metric.has_samples === true || metric.request_count > 0

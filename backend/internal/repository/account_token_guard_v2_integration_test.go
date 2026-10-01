@@ -97,3 +97,38 @@ func TestAccountTokenGuardV2RepositoryLeasesAndReauth(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, service.OpenAIOAuthReauthStatusSucceeded, done.Status)
 }
+
+func TestAccountTokenGuardV2ManagedWorkerOnlyClaimsPasswordTasks(t *testing.T) {
+	ctx := context.Background()
+	repo := NewOpenAIOAuthReauthRepository(integrationDB).(*openAIOAuthReauthRepository)
+	var tasks []*service.OpenAIOAuthReauthTaskRecord
+	for _, mode := range []string{service.OpenAIOAuthReauthModeEmailOTPURL, service.OpenAIOAuthReauthModePasswordTOTP} {
+		account := mustCreateAccount(t, testEntClient(t), &service.Account{
+			Name: "mixed-reauth-" + mode, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+			Credentials: map[string]any{"access_token": "synthetic"},
+		})
+		t.Cleanup(func() {
+			_, err := integrationDB.ExecContext(context.Background(), "DELETE FROM accounts WHERE id=$1", account.ID)
+			require.NoError(t, err)
+		})
+		require.NoError(t, repo.UpsertConfig(ctx, &service.OpenAIOAuthReauthStoredConfig{
+			AccountID: account.ID, LoginEmail: "synthetic@example.com", CredentialMode: mode,
+			ProxySource: service.OpenAIOAuthReauthProxySourceAccount, PasswordCiphertext: "synthetic", OTPURLCiphertext: "synthetic",
+		}))
+		task, err := repo.CreateTask(ctx, account.ID, "synthetic-hash")
+		require.NoError(t, err)
+		tasks = append(tasks, task)
+	}
+	password, err := repo.ClaimNextPasswordTask(ctx, "managed-test", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, password)
+	require.Equal(t, tasks[1].ID, password.ID)
+	email, err := repo.GetTask(ctx, tasks[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, service.OpenAIOAuthReauthStatusQueued, email.Status)
+	require.Empty(t, email.WorkerID)
+	external, err := repo.ClaimNextTask(ctx, "external-test", time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, external)
+	require.Equal(t, tasks[0].ID, external.ID)
+}

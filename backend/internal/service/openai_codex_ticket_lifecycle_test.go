@@ -205,3 +205,13 @@ func TestCodexTicketPolicyExemptsCredentialShadows(t *testing.T) {
 	svc.refreshOpenAICodexTickets(context.Background())
 	require.Empty(t, upstream.requests)
 }
+
+func TestCodexTicketGatewayDoesNotStartBackgroundHarvester(t *testing.T) {
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true}, &httpUpstreamRecorder{})
+	svc.cfg.Runtime.Role = config.RuntimeRoleGateway
+	svc.StartOpenAICodexTicketHarvester()
+	require.Nil(t, svc.openaiCodexTicketDone)
+	require.Nil(t, svc.openaiCodexTicketCancel)
+	require.True(t, svc.openAICodexTicketEnabledContext(context.Background()), "gateway still uses existing ticket policy")
+	svc.StopOpenAICodexTicketHarvester()
+}

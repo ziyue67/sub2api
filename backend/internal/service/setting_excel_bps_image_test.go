@@ -76,7 +76,7 @@ func TestExcelBPSImageSettingsPersistAndApplyImmediately(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, relay)
 	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{
-		ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: " https://images.example/ ",
+		ExcelBPSImageMode: ExcelBPSImageModeRelay, ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: " https://images.example/ ",
 		ExcelBPSImageBodyLimitMiB: 32, ExcelBPSImageBudgetMiB: 768, ExcelBPSImageMaxRequests: 48, ExcelBPSImageMaxImages: 40,
 	}))
 	saved, err := settings.GetAllSettings(ctx)
@@ -93,7 +93,7 @@ func TestExcelBPSImageSettingsPersistAndApplyImmediately(t *testing.T) {
 	require.Equal(t, 768, runtime.BudgetMiB)
 	require.Equal(t, 48, runtime.MaxRequests)
 	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{
-		ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example",
+		ExcelBPSImageMode: ExcelBPSImageModeRelay, ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example",
 		ExcelBPSImageBodyLimitMiB: 128, ExcelBPSImageBudgetMiB: 1024, ExcelBPSImageMaxRequests: 512,
 	}))
 	runtime, err = settings.GetExcelBPSImageRelaySettings(ctx)
@@ -119,7 +119,7 @@ func TestExcelBPSImageSettingsPersistAndApplyImmediately(t *testing.T) {
 		return w.Code
 	}
 	require.Equal(t, 200, fetch(imageURL))
-	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://new.example"}))
+	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{ExcelBPSImageMode: ExcelBPSImageModeRelay, ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://new.example"}))
 	updated, err := gateway.excelBPSImageRelay(ctx)
 	require.NoError(t, err)
 	require.Same(t, relay, updated, "changing the domain must not lose in-flight images")
@@ -138,12 +138,12 @@ func TestExcelBPSImageSettingsRejectInvalidUpdatesAtomically(t *testing.T) {
 	ctx := context.Background()
 	repo := &excelBPSImageSettingsRepo{}
 	settings := NewSettingService(repo, &config.Config{})
-	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example"}))
+	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{ExcelBPSImageMode: ExcelBPSImageModeRelay, ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example"}))
 	for _, limits := range []struct{ body, budget, requests int }{
 		{basispoints.MaxImageBodyMiB + 1, basispoints.MaxImageBudgetMiB, 32}, {64, 511, 32}, {64, basispoints.MaxImageBudgetMiB + 1, 32}, {64, 512, basispoints.MaxImageRequests + 1}, {128, 512, 32},
 	} {
 		err := settings.UpdateSettings(ctx, &SystemSettings{
-			ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example",
+			ExcelBPSImageMode: ExcelBPSImageModeRelay, ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example",
 			ExcelBPSImageBodyLimitMiB: limits.body, ExcelBPSImageBudgetMiB: limits.budget, ExcelBPSImageMaxRequests: limits.requests, ExcelBPSImageMaxImages: 20,
 		})
 		require.Error(t, err)
@@ -155,7 +155,7 @@ func TestExcelBPSImageSettingsRejectInvalidUpdatesAtomically(t *testing.T) {
 		require.Equal(t, basispoints.DefaultImageRelayLimits().MaxImages, runtime.Limits.MaxImages)
 	}
 	for _, origin := range []string{"", "http://images.example", "https://images.example/v1", "https://user:secret@images.example", "https://images.example?token=secret"} {
-		err := settings.UpdateSettings(ctx, &SystemSettings{ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: origin})
+		err := settings.UpdateSettings(ctx, &SystemSettings{ExcelBPSImageMode: ExcelBPSImageModeRelay, ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: origin})
 		require.Error(t, err)
 		require.NotContains(t, err.Error(), "secret")
 		runtime, err := settings.GetExcelBPSImageRelaySettings(ctx)
@@ -174,7 +174,7 @@ func TestExcelBPSImageLimitsHotReload(t *testing.T) {
 	t.Setenv("DATA_DIR", t.TempDir())
 	ctx := context.Background()
 	repo := &excelBPSImageSettingsRepo{values: map[string]string{
-		SettingKeyExcelBPSImageRelayEnabled: "true", SettingKeyExcelBPSImageBaseURL: "https://images.example",
+		SettingKeyExcelBPSImageMode: ExcelBPSImageModeRelay, SettingKeyExcelBPSImageRelayEnabled: "true", SettingKeyExcelBPSImageBaseURL: "https://images.example",
 	}}
 	settings := NewSettingService(repo, &config.Config{})
 	gateway := &OpenAIGatewayService{settingService: settings}

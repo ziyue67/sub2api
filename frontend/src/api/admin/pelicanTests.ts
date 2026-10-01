@@ -35,6 +35,9 @@ export interface PelicanGroupTestResult {
   response_text?: string
   error_message: string
   latency_ms: number
+  /** USD upstream cost; null means usage or pricing was unavailable. */
+  cost_usd: number | null
+  cost_incomplete: boolean
   pelican_config?: PelicanGroupTestConfig
   started_at: string
   finished_at: string
@@ -45,6 +48,10 @@ export interface PelicanGroupTestPlan {
   id: number
   group_id: number
   group_name: string
+  today_cost_usd: number
+  total_cost_usd: number
+  today_cost_incomplete: boolean
+  total_cost_incomplete: boolean
   group_platform: string
   /** The group's status, or "deleted" once the group was removed. */
   group_status: string

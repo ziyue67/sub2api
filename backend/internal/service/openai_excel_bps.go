@@ -114,6 +114,9 @@ func (s *OpenAIGatewayService) excelBPSImageRelayForSettings(settings ExcelBPSIm
 			dataDir = "./data"
 		}
 		s.excelBPSImages, err = basispoints.NewImageRelay(settings.BaseURL, filepath.Join(dataDir, "bps-images"))
+		if err == nil && s.settingService.Serverless != nil {
+			s.excelBPSImages.SetURLDecorator(s.settingService.Serverless.ImageOwnerURL)
+		}
 	}
 	if err == nil {
 		err = s.excelBPSImages.Configure(settings.BaseURL, settings.Limits)
@@ -204,7 +207,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 			c.JSON(status, gin.H{"error": errorBody})
 		}
-		return nil, fmt.Errorf("excel BPS: %s", code)
+		return nil, &excelBPSForwardError{code: code}
 	}
 	originalModel := gjson.GetBytes(body, "model").String()
 	model := account.GetMappedModel(originalModel)
@@ -270,12 +273,6 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return clientCanceled()
 		}
 		return fail(503, "basispoints_image_settings_unavailable", "Excel BPS image settings are unavailable")
-	}
-	if !imageSettings.Enabled && account.IsExcelBPSIgnoreImagesEnabled() {
-		body, err = basispoints.StripInputImages(body)
-		if err != nil {
-			return fail(400, "basispoints_request_invalid", err.Error())
-		}
 	}
 	if account.IsExcelBPSIgnoreEncryptedContentEnabled() {
 		body, err = basispoints.StripEncryptedContent(body)
@@ -367,7 +364,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		var lease excelBPSLease
 		// Pin the attachment upload and the Responses request to the same exit,
 		// whichever pool the account chose.
-		attachmentProxy, lease, err = requestAcquire(ctx, scope)
+		attachmentProxy, lease, err = acquireExcelBPSAttachmentProxy(ctx, c, account, scope, requestAcquire)
 		if err != nil {
 			if isExcelBPSClientCancellation(c, err) {
 				return clientCanceled()
@@ -399,15 +396,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				status = http.StatusServiceUnavailable
 			}
 			if status == http.StatusTooManyRequests && uploadError != nil {
-				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-					Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
-					ProxyID: opsUpstreamProxyID(account), ProxyName: opsUpstreamProxyName(account),
-					UpstreamStatusCode: status, UpstreamURL: basispoints.AttachmentsURL, Kind: "failover",
-					Message: "Excel BPS attachment upload was rate limited",
-				})
+				recordExcelBPSAttachmentFailure(ctx, c, account, err, true)
 				return failoverRateLimited(uploadError.retryAfter)
 			}
-			setOpsUpstreamError(c, status, "Excel BPS attachment upload failed", "")
+			recordExcelBPSAttachmentFailure(ctx, c, account, err, false)
 			if status == http.StatusUnauthorized {
 				return fail(status, code, "Excel BPS attachment authentication failed; request was not replayed")
 			}
@@ -709,6 +701,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 	}
 	var completed []byte
+	var upstreamFailure *basispoints.UpstreamFailure
 	terminal := ""
 	terminalSuccessful := false
 	cacheCreationAsInput := account.IsExcelBPSCacheCreationAsInputEnabled()
@@ -718,7 +711,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			payload := []byte(strings.TrimPrefix(line, "data: "))
 			kind := gjson.GetBytes(payload, "type").String()
 			s.parseSSEUsageBytes(payload, &result.Usage)
-			if len(compactOutput) > 0 && (kind == "response.completed" || kind == "response.failed" || kind == "response.incomplete") {
+			if len(compactOutput) > 0 && (kind == "response.completed" || kind == "response.failed" || kind == "response.cancelled" || kind == "response.incomplete") {
 				subtractImagePolicyUsage(&result.Usage, compactUsage)
 			}
 			if cacheCreationAsInput {
@@ -733,7 +726,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				result.FirstTokenMs = &ms
 			}
 			switch kind {
-			case "response.completed", "response.failed", "response.incomplete", "error":
+			case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
 				if kind == "response.completed" && lease != nil {
 					lease.ReportSuccess()
 				}
@@ -742,6 +735,19 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				completed = []byte(gjson.GetBytes(payload, "response").Raw)
 				result.ResponseID = gjson.GetBytes(payload, "response.id").String()
 				result.UpstreamResponseModel = gjson.GetBytes(payload, "response.model").String()
+				upstreamFailure = basispoints.ParseUpstreamFailure(payload)
+				if upstreamFailure != nil {
+					// Preserve the actual HTTP status separately from the event's
+					// semantic status. An accepted generation is never replayed.
+					setOpsUpstreamError(c, resp.StatusCode, upstreamFailure.Message, "")
+					MarkOpsStreamErrorValue(c, OpsStreamError{
+						ErrType: upstreamFailure.Type, Code: upstreamFailure.Code, Message: upstreamFailure.Message,
+						IntendedStatus: upstreamFailure.Status, CountTowardsSLA: true, NonStream: !stream,
+					})
+					if upstreamFailure.Status == http.StatusTooManyRequests && !isQualityObservation(ctx) {
+						s.coolDownExcelBPS(ctx, account, resp.Header.Get("Retry-After"))
+					}
+				}
 			}
 		}
 		if stream {
@@ -788,7 +794,13 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		MarkResponseCommitted(c)
 	}
 	if !stream {
-		if terminal != "response.completed" {
+		if upstreamFailure != nil {
+			if StopOpenAICompactSSEKeepaliveCommitted(c) {
+				writeOpenAICompactSSEFailureMessage(c, upstreamFailure.Status, upstreamFailure.Code, upstreamFailure.Message)
+			} else {
+				c.JSON(upstreamFailure.Status, gin.H{"error": upstreamFailure.Details()})
+			}
+		} else if terminal != "response.completed" {
 			c.JSON(502, gin.H{"error": gin.H{"code": "basispoints_protocol_error", "message": "Excel BPS did not complete the response"}})
 		} else {
 			c.Data(200, "application/json", completed)

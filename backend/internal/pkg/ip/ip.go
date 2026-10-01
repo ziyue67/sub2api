@@ -54,7 +54,18 @@ func requestUsesLegacyForwardedIPTrust(c *gin.Context) bool {
 // precedence used before the trusted-proxy hardening. It remains the
 // compatibility path for request metadata and usage/error logs; security-
 // sensitive callers must use GetTrustedClientIP or GetSecurityClientIP.
+func SetVerifiedForwardedIP(c *gin.Context, address string) {
+	c.Set("sub2api.verified_forwarded_ip", address)
+}
+
 func GetClientIP(c *gin.Context) string {
+	if c != nil {
+		if v, ok := c.Get("sub2api.verified_forwarded_ip"); ok {
+			if address, valid := v.(string); valid && normalizeIP(address) != "" {
+				return normalizeIP(address)
+			}
+		}
+	}
 	if c == nil {
 		return ""
 	}
@@ -151,6 +162,13 @@ func resolveLegacyForwardedHeaderIP(c *gin.Context) (string, string) {
 // 该方法依赖 gin.Engine.SetTrustedProxies 配置，不会优先直接信任原始转发头值。
 // 适用于 ACL / 风控等安全敏感场景。
 func GetTrustedClientIP(c *gin.Context) string {
+	if c != nil {
+		if v, ok := c.Get("sub2api.verified_forwarded_ip"); ok {
+			if address, valid := v.(string); valid && normalizeIP(address) != "" {
+				return normalizeIP(address)
+			}
+		}
+	}
 	if c == nil {
 		return ""
 	}

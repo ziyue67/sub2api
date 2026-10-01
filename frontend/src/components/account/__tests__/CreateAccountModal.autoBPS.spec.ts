@@ -159,7 +159,7 @@ describe('CreateAccountModal auto BPS switch', () => {
     expect(mocks.createPlan.mock.calls.map(call => call[0].account_id)).toEqual([81, 82])
     expect(mocks.createPlan.mock.calls[0][0]).toMatchObject({ model_id: 'gpt-6-astra', enabled: true, cron_expression: '*/2 * * * *',
       pelican_config: { question_kind: 'state_probe', quality: { action: 'enable_bps', auto_restore: true, bps: {
-        omit_unsupported_tools: false, ignore_images: false, ignore_encrypted_content: true, auto_disable_on_403: true,
+        omit_unsupported_tools: false, ignore_encrypted_content: true, auto_disable_on_403: true,
         auto_recover_on_403: false, auto_move_on_403: false, session_proxy: false, cache_creation_as_input: true,
       } } } })
     expect(wrapper.emitted('created')).toHaveLength(1)

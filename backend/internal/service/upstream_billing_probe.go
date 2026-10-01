@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"io"
 	"log/slog"
 	"math"
@@ -303,10 +304,11 @@ func ProvideUpstreamBillingProbeService(
 	settingService *SettingService,
 	lockCache LeaderLockCache,
 	db *sql.DB,
+	cfg *config.Config,
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetLeaderLock(lockCache, db)
-	svc.Start()
+	startBackgroundService(cfg, svc)
 	return svc
 }
 

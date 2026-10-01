@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"context"
+	"github.com/Wei-Shaw/sub2api/internal/serverless"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newGatewayRoutesTestRouterWithGroup(group *service.Group) *gin.Engine {
+func newGatewayRoutesTestRouterWithGroup(group *service.Group, settings ...*service.SettingService) *gin.Engine {
+	var setting *service.SettingService
+	if len(settings) > 0 {
+		setting = settings[0]
+	}
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	RegisterGatewayRoutes(
@@ -29,6 +35,7 @@ func newGatewayRoutesTestRouterWithGroup(group *service.Group) *gin.Engine {
 		servermiddleware.APIKeyAuthMiddleware(func(c *gin.Context) {
 			groupID := int64(1)
 			c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+				ID:      1,
 				GroupID: &groupID,
 				Group:   group,
 			})
@@ -37,7 +44,7 @@ func newGatewayRoutesTestRouterWithGroup(group *service.Group) *gin.Engine {
 		nil,
 		nil,
 		nil,
-		nil,
+		setting,
 		nil,
 		&config.Config{
 			Gateway: config.GatewayConfig{
@@ -69,7 +76,7 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	source := string(routeSource)
 
 	// rootRoute helper：apiKeyAuth 之后、compositeTarget 之前。
-	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, groupStreamOnly, compositeTarget, requireGroupAnthropic, handler)`))
+	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, groupStreamOnly, podRoute, compositeTarget, requireGroupAnthropic, handler)`))
 	require.Regexp(t, rootHelper, source,
 		"root alias helper must place the allowlist between apiKeyAuth and compositeTarget")
 
@@ -94,7 +101,7 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	}
 
 	// codexDirect 链是一条 Use 调用，直接断言顺序。
-	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, groupStreamOnly, compositeTarget, requireGroupAnthropic)`))
+	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, groupStreamOnly, podRoute, compositeTarget, requireGroupAnthropic)`))
 	require.Regexp(t, codexDirect, source, "codexDirect chain must mount the allowlist after auth and before compositeTarget")
 
 	// 所有带 apiKeyAuth 的根路径路由必须收敛到 rootRoute，避免漏挂。
@@ -208,5 +215,46 @@ func TestGatewayRoutesGroupModelAllowlistModelFreeRoutesUnaffected(t *testing.T)
 		router.ServeHTTP(w, req)
 		require.NotContains(t, w.Body.String(), "not available for this group",
 			"%s should not be blocked by the allowlist middleware, got: %s", path, w.Body.String())
+	}
+}
+
+type serverlessAdmissionStore struct{ reads int }
+
+func (s *serverlessAdmissionStore) Load(context.Context) (serverless.Config, error) {
+	s.reads++
+	return serverless.Config{}, nil
+}
+func (s *serverlessAdmissionStore) Save(context.Context, serverless.Config) error { return nil }
+
+func TestGatewayAdmissionRejectsBeforeServerlessRouting(t *testing.T) {
+	for _, path := range []string{"/v1/responses", "/responses", "/backend-api/codex/responses", "/v1/chat/completions", "/chat/completions"} {
+		for _, mode := range []string{"model", "stream"} {
+			t.Run(path+"/"+mode, func(t *testing.T) {
+				store := &serverlessAdmissionStore{}
+				manager, err := serverless.New(serverless.Runtime{}, nil, store)
+				require.NoError(t, err)
+				t.Cleanup(manager.Stop)
+				group := allowlistGroup(service.PlatformOpenAI, true, "gpt-allowed")
+				if mode == "stream" {
+					group.StreamOnly = true
+				}
+				body := `{"model":"gpt-denied","stream":true}`
+				if mode == "stream" {
+					body = `{"model":"gpt-allowed","stream":false}`
+				}
+				router := newGatewayRoutesTestRouterWithGroup(group, &service.SettingService{Serverless: manager})
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, req)
+				require.GreaterOrEqual(t, w.Code, 400)
+				if mode == "model" {
+					require.Contains(t, w.Body.String(), "gpt-denied")
+				} else {
+					require.Contains(t, w.Body.String(), "stream_required")
+				}
+				require.Zero(t, store.reads, "rejected requests must not read Pod routing configuration or perform region lookups")
+			})
+		}
 	}
 }

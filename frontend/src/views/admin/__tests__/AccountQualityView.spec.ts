@@ -587,7 +587,7 @@ describe('quality operations', () => {
     expect((wrapper.find('[data-testid="quality-bps-auto-disable"]').element as HTMLInputElement).checked).toBe(true)
     expect(wrapper.find('[data-testid="quality-auto-restore"]').exists()).toBe(false)
     const checked = (id: string) => (wrapper.find(`[data-testid="quality-bps-${id}"]`).element as HTMLInputElement).checked
-    expect([checked('omit_unsupported_tools'), checked('ignore_images'), checked('ignore_encrypted_content'), checked('auto_disable_on_403'), checked('cache_creation_as_input')]).toEqual([false, false, true, true, true])
+    expect([checked('omit_unsupported_tools'), checked('ignore_encrypted_content'), checked('auto_disable_on_403'), checked('cache_creation_as_input')]).toEqual([false, true, true, true])
     expect(checked('auto_recover_on_403')).toBe(false)
     expect((wrapper.find('[data-testid="quality-bps-auto_recover_on_403"]').element as HTMLInputElement).disabled).toBe(false)
     expect(wrapper.get<HTMLSelectElement>('[data-testid="quality-probe-interval"]').element.value).toBe('*/2 * * * *')
@@ -603,7 +603,6 @@ describe('quality operations', () => {
     await wrapper.find('[data-testid="quality-bps-pass-threshold"]').setValue('3')
     await wrapper.find('[data-testid="quality-bps-require-all"]').setValue(true)
     expect(wrapper.find('[data-testid="quality-bps-hold-on-usage"]').exists()).toBe(false)
-    await wrapper.find('[data-testid="quality-bps-ignore_images"]').setValue(true)
     await wrapper.find('[data-testid="quality-bps-astra-only"]').trigger('click')
     await wrapper.find('[data-testid="quality-bps-auto_move_on_403"]').setValue(true)
     await vm.save()
@@ -625,7 +624,7 @@ describe('quality operations', () => {
     expect(request.cron_expression).toBe('*/10 * * * *')
     expect(request.pelican_config.quality).toEqual({ expected_answer: '', action: 'enable_bps', remove_group_ids: [], auto_restore: true, bps: {
       failure_threshold: 3, usage_percent: 80, require_all: true, all_models: false, models: ['gpt-6-astra'],
-      omit_unsupported_tools: false, ignore_images: true, ignore_encrypted_content: true, auto_disable_on_403: true,
+      omit_unsupported_tools: false, ignore_encrypted_content: true, auto_disable_on_403: true,
       auto_recover_on_403: true, recovery_interval_minutes: 360,
       auto_move_on_403: true, target_group_id: 21, session_proxy: false, proxy_source: '', cache_creation_as_input: true,
       pass_threshold: 3, hold_on_usage: false } })
@@ -734,7 +733,7 @@ describe('quality operations', () => {
   })
   it('loads saved BPS rules, summarizes their trigger and labels counted failures', async () => {
     const probe = { question_kind: 'state_probe', prompt: '', reasoning_effort: 'high', parallel_count: 1, quality: { expected_answer: '', action: 'enable_bps', remove_group_ids: [], auto_restore: true,
-      bps: { failure_threshold: 2, usage_percent: 80, require_all: false, all_models: true, models: null, omit_unsupported_tools: false, ignore_images: true, ignore_encrypted_content: false,
+      bps: { failure_threshold: 2, usage_percent: 80, require_all: false, all_models: true, models: null, omit_unsupported_tools: false, ignore_encrypted_content: false,
         auto_disable_on_403: true, auto_move_on_403: false, target_group_id: 0, session_proxy: true, proxy_source: 'ip_pool', cache_creation_as_input: true } } }
     vi.mocked(listQualityPlans).mockResolvedValue([{ id: 8, account_id: 1, account_name: 'BPS account', model_id: 'gpt-6-astra', cron_expression: '*/30 * * * *', enabled: true, max_results: 100, pelican_config: probe }] as any)
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
@@ -747,7 +746,7 @@ describe('quality operations', () => {
     expect(vm.actionExplanation('restore_counted:1/3')).toBe('qualityOps.actionHelp.restore_counted')
     vm.edit(vm.plans[0]); await flushPromises()
     // 早先保存、没有满血关闭次数的规则后端按 1 次处理。
-    expect(vm.form.pelican_config.quality.bps).toMatchObject({ all_models: true, models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra'], target_group_id: -1, proxy_source: 'ip_pool', ignore_images: true, pass_threshold: 1 })
+    expect(vm.form.pelican_config.quality.bps).toMatchObject({ all_models: true, models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra'], target_group_id: -1, proxy_source: 'ip_pool', pass_threshold: 1 })
     expect((wrapper.find('[data-testid="quality-bps-pass-threshold"]').element as HTMLInputElement).value).toBe('1')
     expect(wrapper.find('[data-testid="quality-bps-models"]').exists()).toBe(false)
     await wrapper.find('[data-testid="quality-bps-all-models"]').setValue(false)

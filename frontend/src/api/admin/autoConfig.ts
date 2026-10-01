@@ -1,6 +1,10 @@
 import { apiClient } from '../client'
+import type { ModelBillingConfig } from '@/utils/modelBilling'
 import type { ExcelBPSDefaults } from '@/utils/excelBPSDefaults'
+import type { OAuthModelMappingRule } from '@/utils/oauthModelMappings'
 export interface AutoConfig {
+ model_billing?: ModelBillingConfig
+ model_mappings?: OAuthModelMappingRule[] | null
  excel_bps?: ExcelBPSDefaults
  enabled: boolean
  platform: string
@@ -29,6 +33,7 @@ export interface AutoConfigEvent {
   kind: AutoConfigEventKind
   created_at: string
   details: {
+    model_mapping?: Record<string, string>
     config?: AutoConfig
     priority: number
     load_factor: number

@@ -2,11 +2,13 @@ import { apiClient } from '../client'
 
 export type TokenGuardV2CredentialMode = 'email_otp_url' | 'password_totp'
 export type TokenGuardV2ProxySource = 'account' | 'managed_proxy' | 'mihomo'
+export type TokenGuardV2Engine = 'local_worker' | 'session_studio'
 
 export interface TokenGuardV2LoginConfig {
   account_id: number
   login_email: string
   credential_mode: TokenGuardV2CredentialMode
+  engine: TokenGuardV2Engine
   proxy_source: TokenGuardV2ProxySource
   proxy_id?: number
   otp_url_masked?: string
@@ -55,13 +57,29 @@ export interface TokenGuardV2Rules {
 }
 
 export interface TokenGuardV2Status extends TokenGuardV2Rules {
+  runtime_settings?: TokenGuardV2RuntimeSettings
+  worker?: { mode: string; state: string; reason?: string }
   accounts: TokenGuardV2Account[]
+}
+
+export interface TokenGuardV2RuntimeSettings {
+  engine: TokenGuardV2Engine | ''
+  worker_concurrency: number
+}
+
+export async function saveTokenGuardV2Runtime(input: TokenGuardV2RuntimeSettings): Promise<TokenGuardV2RuntimeSettings> {
+  return (await apiClient.put('/admin/account-ops/token-guard-v2/runtime', input)).data
+}
+
+export async function updateTokenGuardV2Switches(accountId: number, input: Partial<Pick<TokenGuardV2Account, 'enabled' | 'auto_relogin_enabled'>>): Promise<Pick<TokenGuardV2Account, 'enabled' | 'auto_relogin_enabled'>> {
+  return (await apiClient.patch(`/admin/account-ops/token-guard-v2/accounts/${accountId}/switches`, input)).data
 }
 
 export interface SaveTokenGuardV2Account {
   account_id?: number
   login_email: string
   credential_mode: TokenGuardV2CredentialMode
+  engine?: TokenGuardV2Engine
   proxy_source: TokenGuardV2ProxySource
   proxy_id?: number | null
   password?: string
@@ -69,8 +87,8 @@ export interface SaveTokenGuardV2Account {
   otp_url?: string
   clear_password?: boolean
   clear_totp?: boolean
-  enabled: boolean
-  auto_relogin_enabled: boolean
+  enabled?: boolean
+  auto_relogin_enabled?: boolean
 }
 
 export async function listTokenGuardV2Accounts(): Promise<TokenGuardV2Status> {

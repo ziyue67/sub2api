@@ -16,13 +16,14 @@ const (
 
 // Explicit fields keep credentials, raw upstream responses and request bodies out of history.
 type AutoConfigEventDetails struct {
-	Config              *OAuthAutoConfig `json:"config,omitempty"`
-	Priority            int              `json:"priority"`
-	LoadFactor          int              `json:"load_factor"`
-	Concurrency         int              `json:"concurrency"`
-	PreviousConcurrency int              `json:"previous_concurrency"`
-	GroupIDs            []int64          `json:"group_ids,omitempty"`
-	CooldownSeconds     int              `json:"cooldown_seconds"`
+	ModelMapping        map[string]string `json:"model_mapping,omitempty"`
+	Config              *OAuthAutoConfig  `json:"config,omitempty"`
+	Priority            int               `json:"priority"`
+	LoadFactor          int               `json:"load_factor"`
+	Concurrency         int               `json:"concurrency"`
+	PreviousConcurrency int               `json:"previous_concurrency"`
+	GroupIDs            []int64           `json:"group_ids,omitempty"`
+	CooldownSeconds     int               `json:"cooldown_seconds"`
 }
 type AutoConfigEvent struct {
 	ID          int64                  `json:"id"`

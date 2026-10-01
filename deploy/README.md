@@ -9,6 +9,7 @@ This directory contains files for deploying Sub2API on Linux servers and Apple-s
 | **Docker Compose** | Quick setup, all-in-one | Not needed (auto-setup) |
 | **Apple container** | Native local stack on macOS 26 | Not needed (auto-setup) |
 | **Binary Install** | Production servers, systemd | Web-based wizard |
+| **[Kubernetes / K3s](kubernetes/README.md)** | Request replicas with a shared primary | Pre-provisioned config / Secrets |
 
 ## Files
 

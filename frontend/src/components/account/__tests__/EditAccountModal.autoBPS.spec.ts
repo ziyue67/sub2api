@@ -172,7 +172,7 @@ describe('EditAccountModal auto BPS switch', () => {
     const request = mocks.createPlan.mock.calls[0][0]
     expect(request).toMatchObject({ account_id: 7, model_id: 'gpt-6-astra', cron_expression: '*/2 * * * *', enabled: true })
     expect(request.pelican_config).toMatchObject({ question_kind: 'state_probe', quality: { action: 'enable_bps', auto_restore: true, bps: {
-      failure_threshold: 3, omit_unsupported_tools: false, ignore_images: false, ignore_encrypted_content: true, auto_disable_on_403: true,
+      failure_threshold: 3, omit_unsupported_tools: false, ignore_encrypted_content: true, auto_disable_on_403: true,
       auto_recover_on_403: false, auto_move_on_403: false, session_proxy: false, cache_creation_as_input: true,
     } } })
     expect(mocks.updatePlan).not.toHaveBeenCalled()
@@ -188,7 +188,6 @@ describe('EditAccountModal auto BPS switch', () => {
     await wrapper.get('[data-testid="quality-bps-auto_disable_on_403"]').setValue(false)
     await wrapper.get('[data-testid="quality-bps-cache_creation_as_input"]').setValue(false)
     await wrapper.get('[data-testid="quality-bps-omit_unsupported_tools"]').setValue(true)
-    await wrapper.get('[data-testid="quality-bps-ignore_images"]').setValue(true)
     await wrapper.get('[data-testid="quality-bps-auto_move_on_403"]').setValue(true)
     await wrapper.get('[data-testid="quality-bps-target-group"]').setValue('0')
     await wrapper.get('[data-testid="quality-bps-session_proxy"]').setValue(true)
@@ -198,7 +197,7 @@ describe('EditAccountModal auto BPS switch', () => {
     expect(mocks.updatePlan).toHaveBeenCalledWith(31, expect.objectContaining({
       cron_expression: '*/5 * * * *', pelican_config: expect.objectContaining({ quality: expect.objectContaining({ bps: expect.objectContaining({
         ignore_encrypted_content: false, auto_disable_on_403: false, cache_creation_as_input: false,
-        omit_unsupported_tools: true, ignore_images: true, auto_move_on_403: true, target_group_id: 0, session_proxy: true, proxy_source: 'ip_pool',
+        omit_unsupported_tools: true, auto_move_on_403: true, target_group_id: 0, session_proxy: true, proxy_source: 'ip_pool',
       }) }) }),
     }))
     expect(mocks.updateAccount.mock.calls[0][1].extra?.openai_excel_bps).not.toBe(true)
