@@ -116,7 +116,8 @@ func TestPrioritySchedulingOrderingAndFallback(t *testing.T) {
 	gateway.priorityScheduling.mu.Unlock()
 	plan.priorityScheduling = false
 	scheduler.applyPriorityScheduling(req, &plan)
-	require.False(t, plan.priorityScheduling)
+	require.True(t, plan.priorityScheduling, "missing history must retain live capacity balancing")
+	require.False(t, gateway.PrioritySchedulingSnapshot().HistoryReady)
 }
 func TestPrioritySignalRefreshCoalescesAndErrorsFallBack(t *testing.T) {
 	c := DefaultPrioritySchedulingConfig()
@@ -239,7 +240,7 @@ func TestPriorityLoadFactorDoesNotHideActualConcurrency(t *testing.T) {
 	boosted := scorePriorityCandidate(c, a, good, time.Now())
 	a.account.LoadFactor = nil
 	normal := scorePriorityCandidate(c, a, good, time.Now())
-	require.Greater(t, boosted.Score, normal.Score)
+	require.Equal(t, boosted.Score, normal.Score, "load-factor overrides must not inflate actual capacity")
 }
 func TestPriorityExplicitPriorityWithinExperienceTier(t *testing.T) {
 	a, b, poor := priorityCandidate(1, 1, 0), priorityCandidate(2, 1, 0), priorityCandidate(3, 0, 0)

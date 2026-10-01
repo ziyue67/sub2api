@@ -22,6 +22,13 @@ export default {
     confirm: '确认',
     reset: '重置',
     search: '搜索',
+    featureSearch: {
+      title: '功能搜索',
+      placeholder: '搜索功能名称或关键词…',
+      resultCount: '{count} 个可用功能',
+      noResults: '未找到匹配功能，请尝试其他名称或关键词',
+      hint: '↑ ↓ 选择 · Enter 打开 · Esc 关闭'
+    },
     filter: '筛选',
     export: '导出',
     import: '导入',

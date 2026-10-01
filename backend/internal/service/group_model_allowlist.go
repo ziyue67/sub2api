@@ -41,7 +41,7 @@ func supplementUnmappedOpenAIModels(accounts []Account, groupID *int64, models [
 	seen := make(map[string]struct{}, len(catalog))
 	for i := range accounts {
 		account := &accounts[i]
-		if account.Platform != PlatformOpenAI || (!account.IsOpenAIPassthroughEnabled() && len(account.GetModelMapping()) != 0) {
+		if account.Platform != PlatformOpenAI || (!account.IsOpenAIPassthroughEnabled() && !account.IsOpenAIModelMappingAliases() && len(account.GetModelMapping()) != 0) {
 			continue
 		}
 		for _, model := range catalog {

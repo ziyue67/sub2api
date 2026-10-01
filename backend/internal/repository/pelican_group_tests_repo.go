@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -23,16 +24,23 @@ func NewPelicanGroupTestRepository(db *sql.DB) service.PelicanGroupTestRepositor
 const pelicanGroupTestPlanSelect = `SELECT p.id, p.group_id, g.name, g.platform,
  CASE WHEN g.deleted_at IS NULL THEN g.status ELSE 'deleted' END,
  p.model_id, p.cron_expression, p.enabled, p.pelican_config, p.last_run_at, p.next_run_at, p.running_until, p.created_at, p.updated_at,
- r.id, r.account_id, r.account_name, r.attempts, r.status, r.error_message, r.latency_ms, r.started_at, r.finished_at, r.created_at
+ COALESCE(c.today_cost, 0), COALESCE(c.total_cost, 0), COALESCE(c.today_incomplete, false), COALESCE(c.total_incomplete, false),
+ r.id, r.account_id, r.account_name, r.attempts, r.status, r.error_message, r.latency_ms, r.started_at, r.finished_at, r.created_at, r.cost_usd, r.cost_incomplete
 FROM pelican_group_test_plans p
 JOIN groups g ON g.id = p.group_id
 LEFT JOIN LATERAL (
- SELECT id, account_id, account_name, attempts, status, error_message, latency_ms, started_at, finished_at, created_at
+ SELECT SUM(cost_usd) FILTER (WHERE cost_date = $1::date) AS today_cost, SUM(cost_usd) AS total_cost,
+ BOOL_OR(unpriced_count > 0) FILTER (WHERE cost_date = $1::date) AS today_incomplete,
+ BOOL_OR(unpriced_count > 0) AS total_incomplete
+ FROM pelican_group_test_daily_costs WHERE group_id = p.group_id
+) c ON true
+LEFT JOIN LATERAL (
+ SELECT id, account_id, account_name, attempts, status, error_message, latency_ms, started_at, finished_at, created_at, cost_usd, cost_incomplete
  FROM pelican_group_test_results WHERE plan_id = p.id ORDER BY id DESC LIMIT 1
 ) r ON true`
 
 func (r *pelicanGroupTestRepository) ListPlans(ctx context.Context) ([]*service.PelicanGroupTestPlan, error) {
-	rows, err := r.db.QueryContext(ctx, pelicanGroupTestPlanSelect+` ORDER BY g.sort_order ASC, g.id ASC, p.id ASC`)
+	rows, err := r.db.QueryContext(ctx, pelicanGroupTestPlanSelect+` ORDER BY g.sort_order ASC, g.id ASC, p.id ASC`, timezone.Now().Format(time.DateOnly))
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +57,7 @@ func (r *pelicanGroupTestRepository) ListPlans(ctx context.Context) ([]*service.
 }
 
 func (r *pelicanGroupTestRepository) GetPlan(ctx context.Context, id int64) (*service.PelicanGroupTestPlan, error) {
-	plan, err := scanPelicanGroupTestPlan(r.db.QueryRowContext(ctx, pelicanGroupTestPlanSelect+` WHERE p.id = $1`, id))
+	plan, err := scanPelicanGroupTestPlan(r.db.QueryRowContext(ctx, pelicanGroupTestPlanSelect+` WHERE p.id = $2`, timezone.Now().Format(time.DateOnly), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -92,9 +100,9 @@ func (r *pelicanGroupTestRepository) DeletePlan(ctx context.Context, id int64) (
 
 func (r *pelicanGroupTestRepository) ListDue(ctx context.Context, now time.Time) ([]*service.PelicanGroupTestPlan, error) {
 	rows, err := r.db.QueryContext(ctx, pelicanGroupTestPlanSelect+`
- WHERE p.enabled = true AND p.next_run_at <= $1 AND (p.running_until IS NULL OR p.running_until < $1)
- AND g.deleted_at IS NULL AND g.status = $2
- ORDER BY p.next_run_at ASC, p.id ASC`, now, service.StatusActive)
+ WHERE p.enabled = true AND p.next_run_at <= $2 AND (p.running_until IS NULL OR p.running_until < $2)
+ AND g.deleted_at IS NULL AND g.status = $3
+ ORDER BY p.next_run_at ASC, p.id ASC`, now.In(timezone.Location()).Format(time.DateOnly), now, service.StatusActive)
 	if err != nil {
 		return nil, err
 	}
@@ -144,11 +152,25 @@ func (r *pelicanGroupTestRepository) CreateResult(ctx context.Context, result *s
 	if result.AccountID > 0 {
 		accountID = result.AccountID
 	}
-	if err := r.db.QueryRowContext(ctx, `INSERT INTO pelican_group_test_results
- (plan_id, account_id, account_name, attempts, status, response_text, error_message, latency_ms, pelican_config, started_at, finished_at)
- VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, created_at`,
+	// The result and its retained daily aggregate commit atomically, including failed
+	// generations. The group comes from the persisted plan, not caller input.
+	if err := r.db.QueryRowContext(ctx, `WITH saved AS (
+ INSERT INTO pelican_group_test_results
+ (plan_id, account_id, account_name, attempts, status, response_text, error_message, latency_ms, pelican_config, started_at, finished_at, cost_usd, cost_incomplete)
+ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+ RETURNING id, created_at, plan_id, cost_usd, cost_incomplete
+), costs AS (
+ INSERT INTO pelican_group_test_daily_costs (group_id, cost_date, cost_usd, unpriced_count)
+ SELECT p.group_id, $14::date, COALESCE(s.cost_usd, 0),
+ CASE WHEN s.cost_usd IS NULL OR s.cost_incomplete THEN 1 ELSE 0 END
+ FROM saved s JOIN pelican_group_test_plans p ON p.id = s.plan_id
+ ON CONFLICT (group_id, cost_date) DO UPDATE SET
+ cost_usd = pelican_group_test_daily_costs.cost_usd + EXCLUDED.cost_usd,
+ unpriced_count = pelican_group_test_daily_costs.unpriced_count + EXCLUDED.unpriced_count
+) SELECT id, created_at FROM saved`,
 		result.PlanID, accountID, result.AccountName, attempts, result.Status, result.ResponseText, result.ErrorMessage,
-		result.LatencyMs, marshalPelicanConfig(result.PelicanConfig), result.StartedAt, result.FinishedAt).Scan(&saved.ID, &saved.CreatedAt); err != nil {
+		result.LatencyMs, marshalPelicanConfig(result.PelicanConfig), result.StartedAt, result.FinishedAt,
+		result.CostUSD, result.CostIncomplete, result.FinishedAt.In(timezone.Location()).Format(time.DateOnly)).Scan(&saved.ID, &saved.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &saved, nil
@@ -168,7 +190,7 @@ func (r *pelicanGroupTestRepository) PruneExpiredResults(ctx context.Context, be
 }
 
 const pelicanGroupTestResultSelect = `SELECT r.id, r.plan_id, p.group_id, g.name, COALESCE(r.account_id, 0), r.account_name, r.attempts,
- r.status, r.error_message, r.latency_ms, r.pelican_config, r.started_at, r.finished_at, r.created_at`
+ r.status, r.error_message, r.latency_ms, r.pelican_config, r.started_at, r.finished_at, r.created_at, r.cost_usd, r.cost_incomplete`
 
 const pelicanGroupTestResultFrom = `
  FROM pelican_group_test_results r
@@ -219,10 +241,13 @@ func scanPelicanGroupTestPlan(row scannable) (*service.PelicanGroupTestPlan, err
 	var resultAccountName, resultStatus, resultError sql.NullString
 	var resultAttempts []byte
 	var resultStarted, resultFinished, resultCreated sql.NullTime
+	var resultCost sql.NullFloat64
+	var resultIncomplete sql.NullBool
 	if err := row.Scan(&plan.ID, &plan.GroupID, &plan.GroupName, &plan.GroupPlatform, &plan.GroupStatus,
 		&plan.ModelID, &plan.CronExpression, &plan.Enabled, &config, &lastRun, &nextRun, &runningUntil, &plan.CreatedAt, &plan.UpdatedAt,
+		&plan.TodayCostUSD, &plan.TotalCostUSD, &plan.TodayCostIncomplete, &plan.TotalCostIncomplete,
 		&resultID, &resultAccountID, &resultAccountName, &resultAttempts, &resultStatus, &resultError, &resultLatency,
-		&resultStarted, &resultFinished, &resultCreated); err != nil {
+		&resultStarted, &resultFinished, &resultCreated, &resultCost, &resultIncomplete); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(config, &plan.PelicanConfig); err != nil {
@@ -237,6 +262,10 @@ func scanPelicanGroupTestPlan(row scannable) (*service.PelicanGroupTestPlan, err
 			AccountID: resultAccountID.Int64, AccountName: resultAccountName.String, Status: resultStatus.String,
 			ErrorMessage: resultError.String, LatencyMs: resultLatency.Int64,
 			StartedAt: resultStarted.Time, FinishedAt: resultFinished.Time, CreatedAt: resultCreated.Time,
+			CostIncomplete: resultIncomplete.Bool,
+		}
+		if resultCost.Valid {
+			last.CostUSD = &resultCost.Float64
 		}
 		if err := unmarshalAttempts(resultAttempts, &last.Attempts); err != nil {
 			return nil, err
@@ -250,7 +279,7 @@ func scanPelicanGroupTestResult(row scannable, withContent ...bool) (*service.Pe
 	result := &service.PelicanGroupTestResult{}
 	var attempts, config []byte
 	dest := []any{&result.ID, &result.PlanID, &result.GroupID, &result.GroupName, &result.AccountID, &result.AccountName, &attempts,
-		&result.Status, &result.ErrorMessage, &result.LatencyMs, &config, &result.StartedAt, &result.FinishedAt, &result.CreatedAt}
+		&result.Status, &result.ErrorMessage, &result.LatencyMs, &config, &result.StartedAt, &result.FinishedAt, &result.CreatedAt, &result.CostUSD, &result.CostIncomplete}
 	if len(withContent) > 0 && withContent[0] {
 		dest = append(dest, &result.ResponseText)
 	}

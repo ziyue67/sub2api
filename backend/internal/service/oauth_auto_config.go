@@ -16,29 +16,37 @@ import (
 const SettingKeyOAuthAutoConfig = "smart_ops_oauth_auto_config"
 const AutoConfigConcurrencyExtraKey = "auto_config_concurrency"
 
-// Initial account fields, BPS defaults and concurrency upgrades are independent.
+// Initial account fields, BPS defaults, model billing and concurrency upgrades are independent.
 type OAuthAutoConfig struct {
-	ExcelBPS         ExcelBPSDefaults `json:"excel_bps"`
-	UpdatedAt        time.Time        `json:"updated_at"`
-	Enabled          bool             `json:"enabled"`
-	Platform         string           `json:"platform"`
-	Priority         int              `json:"priority"`
-	LoadFactor       int              `json:"load_factor"`
-	Concurrency      int              `json:"concurrency"`
-	GroupIDs         []int64          `json:"group_ids"`
-	UpgradeEnabled   bool             `json:"upgrade_enabled"`
-	UpgradeGroupIDs  []int64          `json:"upgrade_group_ids"`
-	SuccessesPerStep int              `json:"successes_per_step"`
-	UpgradeStep      int              `json:"upgrade_step"`
-	MaxConcurrency   int              `json:"max_concurrency"`
-	CooldownSeconds  int              `json:"cooldown_seconds"`
-	Revision         string           `json:"revision"`
+	ModelMappings    []OAuthModelMappingRule `json:"model_mappings"`
+	ModelBilling     ModelBillingConfig      `json:"model_billing"`
+	ExcelBPS         ExcelBPSDefaults        `json:"excel_bps"`
+	UpdatedAt        time.Time               `json:"updated_at"`
+	Enabled          bool                    `json:"enabled"`
+	Platform         string                  `json:"platform"`
+	Priority         int                     `json:"priority"`
+	LoadFactor       int                     `json:"load_factor"`
+	Concurrency      int                     `json:"concurrency"`
+	GroupIDs         []int64                 `json:"group_ids"`
+	UpgradeEnabled   bool                    `json:"upgrade_enabled"`
+	UpgradeGroupIDs  []int64                 `json:"upgrade_group_ids"`
+	SuccessesPerStep int                     `json:"successes_per_step"`
+	UpgradeStep      int                     `json:"upgrade_step"`
+	MaxConcurrency   int                     `json:"max_concurrency"`
+	CooldownSeconds  int                     `json:"cooldown_seconds"`
+	Revision         string                  `json:"revision"`
 }
 
 func DefaultOAuthAutoConfig() OAuthAutoConfig {
-	return OAuthAutoConfig{ExcelBPS: DefaultExcelBPSDefaults(), Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
+	return OAuthAutoConfig{ModelMappings: defaultOAuthModelMappings(PlatformOpenAI), ModelBilling: DefaultModelBillingConfig(), ExcelBPS: DefaultExcelBPSDefaults(), Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
 }
 func ValidateOAuthAutoConfig(c OAuthAutoConfig) error {
+	if err := validateOAuthModelMappings(c.ModelMappings); err != nil {
+		return err
+	}
+	if err := validateModelBillingConfig(c.ModelBilling); err != nil {
+		return err
+	}
 	if err := validateExcelBPSDefaults(c.ExcelBPS); err != nil {
 		return err
 	}
@@ -85,6 +93,8 @@ func GetOAuthAutoConfig(ctx context.Context, repo SettingRepository) (OAuthAutoC
 		return c, err
 	}
 	if raw != "" {
+		// Legacy settings keep their routing until mappings are explicitly saved.
+		c.ModelMappings = nil
 		if err = json.Unmarshal([]byte(raw), &c); err != nil {
 			return c, err
 		}
@@ -127,6 +137,7 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 			return infraerrors.BadRequest("AUTO_CONFIG_GROUP_INVALID", "automatic configuration group is unavailable for this platform")
 		}
 	}
+	applyOAuthModelMappings(input, c.ModelMappings)
 	input.Priority = c.Priority
 	lf := c.LoadFactor
 	input.LoadFactor = &lf
@@ -146,6 +157,9 @@ func (s *AccountOpsService) GetOAuthAutoConfig(ctx context.Context) (OAuthAutoCo
 func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAutoConfig) (OAuthAutoConfig, error) {
 	s.autoConfigMu.Lock()
 	defer s.autoConfigMu.Unlock()
+	if c.ModelMappings == nil {
+		c.ModelMappings = []OAuthModelMappingRule{}
+	}
 	if err := ValidateOAuthAutoConfig(c); err != nil {
 		return c, err
 	}

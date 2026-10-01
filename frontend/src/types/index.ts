@@ -2618,7 +2618,6 @@ export interface QualityBPSPolicy {
   all_models: boolean
   models: string[]
   omit_unsupported_tools: boolean
-  ignore_images: boolean
   ignore_encrypted_content: boolean
   auto_disable_on_403: boolean
   auto_recover_on_403?: boolean

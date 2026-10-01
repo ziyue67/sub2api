@@ -1,3 +1,4 @@
+import { settingsLocation } from '@/utils/settingsSearch'
 /**
  * Vue Router configuration for Sub2API frontend
  * Defines all application routes with lazy loading and navigation guards
@@ -898,7 +899,9 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
-  scrollBehavior(_to, _from, savedPosition) {
+  scrollBehavior(to, _from, savedPosition) {
+    // SettingsView waits for its async form and reveals the target tab first.
+    if (to.path === '/admin/settings' && settingsLocation(to.query.tab, to.hash).linked) return false
     // Scroll to saved position when using browser back/forward
     if (savedPosition) {
       return savedPosition

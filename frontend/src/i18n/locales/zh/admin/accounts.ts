@@ -843,8 +843,6 @@ export default {
         excelBPS: 'Excel / BPS 协议',
         excelBPSOmitUnsupportedTools: '保持 BPS，省略不支持的托管工具',
         excelBPSOmitUnsupportedToolsDesc: '默认关闭：请求声明实时联网搜索（external_web_access=true）、高搜索上下文或图片生成时走原生 Codex 通道，即使 tool_choice=auto 且本轮尚未调用。开启后保持 BPS，省略适配层不支持的托管工具，并向模型说明能力不可用；搜索和图片生成不会因此获得支持，客户端函数工具不受影响。强制工具选择返回 400；tool_choice=none 不触发工具回退。回退原因记录在响应头及 excel_bps.native_fallback 诊断日志中。',
-        excelBPSIgnoreImages: '图片支持关闭时忽略图片输入',
-        excelBPSIgnoreImagesDesc: '默认关闭。仅在系统设置中的 Excel / BPS 图片支持关闭时生效：转发前将当前及历史消息、工具结果中的每张图片替换为不可用提示，保留文本和工具调用关系，避免历史截图反复报错导致会话无法继续。图片混合文本的结果也会明确告知模型无法看到图片，图片支持关闭期间不要重试 view_image 或其他读图工具。重新开启图片支持后恢复正常图片处理。',
         excelBPSCacheCreationAsInput: '创建缓存按普通输入计费',
         excelBPSMihomo: 'BPS 会话代理（谨慎开启）',
         excelBPSProxySource: '出口来源',
@@ -1205,7 +1203,33 @@ export default {
 	    expiresAtFull: '重置次数到期时间：{time}',
 	    clears: '可清除窗口：{windows}',
 	    notUsableNow: '暂不可用',
-	    requiresLimit: '需达到限额后才能使用'
+	    requiresLimit: '需达到限额后才能使用',
+	    reset: '重置',
+	    resetTooltipNeedQuery: '请先点「次数」查询；查询到可用的重置后才能使用',
+	    resetTooltipNone: '当前没有可立即使用的重置',
+	    resetTooltipReady: '消耗 1 次重置，清除限额窗口（需确认）',
+	    confirmTitle: '确认使用 Claude 重置',
+	    confirmMessage: '将消耗 1 次重置次数，立即恢复 {windows} 窗口，剩余 {count} 次。此操作不可撤销，确定继续吗？',
+	    windows: {
+	      fiveHour: '5h',
+	      sevenDay: '7d',
+	      sevenDayOverage: '7d 超额'
+	    },
+	    outcome: {
+	      reset: '重置成功，已清除：{windows}',
+	      alreadyUsed: '该重置已被使用，正在刷新确认',
+	      cooldown: '重置处于冷却中，请稍后再试',
+	      cooldownUntil: '重置处于冷却中，冷却至 {time}',
+	      notLimited: '当前未达到限额，无需重置，未消耗次数',
+	      ineligible: '此账号当前不可使用重置',
+	      unknown: '结果未确认，已阻止再次兑换，请稍后查询',
+	      unavailable: '重置服务暂时不可用，未确认消耗，请稍后再试',
+	      inProgress: '该重置请求仍在处理中，请稍后查询结果',
+	      retryBackoff: '该重置请求刚刚失败，请稍后再试',
+	      busy: '另一个重置正在进行中，请稍后再试',
+	      notAvailable: '当前没有可立即使用的重置，未消耗次数',
+	      failed: '重置请求失败'
+	    }
 	  },
       autoResetCredit: {
 	    title: '自动使用重置卡',

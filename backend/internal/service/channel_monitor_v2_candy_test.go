@@ -14,12 +14,13 @@ import (
 
 type candyRepoFake struct {
 	channelMonitorV2RepoStub
-	mu         sync.Mutex
-	claims     map[string]int64
-	results    []ChannelMonitorV2CandyResult
-	history    []ChannelMonitorV2CandyResult
-	historyIDs []int64
-	prunes     int
+	mu             sync.Mutex
+	claims         map[string]int64
+	results        []ChannelMonitorV2CandyResult
+	history        []ChannelMonitorV2CandyResult
+	historyConfigs map[int64]string
+	historySince   time.Time
+	prunes         int
 }
 
 func (r *candyRepoFake) ClaimCandyProbe(_ context.Context, p ChannelMonitorV2CandyProbe, _ string, slot time.Time, version int) (int64, error) {
@@ -42,8 +43,9 @@ func (r *candyRepoFake) FinishCandyProbe(_ context.Context, result ChannelMonito
 	r.results = append(r.results, result)
 	return nil
 }
-func (r *candyRepoFake) CandyHistory(_ context.Context, ids []int64, _ time.Time) ([]ChannelMonitorV2CandyResult, error) {
-	r.historyIDs = ids
+func (r *candyRepoFake) CandyHistory(_ context.Context, configs map[int64]string, since time.Time) ([]ChannelMonitorV2CandyResult, error) {
+	r.historyConfigs = configs
+	r.historySince = since
 	return r.history, nil
 }
 func (r *candyRepoFake) PruneCandyHistory(context.Context, time.Time) error { r.prunes++; return nil }
@@ -140,7 +142,8 @@ func TestChannelMonitorV2CandyHistoryScopeAndRedaction(t *testing.T) {
 	id := int64(4)
 	matrix := &ChannelMonitorV2Matrix{Items: []ChannelMonitorV2MatrixRow{{GroupID: &id}}}
 	require.NoError(t, s.attachHistory(context.Background(), matrix, &cfg, false))
-	require.Equal(t, []int64{4}, repo.historyIDs)
+	require.Equal(t, map[int64]string{4: p.key()}, repo.historyConfigs)
+	require.Equal(t, groupTestNow.Add(-24*time.Hour), repo.historySince)
 	require.Len(t, matrix.Items[0].Candy.Results, 1)
 	encoded, err := json.Marshal(matrix)
 	require.NoError(t, err)

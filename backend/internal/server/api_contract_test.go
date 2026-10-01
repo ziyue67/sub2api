@@ -881,7 +881,7 @@ func TestAPIContracts(t *testing.T) {
 					"default_user_rpm_limit": 0,
 					"default_subscriptions": [],
 					"enable_model_fallback": false,
-					"excel_bps_image_mode": "relay",
+					"excel_bps_image_mode": "native",
 					"excel_bps_image_base_url": "",
  "excel_bps_image_max_image_mib": 20,
  "excel_bps_image_max_images": 20,
@@ -897,7 +897,7 @@ func TestAPIContracts(t *testing.T) {
  "request_capture_enabled": false,
  "request_capture_quota_mib": 1024,
  "request_capture_retention_days": 7,
-					"excel_bps_image_relay_enabled": false,
+					"excel_bps_image_relay_enabled": true,
                     "excel_bps_image_limit_policy": "off",
                     "excel_bps_image_warning_remaining": 8,
                     "excel_bps_image_compact_reserve": 3,
@@ -1241,7 +1241,7 @@ func TestAPIContracts(t *testing.T) {
 					"default_user_rpm_limit": 0,
 					"default_subscriptions": [],
 					"enable_model_fallback": false,
-					"excel_bps_image_mode": "relay",
+					"excel_bps_image_mode": "native",
 					"excel_bps_image_base_url": "",
  "excel_bps_image_max_image_mib": 20,
  "excel_bps_image_max_images": 20,
@@ -1257,7 +1257,7 @@ func TestAPIContracts(t *testing.T) {
  "request_capture_enabled": false,
  "request_capture_quota_mib": 1024,
  "request_capture_retention_days": 7,
-					"excel_bps_image_relay_enabled": false,
+					"excel_bps_image_relay_enabled": true,
                     "excel_bps_image_limit_policy": "off",
                     "excel_bps_image_warning_remaining": 8,
                     "excel_bps_image_compact_reserve": 3,
@@ -1804,8 +1804,8 @@ func (stubApiKeyCache) IncrementCreateAttemptCount(ctx context.Context, userID i
 	return nil
 }
 
-func (stubApiKeyCache) DeleteCreateAttemptCount(ctx context.Context, userID int64) error {
-	return nil
+func (stubApiKeyCache) IncrementCreateCount(ctx context.Context, userID int64, window time.Duration) (int64, error) {
+	return 0, nil
 }
 
 func (stubApiKeyCache) IncrementDailyUsage(ctx context.Context, apiKey string) error {

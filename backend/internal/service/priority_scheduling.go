@@ -16,6 +16,7 @@ const prioritySchedulingSettingKey = "priority_scheduling_v1"
 // PrioritySchedulingConfig only controls freely selectable OpenAI text requests.
 // Account eligibility, continuity, profit gates and concurrency acquisition stay authoritative.
 type PrioritySchedulingConfig struct {
+	BalanceProtocols   bool     `json:"balance_protocols"`
 	Enabled            bool     `json:"enabled"`
 	Mode               string   `json:"mode"`
 	GroupIDs           []int64  `json:"group_ids"`
@@ -33,7 +34,7 @@ type PrioritySchedulingConfig struct {
 }
 
 func DefaultPrioritySchedulingConfig() PrioritySchedulingConfig {
-	return PrioritySchedulingConfig{Mode: "balanced", GroupIDs: []int64{}, Models: []string{}, WindowMinutes: 60, MinSamples: 5, TargetTTFTMs: 3000, MaxLoadPercent: 80, MinQualityPercent: 90, QualityMaxAgeHours: 24, QualityWeight: 30, LatencyWeight: 25, LoadWeight: 25, CostWeight: 20}
+	return PrioritySchedulingConfig{BalanceProtocols: true, Mode: "balanced", GroupIDs: []int64{}, Models: []string{}, WindowMinutes: 60, MinSamples: 5, TargetTTFTMs: 3000, MaxLoadPercent: 80, MinQualityPercent: 90, QualityMaxAgeHours: 24, QualityWeight: 30, LatencyWeight: 25, LoadWeight: 25, CostWeight: 20}
 }
 
 func ValidatePrioritySchedulingConfig(c PrioritySchedulingConfig) error {
@@ -210,30 +211,35 @@ type prioritySchedulingState struct {
 }
 
 type PrioritySchedulingScore struct {
-	TheoreticalCost float64  `json:"theoretical_cost"`
-	Profit          *float64 `json:"profit"`
-	Margin          *float64 `json:"margin"`
-	EconomicsSource string   `json:"economics_source"`
-	Priority        int      `json:"priority"`
-	Concurrency     int      `json:"concurrency"`
-	LoadFactor      int      `json:"load_factor"`
-	AccountID       int64    `json:"account_id"`
-	AccountName     string   `json:"account_name"`
-	Score           float64  `json:"score"`
-	Tier            string   `json:"tier"`
-	Reasons         []string `json:"reasons"`
-	Rate            *float64 `json:"rate"`
-	LoadPercent     *int     `json:"load_percent"`
-	Waiting         int      `json:"waiting"`
+	CapacityBand        int      `json:"capacity_band"`
+	BoundGroups         int      `json:"bound_groups"`
+	SelectionWeight     float64  `json:"selection_weight"`
+	ExplorationEligible bool     `json:"exploration_eligible"`
+	TheoreticalCost     float64  `json:"theoretical_cost"`
+	Profit              *float64 `json:"profit"`
+	Margin              *float64 `json:"margin"`
+	EconomicsSource     string   `json:"economics_source"`
+	Priority            int      `json:"priority"`
+	Concurrency         int      `json:"concurrency"`
+	LoadFactor          int      `json:"load_factor"`
+	AccountID           int64    `json:"account_id"`
+	AccountName         string   `json:"account_name"`
+	Score               float64  `json:"score"`
+	Tier                string   `json:"tier"`
+	Reasons             []string `json:"reasons"`
+	Rate                *float64 `json:"rate"`
+	LoadPercent         *int     `json:"load_percent"`
+	Waiting             int      `json:"waiting"`
 	PrioritySchedulingSignal
 }
 type PrioritySchedulingSnapshot struct {
-	At           time.Time                 `json:"at"`
-	Model        string                    `json:"model"`
-	GroupID      *int64                    `json:"group_id"`
-	Mode         string                    `json:"mode"`
-	HistoryReady bool                      `json:"history_ready"`
-	Candidates   []PrioritySchedulingScore `json:"candidates"`
+	SelectionPolicy string                    `json:"selection_policy"`
+	At              time.Time                 `json:"at"`
+	Model           string                    `json:"model"`
+	GroupID         *int64                    `json:"group_id"`
+	Mode            string                    `json:"mode"`
+	HistoryReady    bool                      `json:"history_ready"`
+	Candidates      []PrioritySchedulingScore `json:"candidates"`
 }
 
 func (s *OpenAIGatewayService) PrioritySchedulingSnapshot() *PrioritySchedulingSnapshot {
@@ -314,7 +320,7 @@ func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandid
 	rate := item.account.CostMultiplier()
 	theoreticalCost := signal.BaseCost * rate
 	out := PrioritySchedulingScore{Rate: &rate, TheoreticalCost: theoreticalCost, AccountID: item.account.ID, AccountName: item.account.Name, Priority: openAIAccountSchedulingPriority(item.account), Concurrency: item.account.Concurrency, LoadFactor: item.account.EffectiveLoadFactor(), Tier: "eligible", Reasons: []string{}, PrioritySchedulingSignal: signal, Waiting: item.loadInfo.WaitingCount}
-	quality, latency, load, cost := 0.5, 0.5, 0.5, 0.0
+	quality, latency, load, cost := 0.5, 0.5, 0.5, 0.5
 	degraded, unknown := false, false
 	if signal.QualitySamples > 0 {
 		quality = float64(signal.QualityPassed) / float64(signal.QualitySamples)
@@ -342,7 +348,9 @@ func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandid
 			percent = int(100 * float64(item.loadInfo.CurrentConcurrency) / float64(item.account.Concurrency))
 		}
 		out.LoadPercent = &percent
-		load = (1 - clamp01(float64(item.loadInfo.CurrentConcurrency)/float64(item.account.EffectiveLoadFactor()))) / (1 + float64(max(0, item.loadInfo.WaitingCount)))
+		// A configured load factor may express a routing preference, but must
+		// not make a nearly full account look idle to this capacity policy.
+		load = (1 - clamp01(float64(item.loadInfo.CurrentConcurrency)/float64(max(1, item.account.Concurrency)))) / (1 + float64(max(0, item.loadInfo.WaitingCount)))
 		if percent >= c.MaxLoadPercent || item.loadInfo.WaitingCount > 0 {
 			degraded = true
 			out.Reasons = append(out.Reasons, "busy")
@@ -397,55 +405,83 @@ func (s *defaultOpenAIAccountScheduler) applyPriorityScheduling(req OpenAIAccoun
 		return
 	}
 	signals, ready := s.service.prioritySignals(req, c, plan.candidates)
-	snapshot := &PrioritySchedulingSnapshot{At: time.Now(), Model: req.RequestedModel, GroupID: req.GroupID, Mode: c.Mode, HistoryReady: ready, Candidates: []PrioritySchedulingScore{}}
-	if ready {
-		for i := range plan.candidates {
-			item := &plan.candidates[i]
-			score := scorePriorityCandidate(c, *item, signals[item.account.ID], snapshot.At)
-			// Disjoint score bands guarantee that cheaper degraded accounts cannot
-			// overtake accounts meeting the experience targets, even with custom weights.
-			offset := 0.0
-			switch score.Tier {
-			case "eligible":
-				offset = 400
-			case "insufficient":
-				offset = 200
-			}
-			item.score = offset + score.Score
-			snapshot.Candidates = append(snapshot.Candidates, score)
+	snapshot := &PrioritySchedulingSnapshot{At: time.Now(), Model: req.RequestedModel, GroupID: req.GroupID, Mode: c.Mode, SelectionPolicy: "capacity_first", HistoryReady: ready, Candidates: []PrioritySchedulingScore{}}
+	// Cold/failed history must not restore a tiny fixed Top-K and strand idle
+	// accounts. Missing history stays unknown while live capacity still balances.
+	for i := range plan.candidates {
+		item := &plan.candidates[i]
+		score := scorePriorityCandidate(c, *item, signals[item.account.ID], snapshot.At)
+		item.priorityUnhealthy = slices.Contains(score.Reasons, "quality_below_target") ||
+			slices.Contains(score.Reasons, "recent_errors") || slices.Contains(score.Reasons, "historical_loss")
+		item.priorityLatencyFactor = 1
+		if score.Samples >= c.MinSamples && score.P90TTFTMs > 0 {
+			ratio := score.P90TTFTMs / float64(c.TargetTTFTMs)
+			// Experience constrains profit preference even when every account
+			// misses the target. Keep a floor for recovery/overflow traffic.
+			item.priorityLatencyFactor = math.Max(0.02, 1/(1+ratio*ratio))
 		}
-		plan.priorityScheduling = true
-		plan.includeOverflowFallback = true
-		slices.SortStableFunc(snapshot.Candidates, func(a, b PrioritySchedulingScore) int {
-			tier := func(t string) int {
-				if t == "eligible" {
-					return 2
-				}
-				if t == "insufficient" {
-					return 1
-				}
-				return 0
-			}
-			if tier(a.Tier) != tier(b.Tier) {
-				return tier(b.Tier) - tier(a.Tier)
-			}
-			if a.Priority != b.Priority {
-				if a.Priority < b.Priority {
-					return -1
-				}
+		// Experience tiers remain distinct within the same risk/capacity cohort;
+		// current congestion is considered before historical score differences.
+		offset := 0.0
+		switch score.Tier {
+		case "eligible":
+			offset = 400
+		case "insufficient":
+			offset = 200
+		}
+		item.score = offset + score.Score
+		item.priorityExploration = item.account.IsOpenAIOAuth() && score.Tier == "insufficient" &&
+			score.ProfitSamples < c.MinSamples && score.Samples < c.MinSamples &&
+			item.loadKnown && score.LoadPercent != nil && *score.LoadPercent < c.MaxLoadPercent
+		score.ExplorationEligible = item.priorityExploration
+		score.BoundGroups = priorityAccountGroupCount(item.account)
+		score.SelectionWeight = prioritySelectionWeight(*item, snapshot.At)
+		score.CapacityBand = priorityCapacityBand(*item)
+		snapshot.Candidates = append(snapshot.Candidates, score)
+	}
+	plan.priorityScheduling = true
+	plan.includeOverflowFallback = true
+	slices.SortStableFunc(snapshot.Candidates, func(a, b PrioritySchedulingScore) int {
+		unhealthy := func(v PrioritySchedulingScore) bool {
+			return slices.Contains(v.Reasons, "quality_below_target") || slices.Contains(v.Reasons, "recent_errors") || slices.Contains(v.Reasons, "historical_loss")
+		}
+		if unhealthy(a) != unhealthy(b) {
+			if unhealthy(a) {
 				return 1
 			}
-			if a.Score > b.Score {
-				return -1
+			return -1
+		}
+		if a.CapacityBand != b.CapacityBand {
+			return a.CapacityBand - b.CapacityBand
+		}
+		tier := func(t string) int {
+			if t == "eligible" {
+				return 2
 			}
-			if a.Score < b.Score {
+			if t == "insufficient" {
 				return 1
 			}
 			return 0
-		})
-		if len(snapshot.Candidates) > 100 {
-			snapshot.Candidates = snapshot.Candidates[:100]
 		}
+		if tier(a.Tier) != tier(b.Tier) {
+			return tier(b.Tier) - tier(a.Tier)
+		}
+		if a.Priority != b.Priority {
+			if a.Priority < b.Priority {
+				return -1
+			}
+			return 1
+		}
+		if a.SelectionWeight > b.SelectionWeight {
+			return -1
+		}
+		if a.SelectionWeight < b.SelectionWeight {
+			return 1
+		}
+		return 0
+	})
+	if len(snapshot.Candidates) > 100 {
+		snapshot.Candidates = snapshot.Candidates[:100]
 	}
 	state := &s.service.priorityScheduling
 	state.mu.Lock()

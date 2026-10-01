@@ -36,6 +36,12 @@
           </div>
         </div>
       </details>
+      <div class="grid gap-3 md:grid-cols-2">
+        <label v-for="item in companions" :key="item.key" class="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-dark-700">
+          <input v-model="draft[item.key]" type="checkbox" class="mt-0.5" :data-testid="'bps-' + item.key" />
+          <span><span class="block text-sm font-medium">{{ t('admin.accounts.openai.' + item.label) }}</span><span class="mt-1 block text-xs leading-5 text-gray-500">{{ t('autoConfig.bps.' + item.key + 'Hint') }}</span></span>
+        </label>
+      </div>
     </div>
   </section>
 </template>
@@ -50,8 +56,9 @@ import type { Group } from '@/types'
 const props = defineProps<{ groups: Group[] }>()
 const draft = defineModel<ExcelBPSDefaults>({ required: true })
 const { t } = useI18n()
+const companions = [{ key: 'ws_sse_acceleration', label: 'wsSseAcceleration' }, { key: 'auto_enable_on_degradation', label: 'autoBPS' }] as const
 const recommended = [{ key: 'ignore_encrypted_content', label: 'IgnoreEncryptedContent' }, { key: 'auto_disable_on_403', label: 'AutoDisableOn403' }, { key: 'cache_creation_as_input', label: 'CacheCreationAsInput' }] as const
-const advanced = [{ key: 'omit_unsupported_tools', label: 'OmitUnsupportedTools' }, { key: 'ignore_images', label: 'IgnoreImages' }, { key: 'auto_recover_on_403', label: 'AutoRecoverOn403' }, { key: 'auto_move_on_403', label: 'AutoMoveOn403' }, { key: 'session_proxy', label: 'Mihomo' }] as const
+const advanced = [{ key: 'omit_unsupported_tools', label: 'OmitUnsupportedTools' }, { key: 'auto_recover_on_403', label: 'AutoRecoverOn403' }, { key: 'auto_move_on_403', label: 'AutoMoveOn403' }, { key: 'session_proxy', label: 'Mihomo' }] as const
 const targetGroups = computed(() => props.groups.filter(g => g.platform === 'openai' || g.platform === 'composite'))
 watch(() => draft.value.auto_disable_on_403, enabled => { if (!enabled) draft.value.auto_recover_on_403 = false })
 function resetOptions() {

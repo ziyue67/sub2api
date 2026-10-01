@@ -26,7 +26,7 @@ describe('accountAutoBPS', () => {
   it('defaults to two-minute probes and the selected BPS options without enabling the rule', () => {
     const draft = newAutoBPSDraft()
     expect(draft).toMatchObject({ enabled: false, cronExpression: '*/2 * * * *', bps: {
-      omit_unsupported_tools: false, ignore_images: false, ignore_encrypted_content: true,
+      omit_unsupported_tools: false, ignore_encrypted_content: true,
       auto_disable_on_403: true, auto_recover_on_403: false, auto_move_on_403: false,
       session_proxy: false, cache_creation_as_input: true,
     } })

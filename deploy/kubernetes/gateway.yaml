@@ -1,0 +1,141 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sub2api-gateway
+spec:
+  serviceName: sub2api-gateway-headless
+  replicas: 2
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sub2api-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sub2api-gateway
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 320
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: sub2api-gateway
+      # Copy the existing credential key into each private PVC with mode 0600.
+      # A Secret volume's root/group ownership does not satisfy the key-file contract.
+      initContainers:
+        - name: credential-key
+          image: ghcr.io/ranxi2001/sub2api:build-with-k8s-runtime-required
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              umask 077
+              mkdir -p /data/secrets
+              target=/data/secrets/credential-operations.key
+              source=/credential-source/credential-operations.key
+              if [ -e "$target" ]; then
+                cmp -s "$source" "$target" || { echo 'credential key mismatch; restore the existing key' >&2; exit 1; }
+                chmod 0600 "$target"
+              else
+                cat "$source" > "$target.pending"
+                chmod 0600 "$target.pending"
+                mv "$target.pending" "$target"
+              fi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 250m, memory: 64Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: credential-source, mountPath: /credential-source, readOnly: true}
+      containers:
+        - name: sub2api
+          # Both images must be replaced with one verified digest containing this change.
+          image: ghcr.io/ranxi2001/sub2api:build-with-k8s-runtime-required
+          command: ["/app/sub2api"]
+          workingDir: /app
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: RUNTIME_ROLE, value: gateway}
+            - {name: RUN_MODE, value: standard}
+            - {name: AUTO_SETUP, value: "false"}
+            - {name: DATA_DIR, value: /app/data}
+            - {name: SERVER_HOST, value: 0.0.0.0}
+            - {name: SERVER_PORT, value: "8080"}
+            - {name: SERVER_GRACEFUL_SHUTDOWN_TIMEOUT, value: "240"}
+            - {name: SERVER_SHUTDOWN_DRAIN_DELAY, value: "10"}
+            - {name: DATABASE_MAX_OPEN_CONNS, value: "16"}
+            - {name: DATABASE_MAX_IDLE_CONNS, value: "4"}
+            - {name: REDIS_POOL_SIZE, value: "32"}
+            - {name: REDIS_MIN_IDLE_CONNS, value: "4"}
+            - {name: LOG_OUTPUT_TO_FILE, value: "false"}
+            - {name: GOMAXPROCS, value: "2"}
+            - {name: GOMEMLIMIT, value: 1400MiB}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 500m, memory: 768Mi, ephemeral-storage: 256Mi}
+            limits: {cpu: "2", memory: 2Gi, ephemeral-storage: 1Gi}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 120
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          volumeMounts:
+            - {name: data, mountPath: /app/data}
+            - {name: config, mountPath: /app/data/config.yaml, subPath: config.yaml, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          secret:
+            secretName: sub2api-runtime-config
+            defaultMode: 0440
+            items:
+              - {key: config.yaml, path: config.yaml}
+        - name: credential-source
+          secret:
+            secretName: sub2api-credential-key
+            defaultMode: 0440
+            items:
+              - {key: credential-operations.key, path: credential-operations.key}
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # Omit storageClassName to use the cluster default (e.g. K3s local-path).
+        resources:
+          requests:
+            storage: 10Gi

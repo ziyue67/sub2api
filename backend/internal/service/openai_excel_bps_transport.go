@@ -24,6 +24,18 @@ import (
 
 var errExcelBPSProxyUnavailable = errors.New("BPS proxy unavailable")
 
+// Preserve local proxy classification after writing the client error without
+// changing its log message or retaining an acquisition cause with credentials.
+type excelBPSForwardError struct{ code string }
+
+func (e *excelBPSForwardError) Error() string { return "excel BPS: " + e.code }
+func (e *excelBPSForwardError) Unwrap() error {
+	if e.code == "basispoints_proxy_unavailable" {
+		return errExcelBPSProxyUnavailable
+	}
+	return nil
+}
+
 // Keep the cause available to diagnostics without exposing a supplier URL in
 // the error string if a caller logs the returned error.
 type excelBPSAcquisitionFailure struct{ cause error }

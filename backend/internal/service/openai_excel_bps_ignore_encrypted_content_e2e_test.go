@@ -50,7 +50,7 @@ func TestExcelBPSIgnoreEncryptedContentHTTPFlow(t *testing.T) {
 				router := gin.New()
 				router.POST(path, func(c *gin.Context) {
 					svc := openAIClientToolsTestService(nil)
-					svc.httpUpstream = &excelBPSIgnoreImagesHTTPUpstream{target: target, client: upstream.Client()}
+					svc.httpUpstream = &excelBPSImageHTTPUpstream{target: target, client: upstream.Client()}
 					defer func() { _ = svc.CloseExcelBPSImages() }()
 					svc.settingService = NewSettingService(&excelBPSImageSettingsRepo{values: map[string]string{}}, svc.cfg)
 					account := excelAccount()

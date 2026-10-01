@@ -84,7 +84,7 @@ func TestExcelBPSNativeToolImagesForward(t *testing.T) {
 								if part.Get("type").String() == "input_image" {
 									found++
 									require.Equal(t, "file-toolimage", part.Get("file_id").String())
-									require.Equal(t, "original", part.Get("detail").String())
+									require.Len(t, part.Map(), 2, "moved message attachments only accept type and file_id")
 								}
 							}
 						}

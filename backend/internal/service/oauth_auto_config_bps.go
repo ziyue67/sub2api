@@ -8,10 +8,11 @@ import (
 
 // ExcelBPSDefaults is a reusable form template. It never enables accounts by itself.
 type ExcelBPSDefaults struct {
+	WSSSEAcceleration       bool     `json:"ws_sse_acceleration"`
+	AutoEnableOnDegradation bool     `json:"auto_enable_on_degradation"`
 	AllModels               bool     `json:"all_models"`
 	Models                  []string `json:"models"`
 	OmitUnsupportedTools    bool     `json:"omit_unsupported_tools"`
-	IgnoreImages            bool     `json:"ignore_images"`
 	IgnoreEncryptedContent  bool     `json:"ignore_encrypted_content"`
 	AutoDisableOn403        bool     `json:"auto_disable_on_403"`
 	AutoRecoverOn403        bool     `json:"auto_recover_on_403"`
@@ -64,7 +65,6 @@ func (b ExcelBPSDefaults) extra() map[string]any {
 	extra := map[string]any{
 		"openai_excel_bps":                          true,
 		"openai_excel_bps_omit_unsupported_tools":   b.OmitUnsupportedTools,
-		"openai_excel_bps_ignore_images":            b.IgnoreImages,
 		"openai_excel_bps_ignore_encrypted_content": b.IgnoreEncryptedContent,
 		"openai_excel_bps_auto_disable_on_403":      b.AutoDisableOn403,
 		"openai_excel_bps_auto_recover_on_403":      b.AutoDisableOn403 && b.AutoRecoverOn403,

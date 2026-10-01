@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sub2api-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sub2api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sub2api-gateway-headless
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: sub2api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

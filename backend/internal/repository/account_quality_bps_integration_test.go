@@ -92,7 +92,7 @@ func (f *qualityBPSFixture) events() int {
 }
 
 func TestQualityEnableBPSLifecycle(t *testing.T) {
-	f := newQualityBPSFixture(t, `{"codex_7d_used_percent":10,"unrelated":"kept","openai_excel_bps_ignore_images":true}`, &service.QualityPolicy{
+	f := newQualityBPSFixture(t, `{"codex_7d_used_percent":10,"unrelated":"kept","openai_excel_bps_cache_creation_as_input":true}`, &service.QualityPolicy{
 		Action: service.QualityActionEnableBPS, AutoRestore: true,
 		BPS: &service.QualityBPSPolicy{FailureThreshold: 2, UsagePercent: 80, PassThreshold: 2, HoldOnUsage: true,
 			Models: []string{"gpt-6-astra"}, OmitUnsupportedTools: true, IgnoreEncryptedContent: true},
@@ -113,7 +113,7 @@ func TestQualityEnableBPSLifecycle(t *testing.T) {
 	require.Equal(t, true, extra["openai_excel_bps"])
 	require.Equal(t, []any{"gpt-6-astra"}, extra["openai_excel_bps_models"])
 	require.Equal(t, true, extra[service.ExcelBPSOmitUnsupportedToolsKey])
-	require.Equal(t, false, extra[service.ExcelBPSIgnoreImagesKey])
+	require.Equal(t, false, extra["openai_excel_bps_cache_creation_as_input"])
 	require.Equal(t, true, extra[service.ExcelBPSIgnoreEncryptedContentKey])
 	require.NotContains(t, extra, service.ExcelBPS403TargetGroupIDKey)
 	require.Equal(t, "kept", extra["unrelated"])
@@ -138,11 +138,11 @@ func TestQualityEnableBPSLifecycle(t *testing.T) {
 	require.Equal(t, "restored", f.apply("passed"))
 	extra = f.extra()
 	for _, key := range service.QualityBPSManagedKeys {
-		if key != service.ExcelBPSIgnoreImagesKey {
+		if key != "openai_excel_bps_cache_creation_as_input" {
 			require.NotContains(t, extra, key, "keys absent before BPS are removed on restore")
 		}
 	}
-	require.Equal(t, true, extra[service.ExcelBPSIgnoreImagesKey], "previous values come back")
+	require.Equal(t, true, extra["openai_excel_bps_cache_creation_as_input"], "previous values come back")
 	require.Equal(t, "kept", extra["unrelated"])
 	require.Zero(t, f.count(states))
 	require.Equal(t, 1, f.events())

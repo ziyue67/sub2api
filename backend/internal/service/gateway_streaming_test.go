@@ -42,7 +42,7 @@ func TestParseSSEUsage_MessageStart(t *testing.T) {
 	require.Equal(t, 100, usage.InputTokens)
 	require.Equal(t, 50, usage.CacheCreationInputTokens)
 	require.Equal(t, 200, usage.CacheReadInputTokens)
-	require.Equal(t, 0, usage.OutputTokens, "message_start 不应设置 output_tokens")
+	require.Equal(t, 0, usage.OutputTokens, "缺失 output_tokens 时应保留零值")
 }
 
 func TestParseSSEUsage_MessageDelta(t *testing.T) {
@@ -531,4 +531,13 @@ func TestHandleStreamingResponse_SSEErrorEvent_NonJSONDataLine(t *testing.T) {
 		_ = ExtractUpstreamErrorMessage([]byte(sseErr.RawData))
 	})
 	require.Equal(t, "", ExtractUpstreamErrorMessage([]byte(sseErr.RawData)))
+}
+
+func TestParseSSEUsage_StartOutputIsCumulativeNotAddedTwice(t *testing.T) {
+	s := &GatewayService{}
+	usage := &ClaudeUsage{}
+	s.parseSSEUsage(`{"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":2}}}`, usage)
+	require.Equal(t, 2, usage.OutputTokens)
+	s.parseSSEUsage(`{"type":"message_delta","usage":{"output_tokens":7}}`, usage)
+	require.Equal(t, 7, usage.OutputTokens)
 }

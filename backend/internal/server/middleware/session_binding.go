@@ -19,6 +19,11 @@ func SessionBindingContext(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		forwardedIPSettings := cfg.ForwardedClientIPSettings()
 		ip.SetForwardedIPSettings(c, forwardedIPSettings.TrustForwardedIP, forwardedIPSettings.Headers)
+		if verified, ok := c.Get("serverless_verified_ip"); ok {
+			if address, valid := verified.(string); valid {
+				ip.SetVerifiedForwardedIP(c, address)
+			}
+		}
 		userAgent := normalizePersistentText(c.Request.UserAgent(), maxPersistentUserAgentBytes)
 		c.Request.Header.Set("User-Agent", userAgent)
 		binding := &service.SessionBinding{

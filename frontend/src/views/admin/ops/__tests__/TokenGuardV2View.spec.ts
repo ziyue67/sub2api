@@ -16,6 +16,8 @@ const api = vi.hoisted(() => ({
   probeGuard: vi.fn(),
   reloginGuard: vi.fn(),
   saveRules: vi.fn(),
+  saveRuntime: vi.fn(),
+  updateSwitches: vi.fn(),
   listAccounts: vi.fn(),
   listGroups: vi.fn(),
   listProxies: vi.fn(),
@@ -29,6 +31,8 @@ vi.mock('@/api/admin/accountTokenGuardV2', () => ({
   probeTokenGuardV2Account: api.probeGuard,
   reloginTokenGuardV2Account: api.reloginGuard,
   saveTokenGuardV2Rules: api.saveRules,
+  saveTokenGuardV2Runtime: api.saveRuntime,
+  updateTokenGuardV2Switches: api.updateSwitches,
 }))
 vi.mock('@/api/admin/accounts', () => ({ list: api.listAccounts, default: { list: api.listAccounts } }))
 vi.mock('@/api/admin/groups', () => ({ getByPlatform: api.listGroups, default: { getByPlatform: api.listGroups } }))
@@ -51,6 +55,7 @@ let wrapper: VueWrapper | undefined
 beforeEach(() => {
   vi.clearAllMocks()
   api.listGuard.mockResolvedValue({
+    runtime_settings: { engine: 'local_worker', worker_concurrency: 3 },
     probe_interval_seconds: 1800,
     retry_interval_seconds: 300,
     relogin_cooldown_seconds: 1800,
@@ -92,6 +97,8 @@ beforeEach(() => {
     { id: 8, name: 'Singapore', protocol: 'http', host: '198.51.100.8', port: 8080 },
   ])
   api.updateGuard.mockResolvedValue({})
+  api.saveRuntime.mockImplementation(async input => input)
+  api.updateSwitches.mockResolvedValue({ enabled: false, auto_relogin_enabled: true })
   api.saveRules.mockResolvedValue({
     probe_interval_seconds: 1800,
     retry_interval_seconds: 300,
@@ -393,4 +400,100 @@ describe('TokenGuardV2View', () => {
     expect(wrapper.get('tbody').text()).toContain('Account 2')
     expect(wrapper.findAll('tbody tr')).toHaveLength(7)
   })
+})
+
+describe('managed re-login availability', () => {
+  it('separates encrypted credential readiness from a failed runtime', async () => {
+    const data = await api.listGuard()
+    api.listGuard.mockResolvedValue({
+      ...data, worker: { mode: 'managed', state: 'unavailable', reason: 'runtime_install_failed' }
+    })
+    wrapper = mount(TokenGuardV2View, {
+      global: { stubs: { AppLayout: { template: '<div><slot /></div>' }, Icon: true, SmartOpsNav: true } }
+    })
+    await flushPromises()
+    const runtime = wrapper.get('[data-testid="reauth-runtime-status"]')
+    expect(runtime.text()).toContain('tokenGuardV2.runtimeStates.unavailable')
+    expect(runtime.text()).toContain('tokenGuardV2.runtimeReasons.runtime_install_failed')
+    expect(runtime.text()).toContain('tokenGuardV2.runtimeManaged')
+  })
+})
+
+async function mountControls() {
+  wrapper = mount(TokenGuardV2View, {
+    global: { stubs: { AppLayout: { template: '<main><slot /></main>' }, SmartOpsNav: true, Icon: true,
+      BaseDialog: { props: ['show'], template: '<section v-if="show"><slot /><footer><slot name="footer" /></footer></section>' } } },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+it('moves engine and worker count into encryption settings and saves immediately', async () => {
+  const view = await mountControls()
+  const controls = view.get('[data-testid="credential-encryption-setup"]')
+  await controls.get('#token-guard-v2-engine').setValue('session_studio'); await flushPromises()
+  expect(api.saveRuntime).toHaveBeenLastCalledWith({ engine: 'session_studio', worker_concurrency: 3 })
+  expect(controls.text()).toContain('tokenGuardV2.sessionStudioGlobalHint')
+  await controls.get('#token-guard-v2-concurrency').setValue('6'); await flushPromises()
+  expect(api.saveRuntime).toHaveBeenLastCalledWith({ engine: 'session_studio', worker_concurrency: 6 })
+  expect(api.updateGuard).not.toHaveBeenCalled()
+})
+
+it('keeps runtime switches out of account forms and preserves credentials', async () => {
+  const view = await mountControls()
+  await view.findAll('button').find(button => button.text() === 'tokenGuardV2.edit')!.trigger('click')
+  const form = view.get('#token-guard-v2-editor')
+  expect(form.find('#token-guard-v2-engine').exists()).toBe(false)
+  expect(form.find('#token-guard-v2-concurrency').exists()).toBe(false)
+  expect(form.find('input[role="switch"]').exists()).toBe(false)
+  expect(form.text()).not.toContain('tokenGuardV2.autoInspect')
+  expect(form.text()).not.toContain('tokenGuardV2.autoRelogin')
+  await form.trigger('submit'); await flushPromises()
+  const payload = api.updateGuard.mock.calls[0][1]
+  expect(payload).not.toHaveProperty('engine')
+  expect(payload).not.toHaveProperty('enabled')
+  expect(payload).not.toHaveProperty('auto_relogin_enabled')
+  expect(payload.password).toBe('')
+})
+
+it('updates only the selected automation flag without resubmitting credentials', async () => {
+  const view = await mountControls()
+  await view.get('[data-testid="auto-inspect-42"]').setValue(false); await flushPromises()
+  expect(api.updateSwitches).toHaveBeenCalledWith(42, { enabled: false })
+  expect(api.updateGuard).not.toHaveBeenCalled()
+  expect(view.find('#token-guard-v2-editor').exists()).toBe(false)
+  expect((view.get('[data-testid="auto-inspect-42"]').element as HTMLInputElement).checked).toBe(false)
+  api.updateSwitches.mockResolvedValueOnce({ enabled: false, auto_relogin_enabled: false })
+  await view.get('[data-testid="auto-relogin-42"]').setValue(false); await flushPromises()
+  expect(api.updateSwitches).toHaveBeenLastCalledWith(42, { auto_relogin_enabled: false })
+})
+
+it('rolls controls back when saving fails', async () => {
+  const view = await mountControls()
+  api.saveRuntime.mockRejectedValueOnce(new Error('save failed'))
+  await view.get('#token-guard-v2-engine').setValue('session_studio'); await flushPromises()
+  expect((view.get('#token-guard-v2-engine').element as HTMLSelectElement).value).toBe('local_worker')
+  api.updateSwitches.mockRejectedValueOnce(new Error('save failed'))
+  await view.get('[data-testid="auto-inspect-42"]').setValue(false); await flushPromises()
+  expect((view.get('[data-testid="auto-inspect-42"]').element as HTMLInputElement).checked).toBe(true)
+  expect(view.text()).toContain('save failed')
+})
+
+it('preserves legacy engine choices when only concurrency changes', async () => {
+  const data = await api.listGuard(); data.runtime_settings.engine = ''
+  api.listGuard.mockResolvedValue(data)
+  const view = await mountControls()
+  expect(view.text()).toContain('tokenGuardV2.legacyEngineHint')
+  await view.get('#token-guard-v2-concurrency').setValue('4'); await flushPromises()
+  expect(api.saveRuntime).toHaveBeenCalledWith({ engine: '', worker_concurrency: 4 })
+})
+
+it('uses local proxies for email OTP under the remote global engine', async () => {
+  const data = await api.listGuard(); data.runtime_settings.engine = 'session_studio'
+  api.listGuard.mockResolvedValue(data)
+  const view = await mountControls()
+  await view.findAll('button').find(button => button.text() === 'tokenGuardV2.edit')!.trigger('click')
+  expect(view.get('#token-guard-v2-proxy').attributes('disabled')).toBeDefined()
+  await view.get('input[value="email_otp_url"]').setValue()
+  expect(view.get('#token-guard-v2-proxy').attributes('disabled')).toBeUndefined()
 })

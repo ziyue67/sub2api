@@ -132,6 +132,18 @@ function getBulkUpdateConfirm(wrapper: ReturnType<typeof mountModal>) {
 }
 
 describe('BulkEditAccountModal', () => {
+  it('repairs OAuth alias scope without replacing mappings or enabling BPS', async () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    await wrapper.get('[data-testid="enable-model-aliases"]').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent'); await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { credentials: { model_mapping_mode: 'aliases' } })
+    wrapper.unmount()
+  })
+  it('does not offer OAuth alias scope to mixed or API-key targets', () => {
+    const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
+    expect(wrapper.find('[data-testid="enable-model-aliases"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
   it('applies only the independent cost multiplier when selected', async () => {
     const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
     expect(wrapper.get<HTMLInputElement>('#bulk-edit-cost-multiplier').element.value).toBe('0.1')
@@ -277,7 +289,6 @@ describe('BulkEditAccountModal', () => {
       openai_excel_bps_mihomo: false,
       openai_excel_bps_proxy_source: 'mihomo',
       openai_excel_bps_cache_creation_as_input: false,
-      openai_excel_bps_ignore_images: false,
       openai_excel_bps_ignore_encrypted_content: false,
       openai_excel_bps_omit_unsupported_tools: false,
       openai_excel_bps_auto_disable_on_403: false,

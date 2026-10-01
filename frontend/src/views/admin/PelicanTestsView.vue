@@ -88,6 +88,11 @@
                 <div class="min-w-0">
                   <p class="plan-title">
                     <strong :title="plan.group_name">{{ plan.group_name }}</strong>
+                    <span class="inline-flex flex-wrap items-center gap-x-2 text-xs font-normal tabular-nums text-gray-500 dark:text-gray-400" :title="t('pelicanTests.cost.hint')" :data-testid="`pelican-plan-cost-${plan.id}`">
+                      <span class="whitespace-nowrap">{{ t('pelicanTests.cost.today', { amount: costLabel(plan.today_cost_usd, plan.today_cost_incomplete) }) }}</span>
+                      <span aria-hidden="true">·</span>
+                      <span class="whitespace-nowrap">{{ t('pelicanTests.cost.total', { amount: costLabel(plan.total_cost_usd, plan.total_cost_incomplete) }) }}</span>
+                    </span>
                     <span class="state-chip" :class="plan.enabled ? 'state-on' : 'state-off'">{{ t(plan.enabled ? 'pelicanTests.plans.active' : 'pelicanTests.plans.paused') }}</span>
                     <span v-if="isRunning(plan)" class="state-chip state-running">{{ t('pelicanTests.plans.running') }}</span>
                   </p>
@@ -151,12 +156,13 @@
                 <th>{{ t('pelicanTests.history.account') }}</th>
                 <th>{{ t('pelicanTests.history.result') }}</th>
                 <th>{{ t('pelicanTests.history.duration') }}</th>
+                <th>{{ t('pelicanTests.cost.column') }}</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               <tr v-if="resultsLoading && !results.length">
-                <td colspan="7" class="text-center" role="status">{{ t('pelicanTests.history.loading') }}</td>
+                <td colspan="8" class="text-center" role="status">{{ t('pelicanTests.history.loading') }}</td>
               </tr>
               <tr v-for="result in results" :key="result.id" :data-testid="`pelican-result-${result.id}`">
                 <td class="whitespace-nowrap">{{ formatDateTimeToMinute(result.started_at) }}</td>
@@ -176,7 +182,8 @@
                   <small v-if="result.status !== 'success'" class="error-text" :title="result.error_message">{{ result.error_message }}</small>
                 </td>
                 <td class="whitespace-nowrap tabular-nums">{{ pelicanDurationLabel(t, result.latency_ms) }}</td>
-                <td class="text-right">
+                <td class="whitespace-nowrap tabular-nums" :title="t('pelicanTests.cost.hint')" :data-testid="`pelican-result-cost-${result.id}`">{{ costLabel(result.cost_usd, result.cost_incomplete) }}</td>
+                <td class="whitespace-nowrap text-right">
                   <button v-if="result.status === 'success'" class="link-button" :data-testid="`pelican-result-view-${result.id}`" @click="openPreview(result)">
                     {{ t('pelicanTests.history.view') }}
                   </button>
@@ -417,6 +424,12 @@ function scheduleLabel(cron: string) {
 
 function accountName(result: PelicanGroupTestResult) {
   return result.account_name || `#${result.account_id}`
+}
+
+function costLabel(value: number | null | undefined, incomplete = false) {
+  if (value == null) return t('pelicanTests.cost.unknown')
+  const amount = value > 0 && value < 0.000001 ? '<$0.000001' : `$${value.toFixed(6)}`
+  return incomplete ? t('pelicanTests.cost.partial', { amount }) : amount
 }
 
 function attemptLabel(attempt: PelicanGroupTestAttempt) {
@@ -693,7 +706,7 @@ onBeforeUnmount(() => {
 .panel-heading .count { @apply ml-2 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-normal tabular-nums text-gray-500 dark:bg-dark-800; }
 .plan-list { @apply divide-y divide-gray-100 dark:divide-dark-800; }
 .plan-row { @apply flex flex-wrap items-start justify-between gap-4 px-5 py-4; }
-.plan-main { @apply flex min-w-0 flex-1 items-start gap-3; }
+.plan-main { @apply flex min-w-0 items-start gap-3; flex: 1 1 20rem; }
 .group-icon { @apply grid h-9 w-9 shrink-0 place-items-center rounded-xl ring-1 ring-black/5 dark:ring-white/10; }
 .plan-title { @apply flex flex-wrap items-center gap-2; }
 .plan-title strong { @apply truncate text-sm font-semibold; max-width: 260px; }
@@ -710,7 +723,7 @@ onBeforeUnmount(() => {
 .result-dot { @apply inline-block h-2 w-2 rounded-full; }
 .dot-ok { @apply bg-emerald-500; }
 .dot-bad { @apply bg-red-500; }
-.plan-actions { @apply flex shrink-0 flex-wrap items-center gap-1; }
+.plan-actions { @apply ml-auto flex shrink-0 flex-wrap items-center gap-1; }
 .plan-actions button { @apply inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-800; }
 .plan-actions button.danger { @apply text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30; }
 .history-scroll { @apply overflow-x-auto; }

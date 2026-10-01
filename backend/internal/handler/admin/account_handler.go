@@ -3090,11 +3090,16 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 
 		// Return mapped models
 		var models []openai.Model
+		if account.IsOpenAIModelMappingAliases() {
+			models = append(models, openai.DefaultModels...)
+		}
 		for requestedModel := range mapping {
 			var found bool
 			for _, dm := range openai.DefaultModels {
 				if dm.ID == requestedModel {
-					models = append(models, dm)
+					if !account.IsOpenAIModelMappingAliases() {
+						models = append(models, dm)
+					}
 					found = true
 					break
 				}

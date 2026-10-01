@@ -15,6 +15,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish_reauth_runtime:
+        description: '上传凭证守护托管模式的重登运行包（默认关；开启后 Release 会多出 sub2api-reauth_* 附件）'
+        required: false
+        type: boolean
+        default: false
 
 # 环境变量：合并 workflow_dispatch 输入和 repository variable
 # tag push 触发时读取 vars.SIMPLE_RELEASE，workflow_dispatch 时使用输入参数
@@ -347,6 +352,58 @@ jobs:
                 parse_mode: "Markdown",
                 disable_web_page_preview: true
               }')"
+
+  # 内置托管重登运行包：与 <VERSION> 同版本发布，供 backend/internal/reauthruntime
+  # 按 sub2api-reauth_<VERSION>_linux_<arch>.tar.gz 下载并校验摘要后执行。
+  # 该资产缺失时凭证守护的托管模式会报告 runtime 不可用（不影响独立 Worker 模式）。
+  #
+  # 默认不执行：本仓库的 Release 约定为零附件，只有手动 dispatch 并显式勾选
+  # publish_reauth_runtime 时才构建并上传（tag push 路径永不产出附件）。
+  build-reauth-runtime:
+    needs: [release]
+    if: ${{ needs.release.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.publish_reauth_runtime == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve release version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          else
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+          fi
+          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "value=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and validate portable re-login runtime
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          ARCH: ${{ matrix.arch }}
+        run: bash tools/reauth-runtime/build.sh
+
+      - name: Publish runtime to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: gh release upload "$TAG" reauth-output/*.tar.gz --repo "$REPO" --clobber
 
   sync-version-file:
     needs: [release]

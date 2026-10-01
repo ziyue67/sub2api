@@ -51,16 +51,19 @@
                 <h4 class="font-medium text-gray-700 dark:text-gray-200">{{ t('channelMonitorV2.candy.title') }}</h4>
                 <span class="flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400"><i class="h-2 w-2 rounded-full" :class="candyColor[candyDisplayState(row.candy, now)]" />{{ t(`channelMonitorV2.candy.states.${candyDisplayState(row.candy, now)}`) }}</span>
               </div>
-              <p class="mt-1 break-words text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ row.candy.model }} · {{ row.candy.reasoning_effort }} · {{ t('channelMonitorV2.candy.cadence', { minutes: row.candy.interval_minutes }) }} · {{ t('channelMonitorV2.candy.window') }}</p>
-              <div v-if="row.candy.results.length" class="mt-2 flex h-5 gap-px">
-                <button v-for="result in row.candy.results" :key="result.checked_at" type="button"
+              <p class="mt-1 break-words text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">{{ row.candy.model }} · {{ row.candy.reasoning_effort }} · {{ t('channelMonitorV2.candy.cadence', { minutes: row.candy.interval_minutes }) }} · {{ t('channelMonitorV2.candy.window', { count: CANDY_HISTORY_LIMIT }) }}</p>
+              <div class="mt-2 flex h-5 gap-px" role="group" :aria-label="t('channelMonitorV2.candy.historyCount', { count: Math.min(row.candy.results.length, CANDY_HISTORY_LIMIT), limit: CANDY_HISTORY_LIMIT })" data-testid="candy-history-slots">
+                <template v-for="(result, index) in candyHistorySlots(row.candy)" :key="index">
+                  <button v-if="result" type="button"
                   class="min-w-0 flex-1 cursor-help rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-400"
                   :class="candyColor[result.verdict]" :aria-label="candyTooltip(result)" :aria-describedby="isCandyDetail(row, result) ? tooltipId : undefined"
                   data-testid="candy-history-bar" @mouseenter="openDetail($event, { kind: 'candy', row, result })"
                   @focus="openDetail($event, { kind: 'candy', row, result })" @click="openDetail($event, { kind: 'candy', row, result })"
                   @mouseleave="scheduleClose" @blur="scheduleClose" />
+                  <span v-else class="min-w-0 flex-1 rounded-sm bg-gray-200 dark:bg-dark-600" aria-hidden="true" :title="t('channelMonitorV2.candy.notChecked')" data-testid="candy-history-placeholder" />
+                </template>
               </div>
-              <p v-else class="mt-3 text-[10px] text-gray-400">{{ t('channelMonitorV2.candy.waiting') }}</p>
+              <p v-if="!row.candy.results.length" class="mt-3 text-[10px] text-gray-400">{{ t('channelMonitorV2.candy.waiting') }}</p>
               <div class="mt-2 flex items-center justify-between gap-2 text-[9px] text-gray-500 dark:text-gray-400"><span>{{ t('channelMonitorV2.candy.legend') }}</span><span>{{ row.candy.results.length ? time(row.candy.results.at(-1)!.checked_at) : '—' }}</span></div>
             </template>
             <template v-else>
@@ -105,7 +108,7 @@ import type { MonitorCandyResult, MonitorCoverage, MonitorMatrixBucket, MonitorM
 import ProviderIcon from '@/components/user/monitor/ProviderIcon.vue'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import { formatMonitorMs, formatMonitorPercent } from './monitorFormat'
-import { candyDisplayState, hasMonitorSamples, monitorCardTimeline } from './monitorCards'
+import { CANDY_HISTORY_LIMIT, candyDisplayState, candyHistorySlots, hasMonitorSamples, monitorCardTimeline } from './monitorCards'
 
 const props = defineProps<{ items: MonitorMatrixRow[]; coverage?: MonitorCoverage; countdown: number; loading: boolean; now: number }>()
 const { t, locale } = useI18n()

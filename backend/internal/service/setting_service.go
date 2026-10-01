@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
+	"github.com/Wei-Shaw/sub2api/internal/serverless"
 	"strings"
 	"sync/atomic"
 
@@ -118,6 +119,8 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
+	Serverless                         *serverless.Manager // Initialized before requests start.
+	modelBillingCache                  modelBillingConfigCache
 	prioritySchedulingConfig           priorityConfigCache
 	requestCapture                     *requestcapture.Manager
 	settingRepo                        SettingRepository

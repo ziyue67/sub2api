@@ -86,3 +86,17 @@ jobs:
           # Skip `golangci-lint config verify`: it fetches the JSON schema from
           # golangci-lint.run at runtime and flakes on network timeouts.
           verify: false
+
+  # 升级脚本校验（随 ranxi/production 的 k3s 升级助手一并引入）。
+  # 不含 .github/release-tools 的发布矩阵用例：本 Fork 只发布 amd64 单架构，
+  # 发布矩阵已按其目标裁剪，上游用例的 5 目标断言在本仓库本就不成立。
+  release-helpers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: bash -n .github/release-tools/release-images.sh
+      - run: bash -n deploy/upgrade-k3s.sh
+      - run: python -m unittest discover -s deploy/tests -p 'test_upgrade_k3s.py'

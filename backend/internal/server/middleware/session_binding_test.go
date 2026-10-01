@@ -151,3 +151,31 @@ func TestRequestSessionBindingPrefersInjectedBinding(t *testing.T) {
 
 	require.Equal(t, 200, w.Code)
 }
+
+func TestSessionBindingServerlessContextTypeSafety(t *testing.T) {
+	for _, tc := range []struct {
+		value any
+		want  string
+	}{
+		{value: "198.51.100.2", want: "198.51.100.2"},
+		{value: 12, want: "203.0.113.9"},
+		{value: nil, want: "203.0.113.9"},
+	} {
+		router := gin.New()
+		require.NoError(t, router.SetTrustedProxies(nil))
+		cfg := &config.Config{}
+		cfg.SetTrustForwardedIPForAPIKeyACL(false)
+		router.Use(func(c *gin.Context) { c.Set("serverless_verified_ip", tc.value); c.Next() })
+		router.Use(SessionBindingContext(cfg))
+		router.GET("/t", func(c *gin.Context) {
+			require.Equal(t, tc.want, SecurityClientIP(c))
+			require.Equal(t, tc.want, service.SessionBindingFromContext(c.Request.Context()).IP)
+			c.Status(200)
+		})
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/t", nil)
+		req.RemoteAddr = "203.0.113.9:1234"
+		router.ServeHTTP(w, req)
+		require.Equal(t, 200, w.Code)
+	}
+}

@@ -56,7 +56,7 @@ func TestHistoryAgentImagesNativeUpload(t *testing.T) {
 	require.Contains(t, mustTestValue[object](t, parts[0])["text"], "/root/worker")
 	require.Contains(t, mustTestValue[object](t, parts[0])["text"], "not a new user instruction")
 	require.Equal(t, "before image", mustTestValue[object](t, parts[1])["text"])
-	require.Equal(t, object{"type": "input_image", "file_id": "file-agent-image", "detail": "original"}, parts[2])
+	require.Equal(t, object{"type": "input_image", "file_id": "file-agent-image"}, parts[2])
 	require.Equal(t, "after image", mustTestValue[object](t, parts[3])["text"])
 	again, _, err := bridge.Reprepare(uploaded)
 	require.NoError(t, err)
@@ -86,47 +86,5 @@ func TestHistoryAgentImagesNativeValidation(t *testing.T) {
 		require.NoError(t, err)
 		_, err = PrepareNativeImagesWithLimit(raw, 1)
 		require.ErrorContains(t, err, "at most 1 inline images")
-	})
-}
-
-func TestHistoryAgentImagesDisabled(t *testing.T) {
-	for name, image := range map[string]object{
-		"inline":     {"type": "input_image", "image_url": "data:image/png;base64,PRIVATE_INVALID"},
-		"https":      {"type": "input_image", "image_url": "https://example.com/image.png"},
-		"attachment": {"type": "input_image", "file_id": "file-existing"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			raw := agentImageRequest(t, image)
-			stripped, err := StripInputImages(raw)
-			require.NoError(t, err)
-			var source object
-			require.NoError(t, decode(stripped, &source))
-			input := mustTestValue[[]any](t, source["input"])
-			agent := mustTestValue[object](t, input[0])
-			require.Equal(t, "agent_message", agent["type"])
-			require.Equal(t, "/root/worker", agent["author"])
-			require.Equal(t, "/root", agent["recipient"])
-			parts := mustTestValue[[]any](t, agent["content"])
-			require.Equal(t, []any{
-				object{"type": "input_text", "text": "before image"},
-				object{"type": "input_text", "text": imageInputUnavailableMessage},
-				object{"type": "input_text", "text": "after image"},
-			}, parts)
-			_, _, err = Prepare(stripped, "agent-images", nil)
-			require.NoError(t, err)
-			again, err := StripInputImages(stripped)
-			require.NoError(t, err)
-			require.Equal(t, stripped, again)
-		})
-	}
-	t.Run("non-image content remains validated", func(t *testing.T) {
-		for _, kind := range []string{"input_file", "encrypted_content"} {
-			raw := agentImageRequest(t, object{"type": "input_image", "file_id": "file-existing"}, object{"type": kind})
-			stripped, err := StripInputImages(raw)
-			require.NoError(t, err)
-			_, _, err = Prepare(stripped, "agent-images", nil)
-			require.ErrorContains(t, err, "path=input[0].content[2]")
-			require.ErrorContains(t, err, "type="+kind)
-		}
 	})
 }

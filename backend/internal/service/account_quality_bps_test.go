@@ -91,7 +91,7 @@ func TestQualityBPSExtraMatchesAccountOptions(t *testing.T) {
 	require.Equal(t, true, extra["openai_excel_bps"])
 	require.Equal(t, []string{"gpt-6-astra"}, extra["openai_excel_bps_models"])
 	require.Equal(t, true, extra[ExcelBPSOmitUnsupportedToolsKey])
-	require.Equal(t, false, extra[ExcelBPSIgnoreImagesKey])
+	require.NotContains(t, extra, "openai_excel_bps_ignore_images")
 	require.Equal(t, true, extra[ExcelBPSIgnoreEncryptedContentKey])
 	require.Equal(t, false, extra["openai_excel_bps_mihomo"])
 	require.Nil(t, extra[ExcelBPS403TargetGroupIDKey])
