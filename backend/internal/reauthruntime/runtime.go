@@ -24,6 +24,67 @@ import (
 const maxArchive = 256 << 20
 const maxExtracted = 768 << 20
 
+// defaultRuntimeRepo is the GitHub repository that publishes the signed runtime
+// archives. Upstream (ranxi2001/sub2api) tags its runtime with its own release
+// versions; this Fork's versions are unrelated (0.2.x), so the release that
+// matches the application version is normally published by the Fork itself.
+const defaultRuntimeRepo = "ziyue67/sub2api"
+
+// runtimeRepoEnv overrides the runtime source repository, for deployments that
+// want to reuse the upstream runtime instead of publishing their own archive.
+const runtimeRepoEnv = "SUB2API_REAUTH_RUNTIME_REPO"
+
+// runtimeVersionEnv pins the release version used to look up the runtime
+// archive. Unset means "use the application version".
+const runtimeVersionEnv = "SUB2API_REAUTH_RUNTIME_VERSION"
+
+func normalizeRepo(repo string) string {
+	repo = strings.TrimSpace(repo)
+	repo = strings.TrimPrefix(repo, "https://github.com/")
+	repo = strings.TrimSuffix(repo, ".git")
+	repo = strings.Trim(repo, "/")
+	if repo == "" {
+		return defaultRuntimeRepo
+	}
+	for _, r := range repo {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.', r == '/':
+		default:
+			return defaultRuntimeRepo
+		}
+	}
+	// Only a bare owner/repo pair is accepted: a hostname, port or extra path
+	// segment would redirect the archive download somewhere unintended.
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return defaultRuntimeRepo
+	}
+	for _, part := range parts {
+		if strings.ContainsAny(part, ".:") {
+			return defaultRuntimeRepo
+		}
+	}
+	return repo
+}
+
+// runtimeSource resolves the repository and version whose release holds the
+// runtime archive. Both are validated before use so that neither an operator
+// typo nor a stray environment value can redirect the download elsewhere.
+func runtimeSource(appVersion string) (repo, version string) {
+	repo = normalizeRepo(os.Getenv(runtimeRepoEnv))
+	version = strings.TrimPrefix(strings.TrimSpace(os.Getenv(runtimeVersionEnv)), "v")
+	if version == "" {
+		version = appVersion
+	}
+	version = strings.TrimPrefix(version, "v")
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$`).MatchString(version) {
+		// Fall back to the application version, which is validated separately by
+		// the caller's release_required check.
+		version = appVersion
+	}
+	return repo, version
+}
+
 type Status struct {
 	StartedAt int64  `json:"-"`
 	Mode      string `json:"mode"`
@@ -35,6 +96,7 @@ type Manager struct {
 	mu                            sync.Mutex
 	status                        Status
 	root, version, baseURL, token string
+	repo                          string
 	ctx                           context.Context
 	cancel                        context.CancelFunc
 	done                          chan struct{}
@@ -46,7 +108,10 @@ type Manager struct {
 func New(root, version, baseURL, token string) *Manager {
 	root, _ = filepath.Abs(root)
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{root: root, version: strings.TrimPrefix(version, "v"), baseURL: baseURL, token: token,
+	appVersion := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	repo, runtimeVersion := runtimeSource(appVersion)
+	return &Manager{root: root, version: runtimeVersion, repo: repo,
+		baseURL: baseURL, token: token,
 		ctx: ctx, cancel: cancel, client: &http.Client{Timeout: 5 * time.Minute},
 		status: Status{Mode: "managed", State: "idle"}}
 }
@@ -150,10 +215,10 @@ func (m *Manager) prepare(ctx context.Context) (string, error) {
 	if err := os.MkdirAll(m.root, 0700); err != nil {
 		return "", err
 	}
-	// A release digest from the owner repository is required; never execute an
-	// unverified download or follow an arbitrary manifest download URL.
+	// A release digest from the configured repository is required; never execute
+	// an unverified download or follow an arbitrary manifest download URL.
 	name := "sub2api-reauth_" + m.version + "_linux_" + runtime.GOARCH + ".tar.gz"
-	url := "https://api.github.com/repos/ranxi2001/sub2api/releases/tags/v" + m.version
+	url := "https://api.github.com/repos/" + m.repo + "/releases/tags/v" + m.version
 	body, err := m.get(ctx, url, 4<<20)
 	if err != nil {
 		return "", err
@@ -179,7 +244,7 @@ func (m *Manager) prepare(ctx context.Context) (string, error) {
 	if _, err := hex.DecodeString(digest); err != nil {
 		return "", errors.New("invalid runtime digest")
 	}
-	archive, err := m.get(ctx, "https://github.com/ranxi2001/sub2api/releases/download/v"+m.version+"/"+name, maxArchive)
+	archive, err := m.get(ctx, "https://github.com/"+m.repo+"/releases/download/v"+m.version+"/"+name, maxArchive)
 	if err != nil {
 		return "", err
 	}
