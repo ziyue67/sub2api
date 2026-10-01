@@ -1,7 +1,6 @@
 package reauthruntime
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,8 +9,9 @@ import (
 // The managed runtime archive is published by this Fork under its own release
 // tags; the default must never point at an unrelated upstream that would 404.
 func TestRuntimeSourceDefaultsToForkRepository(t *testing.T) {
-	os.Unsetenv(runtimeRepoEnv)
-	os.Unsetenv(runtimeVersionEnv)
+	// t.Setenv 同时完成清理；这两个变量必须为空才能验证默认来源。
+	t.Setenv(runtimeRepoEnv, "")
+	t.Setenv(runtimeVersionEnv, "")
 
 	repo, version := runtimeSource("0.2.12")
 	require.Equal(t, "ziyue67/sub2api", repo)
