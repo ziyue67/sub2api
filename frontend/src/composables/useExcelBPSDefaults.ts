@@ -3,7 +3,7 @@ import { getAutoConfig } from '@/api/admin/autoConfig'
 import { defaultExcelBPSDefaults, initialExcelBPSDefaults, type ExcelBPSDefaults, type ExcelBPSMode } from '@/utils/excelBPSDefaults'
 
 type BPSFormRefs = { [K in keyof ExcelBPSDefaults]: Ref<ExcelBPSDefaults[K]> }
-type FormRefs = Omit<BPSFormRefs, 'recovery_interval_minutes' | 'target_group_id'> & {
+type FormRefs = Omit<BPSFormRefs, 'ws_sse_acceleration' | 'auto_enable_on_degradation' | 'recovery_interval_minutes' | 'target_group_id'> & {
   recovery_interval_minutes: Ref<number | string>
   target_group_id: Ref<number | string>
 }

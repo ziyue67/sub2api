@@ -426,6 +426,7 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 	defer func() { _ = result.resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(result.resp.Body, s.upstreamErrorBodyReadLimit()))
+	recordPelicanTestSSE(ctx, "gemini", mappedModel, respBody)
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %w", err)
 	}

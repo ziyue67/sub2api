@@ -33,7 +33,7 @@ func ingressTestConfig() *config.Config {
 }
 
 func TestProvideHTTPServerAppliesIngressLimits(t *testing.T) {
-	srv := ProvideHTTPServer(ingressTestConfig(), gin.New())
+	srv := ProvideHTTPServer(ingressTestConfig(), gin.New(), NewLifecycle())
 	require.Equal(t, 8*1024, srv.MaxHeaderBytes)
 	require.Equal(t, time.Second, srv.ReadHeaderTimeout)
 	require.Equal(t, 5*time.Second, srv.IdleTimeout)
@@ -49,7 +49,7 @@ func TestProvideHTTPServerEnablesBoundedH2C(t *testing.T) {
 		MaxUploadBufferPerConnection: 1024 * 1024,
 		MaxUploadBufferPerStream:     256 * 1024,
 	}
-	srv := ProvideHTTPServer(cfg, gin.New())
+	srv := ProvideHTTPServer(cfg, gin.New(), NewLifecycle())
 	require.NotNil(t, srv.Protocols)
 	require.True(t, srv.Protocols.UnencryptedHTTP2())
 	require.True(t, srv.Protocols.HTTP1())
@@ -108,7 +108,7 @@ func TestConfigureTrustedProxies(t *testing.T) {
 func TestHTTPServerRejectsOversizedHTTP1Header(t *testing.T) {
 	r := gin.New()
 	r.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
-	srv := ProvideHTTPServer(ingressTestConfig(), r)
+	srv := ProvideHTTPServer(ingressTestConfig(), r, NewLifecycle())
 	addr, stop := serveIngressTestServer(t, srv)
 	defer stop()
 
@@ -127,7 +127,7 @@ func TestHTTPServerRejectsOversizedHTTP1Header(t *testing.T) {
 func TestHTTPServerClosesSlowIncompleteHeader(t *testing.T) {
 	r := gin.New()
 	r.GET("/", func(c *gin.Context) { c.Status(http.StatusOK) })
-	srv := ProvideHTTPServer(ingressTestConfig(), r)
+	srv := ProvideHTTPServer(ingressTestConfig(), r, NewLifecycle())
 	addr, stop := serveIngressTestServer(t, srv)
 	defer stop()
 
@@ -155,7 +155,7 @@ func TestHTTPServerGlobalBodyLimit(t *testing.T) {
 		}
 		c.Status(http.StatusOK)
 	})
-	srv := ProvideHTTPServer(ingressTestConfig(), r)
+	srv := ProvideHTTPServer(ingressTestConfig(), r, NewLifecycle())
 	req, err := http.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("x", 1025)))
 	require.NoError(t, err)
 	rec := httptest.NewRecorder()

@@ -40,18 +40,22 @@ var (
 )
 
 type PelicanGroupTestPlan struct {
-	ID             int64              `json:"id"`
-	GroupID        int64              `json:"group_id"`
-	GroupName      string             `json:"group_name"`
-	GroupPlatform  string             `json:"group_platform"`
-	GroupStatus    string             `json:"group_status"`
-	ModelID        string             `json:"model_id"`
-	CronExpression string             `json:"cron_expression"`
-	Enabled        bool               `json:"enabled"`
-	PelicanConfig  *PelicanTestConfig `json:"pelican_config"`
-	LastRunAt      *time.Time         `json:"last_run_at"`
-	NextRunAt      *time.Time         `json:"next_run_at"`
-	RunningUntil   *time.Time         `json:"running_until,omitempty"`
+	ID                  int64              `json:"id"`
+	GroupID             int64              `json:"group_id"`
+	GroupName           string             `json:"group_name"`
+	TodayCostUSD        float64            `json:"today_cost_usd"`
+	TotalCostUSD        float64            `json:"total_cost_usd"`
+	TodayCostIncomplete bool               `json:"today_cost_incomplete"`
+	TotalCostIncomplete bool               `json:"total_cost_incomplete"`
+	GroupPlatform       string             `json:"group_platform"`
+	GroupStatus         string             `json:"group_status"`
+	ModelID             string             `json:"model_id"`
+	CronExpression      string             `json:"cron_expression"`
+	Enabled             bool               `json:"enabled"`
+	PelicanConfig       *PelicanTestConfig `json:"pelican_config"`
+	LastRunAt           *time.Time         `json:"last_run_at"`
+	NextRunAt           *time.Time         `json:"next_run_at"`
+	RunningUntil        *time.Time         `json:"running_until,omitempty"`
 	// LastResult is the newest result without its HTML, for the admin overview.
 	LastResult *PelicanGroupTestResult `json:"last_result,omitempty"`
 	CreatedAt  time.Time               `json:"created_at"`
@@ -68,21 +72,23 @@ type PelicanGroupTestAttempt struct {
 // PelicanGroupTestResult is one sample. AccountID is the account that gave the final
 // answer (0 when the scheduler found none); only admins see it.
 type PelicanGroupTestResult struct {
-	ID            int64                     `json:"id"`
-	PlanID        int64                     `json:"plan_id"`
-	GroupID       int64                     `json:"group_id"`
-	GroupName     string                    `json:"group_name,omitempty"`
-	AccountID     int64                     `json:"account_id"`
-	AccountName   string                    `json:"account_name"`
-	Attempts      []PelicanGroupTestAttempt `json:"attempts"`
-	Status        string                    `json:"status"`
-	ResponseText  string                    `json:"response_text,omitempty"`
-	ErrorMessage  string                    `json:"error_message"`
-	LatencyMs     int64                     `json:"latency_ms"`
-	PelicanConfig *PelicanTestConfig        `json:"pelican_config,omitempty"`
-	StartedAt     time.Time                 `json:"started_at"`
-	FinishedAt    time.Time                 `json:"finished_at"`
-	CreatedAt     time.Time                 `json:"created_at"`
+	ID             int64                     `json:"id"`
+	PlanID         int64                     `json:"plan_id"`
+	GroupID        int64                     `json:"group_id"`
+	GroupName      string                    `json:"group_name,omitempty"`
+	AccountID      int64                     `json:"account_id"`
+	AccountName    string                    `json:"account_name"`
+	Attempts       []PelicanGroupTestAttempt `json:"attempts"`
+	Status         string                    `json:"status"`
+	ResponseText   string                    `json:"response_text,omitempty"`
+	ErrorMessage   string                    `json:"error_message"`
+	LatencyMs      int64                     `json:"latency_ms"`
+	CostUSD        *float64                  `json:"cost_usd"`
+	CostIncomplete bool                      `json:"cost_incomplete"`
+	PelicanConfig  *PelicanTestConfig        `json:"pelican_config,omitempty"`
+	StartedAt      time.Time                 `json:"started_at"`
+	FinishedAt     time.Time                 `json:"finished_at"`
+	CreatedAt      time.Time                 `json:"created_at"`
 }
 
 // PelicanGroupTestPlanInput is what an admin edits; the question is always the HTML drawing kind.
@@ -143,6 +149,7 @@ type PelicanGroupTestService struct {
 	router     pelicanGroupRouter
 	runAccount func(ctx context.Context, accountID int64, model string, cfg *PelicanTestConfig) (*ScheduledTestResult, error)
 	showcase   *PelicanShowcaseService
+	billing    *BillingService
 	now        func() time.Time
 	// runs tracks background runs so tests can wait for them.
 	runs sync.WaitGroup
@@ -156,6 +163,7 @@ func NewPelicanGroupTestService(
 	concurrency *ConcurrencyService,
 	accountTest *AccountTestService,
 	showcase *PelicanShowcaseService,
+	billing *BillingService,
 ) *PelicanGroupTestService {
 	return &PelicanGroupTestService{
 		repo:       repo,
@@ -163,6 +171,7 @@ func NewPelicanGroupTestService(
 		router:     &gatewayPelicanGroupRouter{gateway: gateway, openai: openai, concurrency: concurrency, slotWait: pelicanGroupTestSlotWait},
 		runAccount: accountTest.RunPelicanBackground,
 		showcase:   showcase,
+		billing:    billing,
 		now:        time.Now,
 	}
 }
@@ -406,6 +415,18 @@ func (s *PelicanGroupTestService) runSamples(ctx context.Context, plan *PelicanG
 // in its own goroutine outside Gin's recovery, so a panic becomes a failed result.
 func (s *PelicanGroupTestService) runSample(ctx context.Context, plan *PelicanGroupTestPlan, group *Group) (result *PelicanGroupTestResult) {
 	started := s.now()
+	var costUSD float64
+	priced, attempted, incomplete := false, false, false
+	defer func() {
+		if result != nil {
+			if priced || !attempted {
+				result.CostUSD = &costUSD
+			} else {
+				result.CostUSD = nil
+			}
+			result.CostIncomplete = incomplete || (attempted && !priced)
+		}
+	}()
 	defer func() {
 		if recover() != nil {
 			result = s.newResult(plan, started, s.now(), "pelican_group_test_panic: sample failed")
@@ -427,9 +448,19 @@ func (s *PelicanGroupTestService) runSample(ctx context.Context, plan *PelicanGr
 			return result
 		}
 		var sample *ScheduledTestResult
+		attempted = true
+		usage := &pelicanTestUsageCollector{model: route.account.GetMappedModel(route.model)}
 		func() {
 			defer route.release()
-			sample, err = s.runAccount(ctx, route.account.ID, route.model, plan.PelicanConfig)
+			defer func() {
+				cost, partial := usage.cost(s.billing, route.account)
+				incomplete = incomplete || partial
+				if cost != nil {
+					costUSD += *cost
+					priced = true
+				}
+			}()
+			sample, err = s.runAccount(context.WithValue(ctx, pelicanTestUsageKey{}, usage), route.account.ID, route.model, plan.PelicanConfig)
 		}()
 		if err != nil || sample == nil {
 			sample = &ScheduledTestResult{Status: "failed", ErrorMessage: fmt.Sprint(err)}
@@ -453,11 +484,13 @@ func (s *PelicanGroupTestService) runSample(ctx context.Context, plan *PelicanGr
 // newResult is a failed result carrying the plan's config snapshot, labelled with the
 // public model the plan asks for (composite groups may send an upstream model instead).
 func (s *PelicanGroupTestService) newResult(plan *PelicanGroupTestPlan, started, finished time.Time, message string) *PelicanGroupTestResult {
+	zero := 0.0
 	result := &PelicanGroupTestResult{
 		PlanID:       plan.ID,
 		GroupID:      plan.GroupID,
 		Attempts:     []PelicanGroupTestAttempt{},
 		Status:       "failed",
+		CostUSD:      &zero,
 		ErrorMessage: message,
 		LatencyMs:    finished.Sub(started).Milliseconds(),
 		StartedAt:    started,

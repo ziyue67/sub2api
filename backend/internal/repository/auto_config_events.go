@@ -40,13 +40,21 @@ func (r *accountOpsRepository) ListAutoConfigEvents(ctx context.Context, before 
 }
 
 func (r *accountRepository) RecordAutoConfigInitial(ctx context.Context, account *service.Account, groups []int64) error {
+	mapping := make(map[string]string)
+	if raw, ok := account.Credentials["model_mapping"].(map[string]any); ok {
+		for from, value := range raw {
+			if to, ok := value.(string); ok {
+				mapping[from] = to
+			}
+		}
+	}
 	load := 1
 	if account.LoadFactor != nil {
 		load = *account.LoadFactor
 	}
 	return insertAutoConfigEvent(ctx, r.sql, service.AutoConfigEvent{
 		AccountID: account.ID, AccountName: account.Name, Platform: account.Platform, Kind: service.AutoConfigEventInitial,
-		Details: service.AutoConfigEventDetails{Priority: account.Priority, LoadFactor: load, Concurrency: account.Concurrency, GroupIDs: groups},
+		Details: service.AutoConfigEventDetails{Priority: account.Priority, LoadFactor: load, Concurrency: account.Concurrency, GroupIDs: groups, ModelMapping: mapping},
 	})
 }
 

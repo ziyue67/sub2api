@@ -725,7 +725,8 @@ func responseModelBillingAdoptable(baseline, response *CostBreakdown, baselineCh
 	if baseline == nil || response == nil {
 		return false
 	}
-	if response.TotalCost > baseline.TotalCost+responseModelBillingCostEpsilon {
+	if response.TotalCost > baseline.TotalCost+responseModelBillingCostEpsilon ||
+		response.ActualCost > baseline.ActualCost+responseModelBillingCostEpsilon {
 		return false
 	}
 	if response.TotalCost <= 0 && baseline.TotalCost > 0 {
@@ -785,6 +786,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 
 	// 获取费率倍数（优先级：用户专属 > 分组默认 > 系统默认）
+	// Keep candidate fallback, response-model selection and Free Fast on one policy snapshot.
+	ctx = withModelBillingConfig(ctx, s.settingService)
 	multiplier := 1.0
 	if s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
@@ -863,6 +866,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	accountRateMultiplier := account.BillingRateMultiplier()
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
 		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
+	usageLog.RateMultiplier *= costModelBillingMultiplier(cost)
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
@@ -1159,6 +1163,7 @@ func (s *GatewayService) calculateTokenCost(
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
 		return &CostBreakdown{ActualCost: 0}
 	}
+	applyModelBillingMultiplier(cost, s.settingService.modelBillingConfigForUsage(ctx), billingModel)
 	return cost
 }
 

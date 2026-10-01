@@ -348,6 +348,55 @@ jobs:
                 disable_web_page_preview: true
               }')"
 
+  # 内置托管重登运行包：与 <VERSION> 同版本发布，供 backend/internal/reauthruntime
+  # 按 sub2api-reauth_<VERSION>_linux_<arch>.tar.gz 下载并校验摘要后执行。
+  # 该资产缺失时凭证守护的托管模式会报告 runtime 不可用（不影响独立 Worker 模式）。
+  build-reauth-runtime:
+    needs: [release]
+    if: ${{ needs.release.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve release version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          else
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+          fi
+          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "value=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and validate portable re-login runtime
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          ARCH: ${{ matrix.arch }}
+        run: bash tools/reauth-runtime/build.sh
+
+      - name: Publish runtime to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: gh release upload "$TAG" reauth-output/*.tar.gz --repo "$REPO" --clobber
+
   sync-version-file:
     needs: [release]
     # 重新发布历史版本（workflow_dispatch）时不回写 main 的 VERSION，避免版本号被改旧

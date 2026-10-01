@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/reauthruntime"
 	"log/slog"
 	"net/http"
 	"os"
@@ -119,17 +120,20 @@ type AccountTokenGuardV2Prober interface {
 }
 
 type AccountTokenGuardV2AccountInput struct {
-	LoginEmail         string `json:"login_email"`
-	CredentialMode     string `json:"credential_mode"`
-	ProxySource        string `json:"proxy_source"`
-	ProxyID            *int64 `json:"proxy_id"`
-	Password           string `json:"password"`
-	TOTPSecret         string `json:"totp_secret"`
-	OTPURL             string `json:"otp_url"`
-	ClearPassword      bool   `json:"clear_password"`
-	ClearTOTP          bool   `json:"clear_totp"`
-	Enabled            bool   `json:"enabled"`
-	AutoReloginEnabled bool   `json:"auto_relogin_enabled"`
+	PreserveEnabled     bool
+	PreserveAutoRelogin bool
+	LoginEmail          string `json:"login_email"`
+	CredentialMode      string `json:"credential_mode"`
+	Engine              string `json:"engine"`
+	ProxySource         string `json:"proxy_source"`
+	ProxyID             *int64 `json:"proxy_id"`
+	Password            string `json:"password"`
+	TOTPSecret          string `json:"totp_secret"`
+	OTPURL              string `json:"otp_url"`
+	ClearPassword       bool   `json:"clear_password"`
+	ClearTOTP           bool   `json:"clear_totp"`
+	Enabled             bool   `json:"enabled"`
+	AutoReloginEnabled  bool   `json:"auto_relogin_enabled"`
 }
 
 type AccountTokenGuardV2Account struct {
@@ -227,6 +231,9 @@ func (s *AccountTokenGuardV2Service) Start() {
 			runCycle := func() {
 				ctx, cancel := context.WithTimeout(s.rootCtx, 90*time.Second)
 				defer cancel()
+				if rows, err := s.repo.ListAccounts(ctx); err == nil && len(rows) > 0 {
+					s.reauth.EnsureWorker()
+				}
 				if _, err := s.RunDue(ctx); err != nil {
 					slog.Warn("account_token_guard_v2_cycle_failed", "error", err)
 				}
@@ -251,6 +258,7 @@ func (s *AccountTokenGuardV2Service) Stop() {
 	if s == nil {
 		return
 	}
+	s.reauth.stopWorker()
 	s.cancel()
 	s.startOnce.Do(func() { close(s.doneCh) })
 	select {
@@ -263,16 +271,34 @@ func (s *AccountTokenGuardV2Service) SaveAccount(ctx context.Context, accountID 
 	if accountID <= 0 {
 		return nil, infraerrors.BadRequest("TOKEN_GUARD_V2_ACCOUNT_INVALID", "invalid account id")
 	}
+	preserveSwitches := false
+	if input.PreserveEnabled || input.PreserveAutoRelogin {
+		existing, err := s.repo.GetAccount(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			preserveSwitches = input.PreserveEnabled && input.PreserveAutoRelogin
+			if input.PreserveEnabled {
+				input.Enabled = existing.Enabled
+			}
+			if input.PreserveAutoRelogin {
+				input.AutoReloginEnabled = existing.AutoReloginEnabled
+			}
+		}
+	}
 	if _, err := s.reauth.SaveCredentialConfig(ctx, accountID, OpenAIOAuthReauthConfigInput{
-		LoginEmail: input.LoginEmail, CredentialMode: input.CredentialMode,
+		LoginEmail: input.LoginEmail, CredentialMode: input.CredentialMode, Engine: input.Engine,
 		ProxySource: input.ProxySource, ProxyID: input.ProxyID,
 		Password: input.Password, TOTPSecret: input.TOTPSecret, OTPURL: input.OTPURL,
 		ClearPassword: input.ClearPassword, ClearTOTP: input.ClearTOTP,
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.repo.UpsertAccount(ctx, accountID, input.Enabled, input.AutoReloginEnabled); err != nil {
-		return nil, infraerrors.New(http.StatusInternalServerError, "TOKEN_GUARD_V2_SAVE_FAILED", "failed to save monitored account")
+	if !preserveSwitches {
+		if err := s.repo.UpsertAccount(ctx, accountID, input.Enabled, input.AutoReloginEnabled); err != nil {
+			return nil, infraerrors.New(http.StatusInternalServerError, "TOKEN_GUARD_V2_SAVE_FAILED", "failed to save monitored account")
+		}
 	}
 	return s.accountView(ctx, accountID)
 }
@@ -467,4 +493,9 @@ func (s *AccountTokenGuardV2Service) probeAccount(ctx context.Context, account *
 		}
 	}
 	return AccountTokenGuardV2ProbeTransient, "temporary inspection failure"
+}
+
+// WorkerStatus separates saved login credentials from execution availability.
+func (s *AccountTokenGuardV2Service) WorkerStatus() reauthruntime.Status {
+	return s.reauth.WorkerStatus()
 }

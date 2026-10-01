@@ -82,8 +82,8 @@ func (r *accountTokenGuardV2TestRepo) RescheduleEnabled(context.Context) error {
 
 type accountTokenGuardV2TestSettings struct{ raw string }
 
-func (s *accountTokenGuardV2TestSettings) GetValue(context.Context, string) (string, error) {
-	if s.raw == "" {
+func (s *accountTokenGuardV2TestSettings) GetValue(_ context.Context, key string) (string, error) {
+	if s.raw == "" || key == openAIOAuthReauthRuntimeSettingsKey {
 		return "", ErrSettingNotFound
 	}
 	return s.raw, nil

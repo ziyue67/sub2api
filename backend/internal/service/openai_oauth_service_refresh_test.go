@@ -169,14 +169,15 @@ func TestOpenAITokenRefresher_Refresh_PATRemovesStaleOAuthFields(t *testing.T) {
 		Platform: PlatformOpenAI,
 		Type:     AccountTypeOAuth,
 		Credentials: map[string]any{
-			"access_token":  "at-test-token",
-			"refresh_token": "stale-refresh-token",
-			"id_token":      "stale-id-token",
-			"expires_at":    time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
-			"expires_in":    3600,
-			"client_id":     "stale-client",
-			"auth_mode":     OpenAIAuthModePersonalAccessToken,
-			"model_mapping": map[string]any{"gpt-5": "gpt-5-codex"},
+			"access_token":       "at-test-token",
+			"refresh_token":      "stale-refresh-token",
+			"id_token":           "stale-id-token",
+			"expires_at":         time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+			"expires_in":         3600,
+			"client_id":          "stale-client",
+			"auth_mode":          OpenAIAuthModePersonalAccessToken,
+			"model_mapping":      map[string]any{"gpt-5": "gpt-5-codex"},
+			"model_mapping_mode": "aliases",
 		},
 	}
 
@@ -191,6 +192,7 @@ func TestOpenAITokenRefresher_Refresh_PATRemovesStaleOAuthFields(t *testing.T) {
 	require.NotContains(t, credentials, "expires_in")
 	require.NotContains(t, credentials, "client_id")
 	require.Equal(t, map[string]any{"gpt-5": "gpt-5-codex"}, credentials["model_mapping"])
+	require.Equal(t, "aliases", credentials["model_mapping_mode"])
 }
 
 func TestOpenAITokenProvider_NoRefreshTokenExpiredAccessTokenReturnsError(t *testing.T) {

@@ -1,6 +1,7 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/views/admin/ops/__tests__/TokenGuardV2View.spec.ts \
 	src/features/channel-monitor-v2/__tests__/MonitorCandySettings.spec.ts \
 	src/features/channel-monitor-v2/__tests__/MonitorStatusCards.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorCards.spec.ts \
@@ -44,6 +45,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/PaymentResultView.spec.ts \
 	src/views/user/__tests__/ChannelStatusView.mode.spec.ts \
 	src/components/user/profile/__tests__/ProfileInfoCard.spec.ts \
+	src/components/settings/ServerlessSettings.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/views/admin/__tests__/HarvestFlowView.spec.ts \
 	src/views/admin/settings/MihomoSettings.spec.ts \

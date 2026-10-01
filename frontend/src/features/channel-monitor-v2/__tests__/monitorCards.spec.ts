@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { candyDisplayState, hasMonitorSamples, monitorCardTimeline, monitorRefreshSeconds } from '../monitorCards'
+import { CANDY_HISTORY_LIMIT, candyDisplayState, candyHistorySlots, hasMonitorSamples, monitorCardTimeline, monitorRefreshSeconds } from '../monitorCards'
 import type { MonitorCandyHistory, MonitorCoverage, MonitorMatrixRow, MonitorMetric } from '@/api/channelMonitorV2'
 
 describe('monitor card data semantics', () => {
+  it.each([0, 1, 60, 99, 100, 120])('keeps 100 history slots for %i records without inventing results', (count) => {
+    const results: MonitorCandyHistory['results'] = Array.from({ length: count }, (_, index) => ({ checked_at: new Date(Date.UTC(2026, 8, 29, 0, index)).toISOString(), verdict: 'correct', latency_ms: index }))
+    const history: MonitorCandyHistory = { model: 'demo', reasoning_effort: 'medium', interval_minutes: 1, results }
+    const slots = candyHistorySlots(history)
+    const kept = Math.min(100, count)
+    expect(CANDY_HISTORY_LIMIT).toBe(100)
+    expect(slots).toHaveLength(100)
+    expect(slots.slice(0, 100 - kept)).toEqual(Array(100 - kept).fill(null))
+    expect(slots.slice(100 - kept)).toEqual(results.slice(-100))
+    if (count) expect(slots[99]).toBe(results.at(-1))
+    expect(history.results).toHaveLength(count)
+  })
   it('refreshes at the fastest visible probe interval without slowing configured polling or bootstrap', () => {
     const row = (minutes: number) => ({ candy: { interval_minutes: minutes } }) as MonitorMatrixRow
     expect(monitorRefreshSeconds(300, [], false)).toBe(300)

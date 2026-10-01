@@ -1,4 +1,12 @@
 export default {
+  cost: {
+    today: 'Today {amount}',
+    total: 'Total {amount}',
+    column: 'Test cost (USD)',
+    unknown: 'Not recorded',
+    partial: '{amount} (partial)',
+    hint: 'Calculated from reported token usage, model USD pricing and the account cost multiplier. No user balance is charged. Today follows the server timezone. Totals include all test plans in the group and survive history cleanup and plan deletion. Only costs recorded since the upgrade are included. Missing usage or pricing is not recorded; partial means some calls could not be priced.',
+  },
   title: 'Pelican Showcase',
   description: 'Ask each group the Pelican question on a schedule. The sub2api scheduler picks the answering account just as for a user request, and successful drawings appear on the user Pelican Showcase page.',
   viewShowcase: 'Open showcase',

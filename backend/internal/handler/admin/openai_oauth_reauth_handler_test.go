@@ -58,3 +58,39 @@ func TestOpenAIOAuthReauthWorkerRouteRejectsUnsafeTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIOAuthReauthRuntimeSettingsRequireWorkerAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	token := strings.Repeat("w", 32)
+	t.Setenv(openAIOAuthReauthWorkerTokenEnv, token)
+	router := gin.New()
+	router.POST("/runtime-settings", (&OpenAIOAuthReauthHandler{}).RuntimeSettings)
+	for _, valid := range []bool{false, true} {
+		req := httptest.NewRequest(http.MethodPost, "/runtime-settings", strings.NewReader("{}"))
+		if valid {
+			req.Header.Set("X-OpenAI-Reauth-Worker-Token", token)
+		}
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		if valid {
+			require.Equal(t, http.StatusOK, recorder.Code)
+			require.Contains(t, recorder.Body.String(), `"worker_concurrency":null`)
+		} else {
+			require.Equal(t, http.StatusUnauthorized, recorder.Code)
+		}
+		require.NotContains(t, recorder.Body.String(), token)
+	}
+}
+
+func TestAccountTokenGuardV2CredentialUpdatePreservesOmittedSwitches(t *testing.T) {
+	input := (accountTokenGuardV2SaveRequest{}).input()
+	require.True(t, input.PreserveEnabled)
+	require.True(t, input.PreserveAutoRelogin)
+	require.True(t, input.Enabled)
+	require.True(t, input.AutoReloginEnabled)
+	disabled := false
+	input = (accountTokenGuardV2SaveRequest{Enabled: &disabled}).input()
+	require.False(t, input.PreserveEnabled)
+	require.False(t, input.Enabled)
+	require.True(t, input.PreserveAutoRelogin)
+}

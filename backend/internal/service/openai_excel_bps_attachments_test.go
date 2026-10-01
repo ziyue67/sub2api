@@ -107,7 +107,7 @@ func TestExcelBPSNativeAttachmentForward(t *testing.T) {
 							if part.Get("type").String() == "input_image" {
 								found++
 								require.Equal(t, "file-native123", part.Get("file_id").String())
-								require.Equal(t, "original", part.Get("detail").String())
+								require.Len(t, part.Map(), 2, "native file references only accept type and file_id")
 								require.False(t, part.Get("image_url").Exists())
 							}
 						}

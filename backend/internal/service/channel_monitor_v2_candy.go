@@ -12,7 +12,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
-const channelCandyMaxProbes = 64
+const (
+	channelCandyMaxProbes             = 64
+	ChannelMonitorV2CandyHistoryLimit = 100
+	ChannelMonitorV2CandyRetention    = 24 * time.Hour
+)
 
 type ChannelMonitorV2CandyProbe struct {
 	GroupID         int64  `json:"group_id"`
@@ -47,7 +51,7 @@ type ChannelMonitorV2CandyHistory struct {
 type ChannelMonitorV2CandyRepository interface {
 	ClaimCandyProbe(context.Context, ChannelMonitorV2CandyProbe, string, time.Time, int) (int64, error)
 	FinishCandyProbe(context.Context, ChannelMonitorV2CandyResult) error
-	CandyHistory(context.Context, []int64, time.Time) ([]ChannelMonitorV2CandyResult, error)
+	CandyHistory(context.Context, map[int64]string, time.Time) ([]ChannelMonitorV2CandyResult, error)
 	PruneCandyHistory(context.Context, time.Time) error
 }
 
@@ -235,19 +239,19 @@ func (s *ChannelMonitorV2CandyService) attachHistory(ctx context.Context, matrix
 			probes[p.GroupID] = p
 		}
 	}
-	ids := []int64{}
+	configs := map[int64]string{}
 	for _, row := range matrix.Items {
 		if row.GroupID != nil {
-			if _, ok := probes[*row.GroupID]; ok {
-				ids = append(ids, *row.GroupID)
+			if probe, ok := probes[*row.GroupID]; ok {
+				configs[*row.GroupID] = probe.key()
 			}
 		}
 	}
-	if len(ids) == 0 {
+	if len(configs) == 0 {
 		return nil
 	}
 	// Only groups already admitted by the matrix's server-side scope are read.
-	history, err := s.repo.CandyHistory(ctx, ids, s.now().Add(-time.Hour))
+	history, err := s.repo.CandyHistory(ctx, configs, s.now().Add(-ChannelMonitorV2CandyRetention))
 	if err != nil {
 		return err
 	}

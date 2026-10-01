@@ -74,5 +74,5 @@ withDefaults(defineProps<{ targetGroups: { id: number; name: string }[]; showAut
 const bps = defineModel<QualityBPSPolicy>('bps', { required: true })
 const autoRestore = defineModel<boolean>('autoRestore', { default: false })
 const { t } = useI18n()
-const bpsToggles = [['omit_unsupported_tools', 'OmitUnsupportedTools'], ['ignore_images', 'IgnoreImages'], ['ignore_encrypted_content', 'IgnoreEncryptedContent'], ['auto_disable_on_403', 'AutoDisableOn403'], ['auto_recover_on_403', 'AutoRecoverOn403']] as const
+const bpsToggles = [['omit_unsupported_tools', 'OmitUnsupportedTools'], ['ignore_encrypted_content', 'IgnoreEncryptedContent'], ['auto_disable_on_403', 'AutoDisableOn403'], ['auto_recover_on_403', 'AutoRecoverOn403']] as const
 </script>

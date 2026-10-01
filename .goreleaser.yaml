@@ -75,6 +75,13 @@ release:
 
     本版本起不再发布 `tar.gz` / `zip` 二进制包与 `checksums.txt`，请使用上方镜像部署。
 
+    **K3s gateway upgrade (on each existing single-node host):**
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }}/{{ .Tag }}/deploy/upgrade-k3s.sh | sudo bash -s -- --version {{ .Tag }}
+    ```
+    Defaults: namespace `tosky-canary`, Deployment `tosky-nerd`; override with `--namespace NAME --deployment NAME`.
+    Upgrade every instance sharing Redis to this release.
+
     ## 📚 Documentation
 
     - [GitHub Repository](https://github.com/{{ .Env.GITHUB_REPO_OWNER }}/{{ .Env.GITHUB_REPO_NAME }})

@@ -83,7 +83,7 @@ func TestPelicanGroupTestHandlerStatusCodes(t *testing.T) {
 	for id := int64(60); id > 0; id-- {
 		repo.results = append(repo.results, &service.PelicanGroupTestResult{ID: id, Status: "success"})
 	}
-	h := NewPelicanGroupTestHandler(service.NewPelicanGroupTestService(repo, groupTestHandlerGroups{}, nil, nil, nil, nil, nil))
+	h := NewPelicanGroupTestHandler(service.NewPelicanGroupTestService(repo, groupTestHandlerGroups{}, nil, nil, nil, nil, nil, nil))
 
 	w := serveGroupTest(h.ListPlans, http.MethodGet, "/plans", "/plans", "")
 	require.Equal(t, http.StatusOK, w.Code)

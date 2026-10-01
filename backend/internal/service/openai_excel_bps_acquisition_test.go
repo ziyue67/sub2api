@@ -17,7 +17,7 @@ import (
 )
 
 func TestExcelBPSAcquisitionDiagnosticsPreserveReasonWithoutSending(t *testing.T) {
-	for _, reason := range []string{"candidate_checks_exhausted", "acquisition_timeout", "no_eligible_nodes", "session_draining", "session_capacity", "manager_unavailable"} {
+	for _, reason := range []string{"candidate_checks_exhausted", "acquisition_timeout", "no_eligible_nodes", "session_draining", "session_capacity", "manager_unavailable", "warm_pool_empty"} {
 		t.Run(reason, func(t *testing.T) {
 			core, logs := observer.New(zap.WarnLevel)
 			ctx := logger.IntoContext(context.Background(), zap.New(core))

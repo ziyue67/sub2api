@@ -31,6 +31,18 @@ beforeEach(() => {
 })
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 describe('AutoConfigHistory', () => {
+  it('renders initial mappings and the saved mapping template', async () => {
+    const initial = event(11, 'initial_applied')
+    initial.details.model_mapping = { 'gpt-5.4': 'gpt-5.5' }
+    const saved = event(10, 'config_saved')
+    saved.details.config = { enabled: false, platform: 'openai', priority: 50, load_factor: 1, concurrency: 3, group_ids: [], upgrade_enabled: false, upgrade_group_ids: [], successes_per_step: 20, upgrade_step: 1, max_concurrency: 100, cooldown_seconds: 60, revision: 'saved', model_mappings: [{ from: 'gpt-5.4', to: 'gpt-5.5' }] }
+    vi.mocked(getAutoConfigEvents).mockResolvedValue({ items: [initial, saved], has_more: false })
+    const w = render(); await flushPromises()
+    expect(w.findAll('[data-testid=history-row]')[0].text()).toContain('模型映射：gpt-5.4 → gpt-5.5')
+    expect(w.get('details').text()).toContain('模型映射')
+    expect(w.get('details').text()).toContain('gpt-5.4 → gpt-5.5')
+  })
+
   it('shows an honest empty state without invented history', async () => {
     const w = render(); await flushPromises()
     expect(w.get('[data-testid=history-empty]').text()).toContain('暂无自动配置日志')
@@ -50,12 +62,15 @@ describe('AutoConfigHistory', () => {
   it('shows the complete saved rule and group snapshot, including zero priority', async () => {
     const saved = event(9, 'config_saved')
     saved.account_id = 0
-    saved.details.config = { enabled: true, platform: 'openai', priority: 0, load_factor: 10000, concurrency: 5, group_ids: [3], upgrade_enabled: true, upgrade_group_ids: [5], successes_per_step: 20, upgrade_step: 2, max_concurrency: 100, cooldown_seconds: 60, revision: 'saved' }
+    saved.details.config = { model_mappings: [{ from: 'gpt-5.4', to: 'gpt-6-luna' }], model_billing: { enabled: true, rules: [{ model: 'gpt-6-luna*', multiplier: 10 }] }, enabled: true, platform: 'openai', priority: 0, load_factor: 10000, concurrency: 5, group_ids: [3], upgrade_enabled: true, upgrade_group_ids: [5], successes_per_step: 20, upgrade_step: 2, max_concurrency: 100, cooldown_seconds: 60, revision: 'saved' }
     vi.mocked(getAutoConfigEvents).mockResolvedValue({ items: [saved], has_more: false })
     const w = render(); await flushPromises()
     expect(w.get('[data-testid=history-row]').text()).toContain('全局配置')
     expect(w.get('[data-testid=history-row]').text()).toContain('优先级 0')
     expect(w.get('details').text()).toContain('连续成功 20 次，提升 2 并发，上限 100，冷却 60 秒')
+    expect(w.get('details').text()).toContain('模型计价：开启')
+    expect(w.get('details').text()).toContain('gpt-6-luna* · 10×')
+    expect(w.get('details').text()).toContain('gpt-5.4 → gpt-6-luna')
     expect(w.get('details').text()).toContain('首次加入分组：#3')
     expect(w.get('details').text()).toContain('允许升级的账号分组：#5')
   })

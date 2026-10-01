@@ -136,6 +136,18 @@ func (r *reauthTestRepo) ClaimNextTask(_ context.Context, workerID string, _ tim
 	r.task.Attempt++
 	return r.task, nil
 }
+func (r *reauthTestRepo) ClaimNextTaskForEngines(ctx context.Context, workerID string, stale time.Duration, mode string, engines []string) (*OpenAIOAuthReauthTaskRecord, error) {
+	if r.config == nil || (mode != "" && r.config.CredentialMode != mode) {
+		return nil, nil
+	}
+	for _, engine := range engines {
+		if normalizedReauthEngine(r.config.Engine) == engine {
+			return r.ClaimNextTask(ctx, workerID, stale)
+		}
+	}
+	return nil, nil
+}
+
 func (r *reauthTestRepo) SetSession(_ context.Context, _ int64, workerID, sessionID string) error {
 	if r.task == nil || r.task.WorkerID != workerID {
 		return errors.New("worker mismatch")

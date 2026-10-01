@@ -1,0 +1,38 @@
+name: Re-login runtime
+on:
+  pull_request:
+    paths:
+      - 'tools/openai_oauth_reauth_worker.py'
+      - 'tools/test_openai_oauth_reauth_worker.py'
+      - 'tools/test_openai_oauth_reauth_engines.py'
+      - 'tools/test_openai_oauth_reauth_runtime_controls.py'
+      - 'tools/reauth-runtime/**'
+      - 'backend/internal/reauthruntime/**'
+      - '.github/workflows/reauth-runtime.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - name: Package and validate without publishing
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: 0.0.0-test
+        run: bash tools/reauth-runtime/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reauth-runtime-test-${{ matrix.arch }}
+          path: reauth-output/*.tar.gz
+          retention-days: 3

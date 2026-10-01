@@ -22,14 +22,16 @@ export default {
         }
     },
     "candy": {
+        "historyCount": "{count}/{limit} checks recorded; gray means no check",
+        "notChecked": "Not checked",
         "disabled": "Checks disabled",
         "disabledHint": "Intelligence checks are not enabled for this group. An administrator can configure them in Channel Monitor.",
         "invalid": 'Enter a model and an integer interval from 1 to 1440 minutes.',
         "title": "Reasoning check",
         "cadence": "Every {minutes} min",
-        "window": "Last 60 min · observed checks only",
+        "window": "Last 24 hours · latest {count} checks",
         "waiting": "Waiting for a check",
-        "legend": "21 green · other yellow · probe failure red",
+        "legend": "21 green · other yellow · probe failure red · not checked gray",
         "states": {
             "correct": "Correct",
             "incorrect": "Wrong answer",

@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	dbmigrations "github.com/Wei-Shaw/sub2api/migrations"
 	"github.com/lib/pq"
@@ -268,6 +270,111 @@ const pelicanGroupTestsMigration = "253_pelican_group_tests.sql"
 
 // 253 turns the groups picked for the showcase before group tests into paused plans, so
 // they stay on the gallery after the upgrade.
+func TestPelicanGroupTestRepo_CostsSurviveRetentionAndPlanDeletion(t *testing.T) {
+	ctx := context.Background()
+	originalTZ := timezone.Name()
+	require.NoError(t, timezone.Init("Asia/Shanghai"))
+	t.Cleanup(func() { require.NoError(t, timezone.Init(originalTZ)) })
+	repo := NewPelicanGroupTestRepository(integrationDB)
+	groups := createPelicanGroupTestGroups(t, "costs", "isolated")
+	a, err := repo.CreatePlan(ctx, newPelicanGroupTestPlan(groups[0].ID, true, time.Now()))
+	require.NoError(t, err)
+	b, err := repo.CreatePlan(ctx, newPelicanGroupTestPlan(groups[0].ID, true, time.Now()))
+	require.NoError(t, err)
+	other, err := repo.CreatePlan(ctx, newPelicanGroupTestPlan(groups[1].ID, true, time.Now()))
+	require.NoError(t, err)
+	today := timezone.Today()
+	// Local 00:30 is still yesterday in the database's UTC session.
+	finished := today.Add(30 * time.Minute).UTC()
+	save := func(planID int64, cost *float64, at time.Time, partial bool) *service.PelicanGroupTestResult {
+		t.Helper()
+		saved, err := repo.CreateResult(ctx, &service.PelicanGroupTestResult{PlanID: planID, GroupID: groups[1].ID, Status: "failed", StartedAt: at.Add(-time.Minute), FinishedAt: at, CostUSD: cost, CostIncomplete: partial})
+		require.NoError(t, err)
+		return saved
+	}
+	oldCost, firstCost, secondCost, zero := 1.25, 0.1, 0.2, 0.0
+	save(a.ID, &oldCost, today.Add(-time.Second), false)
+	first := save(a.ID, &firstCost, finished, false)
+	save(b.ID, &secondCost, finished, true)
+	save(a.ID, nil, finished, false)
+	save(other.ID, &zero, finished, false)
+	detail, err := repo.GetResult(ctx, first.ID)
+	require.NoError(t, err)
+	require.NotNil(t, detail.CostUSD)
+	require.InDelta(t, firstCost, *detail.CostUSD, 1e-10)
+	page, _, err := repo.ListResults(ctx, b.ID, 0, 20)
+	require.NoError(t, err)
+	require.Len(t, page, 1)
+	require.InDelta(t, secondCost, *page[0].CostUSD, 1e-10)
+	require.True(t, page[0].CostIncomplete)
+	last, err := repo.GetPlan(ctx, b.ID)
+	require.NoError(t, err)
+	require.InDelta(t, secondCost, *last.LastResult.CostUSD, 1e-10)
+	require.True(t, last.LastResult.CostIncomplete)
+
+	// Concurrent parallel samples must atomically add to the same daily row.
+	var wg sync.WaitGroup
+	errs := make(chan error, 12)
+	for range 12 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cost := 0.01
+			_, err := repo.CreateResult(ctx, &service.PelicanGroupTestResult{PlanID: a.ID, Status: "success", StartedAt: finished, FinishedAt: finished, CostUSD: &cost})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	check := func() {
+		t.Helper()
+		got, err := repo.GetPlan(ctx, b.ID)
+		require.NoError(t, err)
+		require.InDelta(t, 0.42, got.TodayCostUSD, 1e-10)
+		require.InDelta(t, 1.67, got.TotalCostUSD, 1e-10)
+		require.True(t, got.TodayCostIncomplete)
+		require.True(t, got.TotalCostIncomplete)
+		isolated, err := repo.GetPlan(ctx, other.ID)
+		require.NoError(t, err)
+		require.Zero(t, isolated.TotalCostUSD)
+		require.False(t, isolated.TotalCostIncomplete)
+	}
+	check()
+	require.NoError(t, repo.PruneResults(ctx, a.ID, 2))
+	check()
+	require.NoError(t, repo.PruneExpiredResults(ctx, time.Now().Add(time.Hour)))
+	check()
+	deleted, err := repo.DeletePlan(ctx, a.ID)
+	require.NoError(t, err)
+	require.True(t, deleted)
+	check()
+	// Replaying the migration must neither fabricate legacy costs nor reset totals.
+	migration, err := dbmigrations.FS.ReadFile("261_pelican_group_test_costs.sql")
+	require.NoError(t, err)
+	_, err = integrationDB.ExecContext(ctx, string(migration))
+	require.NoError(t, err)
+	check()
+	plans, err := repo.ListPlans(ctx)
+	require.NoError(t, err)
+	for _, plan := range plans {
+		if plan.ID == b.ID {
+			require.InDelta(t, 1.67, plan.TotalCostUSD, 1e-10)
+		}
+	}
+	due, err := repo.ListDue(ctx, time.Now().AddDate(0, 0, 1))
+	require.NoError(t, err)
+	for _, plan := range due {
+		if plan.ID == b.ID {
+			require.Zero(t, plan.TodayCostUSD)
+			require.False(t, plan.TodayCostIncomplete)
+			require.InDelta(t, 1.67, plan.TotalCostUSD, 1e-10)
+		}
+	}
+}
+
 func TestMigration253ConvertsShowcaseGroupsToPausedPlans(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()

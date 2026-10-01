@@ -10,14 +10,42 @@
       <form v-if="draft" class="space-y-5" @submit.prevent="save">
         <p v-if="draft.runtime_blocked" role="alert" class="rounded-xl bg-amber-50 p-4 text-amber-800">{{ t('autoConfig.blocked') }}</p>
         <fieldset :disabled="saving" class="min-w-0"><BPSDefaultsCard v-model="draft.excel_bps" :groups="groups" /></fieldset>
+        <fieldset :disabled="saving" class="min-w-0">
+          <section class="card space-y-5" data-testid="model-billing">
+            <header class="flex flex-wrap items-center justify-between gap-3">
+              <h2 class="text-lg font-semibold">{{ t('autoConfig.modelBilling.title') }}</h2>
+              <label class="flex items-center gap-2 text-sm"><input v-model="draft.model_billing.enabled" data-testid="model-billing-enabled" type="checkbox" role="switch" />{{ t('autoConfig.enable') }}</label>
+            </header>
+            <p class="text-sm leading-6 text-gray-500">{{ t('autoConfig.modelBilling.hint') }}</p>
+            <div v-for="(rule, index) in draft.model_billing.rules" :key="index" class="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
+              <label class="min-w-0"><span class="field-label">{{ t('autoConfig.modelBilling.model') }}</span><input v-model="rule.model" :data-testid="'model-billing-model-' + index" type="text" maxlength="200" placeholder="gpt-6-luna*" required class="input w-full" /></label>
+              <label><span class="field-label">{{ t('autoConfig.modelBilling.multiplier') }}</span><div class="flex items-center gap-2"><input v-model.number="rule.multiplier" :data-testid="'model-billing-multiplier-' + index" type="number" min="1" max="1000" step="any" required class="input min-w-0 w-full" /><span class="text-sm text-gray-500">×</span></div></label>
+              <button type="button" :data-testid="'model-billing-remove-' + index" class="btn btn-secondary" @click="draft.model_billing.rules.splice(index, 1)">{{ t('autoConfig.modelBilling.remove') }}</button>
+            </div>
+            <button type="button" data-testid="model-billing-add" class="btn btn-secondary" :disabled="draft.model_billing.rules.length >= 100" @click="draft.model_billing.rules.push({ model: '', multiplier: 10 })">{{ t('autoConfig.modelBilling.add') }}</button>
+            <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.modelBilling.matchHint') }}</p>
+            <p class="rounded-xl bg-amber-50 p-3 text-sm leading-6 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{{ t('autoConfig.modelBilling.example') }}</p>
+          </section>
+        </fieldset>
         <fieldset :disabled="saving" class="grid min-w-0 gap-5 xl:grid-cols-2">
           <section class="card space-y-5">
             <header class="flex items-center justify-between gap-3"><h2 class="text-lg font-semibold">{{ t('autoConfig.initial') }}</h2><label class="flex items-center gap-2 text-sm"><input v-model="draft.enabled" data-testid="initial-enabled" type="checkbox" role="switch" />{{ t('autoConfig.enable') }}</label></header>
             <p class="text-sm leading-6 text-gray-500">{{ t('autoConfig.initialHint') }}</p>
-            <label class="block"><span class="field-label">{{ t('autoConfig.platform') }}</span><select v-model="draft.platform" data-testid="platform" class="input w-full" @change="draft.group_ids = []"><option v-for="p in platforms" :key="p.value" :value="p.value">{{ p.label }}</option></select></label>
+            <label class="block"><span class="field-label">{{ t('autoConfig.platform') }}</span><select v-model="draft.platform" data-testid="platform" class="input w-full" @change="draft.group_ids = []; draft.model_mappings = defaultOAuthModelMappings(draft.platform)"><option v-for="p in platforms" :key="p.value" :value="p.value">{{ p.label }}</option></select></label>
             <div class="grid gap-4 sm:grid-cols-3"><label v-for="field in initialFields" :key="field.key"><span class="field-label">{{ t('autoConfig.' + field.key) }}</span><input v-model.number="draft[field.key]" :data-testid="field.key" type="number" :min="field.min" max="10000" step="1" required class="input w-full" /></label></div>
             <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.loadHint') }}</p>
             <fieldset><legend class="field-label">{{ t('autoConfig.groups') }}</legend><div class="group-list"><label v-for="g in initialGroups" :key="g.id" class="group-option"><input v-model="draft.group_ids" :value="g.id" type="checkbox" :data-testid="'initial-group-' + g.id" /><span>{{ g.name }} <small class="text-gray-400">#{{ g.id }}</small></span></label><p v-if="!initialGroups.length" class="text-sm text-gray-500">{{ t('autoConfig.noGroups') }}</p></div></fieldset>
+            <fieldset class="space-y-3 border-t border-gray-100 pt-4 dark:border-dark-700" data-testid="initial-model-mappings">
+              <legend class="field-label">{{ t('autoConfig.mapping.title') }}</legend>
+              <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.mapping.hint') }}</p>
+              <div v-for="(rule, index) in draft.model_mappings" :key="index" class="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                <label class="min-w-0"><span class="field-label">{{ t('autoConfig.mapping.from') }}</span><input v-model="rule.from" :data-testid="'mapping-from-' + index" class="input w-full" type="text" placeholder="gpt-5.4" maxlength="256" required /></label>
+                <label class="min-w-0"><span class="field-label">{{ t('autoConfig.mapping.to') }}</span><input v-model="rule.to" :data-testid="'mapping-to-' + index" class="input w-full" type="text" placeholder="gpt-5.5" maxlength="256" required /></label>
+                <button type="button" :data-testid="'mapping-remove-' + index" class="btn btn-secondary" :aria-label="t('autoConfig.mapping.remove') + ' ' + (index + 1)" @click="draft.model_mappings.splice(index, 1)">{{ t('autoConfig.mapping.remove') }}</button>
+              </div>
+              <button type="button" data-testid="mapping-add" class="btn btn-secondary" :disabled="draft.model_mappings.length >= 100" @click="draft.model_mappings.push({ from: '', to: '' })">{{ t('autoConfig.mapping.add') }}</button>
+              <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.mapping.allowlistHint') }}</p>
+            </fieldset>
           </section>
           <section class="card space-y-5">
             <header class="flex items-center justify-between gap-3"><h2 class="text-lg font-semibold">{{ t('autoConfig.upgrade') }}</h2><label class="flex items-center gap-2 text-sm"><input v-model="draft.upgrade_enabled" data-testid="upgrade-enabled" type="checkbox" role="switch" />{{ t('autoConfig.enable') }}</label></header>
@@ -40,13 +68,15 @@ import { useAuthStore } from '@/stores/auth'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import BPSDefaultsCard from '@/components/admin/operations/BPSDefaultsCard.vue'
+import { defaultOAuthModelMappings, oauthModelMappingsError, oauthModelMappingsPayload, type OAuthModelMappingRule } from '@/utils/oauthModelMappings'
 import { defaultExcelBPSDefaults, excelBPSDefaultsError, excelBPSDefaultsPayload, type ExcelBPSDefaults } from '@/utils/excelBPSDefaults'
 import AutoConfigHistory from '@/components/admin/operations/AutoConfigHistory.vue'
 import { getAll } from '@/api/admin/groups'
 import { getAutoConfig, saveAutoConfig, type AutoConfig } from '@/api/admin/autoConfig'
 import type { Group } from '@/types'
+import { defaultModelBillingConfig, modelBillingConfigError, modelBillingPayload, type ModelBillingConfig } from '@/utils/modelBilling'
 const { t } = useI18n(), auth = useAuthStore()
-const draft = ref<(AutoConfig & { excel_bps: ExcelBPSDefaults }) | null>(null), groups = ref<Group[]>([])
+const draft = ref<(AutoConfig & { excel_bps: ExcelBPSDefaults; model_billing: ModelBillingConfig; model_mappings: OAuthModelMappingRule[] }) | null>(null), groups = ref<Group[]>([])
 const loading = ref(false), saving = ref(false), error = ref(''), notice = ref('')
 const historyRefreshKey = ref(0)
 let generation = 0, alive = true
@@ -57,18 +87,22 @@ const upgradeFields = [{ key: 'successes_per_step', max: 100000 }, { key: 'upgra
 const initialGroups = computed(() => groups.value.filter(g => g.platform === draft.value?.platform))
 async function load() {
  const v = generation; loading.value = true; error.value = ''
- try { const [config, available] = await Promise.all([getAutoConfig(), getAll()]); if (validGeneration(v)) { draft.value = { ...config, excel_bps: config.excel_bps ?? defaultExcelBPSDefaults() }; groups.value = available.filter(g => g.status === 'active') } }
+ try { const [config, available] = await Promise.all([getAutoConfig(), getAll()]); if (validGeneration(v)) { draft.value = { ...config, model_mappings: config.model_mappings ?? defaultOAuthModelMappings(config.platform), model_billing: config.model_billing ?? defaultModelBillingConfig(), excel_bps: config.excel_bps ?? defaultExcelBPSDefaults() }; groups.value = available.filter(g => g.status === 'active') } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.loadFailed') }
  finally { if (validGeneration(v)) loading.value = false }
 }
 async function save() {
  if (!draft.value || saving.value) return
  const c = draft.value
+ const modelError = modelBillingConfigError(c.model_billing)
+ if (modelError) { error.value = t(modelError); return }
  const bpsError = excelBPSDefaultsError(c.excel_bps)
  if (bpsError) { error.value = t(bpsError); return }
+ const mappingError = oauthModelMappingsError(c.model_mappings)
+ if (mappingError) { error.value = t(mappingError); return }
  if (c.enabled && !c.group_ids.length || c.upgrade_enabled && !c.upgrade_group_ids.length || [...initialFields, ...upgradeFields].some(f => !Number.isInteger(c[f.key]) || c[f.key] < ('min' in f ? f.min : 1) || c[f.key] > ('max' in f ? f.max : 10000))) { error.value = t('autoConfig.invalid'); return }
  const v = generation; saving.value = true; error.value = ''; notice.value = ''
- try { const { runtime_blocked: _blocked, ...payload } = c; const result = await saveAutoConfig({ ...payload, excel_bps: excelBPSDefaultsPayload(c.excel_bps) }); if (validGeneration(v)) { draft.value = { ...result, excel_bps: result.excel_bps ?? defaultExcelBPSDefaults() }; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
+ try { const { runtime_blocked: _blocked, ...payload } = c; const result = await saveAutoConfig({ ...payload, model_mappings: oauthModelMappingsPayload(c.model_mappings), model_billing: modelBillingPayload(c.model_billing), excel_bps: excelBPSDefaultsPayload(c.excel_bps) }); if (validGeneration(v)) { draft.value = { ...result, model_mappings: result.model_mappings ?? defaultOAuthModelMappings(result.platform), model_billing: result.model_billing ?? defaultModelBillingConfig(), excel_bps: result.excel_bps ?? defaultExcelBPSDefaults() }; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.saveFailed') }
  finally { if (validGeneration(v)) saving.value = false }
 }

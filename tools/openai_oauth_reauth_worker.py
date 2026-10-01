@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import codecs
+import multiprocessing
+import uuid
 import html
 import ipaddress
 import json
@@ -16,12 +19,13 @@ import logging
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -223,10 +227,11 @@ class WorkerConfig:
     base_url: str
     worker_token: str
     worker_id: str
-    protocol_root: Path
+    protocol_root: Path | None
     tosub2_root: Path | None = None
     poll_seconds: float = 5.0
     request_timeout: float = 30.0
+    concurrency: int = 3
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -249,17 +254,18 @@ class WorkerConfig:
             raise WorkerError("OPENAI_REAUTH_WORKER_ID must be at most 128 characters")
 
         root_raw = (os.getenv("CODEX_PROTOCOL_ROOT", "").strip() or os.getenv("TURB_ROOT", "").strip())
-        protocol_root = Path(root_raw).expanduser().resolve() if root_raw else Path()
-        required = (
-            protocol_root / "core" / "codex_oauth.py",
-            protocol_root / "core" / "session.py",
-            protocol_root / "sentinel" / "sentinel-runner.js",
-            protocol_root / "sentinel" / "sdk.js",
-        )
-        if not root_raw or not all(path.is_file() for path in required):
-            raise WorkerError(
-                "CODEX_PROTOCOL_ROOT/TURB_ROOT must point to a Turb project with the pure protocol and Sentinel assets"
+        protocol_root = Path(root_raw).expanduser().resolve() if root_raw else None
+        if protocol_root is not None:
+            required = (
+                protocol_root / "core" / "codex_oauth.py",
+                protocol_root / "core" / "session.py",
+                protocol_root / "sentinel" / "sentinel-runner.js",
+                protocol_root / "sentinel" / "sdk.js",
             )
+            if not all(path.is_file() for path in required):
+                raise WorkerError(
+                    "CODEX_PROTOCOL_ROOT/TURB_ROOT must point to a Turb project with the pure protocol and Sentinel assets"
+                )
 
         tosub2_raw = os.getenv("TOSUB2_ROOT", "").strip()
         tosub2_root = Path(tosub2_raw).expanduser().resolve() if tosub2_raw else None
@@ -271,6 +277,16 @@ class WorkerConfig:
             if not all(path.is_file() for path in required_tosub2):
                 raise WorkerError("TOSUB2_ROOT must point to a toSub2 checkout containing src/protocol-login.mjs")
 
+        if protocol_root is None and tosub2_root is None:
+            raise WorkerError("configure TOSUB2_ROOT for password/TOTP or CODEX_PROTOCOL_ROOT/TURB_ROOT for email OTP")
+
+        try:
+            concurrency = int(os.getenv("OPENAI_REAUTH_CONCURRENCY", "3"))
+        except ValueError:
+            raise WorkerError("OPENAI_REAUTH_CONCURRENCY must be an integer from 1 to 16") from None
+        if not 1 <= concurrency <= 16:
+            raise WorkerError("OPENAI_REAUTH_CONCURRENCY must be an integer from 1 to 16")
+
         return cls(
             base_url=base_url,
             worker_token=worker_token,
@@ -279,6 +295,7 @@ class WorkerConfig:
             tosub2_root=tosub2_root,
             poll_seconds=_positive_float(os.getenv("OPENAI_REAUTH_POLL_SECONDS"), 5.0),
             request_timeout=_positive_float(os.getenv("OPENAI_REAUTH_REQUEST_TIMEOUT"), 30.0),
+            concurrency=concurrency,
         )
 
 
@@ -320,10 +337,19 @@ class WorkerAPI:
             raise WorkerError(str(envelope.get("message") or "sub2api request failed"))
         return envelope.get("data")
 
+    def runtime_concurrency(self) -> int:
+        data = self._post("/api/v1/internal/openai-reauth/runtime-settings", {})
+        value = data.get("worker_concurrency") if isinstance(data, dict) else None
+        if isinstance(data, dict) and "worker_concurrency" in data and value is None:
+            return self.config.concurrency
+        if type(value) is not int or not 1 <= value <= 16:
+            raise WorkerError("invalid worker concurrency from server")
+        return value
+
     def claim(self) -> dict[str, Any] | None:
         data = self._post(
             "/api/v1/internal/openai-reauth/claim",
-            {"worker_id": self.config.worker_id},
+            {"worker_id": self.config.worker_id, "engines": ["local_worker", "session_studio"]},
         )
         return data if isinstance(data, dict) else None
 
@@ -772,13 +798,15 @@ def _wait_for_otp(
     raise WorkerError("timed out waiting for a new mailbox verification code")
 
 
-def process_claim(api: WorkerAPI, protocol: SimpleNamespace, claim: dict[str, Any]) -> None:
+def process_claim(api: WorkerAPI, protocol: SimpleNamespace | None, claim: dict[str, Any]) -> None:
     mode = str(claim.get("credential_mode") or "email_otp_url").strip()
     if mode == "password_totp":
         process_password_claim(api, claim)
         return
     if mode != "email_otp_url":
         raise WorkerError("claimed task has an unsupported credential mode")
+    if protocol is None:
+        raise WorkerError("email OTP re-login requires CODEX_PROTOCOL_ROOT/TURB_ROOT")
 
     task_id = int(claim.get("task_id") or 0)
     account_id = int(claim.get("account_id") or 0)
@@ -886,7 +914,123 @@ def process_claim(api: WorkerAPI, protocol: SimpleNamespace, claim: dict[str, An
                 LOGGER.warning("task=%s protocol session cleanup failed: %s", task_id, sanitize_error(str(exc)))
 
 
+def _session_studio_result(response: Any) -> dict[str, Any]:
+    """Decode bounded JSON/NDJSON, stopping at the terminal object, not EOF."""
+    decoder = json.JSONDecoder()
+    utf8 = codecs.getincrementaldecoder("utf-8")()
+    pending = ""
+    total = 0
+    deadline = time.monotonic() + 25 * 60
+    while True:
+        while pending.strip():
+            pending = pending.lstrip()
+            try:
+                event, end = decoder.raw_decode(pending)
+            except ValueError:
+                break
+            pending = pending[end:]
+            if not isinstance(event, dict):
+                raise WorkerError("Session Studio returned invalid JSON")
+            if event.get("type") == "result":
+                payload = event.get("payload")
+                if not isinstance(payload, dict):
+                    raise WorkerError("Session Studio returned an invalid result")
+                return payload
+            if "credential" in event or "error" in event or str(event.get("status", "")).lower() in {
+                "active", "ok", "success", "succeeded", "failed", "error", "auth_failed"
+            }:
+                return event
+        if time.monotonic() >= deadline:
+            raise WorkerError("Session Studio response timed out")
+        chunk = response.read1(4096)
+        if not chunk:
+            raise WorkerError("Session Studio response ended without a result")
+        total += len(chunk)
+        if total > 8 * MAX_RESPONSE_BYTES:
+            raise WorkerError("Session Studio response is too large")
+        try:
+            pending += utf8.decode(chunk)
+        except UnicodeDecodeError:
+            raise WorkerError("Session Studio returned invalid JSON") from None
+
+
+def process_session_studio_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
+    task_id = int(claim.get("task_id") or 0)
+    account_id = int(claim.get("account_id") or 0)
+    email = str(claim.get("login_email") or "").strip()
+    password = str(claim.get("password") or "")
+    if task_id <= 0 or account_id <= 0 or not email or not password:
+        raise WorkerError("claimed password task is missing required fields")
+    # Never infer an external destination or silently fall back to an engine.
+    endpoint = str(claim.get("relogin_endpoint") or "").strip()
+    try:
+        parsed = urlparse(endpoint)
+        valid = parsed.scheme == "https" and parsed.hostname and not (
+            parsed.username or parsed.password or parsed.query or parsed.fragment
+        )
+        parsed.port
+    except ValueError:
+        valid = False
+    if not valid:
+        raise WorkerError("Session Studio requires a configured HTTPS endpoint")
+    if claim.get("proxy_url"):
+        raise WorkerError("Session Studio does not accept an account proxy")
+    origin = f"https://{parsed.netloc}"
+    headers = {
+        "Content-Type": "application/json", "Accept": "application/x-ndjson, application/json",
+        "Origin": origin, "Referer": origin + "/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0",
+    }
+    extra_headers = claim.get("relogin_headers") or {}
+    if not isinstance(extra_headers, dict):
+        raise WorkerError("Session Studio headers are invalid")
+    reserved = {"host", "content-length", "transfer-encoding", "connection", "x-openai-reauth-worker-token"}
+    for name, value in extra_headers.items():
+        if (not isinstance(name, str) or not isinstance(value, str)
+                or not re.fullmatch(r"[!#$%&'*+.^_\x60|~0-9A-Za-z-]+", name)
+                or name.lower() in reserved or "\r" in value or "\n" in value):
+            raise WorkerError("Session Studio headers are invalid")
+        headers[name] = value.replace("{{uuid}}", str(uuid.uuid4()))
+    request = Request(endpoint, method="POST", headers=headers, data=json.dumps({
+        "action": "start", "auth_mode": "password_2fa", "email": email,
+        "password": password, "mfa_secret": str(claim.get("totp_secret") or ""),
+    }).encode("utf-8"))
+    LOGGER.info("task=%s account=%s started (session_studio)", task_id, account_id)
+    started = time.monotonic()
+    _best_effort_progress(api, task_id, "starting")
+    _best_effort_progress(api, task_id, "protocol_connecting")
+    try:
+        # No redirects: credentials must never be forwarded to another target.
+        with NO_REDIRECT_OPENER.open(request, timeout=60) as response:
+            payload = _session_studio_result(response)
+    except HTTPError as exc:
+        raise WorkerError(f"Session Studio HTTP {exc.code}") from None
+    except (URLError, TimeoutError, OSError, ValueError):
+        raise WorkerError("Session Studio request failed") from None
+    credentials = payload.get("credential")
+    if payload.get("error") or str(payload.get("status", "")).lower() in {"failed", "error", "auth_failed"}:
+        # Provider errors may echo secrets. Do not relay their message or code.
+        raise WorkerError("Session Studio login failed")
+    if not isinstance(credentials, dict) or not all(
+        isinstance(credentials.get(key), str) and credentials[key].strip()
+        for key in ("access_token", "refresh_token", "id_token")
+    ):
+        raise WorkerError("Session Studio returned incomplete OAuth credentials")
+    _best_effort_progress(api, task_id, "applying_credentials")
+    result = api.credentials(task_id, credentials, {})
+    if not result or result.get("status") != "succeeded":
+        raise WorkerError("Session Studio credentials were not accepted")
+    LOGGER.info("task=%s account=%s succeeded engine=session_studio elapsed_ms=%d",
+                task_id, account_id, (time.monotonic() - started) * 1000)
+
+
 def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
+    engine = str(claim.get("engine") or "local_worker")
+    if engine == "session_studio":
+        process_session_studio_claim(api, claim)
+        return
+    if engine != "local_worker":
+        raise WorkerError("unsupported password re-login engine")
     task_id = int(claim.get("task_id") or 0)
     account_id = int(claim.get("account_id") or 0)
     email = str(claim.get("login_email") or "").strip()
@@ -902,14 +1046,13 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
     node_executable = os.getenv("NODE_EXECUTABLE", "node").strip()
     if not node_executable or shutil.which(node_executable) is None:
         raise WorkerError("Node.js is required for password/TOTP re-login")
-    script = root / "src" / "protocol-login.mjs"
+    script = root.resolve() / "src" / "protocol-login.mjs"
     if not script.is_file():
         raise WorkerError("toSub2 protocol-login.mjs is unavailable")
 
     LOGGER.info("task=%s account=%s started (password protocol)", task_id, account_id)
     _best_effort_progress(api, task_id, "starting")
     _best_effort_progress(api, task_id, "protocol_connecting")
-    _best_effort_progress(api, task_id, "password_submitted")
     with tempfile.TemporaryDirectory(prefix="sub2api-reauth-") as temp_dir:
         output_path = Path(temp_dir) / "oauth.json"
         command = [
@@ -936,7 +1079,7 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
         try:
             result = subprocess.run(
                 command,
-                cwd=root,
+                cwd=temp_dir,
                 env=child_env,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
@@ -949,8 +1092,6 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
         if result.returncode != 0:
             # The external runner may echo unlabeled secrets that regexes cannot redact.
             raise WorkerError(f"password/TOTP protocol failed (exit {result.returncode})")
-        if totp_secret:
-            _best_effort_progress(api, task_id, "mfa_submitted")
         try:
             payload = json.loads(output_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, ValueError):
@@ -965,13 +1106,14 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
         for key in ("access_token", "refresh_token", "id_token")
     ):
         raise WorkerError("password/TOTP protocol returned incomplete OAuth credentials")
+    _best_effort_progress(api, task_id, "applying_credentials")
     result = api.credentials(task_id, credentials, extra if isinstance(extra, dict) else {})
     if not result or result.get("status") != "succeeded":
         raise WorkerError(str((result or {}).get("error") or "credentials were not accepted"))
     LOGGER.info("task=%s account=%s succeeded", task_id, account_id)
 
 
-def run_once(api: WorkerAPI, protocol: SimpleNamespace) -> bool:
+def run_once(api: WorkerAPI, protocol: SimpleNamespace | None) -> bool:
     try:
         claim = api.claim()
     except WorkerError as exc:
@@ -993,27 +1135,121 @@ def run_once(api: WorkerAPI, protocol: SimpleNamespace) -> bool:
     return True
 
 
+def terminate_worker(_signum: int, _frame: Any) -> None:
+    # The managed launcher makes us a process-group leader. On API death its
+    # parent-death SIGTERM must also terminate Node/TLS descendants.
+    if hasattr(os, "getpgrp") and os.getpgrp() == os.getpid():
+        try:
+            os.killpg(os.getpgrp(), signal.SIGKILL)
+        except OSError:
+            pass
+    raise SystemExit(0)
+
+
+def _worker_loop(config: WorkerConfig, stop: Any = None) -> None:
+    signal.signal(signal.SIGTERM, terminate_worker)
+    protocol = load_protocol(config.protocol_root) if config.protocol_root is not None else None
+    api = WorkerAPI(config)
+    LOGGER.info("worker=%s ready", config.worker_id)
+    while stop is None or not stop.is_set():
+        if not run_once(api, protocol):
+            if stop is None:
+                time.sleep(config.poll_seconds)
+            else:
+                stop.wait(config.poll_seconds)
+
+
+def worker_slot_config(config: WorkerConfig, slot: int) -> WorkerConfig:
+    suffix = f"-slot-{slot}"
+    # Preserve the existing 128-character worker ownership limit.
+    return replace(config, worker_id=config.worker_id[:128-len(suffix)] + suffix, concurrency=1)
+
+
+def reconcile_worker_pool(context: Any, children: dict, config: WorkerConfig, target: int) -> None:
+    # Retiring processes finish their current task before exiting. They do not
+    # claim another task. Never replace a retiring slot until it has exited.
+    for slot, (child, stop) in list(children.items()):
+        if not child.is_alive():
+            child.join()
+            del children[slot]
+            if not stop.is_set():
+                raise WorkerError("a re-login worker process exited")
+    for slot, (_child, stop) in children.items():
+        if slot > target:
+            stop.set()
+    for slot in range(1, target + 1):
+        if slot not in children:
+            stop = context.Event()
+            child = context.Process(target=_worker_loop, args=(worker_slot_config(config, slot), stop))
+            child.start()
+            children[slot] = (child, stop)
+
+
+def run_worker_pool(config: WorkerConfig) -> None:
+    context = multiprocessing.get_context("fork" if sys.platform.startswith("linux") else "spawn")
+    children = {}
+    api = WorkerAPI(config)
+    target = config.concurrency
+    next_poll = 0.0
+    try:
+        while True:
+            now = time.monotonic()
+            if now >= next_poll:
+                try:
+                    target = api.runtime_concurrency()
+                except WorkerError:
+                    # Older API versions and temporary outages retain the last
+                    # working count; they never interrupt active credentials.
+                    pass
+                next_poll = now + 5
+            reconcile_worker_pool(context, children, config, target)
+            time.sleep(0.25)
+    finally:
+        for child, _stop in children.values():
+            if child.is_alive():
+                child.terminate()
+        for child, _stop in children.values():
+            child.join(timeout=5)
+            if child.is_alive():
+                child.kill()
+                child.join()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="claim at most one task, then exit")
+    parser.add_argument("--check", action="store_true", help="validate local configuration without claiming a task")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         config = WorkerConfig.from_env()
-        protocol = load_protocol(config.protocol_root)
+        node_executable = os.getenv("NODE_EXECUTABLE", "node").strip()
+        if not node_executable or shutil.which(node_executable) is None:
+            raise WorkerError("Node.js is required for the re-login protocol runner")
+        protocol = load_protocol(config.protocol_root) if config.protocol_root is not None else None
         api = WorkerAPI(config)
     except Exception as exc:
         LOGGER.error("worker startup failed: %s", sanitize_error(f"{type(exc).__name__}: {exc}"))
         return 2
 
-    LOGGER.info("worker=%s ready", config.worker_id)
+    if args.check:
+        LOGGER.info("worker configuration valid (password_totp=%s email_otp_url=%s)", config.tosub2_root is not None, protocol is not None)
+        return 0
+    signal.signal(signal.SIGTERM, terminate_worker)
+    LOGGER.info("worker=%s concurrency=%s ready", config.worker_id, config.concurrency)
     try:
+        if not args.once:
+            run_worker_pool(config)
+            return 0
         while True:
             worked = run_once(api, protocol)
             if args.once:
                 return 0
             if not worked:
                 time.sleep(config.poll_seconds)
+    except WorkerError as exc:
+        LOGGER.error("worker pool failed: %s", sanitize_error(str(exc)))
+        return 1
     except KeyboardInterrupt:
         LOGGER.info("worker stopped")
         return 0

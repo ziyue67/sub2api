@@ -6,11 +6,30 @@ import (
 	"errors"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type accountTokenGuardV2Repository struct {
 	db *sql.DB
+}
+
+func (r *accountTokenGuardV2Repository) UpdateSwitches(ctx context.Context, id int64, enabled, autoRelogin *bool) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE account_token_guard_v2_accounts
+		SET enabled = COALESCE($2, enabled), auto_relogin_enabled = COALESCE($3, auto_relogin_enabled),
+			next_probe_at = CASE WHEN $2 = TRUE AND NOT enabled THEN LEAST(next_probe_at, NOW()) ELSE next_probe_at END,
+			updated_at = NOW() WHERE account_id = $1`, id, enabled, autoRelogin)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return infraerrors.NotFound("TOKEN_GUARD_V2_NOT_FOUND", "Monitored account not found")
+	}
+	return nil
 }
 
 func NewAccountTokenGuardV2Repository(db *sql.DB) service.AccountTokenGuardV2Repository {

@@ -598,6 +598,18 @@ func TestSettingService_InitializeDefaultSettingsPersistsConfiguredForwardedClie
 	require.JSONEq(t, `["X-Cdn-Ip","True-Client-Ip"]`, repo.values[SettingKeyForwardedClientIPHeaders])
 }
 
+func TestSettingService_InitializeDefaultBPSImages(t *testing.T) {
+	repo := &forwardedIPMigrationRepoStub{values: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	require.NoError(t, svc.InitializeDefaultSettings(context.Background()))
+	require.Equal(t, "true", repo.values[SettingKeyExcelBPSImageRelayEnabled])
+	require.Equal(t, ExcelBPSImageModeNative, repo.values[SettingKeyExcelBPSImageMode])
+
+	repo.values[SettingKeyExcelBPSImageRelayEnabled] = "false"
+	require.NoError(t, svc.InitializeDefaultSettings(context.Background()))
+	require.Equal(t, "false", repo.values[SettingKeyExcelBPSImageRelayEnabled])
+}
+
 func TestSettingService_UpdateSettings_APIKeyACLTrustForwardedIPRefreshesConfig(t *testing.T) {
 	repo := &settingUpdateRepoStub{}
 	cfg := &config.Config{}

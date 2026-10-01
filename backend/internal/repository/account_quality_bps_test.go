@@ -13,12 +13,12 @@ func TestQualityBPSSnapshotEqualDefaultsAndManualChanges(t *testing.T) {
 		before, after map[string]any
 		equal         bool
 	}{
-		{"omitted false switches", map[string]any{"openai_excel_bps": true, "openai_excel_bps_ignore_images": false, "openai_excel_bps_mihomo": false}, map[string]any{"openai_excel_bps": true}, true},
+		{"omitted false switches", map[string]any{"openai_excel_bps": true, "openai_excel_bps_cache_creation_as_input": false, "openai_excel_bps_mihomo": false}, map[string]any{"openai_excel_bps": true}, true},
 		{"default recovery interval", map[string]any{"openai_excel_bps_403_recovery_interval_minutes": 60}, nil, true},
 		{"custom recovery interval", map[string]any{"openai_excel_bps_403_recovery_interval_minutes": 30}, nil, false},
 		{"default proxy", map[string]any{"openai_excel_bps_proxy_source": "mihomo"}, nil, true},
 		{"manual disable", map[string]any{"openai_excel_bps": true}, nil, false},
-		{"manual toggle", map[string]any{"openai_excel_bps_ignore_images": true}, nil, false},
+		{"manual toggle", map[string]any{"openai_excel_bps_cache_creation_as_input": true}, nil, false},
 		{"manual proxy change", map[string]any{"openai_excel_bps_proxy_source": "ip_pool"}, nil, false},
 		{"model scope removed", map[string]any{"openai_excel_bps_models": []string{"gpt-6-astra"}}, nil, false},
 		{"empty models are not all models", map[string]any{"openai_excel_bps_models": []string{}}, nil, false},

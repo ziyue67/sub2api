@@ -172,3 +172,21 @@ it('distinguishes an enabled check awaiting its first result from a disabled che
   expect(section.text()).not.toContain('channelMonitorV2.candy.disabled')
   expect(section.findAll('[data-testid="candy-history-bar"]')).toHaveLength(0)
 })
+
+it.each([0, 1, 99, 100, 120])('renders exactly 100 enabled-check slots for %i actual results', async (count) => {
+  const { wrapper, row } = hoverFixture()
+  const results = Array.from({ length: count }, (_, index) => ({ ...row.candy!.results[0], checked_at: new Date(Date.UTC(2026, 8, 29, 0, index)).toISOString() }))
+  await wrapper.setProps({ items: [{ ...row, candy: { ...row.candy!, results } }] })
+  const grid = wrapper.get('[data-testid="candy-history-slots"]')
+  const bars = grid.findAll('[data-testid="candy-history-bar"]')
+  const blanks = grid.findAll('[data-testid="candy-history-placeholder"]')
+  expect(bars).toHaveLength(Math.min(count, 100))
+  expect(blanks).toHaveLength(Math.max(100 - count, 0))
+  expect(grid.element.children).toHaveLength(100)
+  expect(grid.attributes('aria-label')).toContain(Math.min(count, 100) + ' 100')
+  expect(blanks.every(blank => blank.attributes('tabindex') === undefined)).toBe(true)
+  if (count > 0) {
+    await bars.at(-1)!.trigger('mouseenter')
+    expect(tooltip()?.textContent).toContain('channelMonitorV2.candy.states.error')
+  }
+})
