@@ -87,9 +87,9 @@ jobs:
           # golangci-lint.run at runtime and flakes on network timeouts.
           verify: false
 
-  # 升级脚本校验（随 ranxi/production 的 k3s 升级助手一并引入）。
-  # 不含 .github/release-tools 的发布矩阵用例：本 Fork 只发布 amd64 单架构，
-  # 发布矩阵已按其目标裁剪，上游用例的 5 目标断言在本仓库本就不成立。
+  # 发布工具链与升级脚本校验（随 ranxi/production 的 k3s 升级助手一并引入）。
+  # 发布矩阵用例的期望值改为从 .goreleaser.yaml 推导（本 Fork 为 amd64 单架构、
+  # archives 为空），因此本仓库与上游多架构下都成立，不再需要按仓库裁剪断言。
   release-helpers:
     runs-on: ubuntu-latest
     steps:
@@ -97,6 +97,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - run: python -m pip install -r .github/release-tools/requirements-release.txt
+      - run: python -m unittest discover -s .github/release-tools -p 'test_release_matrix.py'
       - run: bash -n .github/release-tools/release-images.sh
       - run: bash -n deploy/upgrade-k3s.sh
       - run: python -m unittest discover -s deploy/tests -p 'test_upgrade_k3s.py'

@@ -1,6 +1,7 @@
 import argparse
 import hashlib
 import importlib.util
+import itertools
 import io
 import json
 import os
@@ -52,17 +53,34 @@ class ReleaseMatrixTest(unittest.TestCase):
         return argparse.Namespace(input='release-input', version='9.8.7', sha='a' * 40, simple=simple, output='contexts')
 
     def test_full_and_simple_matrix_match_existing_targets(self):
+        # The matrix is derived from .goreleaser.yaml, so assert the relationship
+        # instead of the upstream target count: this Fork builds amd64 only.
+        build = release.config()['builds'][0]
+        expected = {goos: set() for goos in build['goos']}
+        for goos, goarch in itertools.product(build['goos'], build['goarch']):
+            if any(all({'goos': goos, 'goarch': goarch}.get(k) == v for k, v in rule.items())
+                   for rule in build.get('ignore', [])):
+                continue
+            expected[goos].add(goarch)
         full = release.targets()
-        self.assertEqual(len(full), 5)
-        self.assertNotIn({'goos': 'windows', 'goarch': 'arm64'}, full)
+        self.assertEqual(len(full), sum(len(a) for a in expected.values()))
+        for target in full:
+            self.assertIn(target['goarch'], expected[target['goos']])
+        # Ignored combinations must never appear.
+        for rule in build.get('ignore', []):
+            self.assertNotIn(rule, full)
+        # Simple mode is exactly one linux/amd64 image.
         self.assertEqual(release.targets(True), [{'goos': 'linux', 'goarch': 'amd64'}])
 
     def test_leaf_keeps_packaging_and_selects_only_one_target(self):
         original = release.config()
-        release.generate_config(argparse.Namespace(mode='build', simple=False, goos='darwin', goarch='arm64', output='leaf.yaml'))
+        # Pick a real target from this repository's matrix instead of assuming
+        # a multi-architecture upstream matrix.
+        target = release.targets()[-1]
+        release.generate_config(argparse.Namespace(mode='build', simple=False, goos=target['goos'], goarch=target['goarch'], output='leaf.yaml'))
         leaf = yaml.safe_load(Path('leaf.yaml').read_text())
-        self.assertEqual(leaf['builds'][0]['goos'], ['darwin'])
-        self.assertEqual(leaf['builds'][0]['goarch'], ['arm64'])
+        self.assertEqual(leaf['builds'][0]['goos'], [target['goos']])
+        self.assertEqual(leaf['builds'][0]['goarch'], [target['goarch']])
         self.assertEqual(leaf['builds'][0]['ignore'], [])
         self.assertEqual(leaf['archives'], original['archives'])
         self.assertEqual(leaf['release'], original['release'])
@@ -116,7 +134,9 @@ class ReleaseMatrixTest(unittest.TestCase):
         Path('backend/resources').mkdir()
         Path('backend/resources/data').write_text('fixture')
         release.contexts(args)
-        for arch in ('amd64', 'arm64'):
+        arches = sorted({t['goarch'] for t in release.targets() if t['goos'] == 'linux'})
+        self.assertTrue(arches)
+        for arch in arches:
             binary = Path('contexts') / arch / 'sub2api'
             self.assertEqual(binary.read_bytes(), b'fixture')
             self.assertEqual(binary.stat().st_mode & 0o777, 0o755)
@@ -137,7 +157,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         output = dict(line.split('=', 1) for line in Path('outputs').read_text().splitlines())
         self.assertEqual(output['dry_run'], 'true')
         self.assertEqual(output['owner_lower'], 'exampleowner')
-        self.assertEqual(len(json.loads(output['matrix'])['include']), 5)
+        self.assertEqual(len(json.loads(output['matrix'])['include']), len(release.targets()))
 
     def test_docker_commands_do_not_publish_during_dry_run(self):
         fake_bin = Path('bin')

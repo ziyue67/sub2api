@@ -138,8 +138,14 @@ func TestManagedProcessGetsOnlyWorkerEnvironmentAndStops(t *testing.T) {
 	m := New(root, "1.2.3", "http://127.0.0.1:4040", "synthetic-worker-token")
 	m.Ensure()
 	defer m.Stop()
-	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(dir, "unrelated-secret")); return err == nil }, time.Second, 10*time.Millisecond)
-	require.Equal(t, "running", m.Status().State)
+	// The supervised child may write its files before the supervisor records the
+	// running state, so wait for both instead of asserting either one directly.
+	require.Eventually(t, func() bool {
+		if _, err := os.Stat(filepath.Join(dir, "unrelated-secret")); err != nil {
+			return false
+		}
+		return m.Status().State == "running"
+	}, time.Second, 10*time.Millisecond)
 	got, err := os.ReadFile(filepath.Join(dir, "worker-token"))
 	require.NoError(t, err)
 	require.Equal(t, "synthetic-worker-token", string(got))

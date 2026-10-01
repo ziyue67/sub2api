@@ -10,6 +10,7 @@ import (
 // tags; the default must never point at an unrelated upstream that would 404.
 // 空值等价于未设置，因此这里用 t.Setenv(…, "") 而不是 os.Unsetenv（后者需处理返回错误）。
 func TestRuntimeSourceDefaultsToForkRepository(t *testing.T) {
+	// t.Setenv 同时完成清理；这两个变量必须为空才能验证默认来源。
 	t.Setenv(runtimeRepoEnv, "")
 	t.Setenv(runtimeVersionEnv, "")
 
