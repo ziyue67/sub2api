@@ -3204,7 +3204,20 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 				reason = "not available for this group"
 			}
 			require.Contains(t, closeErr.Reason, reason)
-			require.Len(t, upstreamPayloadCh, turnCount-1, "rejected turn must not reach upstream")
+			// 被拒 turn 不得到达上游：只统计真正的 turn 帧（response.create）。
+			// 本 Fork 的中继语义会转发 session.update 等非 turn 帧并收到上游 ack，
+			// 因此不能把通道里的全部帧数当作 turn 数，但仍逐帧校验 JSON。
+			reachedTurns := 0
+			for pending := len(upstreamPayloadCh); pending > 0; pending-- {
+				frame := <-upstreamPayloadCh
+				require.Truef(t, json.Valid(frame), "upstream frame must be valid JSON, got %q", string(frame))
+				if gjson.GetBytes(frame, "type").String() == "response.create" {
+					reachedTurns++
+				}
+				// 原样放回，避免消费通道影响后续断言。
+				upstreamPayloadCh <- frame
+			}
+			require.Equal(t, turnCount-1, reachedTurns, "rejected turn must not reach upstream")
 			_ = clientConn.CloseNow()
 			return openAIResponsesWSUsageLogResult{}
 		}
