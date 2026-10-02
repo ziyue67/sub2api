@@ -610,7 +610,7 @@ describe('user KeysView column settings', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('new-key', 42, undefined, [], [], 0, undefined,
-      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, Number(input))
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, Number(input), [])
     await getButtonByText(wrapper, 'Create API Key').trigger('click')
     expect((wrapper.get('#key-concurrency-limit').element as HTMLInputElement).value).toBe('0')
   })
@@ -669,6 +669,49 @@ describe('user KeysView column settings', () => {
     { key: 'group', order: 'asc' },
     { key: 'group', order: 'desc' },
   ] as const)('keeps filters and resets pagination and selection when sorting $key $order', async ({ key, order }) => {
+    getAvailableGroups.mockResolvedValue([{ id: 42, name: 'OpenAI' }])
+    const wrapper = await mountView()
+
+    await wrapper.get('[data-test="page-size-50"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.findComponent({ name: 'SearchInput' }).vm.$emit('update:modelValue', 'target')
+    await wrapper.findComponent({ name: 'SearchInput' }).vm.$emit('search')
+    await flushPromises()
+
+    const selects = wrapper.findAllComponents({ name: 'Select' })
+    await selects[0].vm.$emit('update:modelValue', 42)
+    await flushPromises()
+    await selects[1].vm.$emit('update:modelValue', 'active')
+    await flushPromises()
+
+    await wrapper.get('[data-test="page-2"]').trigger('click')
+    await flushPromises()
+    const table = wrapper.findComponent({ name: 'DataTable' })
+    table.vm.$emit('update:selectedKeys', [1])
+    await nextTick()
+    expect(table.props('selectedKeys')).toEqual([1])
+    expect(visibleColumnMeta(wrapper).find((column) => column.key === key)?.sortable).toBe(true)
+    listKeys.mockClear()
+
+    table.vm.$emit('sort', key, order)
+    await flushPromises()
+
+    expect(table.props('selectedKeys')).toEqual([])
+    expect(listKeys).toHaveBeenLastCalledWith(
+      1,
+      50,
+      {
+        search: 'target',
+        status: 'active',
+        group_id: 42,
+        sort_by: key,
+        sort_order: order,
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+  })
+
   it('shows actual shared policy as read-only metadata and never submits it', async () => {
     setKeys({ ...createApiKey(), group_id: 42, concurrency_limit: 1 })
     const wrapper = await mountView()
@@ -697,7 +740,7 @@ describe('user KeysView column settings', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('new-key', 42, undefined, [], [], 0, undefined,
-      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, 2)
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, 2, [])
   })
 
   it('distinguishes unknown statistics and policy from zero and still permits saving', async () => {
@@ -962,19 +1005,11 @@ describe('user KeysView column settings', () => {
     await selects[1].vm.$emit('update:modelValue', 'active')
     await flushPromises()
 
-    await wrapper.get('[data-test="page-2"]').trigger('click')
-    await flushPromises()
-    const table = wrapper.findComponent({ name: 'DataTable' })
-    table.vm.$emit('update:selectedKeys', [1])
-    await nextTick()
-    expect(table.props('selectedKeys')).toEqual([1])
-    expect(visibleColumnMeta(wrapper).find((column) => column.key === key)?.sortable).toBe(true)
     listKeys.mockClear()
 
-    table.vm.$emit('sort', key, order)
+    await wrapper.get('[data-test="sort-current-concurrency"]').trigger('click')
     await flushPromises()
 
-    expect(table.props('selectedKeys')).toEqual([])
     expect(listKeys).toHaveBeenLastCalledWith(
       1,
       50,
@@ -982,8 +1017,8 @@ describe('user KeysView column settings', () => {
         search: 'target',
         status: 'active',
         group_id: 42,
-        sort_by: key,
-        sort_order: order,
+        sort_by: 'current_concurrency',
+        sort_order: 'asc',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
