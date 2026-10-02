@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -136,7 +137,11 @@ func (s *OpenAIGatewayService) ProxyGrokRealtime(ctx context.Context, c *gin.Con
 	return s.ProxyGrokRealtimeConn(ctx, c, client, upstream)
 }
 
-type GrokRealtimeUpstream struct{ conn openAIWSClientConn }
+type GrokRealtimeUpstream struct {
+	conn      openAIWSClientConn
+	closeOnce sync.Once
+	closeErr  error
+}
 
 // GrokRealtimeDialError preserves an HTTP status returned before WebSocket
 // upgrade so handlers can apply the normal Grok account policy.
@@ -152,7 +157,8 @@ func (u *GrokRealtimeUpstream) Close() error {
 	if u == nil || u.conn == nil {
 		return nil
 	}
-	return u.conn.Close()
+	u.closeOnce.Do(func() { u.closeErr = u.conn.Close() })
+	return u.closeErr
 }
 
 func (s *OpenAIGatewayService) OpenGrokRealtime(ctx context.Context, account *Account, token, model string) (*GrokRealtimeUpstream, error) {
@@ -202,10 +208,13 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errCh := make(chan error, 2)
+	var readers sync.WaitGroup
+	readers.Add(2)
 	var audioObserved atomic.Bool
 
 	// Upstream → client
 	go func() {
+		defer readers.Done()
 		for {
 			msg, readErr := conn.ReadMessage(ctx)
 			if readErr != nil {
@@ -224,6 +233,7 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 
 	// Client → upstream (JSON events only)
 	go func() {
+		defer readers.Done()
 		for {
 			kind, msg, readErr := client.Read(ctx)
 			if readErr != nil {
@@ -248,7 +258,12 @@ func (s *OpenAIGatewayService) ProxyGrokRealtimeConn(ctx context.Context, c *gin
 		}
 	}()
 
-	return awaitGrokRealtimeAudioObserved(errCh, &audioObserved)
+	observed, err := awaitGrokRealtimeAudioObserved(errCh, &audioObserved)
+	cancel()
+	_ = upstream.Close()
+	// Join both directions before the handler releases its API key reservation.
+	readers.Wait()
+	return observed, err
 }
 
 // ProbeGrokRealtime performs the upstream WebSocket handshake without sending

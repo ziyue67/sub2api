@@ -188,6 +188,7 @@ func openAITurnRouteFingerprint(a *Account) [32]byte {
 	for _, key := range []string{
 		codexFingerprintSeedExtraKey, codexFingerprintModeExtraKey,
 		"openai_passthrough", "openai_oauth_passthrough", "openai_excel_bps", "openai_excel_bps_models", "openai_excel_bps_mihomo",
+		"openai_prism_browser",
 		"openai_oauth_responses_websockets_v2_mode", "openai_apikey_responses_websockets_v2_mode",
 		"openai_oauth_responses_websockets_v2_enabled", "openai_apikey_responses_websockets_v2_enabled",
 		"responses_websockets_v2_enabled", "openai_ws_enabled", "openai_ws_force_http",
@@ -326,15 +327,18 @@ func (s *OpenAIGatewayService) admitOpenAITurn(ctx context.Context, c *gin.Conte
 
 // admitOpenAITurnForGroup is used by connection-pool callbacks, which run
 // after the request's gin context has been reduced to a plain context.  The
-// group is carried explicitly so a stale account cannot still complete a
-// new handshake after it has been removed from the API key's group.
+// group scope is captured up front with openAITurnAdmissionGroupFromContext,
+// so a stale account cannot still complete a new handshake after it has been
+// removed from the API key's group, while keyless account tests stay unscoped
+// exactly as on the HTTP path.
 func (s *OpenAIGatewayService) admitOpenAITurnForGroup(
 	ctx context.Context,
 	groupID int64,
+	enforceGroup bool,
 	selected *Account,
 	outboundModel string,
 ) (*Account, error) {
-	return s.admitOpenAITurnWithGroup(ctx, selected, outboundModel, groupID, true)
+	return s.admitOpenAITurnWithGroup(ctx, selected, outboundModel, groupID, enforceGroup)
 }
 
 func (s *OpenAIGatewayService) admitOpenAITurnWithGroup(
@@ -393,6 +397,9 @@ func (s *OpenAIGatewayService) bindOpenAIWSHandshake(account *Account, model str
 }
 
 func (s *OpenAIGatewayService) checkOpenAIWSBinding(account *Account, model string, b *openAIWSTurnBinding) error {
+	if accountHasPrismBrowser(account) {
+		return denyOpenAITurn("prism_requires_http")
+	}
 	if account.isExcelBPSUpstreamModelEnabled(model) {
 		return denyOpenAITurn("excel_bps_requires_http")
 	}

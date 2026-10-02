@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -263,6 +264,10 @@ type ConcurrencyService struct {
 	accountLoadCacheMu  sync.RWMutex
 	accountLoadCache    map[string]cachedAccountLoadBatch
 	accountLoadGroup    singleflight.Group
+
+	// apiKeyQueuePolicy is the immutable process policy for key-level waiting.
+	apiKeyQueuePolicy atomic.Pointer[APIKeyQueuePolicy]
+	apiKeyQueueStop   *apiKeyQueueStopState
 }
 
 // LaneConcurrencySupported reports whether the configured concurrency cache
@@ -284,6 +289,7 @@ func NewConcurrencyService(cache ConcurrencyCache) *ConcurrencyService {
 	svc := &ConcurrencyService{
 		cache:            cache,
 		accountLoadCache: make(map[string]cachedAccountLoadBatch),
+		apiKeyQueueStop:  newAPIKeyQueueStopState(),
 	}
 	svc.SetAccountLoadBatchCacheTTL(defaultAccountLoadBatchCacheTTL)
 	return svc
@@ -365,6 +371,9 @@ type AcquireResult struct {
 	// immediate acquire, the lane selected for the subsequent wait plan).
 	// It is nil for legacy account-level slots.
 	Lane *AccountProxyLane
+	// RequestID is the exact Redis member owned by this result. Live transfer
+	// uses it to move the reservation atomically instead of counting it twice.
+	RequestID string
 }
 
 type AccountWithConcurrency struct {
@@ -421,6 +430,7 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 			Acquired:          true,
 			MaxConcurrency:    maxConcurrency,
 			MaxConcurrencySet: true,
+			RequestID:         requestID,
 			ReleaseFunc: func() {
 				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -699,6 +709,7 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 			Acquired:          true,
 			MaxConcurrency:    maxConcurrency,
 			MaxConcurrencySet: true,
+			RequestID:         requestID,
 			ReleaseFunc: func() {
 				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
@@ -717,16 +728,66 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 	}, nil
 }
 
+// APIKeySlotAdmissionCache adds atomic admission to the shared statistics set.
+// A cache lacking admission support cannot admit a key with a configured limit.
+type APIKeySlotAdmissionCache interface {
+	APIKeyConcurrencyCache
+	AcquireAPIKeySlot(context.Context, int64, int, string) (bool, error)
+}
+
+// AcquireAPIKeySlot never waits for capacity. The caller owns ReleaseFunc,
+// including after cancellation: WS turns retain their slots while draining.
+// HTTP callers bind release to their request context at the helper boundary.
+func (s *ConcurrencyService) AcquireAPIKeySlot(ctx context.Context, apiKeyID int64, maxConcurrency int) (*AcquireResult, error) {
+	if maxConcurrency == 0 {
+		return &AcquireResult{Acquired: true, ReleaseFunc: s.TrackAPIKeySlot(context.WithoutCancel(ctx), apiKeyID)}, nil
+	}
+	if s == nil || s.cache == nil || apiKeyID <= 0 || maxConcurrency < 0 {
+		return nil, fmt.Errorf("API key concurrency admission unavailable")
+	}
+	cache, ok := s.cache.(APIKeySlotAdmissionCache)
+	if !ok {
+		return nil, fmt.Errorf("API key concurrency admission unavailable")
+	}
+	requestID := generateRequestID()
+	leaseCache, ok := s.cache.(APIKeySlotLeaseCache)
+	owner, ownerOK := apiKeyAdmissionOwnerFromContext(ctx)
+	if !ok || leaseCache.APIKeySlotTTL() <= 2*time.Second || leaseCache.APIKeySlotRefreshInterval() <= 0 || !ownerOK {
+		return nil, fmt.Errorf("API key concurrency requires a renewable lease and cancellation owner")
+	}
+	started := time.Now()
+	acquireCtx, cancel := context.WithTimeout(ctx, apiKeySlotTrackTimeout)
+	acquired, err := cache.AcquireAPIKeySlot(acquireCtx, apiKeyID, maxConcurrency, requestID)
+	cancel()
+	if err != nil {
+		// The write may have succeeded even if its response was lost.
+		releaseAPIKeySlot(cache, apiKeyID, requestID)
+		return nil, fmt.Errorf("acquire API key %d concurrency slot: %w", apiKeyID, err)
+	}
+	if !acquired {
+		return &AcquireResult{Acquired: false}, nil
+	}
+	return &AcquireResult{Acquired: true, ReleaseFunc: keepEnforcedAPIKeySlot(owner, leaseCache, apiKeyID, requestID, started)}, nil
+}
+
 // TrackAPIKeySlot records one active request slot for an API key without
 // applying key-level concurrency limits. It is fail-open: Redis errors are
-// logged and return a no-op release function.
+// logged without blocking the request; even ambiguous writes retain cleanup.
 func (s *ConcurrencyService) TrackAPIKeySlot(ctx context.Context, apiKeyID int64) func() {
+	_, release, _ := s.TrackAPIKeySlotOwned(ctx, apiKeyID)
+	return release
+}
+
+// TrackAPIKeySlotOwned returns the exact stats member identity plus release and
+// stop-only pause handles. The Live transfer needs the identity to move the
+// stats member atomically into the Live lease without an orphan renewal worker.
+func (s *ConcurrencyService) TrackAPIKeySlotOwned(ctx context.Context, apiKeyID int64) (string, func(), func()) {
 	if s == nil || s.cache == nil || apiKeyID <= 0 {
-		return func() {}
+		return "", func() {}, func() {}
 	}
 	cache, ok := s.cache.(APIKeyConcurrencyCache)
 	if !ok {
-		return func() {}
+		return "", func() {}, func() {}
 	}
 
 	requestID := generateRequestID()
@@ -739,16 +800,10 @@ func (s *ConcurrencyService) TrackAPIKeySlot(ctx context.Context, apiKeyID int64
 	cancel()
 	if err != nil {
 		logger.LegacyPrintf("service.concurrency", "Warning: failed to track api key slot for %d (req=%s): %v", apiKeyID, requestID, err)
-		return func() {}
 	}
 
-	return func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := cache.ReleaseAPIKeySlot(bgCtx, apiKeyID, requestID); err != nil {
-			logger.LegacyPrintf("service.concurrency", "Warning: failed to release api key slot for %d (req=%s): %v", apiKeyID, requestID, err)
-		}
-	}
+	release, pause := keepAPIKeySlotState(ctx, cache, apiKeyID, requestID)
+	return requestID, release, pause
 }
 
 // GetAPIKeyConcurrencyBatch gets real-time active request counts for API keys.

@@ -16,10 +16,11 @@ import (
 // admin actions on it: the gallery settings and removing a snapshot.
 type PelicanShowcaseHandler struct {
 	showcase *service.PelicanShowcaseService
+	public   *pelicanPublicCache
 }
 
 func NewPelicanShowcaseHandler(showcase *service.PelicanShowcaseService) *PelicanShowcaseHandler {
-	return &PelicanShowcaseHandler{showcase: showcase}
+	return &PelicanShowcaseHandler{showcase: showcase, public: newPelicanPublicCache(showcase)}
 }
 
 // List GET /api/v1/pelican-showcase
@@ -60,6 +61,7 @@ func (h *PelicanShowcaseHandler) DeleteItem(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	h.public.invalidate()
 	response.Success(c, gin.H{"deleted": true})
 }
 
@@ -107,6 +109,7 @@ func (h *PelicanShowcaseHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 	subject, _ := middleware.GetAuthSubjectFromContext(c)
+	h.public.invalidate()
 	role, _ := middleware.GetUserRoleFromContext(c)
 	slog.Info("settings updated", "audit", true, "user_id", subject.UserID, "role", role,
 		"changed", []string{"pelican_showcase_enabled", "pelican_showcase_config"})

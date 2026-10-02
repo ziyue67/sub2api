@@ -3,9 +3,10 @@ package service
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"net/url"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 )
 
 var codexToolCapabilityFields = []string{
@@ -21,7 +22,11 @@ func applyCodexToolCapabilities(dst, src map[string]json.RawMessage, overwrite b
 		if len(value) == 0 {
 			continue
 		}
-		// These Codex fields are nullable booleans or strings, never arbitrary objects.
+		// Unlike the scalar capability fields, Codex service_tiers is a
+		// non-nullable array. An explicit null declares no available tiers.
+		if field == "service_tiers" && bytes.Equal(value, []byte("null")) {
+			value = json.RawMessage("[]")
+		}
 		if !bytes.Equal(value, []byte("null")) {
 			if field == "service_tiers" {
 				var tiers []configuredCodexServiceTier
@@ -88,11 +93,25 @@ func accountCodexToolCapabilities(account *Account, modelID string) map[string]j
 		target := modelID
 		if isOpenAIGPT6AstraModel(target) {
 			target = "gpt-6-astra"
+		} else if openai.IsGPT61SolModelSpelling(target) {
+			target = "gpt-6.1-sol"
 		}
 		_, disabled := apiKeyCodexModelsWithoutResponsesLite[target]
-		if disabled && bytes.Equal(capabilities["use_responses_lite"], []byte("true")) {
+		if disabled {
+			// Override bundled defaults even when this account has no snapshot.
 			capabilities["use_responses_lite"] = json.RawMessage("false")
 		}
+	}
+	// API Astra publicly supports Ultrafast. OAuth must advertise it in its
+	// account manifest; a subscription label alone does not grant the capability.
+	if account.IsOpenAIApiKey() && isOfficialOpenAIModelsBaseURL(baseURL) && isOpenAIGPT6AstraModel(modelID) {
+		tiers := configuredCodexServiceTiersForModel(modelID)
+		tiers = append(tiers, configuredCodexServiceTier{ID: OpenAIFastTierUltrafast, Name: "Ultrafast", Description: "Lowest latency; 6x Standard token pricing."})
+		encoded, err := json.Marshal(tiers)
+		if err != nil {
+			panic(err)
+		}
+		applyCodexToolCapabilities(capabilities, map[string]json.RawMessage{"service_tiers": encoded}, false)
 	}
 	// This function receives the mapped upstream model. A BPS relay does not
 	// implement Codex's native encrypted multi-agent message contract, even
@@ -286,8 +305,11 @@ func intersectUpstreamModelMetadata(modelID string, candidates []UpstreamModelMe
 			result.CodexToolCapabilities[field] = value
 		} else if declared {
 			fallback := json.RawMessage("null")
-			if field == "supports_search_tool" || field == "use_responses_lite" {
+			switch field {
+			case "supports_search_tool", "use_responses_lite":
 				fallback = json.RawMessage("false")
+			case "service_tiers":
+				fallback = json.RawMessage("[]")
 			}
 			result.CodexToolCapabilities[field] = fallback
 		}

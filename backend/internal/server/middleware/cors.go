@@ -3,6 +3,7 @@ package middleware
 import (
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -65,6 +66,27 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 	allowHeadersValue := strings.Join(allowHeaders, ", ")
 
 	return func(c *gin.Context) {
+		// Published Pelican results use explicit API key headers, never cookies. Handle
+		// its preflight here because this global middleware precedes routes.
+		if isPublicPelicanShowcasePath(c.Request.URL.Path) {
+			method := c.Request.Method
+			if method == http.MethodOptions {
+				method = c.GetHeader("Access-Control-Request-Method")
+			}
+			if method == http.MethodGet || method == http.MethodHead {
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Accept, Authorization, X-API-Key, X-Goog-API-Key, If-None-Match, Cache-Control")
+				c.Header("Access-Control-Expose-Headers", "ETag, Cache-Control, Retry-After")
+				c.Header("Access-Control-Max-Age", "86400")
+				if c.Request.Method == http.MethodOptions {
+					c.AbortWithStatus(http.StatusNoContent)
+					return
+				}
+				c.Next()
+				return
+			}
+		}
 		origin := strings.TrimSpace(c.GetHeader("Origin"))
 		originAllowed := allowAll
 		if origin != "" && !allowAll {
@@ -98,6 +120,19 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func isPublicPelicanShowcasePath(path string) bool {
+	const root = "/api/v1/public/pelican-showcase"
+	if path == root {
+		return true
+	}
+	id, ok := strings.CutPrefix(path, root+"/items/")
+	if !ok {
+		return false
+	}
+	value, err := strconv.ParseInt(id, 10, 64)
+	return err == nil && value > 0
 }
 
 func normalizeOrigins(values []string) []string {

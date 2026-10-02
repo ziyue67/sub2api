@@ -1044,6 +1044,50 @@ describe('UseKeyModal', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('derives OpenAI Codex reasoning effort from the selected catalog descriptor', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        models: [
+          {
+            slug: 'glm-5.3',
+            default_reasoning_level: 'none',
+            supported_reasoning_levels: [{ effort: 'none' }]
+          }
+        ]
+      })
+    }))
+
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-openai-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'openai'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    await wrapper.get('[data-testid="codex-model-catalog-fetch"]').trigger('click')
+    await flushPromises()
+
+    const configToml = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('model_provider = "OpenAI"'))
+    expect(configToml).toContain('model = "glm-5.3"')
+    expect(configToml).not.toContain('model_reasoning_effort')
+  })
+
   it.each([1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1])(
     'uses file mode only when the manifest exceeds the remote byte limit (%s bytes)',
     async (responseBytes) => {

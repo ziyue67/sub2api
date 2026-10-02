@@ -177,9 +177,18 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		ctx := context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID)
 		c.Request = c.Request.WithContext(ctx)
 		billingInfoRequest := c.Request.URL.Path == "/v1/sub2api/billing"
+		pelicanReadRequest := (c.Request.Method == http.MethodGet || c.Request.Method == http.MethodHead) &&
+			isPublicPelicanShowcasePath(c.Request.URL.Path)
+		// Showcase reads are free but still require an unexpired site API key,
+		// including in simple mode. The existing user/group/IP checks above apply.
+		if pelicanReadRequest && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
+			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key 已过期")
+			return
+		}
 		// Read-only endpoints must remain discoverable after a generation consumes
 		// the key's remaining balance. They never trigger upstream model usage.
-		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest ||
+		metadataReadRequest := billingInfoRequest || pelicanReadRequest
+		skipBilling := c.Request.URL.Path == "/v1/usage" || metadataReadRequest ||
 			isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path) ||
 			isModelListRead(c.Request.Method, c.Request.URL.Path)
 
@@ -193,11 +202,11 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			})
 			c.Set(string(ContextKeyUserRole), apiKey.User.Role)
 			setGroupContext(c, apiKey.Group)
-			if !billingInfoRequest {
+			if !metadataReadRequest {
 				_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 			}
 			authDone()
-			c.Next()
+			nextWithAPIKeyAdmissionOwner(c, apiKeyService, apiKeyString, ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL()), apiKey, false)
 			return
 		}
 
@@ -206,8 +215,8 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		var subscription *service.UserSubscription
 		isSubscriptionType := apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 
-		// 倍率自省不需要订阅数据；/v1/usage 仍保留原有订阅读取行为。
-		if isSubscriptionType && subscriptionService != nil && !billingInfoRequest {
+		// 倍率自省和展示结果只读查询不需要订阅数据；/v1/usage 保留原行为。
+		if isSubscriptionType && subscriptionService != nil && !metadataReadRequest {
 			sub, subErr := subscriptionService.GetActiveSubscription(
 				c.Request.Context(),
 				apiKey.User.ID,
@@ -292,12 +301,12 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		})
 		c.Set(string(ContextKeyUserRole), apiKey.User.Role)
 		setGroupContext(c, apiKey.Group)
-		if !billingInfoRequest {
+		if !metadataReadRequest {
 			_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 		}
 
 		authDone()
-		c.Next()
+		nextWithAPIKeyAdmissionOwner(c, apiKeyService, apiKeyString, ip.GetSecurityClientIP(c, cfg.TrustForwardedIPForAPIKeyACL()), apiKey, false)
 	}
 }
 

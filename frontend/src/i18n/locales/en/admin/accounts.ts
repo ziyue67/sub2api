@@ -717,6 +717,9 @@ export default {
       // OpenAI specific hints
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
+        prismBrowser: 'Use Prism browser protocol automatically',
+        prismBrowserDesc: 'Uses the server-managed Prism adapter with this OpenAI OAuth account. No separate Prism credentials are needed. Currently supports text requests with gpt-5.6-sol.',
+        prismBrowserManagedEndpoint: 'Enabled: requests are routed to the server-managed Prism adapter.',
         apiKeyHint: 'Your OpenAI API Key',
         apiProtocol: {
           title: 'API Protocol (Optional)',

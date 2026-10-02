@@ -91,6 +91,37 @@ async function submit(wrapper: ReturnType<typeof mountModal>) {
 
 const toggleSelector = '[data-testid="account-auto-bps-toggle"]'
 
+describe('EditAccountModal Prism OAuth switch', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach(mock => mock.mockReset())
+    mocks.updateAccount.mockImplementation(async (_id: number, payload: Record<string, unknown>) => ({ ...buildOAuthAccount(), ...payload }))
+    mocks.listByAccount.mockResolvedValue([])
+  })
+
+  it('persists the Prism switch while preserving unrelated extra fields', async () => {
+    const wrapper = mountModal(buildOAuthAccount({ extra: { fixture_flag: true } }))
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-prism-browser-oauth-toggle"]').setValue(true)
+    await submit(wrapper)
+    expect(mocks.updateAccount).toHaveBeenCalledTimes(1)
+    expect(mocks.updateAccount.mock.calls[0][1].extra).toMatchObject({ fixture_flag: true, openai_prism_browser: true })
+  })
+
+  it('removes the flag when disabled', async () => {
+    const wrapper = mountModal(buildOAuthAccount({ extra: { openai_prism_browser: true } }))
+    await flushPromises()
+    await wrapper.get('[data-testid="openai-prism-browser-oauth-toggle"]').setValue(false)
+    await submit(wrapper)
+    expect(mocks.updateAccount.mock.calls[0][1].extra.openai_prism_browser).toBeUndefined()
+  })
+
+  it('hides Prism for API-key accounts', async () => {
+    const wrapper = mountModal(buildOAuthAccount({ type: 'apikey' }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="openai-prism-browser-oauth-toggle"]').exists()).toBe(false)
+  })
+})
+
 describe('EditAccountModal auto BPS switch', () => {
   beforeEach(() => {
     Object.values(mocks).forEach(mock => mock.mockReset())
