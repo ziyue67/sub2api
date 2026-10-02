@@ -1,0 +1,19 @@
+{
+  "source_commit": "5a07b0560b8d48a40c0094dd95c4983538f4f050",
+  "components": [
+    "frontend/src/components/keys/UseKeyModal.vue",
+    "frontend/src/components/common/PlatformTypeBadge.vue"
+  ],
+  "mode": "Actual Vue components with mocked catalog; not full page navigation or production acceptance",
+  "fixtures": "Fictional catalog.example.com URL, demonstration API key, subscription labels and model metadata",
+  "screenshots": [
+    "catalog-remote.png",
+    "catalog-file.png",
+    "catalog-oversized.png",
+    "catalog-dark.png",
+    "catalog-mobile.png",
+    "plans-after.png"
+  ],
+  "browser_errors": [],
+  "captured_at": "2026-10-01T16:11:01.645Z"
+}

@@ -707,6 +707,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			ReleaseFunc:                result.ReleaseFunc,
 			AdmissionMaxConcurrency:    admissionMax,
 			AdmissionMaxConcurrencySet: admissionMaxSet,
+			AccountRequestID:           result.RequestID,
 		}), false, nil
 	}
 
@@ -1502,6 +1503,7 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			ReleaseFunc:                result.ReleaseFunc,
 			AdmissionMaxConcurrency:    admissionMax,
 			AdmissionMaxConcurrencySet: admissionMaxSet,
+			AccountRequestID:           result.RequestID,
 		}), compactBlocked, nil
 	}
 	return nil, compactBlocked, nil
@@ -1796,6 +1798,7 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 				ReleaseFunc:                result.ReleaseFunc,
 				AdmissionMaxConcurrency:    admissionMax,
 				AdmissionMaxConcurrencySet: admissionMaxSet,
+				AccountRequestID:           result.RequestID,
 			}), nil
 		}
 		if s.service.concurrencyService != nil {
@@ -3113,6 +3116,11 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 		return false
 	}
 	if len(requestedModels) > 0 && account.IsExcelBPSEnabledForModel(requestedModels[0]) {
+		return false
+	}
+	// Prism runs one HTTP turn per request; the WS entry would only close the
+	// session after selection, so keep WS clients on the other accounts.
+	if accountHasPrismBrowser(account) {
 		return false
 	}
 	if requiredTransport == OpenAIUpstreamTransportResponsesWebsocketV2Ingress {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  createPelicanPreviewChannel,
   createPelicanPreviewDocument,
   fitPelicanArtwork,
   getPelicanViewport,
@@ -51,6 +52,7 @@ describe('Pelican preview geometry', () => {
 describe('Pelican opaque sandbox messages', () => {
   const source = {} as Window
   const valid = { type: 'pelican-preview:size', channel: 'one-preview', width: 1600, height: 1200 }
+  afterEach(() => vi.unstubAllGlobals())
 
   it('accepts bounded sizes only from its own iframe and current channel', () => {
     const event = { source, data: valid } as MessageEvent
@@ -61,6 +63,15 @@ describe('Pelican opaque sandbox messages', () => {
 
   it.each([null, {}, { ...valid, width: '1600' }, { ...valid, width: Infinity }, { ...valid, height: -1 }, { ...valid, width: 8193 }])('ignores malformed messages without changing dimensions', (data) => {
     expect(readPelicanSizeMessage({ source, data } as MessageEvent, source, 'one-preview')).toBeNull()
+  })
+
+  it('creates a fresh channel per document without crypto.randomUUID', () => {
+    vi.stubGlobal('crypto', { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) })
+    const channel = createPelicanPreviewChannel()
+    expect(channel).toMatch(/^pelican-[0-9a-f]{32}$/)
+    expect(createPelicanPreviewChannel()).not.toBe(channel)
+    // The parent compares its raw channel with the one the iframe echoes back.
+    expect(createPelicanPreviewDocument('<svg viewBox="0 0 10 10"></svg>', channel)).toContain(`data-pelican-preview="${channel}"`)
   })
 })
 

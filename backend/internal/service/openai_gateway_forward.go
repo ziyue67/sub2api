@@ -5,19 +5,43 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
+
+func accountUsesPrismBrowser(account *Account, cfg *config.Config) bool {
+	return accountHasPrismBrowser(account) && cfg != nil && cfg.Gateway.PrismBrowser.Enabled
+}
+
+func accountHasPrismBrowser(account *Account) bool {
+	if account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth || account.IsShadow() {
+		return false
+	}
+	enabled, _ := account.Extra["openai_prism_browser"].(bool)
+	return enabled
+}
+
+func prismBrowserResponsesURL(baseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		return ""
+	}
+	if strings.HasSuffix(base, "/responses") {
+		return base
+	}
+	return base + "/responses"
+}
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, resultErr error) {
@@ -82,6 +106,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	modelForBPS := gjson.GetBytes(body, "model").String()
+	if accountHasPrismBrowser(account) {
+		return s.forwardPrismBrowser(ctx, c, account, body, startTime)
+	}
 	if c.GetBool(bpsAccountProbeRequiredContextKey) &&
 		(!account.IsExcelBPSEnabledForModel(modelForBPS) || account.excelBPSNativeFallbackReason(body) != "") {
 		return nil, errors.New("bps probe path is unavailable")
@@ -404,10 +431,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	apiKey := getAPIKeyFromContext(c)
-	imageGenerationAllowed := GroupAllowsImageGeneration(nil)
-	if apiKey != nil {
-		imageGenerationAllowed = GroupAllowsImageGeneration(apiKey.Group)
-	}
+	// Prefer the freshest revalidated image permission over the handshake Group
+	// snapshot so a mid-wait relaxation or revocation is honored.
+	imageGenerationAllowed := GroupAllowsImageGenerationLatest(c.Request.Context(), apiKeyGroup(apiKey))
 	codexImageGenerationBridgeEnabled := isCodexCLI &&
 		!isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)) &&
 		imageGenerationAllowed &&

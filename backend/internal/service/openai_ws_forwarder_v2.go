@@ -118,7 +118,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 
 	stateStore := s.getOpenAIWSStateStore()
-	groupID := getOpenAIGroupIDFromContext(c)
+	groupID, enforceGroup := openAITurnAdmissionGroupFromContext(c)
 	sessionHash := s.GenerateSessionHash(c, nil)
 	if sessionHash == "" {
 		var legacySessionHash string
@@ -216,7 +216,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		WSURL:   wsURL,
 		Headers: wsHeaders,
 		HeadersFactory: func(factoryCtx context.Context, headers http.Header) (http.Header, error) {
-			latest, err := s.admitOpenAITurnForGroup(factoryCtx, groupID, account, mappedModel)
+			latest, err := s.admitOpenAITurnForGroup(factoryCtx, groupID, enforceGroup, account, mappedModel)
 			if err != nil {
 				s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
 					factoryCtx,
@@ -245,7 +245,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return s.bindOpenAIWSHandshake(account, mappedModel, headers)
 		},
 		CheckBinding: func(checkCtx context.Context, b *openAIWSTurnBinding) error {
-			latest, err := s.admitOpenAITurnForGroup(checkCtx, groupID, account, mappedModel)
+			latest, err := s.admitOpenAITurnForGroup(checkCtx, groupID, enforceGroup, account, mappedModel)
 			if err != nil {
 				s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
 					checkCtx,

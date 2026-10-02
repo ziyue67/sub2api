@@ -835,6 +835,9 @@ export default {
       // OpenAI specific hints
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
+        prismBrowser: '自动使用 Prism 浏览器协议',
+        prismBrowserDesc: '使用此 OpenAI OAuth 账号接入服务器管理的 Prism 适配器，无需另填 Prism 凭据。目前支持 gpt-5.6-sol 纯文本请求。',
+        prismBrowserManagedEndpoint: '已启用：请求将自动发送到服务器的 Prism 适配器。',
         apiKeyHint: '您的 OpenAI API Key',
         apiProtocol: {
           title: 'API 协议（可选）',

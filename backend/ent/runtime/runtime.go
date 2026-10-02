@@ -72,8 +72,14 @@ func init() {
 	apikey.DefaultUpdatedAt = apikeyDescUpdatedAt.Default.(func() time.Time)
 	// apikey.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	apikey.UpdateDefaultUpdatedAt = apikeyDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// apikeyDescConcurrencyLimit is the schema descriptor for concurrency_limit field.
+	apikeyDescConcurrencyLimit := apikeyFields[1].Descriptor()
+	// apikey.DefaultConcurrencyLimit holds the default value on creation for the concurrency_limit field.
+	apikey.DefaultConcurrencyLimit = apikeyDescConcurrencyLimit.Default.(int)
+	// apikey.ConcurrencyLimitValidator is a validator for the "concurrency_limit" field. It is called by the builders before save.
+	apikey.ConcurrencyLimitValidator = apikeyDescConcurrencyLimit.Validators[0].(func(int) error)
 	// apikeyDescKey is the schema descriptor for key field.
-	apikeyDescKey := apikeyFields[1].Descriptor()
+	apikeyDescKey := apikeyFields[2].Descriptor()
 	// apikey.KeyValidator is a validator for the "key" field. It is called by the builders before save.
 	apikey.KeyValidator = func() func(string) error {
 		validators := apikeyDescKey.Validators
@@ -91,7 +97,7 @@ func init() {
 		}
 	}()
 	// apikeyDescName is the schema descriptor for name field.
-	apikeyDescName := apikeyFields[2].Descriptor()
+	apikeyDescName := apikeyFields[3].Descriptor()
 	// apikey.NameValidator is a validator for the "name" field. It is called by the builders before save.
 	apikey.NameValidator = func() func(string) error {
 		validators := apikeyDescName.Validators

@@ -38,7 +38,7 @@ func TestCLIUserAgentMatchesOfficialInteractiveCapture(t *testing.T) {
 
 func TestResolveCLIVersionDefaultsToPinnedClientVersion(t *testing.T) {
 	t.Setenv(CLIVersionEnv, "")
-	// Default advertise pin is CLIClientVersion; CLIStableVersion is only the floor.
+	// The default pin and minimum accepted version stay aligned.
 	require.Equal(t, CLIClientVersion, ResolveCLIVersion())
 	require.True(t, IsSupportedCLIVersion(CLIClientVersion))
 	require.True(t, IsSupportedCLIVersion(CLIStableVersion))

@@ -1276,7 +1276,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			if result.Lane != nil && sessionHash != "" {
 				s.bindSelectedLaneSticky(ctx, groupID, requestedModel, sessionHash, account, result.Lane, openaiStickySessionTTL)
 			}
-			selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc, admissionMaxConcurrencyArgs(result)...)
+			selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc, result.RequestID, admissionMaxConcurrencyArgs(result)...)
 			return markStickySessionHit(selection, stickyHit), selectErr
 		}
 		if stickyAccountID > 0 && stickyAccountID == account.ID && s.concurrencyService != nil {
@@ -1284,7 +1284,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			if waitingCount < cfg.StickySessionMaxWaiting {
 				plan, waitable := s.openAIWaitPlanForAccount(ctx, account, cfg.StickySessionWaitTimeout, cfg.StickySessionMaxWaiting)
 				if waitable {
-					selection, selectErr := s.newSelectionResult(ctx, account, false, nil, plan)
+					selection, selectErr := s.newSelectionResult(ctx, account, false, nil, "", plan)
 					return markStickySessionHit(selection, stickyHit), selectErr
 				}
 			}
@@ -1293,7 +1293,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if !waitable {
 			return nil, ErrNoAvailableAccounts
 		}
-		selection, selectErr := s.newSelectionResult(ctx, account, false, nil, plan)
+		selection, selectErr := s.newSelectionResult(ctx, account, false, nil, "", plan)
 		return markStickySessionHit(selection, stickyHit), selectErr
 	}
 
@@ -1368,7 +1368,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 						}
 						result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency, account)
 						if err == nil && result != nil && result.Acquired {
-							selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc, admissionMaxConcurrencyArgs(result)...)
+							selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc, result.RequestID, admissionMaxConcurrencyArgs(result)...)
 							if selectErr != nil {
 								return nil, selectErr
 							}
@@ -1383,7 +1383,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 						if waitingCount < cfg.StickySessionMaxWaiting {
 							plan, waitable := s.openAIWaitPlanForAccount(ctx, account, cfg.StickySessionWaitTimeout, cfg.StickySessionMaxWaiting)
 							if waitable {
-								selection, selectErr := s.newSelectionResult(ctx, account, false, nil, plan)
+								selection, selectErr := s.newSelectionResult(ctx, account, false, nil, "", plan)
 								return markStickySessionHit(selection, true), selectErr
 							}
 						}
@@ -1576,7 +1576,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency, fresh)
 			if err == nil && result != nil && result.Acquired {
-				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc, admissionMaxConcurrencyArgs(result)...)
+				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc, result.RequestID, admissionMaxConcurrencyArgs(result)...)
 				if selectErr != nil {
 					return nil, true, selectErr
 				}
@@ -1615,7 +1615,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			}
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency, fresh)
 			if err == nil && result != nil && result.Acquired {
-				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc, admissionMaxConcurrencyArgs(result)...)
+				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc, result.RequestID, admissionMaxConcurrencyArgs(result)...)
 				if selectErr != nil {
 					return nil, selectErr
 				}
@@ -1674,7 +1674,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if !waitable {
 			continue
 		}
-		return s.newSelectionResult(ctx, fresh, false, nil, plan)
+		return s.newSelectionResult(ctx, fresh, false, nil, "", plan)
 	}
 
 	if requireCompact && baseCandidateCount > 0 {
@@ -2027,7 +2027,12 @@ func (s *OpenAIGatewayService) finalizeOpenAISelectionResult(ctx context.Context
 	return selection, nil
 }
 
-func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan, explicitAdmissionMax ...int) (*AccountSelectionResult, error) {
+// newSelectionResult constructs an OpenAI selection result.
+//
+// 参数取 Fork 与 ranxi 的并集：Fork 的 lane 语义（随结果携带 admission 并发上限、
+// 选号前先投影车道）与 ranxi 的 requestID（Redis member，Live 精确交接使用）。
+// requestID 为空表示该结果不参与 Live 交接。
+func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), requestID string, waitPlan *AccountWaitPlan, explicitAdmissionMax ...int) (*AccountSelectionResult, error) {
 	admissionMax, admissionMaxSet := selectionAdmissionMaxConcurrency(account, waitPlan, explicitAdmissionMax...)
 	laneCapable := s != nil && laneConcurrencySupported(s.concurrencyService)
 	// A lane-enabled account must always carry a request-local egress choice,
@@ -2115,14 +2120,15 @@ func (s *OpenAIGatewayService) newSelectionResult(ctx context.Context, account *
 		WaitPlan:                   waitPlan,
 		AdmissionMaxConcurrency:    admissionMax,
 		AdmissionMaxConcurrencySet: admissionMaxSet,
+		AccountRequestID:           requestID,
 	}), nil
 }
 
-func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, account *Account, release func(), explicitAdmissionMax ...int) (*AccountSelectionResult, error) {
+func (s *OpenAIGatewayService) newAcquiredSelectionResult(ctx context.Context, account *Account, release func(), requestID string, explicitAdmissionMax ...int) (*AccountSelectionResult, error) {
 	// newSelectionResult owns release-on-error for acquired reservations.  Keep
 	// one owner so hydration/lane validation cannot double-release a non-idempotent
 	// test double or an external reservation implementation.
-	return s.newSelectionResult(ctx, account, true, release, nil, explicitAdmissionMax...)
+	return s.newSelectionResult(ctx, account, true, release, requestID, nil, explicitAdmissionMax...)
 }
 
 // markStickySessionHit 在选号结果上记录账号是否来自会话粘性命中。

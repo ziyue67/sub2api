@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import PelicanArtworkPreview from '../PelicanArtworkPreview.vue'
 
 let wrapper: ReturnType<typeof mount> | undefined
-afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.restoreAllMocks() })
+afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 function mountPreview(mode: 'fit' | 'actual' = 'fit', ancestorScale = 1) {
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
@@ -64,6 +64,20 @@ describe('PelicanArtworkPreview', () => {
     await preview.vm.$nextTick()
     expect(frame.element.style.width).toBe('600px')
     expect(frame.element.style.height).toBe('1200px')
+  })
+
+  it('renders over plain HTTP, where browsers do not provide crypto.randomUUID', async () => {
+    // randomUUID exists only in secure contexts (HTTPS, localhost); an admin
+    // panel opened at http://IP:port still has getRandomValues (#201).
+    vi.stubGlobal('crypto', { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) })
+    const preview = mountPreview()
+    const frame = preview.get('iframe')
+    const srcdoc = frame.attributes('srcdoc')
+    expect(srcdoc).toContain('<svg viewBox="0 0 1200 600"></svg>')
+    const channel = srcdoc.match(/data-pelican-preview="([^"]+)"/)![1]
+    window.dispatchEvent(new MessageEvent('message', { source: frame.element.contentWindow, data: { type: 'pelican-preview:size', channel, width: 1600, height: 1200 } }))
+    await preview.vm.$nextTick()
+    expect(frame.element.style.transform).toBe('scale(0.5)')
   })
 
   it('switches to intentional natural-size scrolling without restarting the document', async () => {

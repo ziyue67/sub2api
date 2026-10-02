@@ -88,7 +88,8 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 
 	streamStarted := false
-	userRelease, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, false, &streamStarted)
+	// 本 Fork 的用户槽位排队需要 Key 级准入参数（apiKeyID / keyLimit）。
+	userRelease, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, apiKey.ID, apiKey.ConcurrencyLimit, false, &streamStarted)
 	if err != nil {
 		reqLog.Warn("systemone.user_slot_acquire_failed", zap.Error(err))
 		h.handleConcurrencyError(c, err, "user", false)

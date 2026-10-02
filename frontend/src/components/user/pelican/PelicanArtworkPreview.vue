@@ -27,7 +27,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createPelicanPreviewDocument, fitPelicanArtwork, getPelicanViewport, readPelicanSizeMessage, type PelicanPreviewMode } from '@/utils/pelicanPreview'
+import { createPelicanPreviewChannel, createPelicanPreviewDocument, fitPelicanArtwork, getPelicanViewport, readPelicanSizeMessage, type PelicanPreviewMode } from '@/utils/pelicanPreview'
 
 const props = withDefaults(defineProps<{ html: string; title: string; mode?: PelicanPreviewMode; interactive?: boolean }>(), { mode: 'fit', interactive: true })
 const containerRef = ref<HTMLElement | null>(null)
@@ -41,7 +41,7 @@ let updates = 0
 let observer: ResizeObserver | undefined
 
 watch(() => props.html, (html) => {
-  channel = `pelican-${crypto.randomUUID()}`
+  channel = createPelicanPreviewChannel()
   updates = 0
   viewport.value = getPelicanViewport(html)
   artwork.value = { ...viewport.value }
