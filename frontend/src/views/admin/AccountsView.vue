@@ -389,8 +389,12 @@
               @probe="handleProbeUpstreamUsage(row)"
             />
           </template>
-          <template #cell-priority="{ value }">
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ value }}</span>
+          <template #cell-priority="{ row }">
+            <AccountPriorityCell
+              :account="row"
+              @updated="handleAccountUpdated"
+              @error="(message: string) => appStore.showError(message)"
+            />
           </template>
           <template #header-scheduler_score="{ column }">
             <div class="flex items-center">
@@ -543,6 +547,7 @@ import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import ExcelBPS403Badge from '@/components/account/ExcelBPS403Badge.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import AccountUpstreamBalanceCell from '@/components/account/AccountUpstreamBalanceCell.vue'
+import AccountPriorityCell from '@/components/account/AccountPriorityCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
