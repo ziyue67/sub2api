@@ -129,6 +129,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if account != nil && s.shouldEmulateWebSearch(ctx, account, parsed.GroupID, parsed.Body.Bytes()) {
 		return s.handleWebSearchEmulation(ctx, c, account, parsed)
 	}
+	if account != nil && account.IsAnthropicAPIKeyForceCacheTTL1hEnabled() {
+		if err := parsed.ReplaceBody(forceAnthropicAPIKeyCacheTTL1h(account, parsed.Body.Bytes())); err != nil {
+			return nil, fmt.Errorf("force Anthropic API Key cache TTL: %w", err)
+		}
+	}
 
 	if account != nil && account.IsAnthropicAPIKeyPassthroughEnabled() {
 		passthroughBody := parsed.Body.Bytes()

@@ -566,6 +566,7 @@ describe('admin UsageView tabs', () => {
 
     expect(wrapper.findAll('[data-testid="usage-detail-tab"]')).toHaveLength(2)
     expect(wrapper.text()).not.toContain('usage.tabs.ranking')
+    wrapper.unmount()
   })
 })
 

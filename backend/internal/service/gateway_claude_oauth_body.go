@@ -1143,6 +1143,42 @@ func injectAnthropicCacheControlTTL1h(body []byte) []byte {
 	return forceEphemeralCacheControlTTL(body, cacheTTLTarget1h)
 }
 
+func forceAnthropicAPIKeyCacheTTL1h(account *Account, body []byte) []byte {
+	if account == nil || !account.IsAnthropicAPIKeyForceCacheTTL1hEnabled() {
+		return body
+	}
+	return injectAnthropicCacheControlTTL1h(body)
+}
+
+func anthropicBodyHasEphemeralCacheControlTTL(body []byte, ttl string) bool {
+	if len(body) == 0 || ttl == "" {
+		return false
+	}
+	matches := func(value gjson.Result) bool {
+		cc := value.Get("cache_control")
+		return cc.Get("type").String() == "ephemeral" && cc.Get("ttl").String() == ttl
+	}
+	root := gjson.ParseBytes(body)
+	if cc := root.Get("cache_control"); cc.Get("type").String() == "ephemeral" && cc.Get("ttl").String() == ttl {
+		return true
+	}
+	for _, collection := range []string{"system", "tools"} {
+		for _, value := range root.Get(collection).Array() {
+			if matches(value) {
+				return true
+			}
+		}
+	}
+	for _, message := range root.Get("messages").Array() {
+		for _, block := range message.Get("content").Array() {
+			if matches(block) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func forceEphemeralCacheControlTTL(body []byte, ttl string) []byte {
 	if len(body) == 0 || ttl == "" {
 		return body
