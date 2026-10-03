@@ -956,6 +956,9 @@ export default {
         apiKeyPassthrough: 'Auto passthrough (auth only)',
         apiKeyPassthroughDesc:
           'Only applies to Anthropic API Key accounts. When enabled, messages/count_tokens are forwarded in passthrough mode with auth replacement only, while billing/concurrency/audit and safety filtering are preserved. Disable to roll back immediately.',
+        forceCacheTTL1h: 'Force real 1h cache TTL',
+        forceCacheTTL1hDesc:
+          'Only applies to this Anthropic API Key account. Existing ephemeral cache breakpoints are upgraded to 1h and the required upstream beta is added. No new cache breakpoint is created and usage billing classifications are not rewritten.',
         apiKeyAuthScheme: 'Upstream auth scheme',
         apiKeyAuthSchemeDesc: 'Choose the API key auth header used when forwarding to an Anthropic-compatible upstream. Ollama Cloud uses Authorization: Bearer.',
         apiKeyAuthSchemeXApiKey: 'x-api-key',
