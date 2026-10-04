@@ -225,6 +225,45 @@ func TestGatewayServiceRecordUsage_AddsAnthropicWebSearchSurcharge(t *testing.T)
 	}
 }
 
+func TestGatewayServiceRecordUsage_UsesAnthropicGroupWebSearchPrice(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	userRepo := &openAIRecordUsageUserRepoStub{}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+	svc.cfg.Default.RateMultiplier = 0.75
+	pricePerCall := 0.02
+	group := &Group{
+		ID:                    143,
+		Platform:              PlatformAnthropic,
+		RateMultiplier:        0.75,
+		WebSearchPricePerCall: &pricePerCall,
+	}
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "anthropic_group_web_search_price",
+			Usage:     ClaudeUsage{WebSearchRequests: 2},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 1, GroupID: &group.ID, Group: group},
+		User:    &User{ID: 2},
+		Account: &Account{ID: 3, Platform: PlatformAnthropic},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.InDelta(t, 0.04, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, 0.03, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, 0.03, userRepo.lastAmount, 1e-12)
+	require.Equal(t, []ToolSurcharge{{
+		Name:           "web_search",
+		Count:          2,
+		Price:          20,
+		RateMultiplier: 0.75,
+		Cost:           0.03,
+	}}, usageRepo.lastLog.ToolSurcharges)
+}
+
 func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})

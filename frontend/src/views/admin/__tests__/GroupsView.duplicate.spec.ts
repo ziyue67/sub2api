@@ -245,6 +245,54 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
+  it('shows web search pricing when creating an Anthropic group', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const createButton = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'admin.groups.createGroup')
+    expect(createButton).toBeTruthy()
+    await createButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="create-web-search-price"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('loads and saves an Anthropic group web search price', async () => {
+    const anthropicGroup = {
+      ...sourceGroup,
+      name: 'Claude',
+      platform: 'anthropic' as const,
+      web_search_price_per_call: 0.012,
+    }
+    listGroups.mockResolvedValue({
+      items: [anthropicGroup],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    updateGroup.mockResolvedValue(anthropicGroup)
+
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+
+    const priceInput = wrapper.get<HTMLInputElement>('[data-testid="edit-web-search-price"]')
+    expect(priceInput.element.value).toBe('0.012')
+    await priceInput.setValue('0.02')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({
+      web_search_price_per_call: 0.02,
+    }))
+    wrapper.unmount()
+  })
+
   it('ignores repeated clicks while the duplicate request is in flight', async () => {
     let resolveDuplicate!: (value: AdminGroup) => void
     duplicateGroup.mockImplementationOnce(

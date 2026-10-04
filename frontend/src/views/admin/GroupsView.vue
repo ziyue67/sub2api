@@ -1482,9 +1482,9 @@
           </div>
         </div>
 
-        <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
+        <!-- 托管网页搜索按次计费（OpenAI Responses / Anthropic Messages） -->
         <div
-          v-if="createForm.platform === 'openai'"
+          v-if="['openai', 'anthropic'].includes(createForm.platform)"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
         >
           <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
@@ -1496,6 +1496,7 @@
             }}</label>
             <input
               v-model.number="createForm.web_search_price_per_call"
+              data-testid="create-web-search-price"
               type="number"
               step="0.001"
               min="0"
@@ -3151,9 +3152,9 @@
           </div>
         </div>
 
-        <!-- Codex 网页搜索按次计费（仅 openai 平台） -->
+        <!-- 托管网页搜索按次计费（OpenAI Responses / Anthropic Messages） -->
         <div
-          v-if="editForm.platform === 'openai'"
+          v-if="['openai', 'anthropic'].includes(editForm.platform)"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
         >
           <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
@@ -3165,6 +3166,7 @@
             }}</label>
             <input
               v-model.number="editForm.web_search_price_per_call"
+              data-testid="edit-web-search-price"
               type="number"
               step="0.001"
               min="0"
@@ -5052,7 +5054,7 @@ const createForm = reactive({
   video_price_720p: null as number | null,
   video_price_1080p: null as number | null,
   video_model_prices: createVideoModelPricesForm(),
-  // Codex 网页搜索按次计费（仅 openai 平台使用）；null = 使用默认价 0.01
+  // 托管网页搜索按次计费（OpenAI Responses / Anthropic Messages）；null = 使用默认价 0.01
   web_search_price_per_call: null as number | null,
   search_price_per_1k: null as number | null,
   audio_realtime_price_per_min: null as number | null,
@@ -5421,7 +5423,7 @@ const editForm = reactive({
   video_price_720p: null as number | null,
   video_price_1080p: null as number | null,
   video_model_prices: createVideoModelPricesForm(),
-  // Codex 网页搜索按次计费（仅 openai 平台使用）；null = 使用默认价 0.01
+  // 托管网页搜索按次计费（OpenAI Responses / Anthropic Messages）；null = 使用默认价 0.01
   web_search_price_per_call: null as number | null,
   search_price_per_1k: null as number | null,
   audio_realtime_price_per_min: null as number | null,
@@ -5594,7 +5596,7 @@ const editVideoFinalPricePreview = computed(() =>
   buildVideoFinalPricePreview(editForm),
 );
 
-// Codex 网页搜索单次默认价（与后端 defaultWebSearchPricePerCall 一致，官方 $10/1000 次）
+// 托管网页搜索单次默认价（与后端 defaultWebSearchPricePerCall 一致，官方 $10/1000 次）
 const DEFAULT_WEB_SEARCH_PRICE_PER_CALL = 0.01;
 
 const buildWebSearchFinalPricePreview = (form: {
