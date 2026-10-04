@@ -755,12 +755,30 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		SessionID:                 l.SessionID,
 		CacheTTLOverridden:        l.CacheTTLOverridden,
 		BillingMode:               l.BillingMode,
+		ToolSurcharges:            toolSurchargesFromService(l.ToolSurcharges),
 		CreatedAt:                 l.CreatedAt,
 		User:                      UserFromServiceShallow(l.User),
 		APIKey:                    APIKeyFromService(l.APIKey),
 		Group:                     GroupFromServiceShallow(l.Group),
 		Subscription:              UserSubscriptionFromService(l.Subscription),
 	}
+}
+
+func toolSurchargesFromService(items []service.ToolSurcharge) []ToolSurcharge {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]ToolSurcharge, 0, len(items))
+	for _, item := range items {
+		out = append(out, ToolSurcharge{
+			Name:           item.Name,
+			Count:          item.Count,
+			Price:          item.Price,
+			RateMultiplier: item.RateMultiplier,
+			Cost:           item.Cost,
+		})
+	}
+	return out
 }
 
 // UsageLogFromService converts a service UsageLog to DTO for regular users.

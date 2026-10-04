@@ -102,6 +102,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
+			sqlmock.AnyArg(), // tool_surcharges
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -197,6 +198,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
+			sqlmock.AnyArg(), // tool_surcharges
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -278,8 +280,10 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	prepared := prepareUsageLogInsert(log)
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
-	require.Equal(t, true, prepared.args[len(prepared.args)-2])
+	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3])
+	require.Equal(t, true, prepared.args[len(prepared.args)-3])
+	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
+	require.Nil(t, prepared.args[len(prepared.args)-2])
 	require.Equal(t, int16(service.RequestTypeStream), prepared.args[30])
 	require.Equal(t, service.RequestTypeStream, log.RequestType)
 	require.True(t, log.Stream)
@@ -314,6 +318,23 @@ func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 	breakdownJSON, ok := prepared.args[42].(string)
 	require.True(t, ok)
 	require.JSONEq(t, `{"1K":1,"4K":1}`, breakdownJSON)
+}
+
+func TestPrepareUsageLogInsert_PersistsToolSurchargesJSON(t *testing.T) {
+	prepared := prepareUsageLogInsert(&service.UsageLog{
+		UserID:    1,
+		APIKeyID:  2,
+		AccountID: 3,
+		RequestID: "req-tool-surcharge",
+		Model:     "gpt-5",
+		ToolSurcharges: []service.ToolSurcharge{{
+			Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225,
+		}},
+	})
+
+	encoded, ok := prepared.args[len(prepared.args)-2].(string)
+	require.True(t, ok)
+	require.JSONEq(t, `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225}]`, encoded)
 }
 
 func TestCoalesceTrimmedString(t *testing.T) {
@@ -960,6 +981,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
 			false, // native_compaction_v2
+			sql.NullString{Valid: true, String: `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225}]`}, // tool_surcharges
 			now,
 		}})
 		require.NoError(t, err)
@@ -973,6 +995,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.NotNil(t, log.ImageSizeSource)
 		require.Equal(t, "output", *log.ImageSizeSource)
 		require.Equal(t, map[string]int{"4K": 2}, log.ImageSizeBreakdown)
+		require.Equal(t, []service.ToolSurcharge{{
+			Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225,
+		}}, log.ToolSurcharges)
 	})
 
 	t.Run("request_type_ws_v2_overrides_legacy", func(t *testing.T) {
@@ -1040,6 +1065,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
+			sql.NullString{},  // tool_surcharges
 			now,
 		}})
 		require.NoError(t, err)
@@ -1103,6 +1129,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			true,              // native_compaction_v2
+			sql.NullString{},  // tool_surcharges
 			now,
 		}})
 		require.NoError(t, err)
@@ -1167,6 +1194,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
+			sql.NullString{},  // tool_surcharges
 			now,
 		}})
 		require.NoError(t, err)

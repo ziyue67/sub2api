@@ -389,6 +389,8 @@ export default {
     accountCost: '成本',
     userBilled: '用户扣费',
     accountBilled: '账号计费',
+    toolSurchargeLine: '{name} 调用 {count} 次，调用花费 ${cost}',
+    toolSurchargeRate: '${price}/1000 次 × {rate}x',
     resetNow: '现在',
     resetPending: '待刷新',
     accountMultiplier: '账号倍率',

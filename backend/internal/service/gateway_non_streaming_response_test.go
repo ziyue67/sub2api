@@ -77,7 +77,7 @@ func TestHandleNonStreamingResponse_ValidJSONUnchanged(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
 
-	body := []byte(`{"id":"msg_1","type":"message","usage":{"input_tokens":12,"output_tokens":7}}`)
+	body := []byte(`{"id":"msg_1","type":"message","usage":{"input_tokens":12,"output_tokens":7,"server_tool_use":{"web_search_requests":3}}}`)
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -94,6 +94,7 @@ func TestHandleNonStreamingResponse_ValidJSONUnchanged(t *testing.T) {
 	require.NotNil(t, usage)
 	require.Equal(t, 12, usage.InputTokens)
 	require.Equal(t, 7, usage.OutputTokens)
+	require.Equal(t, 3, usage.WebSearchRequests)
 	require.JSONEq(t, string(body), rec.Body.String())
 }
 

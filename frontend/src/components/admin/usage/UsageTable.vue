@@ -230,6 +230,15 @@
             <div v-if="showAccountBilling && row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
               A ${{ accountBilled(row).toFixed(6) }}
             </div>
+            <div
+              v-for="(item, index) in billableToolSurcharges(row)"
+              :key="`${item.name}-${index}`"
+              class="mt-0.5 flex items-center gap-1 text-[11px] text-cyan-600 dark:text-cyan-400"
+              :title="t('usage.toolSurchargeRate', { price: item.price.toFixed(6), rate: formatMultiplier(item.rate_multiplier) })"
+            >
+              <Icon name="search" size="xs" class="h-3 w-3 shrink-0" />
+              <span>{{ t('usage.toolSurchargeLine', { name: item.name, count: item.count, cost: item.cost.toFixed(6) }) }}</span>
+            </div>
           </div>
         </template>
 
@@ -499,6 +508,14 @@
               <span class="text-gray-400">{{ t('admin.usage.cacheReadCost') }}</span>
               <span class="font-medium text-white">${{ tooltipData.cache_read_cost.toFixed(8) }}</span>
             </div>
+            <div
+              v-for="(item, index) in billableToolSurcharges(tooltipData)"
+              :key="`tooltip-${item.name}-${index}`"
+              class="flex items-center justify-between gap-4"
+            >
+              <span class="text-gray-400">{{ item.name }} × {{ item.count }}</span>
+              <span class="font-medium text-cyan-300">${{ item.cost.toFixed(8) }}</span>
+            </div>
           </div>
           <!-- Rate and Summary -->
           <div class="flex items-center justify-between gap-6">
@@ -646,6 +663,11 @@ const ipGeoBatchLoading = ref(false)
 
 // 长上下文计费 x2 徽标展示开关（公开设置，默认开启；未加载/缺失时按开启处理）
 const showLongContextBadge = computed(() => appStore.cachedPublicSettings?.usage_show_long_context_badge !== false)
+
+const billableToolSurcharges = (row: AdminUsageLog | null | undefined) =>
+  (row?.tool_surcharges ?? []).filter((item) =>
+    item != null && item.name.trim() !== '' && item.count > 0 && item.price >= 0 && item.cost >= 0
+  )
 
 const showIpGeoToolbar = computed(() => props.columns.some((col) => col.key === 'ip_address'))
 

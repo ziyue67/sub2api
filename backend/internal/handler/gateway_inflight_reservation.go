@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -31,6 +32,27 @@ func tokenInflightEstimate(model string, body []byte) service.InflightEstimateRe
 		MaxTokens: requestMaxOutputTokens(body),
 		Kind:      service.InflightEstimateToken,
 	}
+}
+
+// hostedWebSearchInflightEstimate reserves the one call that is provable from
+// a hosted-search tool declaration. Providers do not expose a request-side
+// maximum call count, so higher arbitrary holds would reject valid users while
+// still not being a trustworthy upper bound.
+func hostedWebSearchInflightEstimate(model string, body []byte) service.InflightEstimateRequest {
+	req := tokenInflightEstimate(model, body)
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.IsArray() {
+		return req
+	}
+	tools.ForEach(func(_, tool gjson.Result) bool {
+		toolType := strings.ToLower(strings.TrimSpace(tool.Get("type").String()))
+		if toolType == "web_search" || strings.HasPrefix(toolType, "web_search_") {
+			req.HostedWebSearchCalls = 1
+			return false
+		}
+		return true
+	})
+	return req
 }
 
 func inflightNoop() {}

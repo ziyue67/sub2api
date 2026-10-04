@@ -703,6 +703,10 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	if parsed.Get("type").String() == "message_start" {
 		usageNode = parsed.Get("message.usage")
 	}
+	if webSearchRequests := usageNode.Get("server_tool_use.web_search_requests"); webSearchRequests.Exists() {
+		// This is cumulative across Anthropic stream events, not a delta.
+		usage.WebSearchRequests = int(webSearchRequests.Int())
+	}
 	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
 }
 
@@ -777,6 +781,7 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 	usage.OutputTokens = int(usageNode.Get("output_tokens").Int())
 	usage.CacheCreationInputTokens = int(usageNode.Get("cache_creation_input_tokens").Int())
 	usage.CacheReadInputTokens = int(usageNode.Get("cache_read_input_tokens").Int())
+	usage.WebSearchRequests = int(usageNode.Get("server_tool_use.web_search_requests").Int())
 
 	cc5m := usageNode.Get("cache_creation.ephemeral_5m_input_tokens").Int()
 	cc1h := usageNode.Get("cache_creation.ephemeral_1h_input_tokens").Int()

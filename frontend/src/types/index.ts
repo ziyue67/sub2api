@@ -1902,6 +1902,16 @@ export type UsageRequestType = 'unknown' | 'sync' | 'stream' | 'ws_v2' | 'cyber'
 export type ImageSizeSource = 'output' | 'input' | 'default' | 'legacy'
 export type ImageSizeBreakdown = Record<string, number>
 
+export interface ToolSurcharge {
+  name: string
+  count: number
+  /** USD per 1,000 calls. */
+  price: number
+  rate_multiplier: number
+  /** Actual user charge after rate_multiplier. */
+  cost: number
+}
+
 export interface UsageLog {
   id: number
   user_id: number
@@ -1962,6 +1972,8 @@ export interface UsageLog {
 
   // 计费模式
   billing_mode?: string | null
+
+  tool_surcharges?: ToolSurcharge[]
 
   created_at: string
 

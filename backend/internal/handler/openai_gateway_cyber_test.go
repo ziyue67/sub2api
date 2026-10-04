@@ -84,6 +84,26 @@ func TestRecordCyberPolicyIfMarked_ForwardSuccessSkipsUsageLog(t *testing.T) {
 	require.True(t, c.GetBool(cyberPolicyRecordedKey))
 }
 
+func TestShouldRecordCyberPolicyFallbackUsage(t *testing.T) {
+	tests := []struct {
+		name           string
+		forwardErrored bool
+		result         *service.OpenAIForwardResult
+		want           bool
+	}{
+		{name: "success never needs fallback", result: &service.OpenAIForwardResult{}, want: false},
+		{name: "error without result uses cyber fallback", forwardErrored: true, want: true},
+		{name: "token-only error uses cyber fallback", forwardErrored: true, result: &service.OpenAIForwardResult{Usage: service.OpenAIUsage{InputTokens: 10}}, want: true},
+		{name: "image partial uses unified usage", forwardErrored: true, result: &service.OpenAIForwardResult{ImageCount: 1}, want: false},
+		{name: "web search partial uses unified usage", forwardErrored: true, result: &service.OpenAIForwardResult{Usage: service.OpenAIUsage{InputTokens: 10}, WebSearchCalls: 2}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldRecordCyberPolicyFallbackUsage(tt.forwardErrored, tt.result))
+		})
+	}
+}
+
 // TestClearCyberPolicyTurnState verifies F1 at the handler level: after a turn
 // is finalized, both the mark and the recorded guard are reset so the next WS
 // turn detects/records independently.

@@ -676,6 +676,9 @@ type UsageLog struct {
 
 	// BillingMode 计费模式：token/image
 	BillingMode *string `json:"billing_mode,omitempty"`
+	// ToolSurcharges lists completed hosted-tool calls billed in addition to
+	// token usage. Price is USD per 1,000 calls.
+	ToolSurcharges []ToolSurcharge `json:"tool_surcharges,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 
@@ -683,6 +686,14 @@ type UsageLog struct {
 	APIKey       *APIKey           `json:"api_key,omitempty"`
 	Group        *Group            `json:"group,omitempty"`
 	Subscription *UserSubscription `json:"subscription,omitempty"`
+}
+
+type ToolSurcharge struct {
+	Name           string  `json:"name"`
+	Count          int     `json:"count"`
+	Price          float64 `json:"price"`
+	RateMultiplier float64 `json:"rate_multiplier"`
+	Cost           float64 `json:"cost"`
 }
 
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。

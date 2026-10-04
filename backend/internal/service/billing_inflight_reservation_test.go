@@ -162,6 +162,22 @@ func TestInflightEstimate_MediaKinds(t *testing.T) {
 	require.Greater(t, est, 0.0)
 }
 
+func TestInflightEstimate_HostedWebSearchAddsPerCallCostAtBaseRate(t *testing.T) {
+	groupID := int64(31)
+	price := 0.02
+	group := &Group{ID: groupID, Platform: PlatformOpenAI, RateMultiplier: 1.5, WebSearchPricePerCall: &price}
+	svc := newInflightEstimateGateway(t, nil)
+	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: group}
+	req := InflightEstimateRequest{Model: "claude-sonnet-4-5", BodyBytes: 4000, MaxTokens: 1000}
+
+	base, priced := svc.EstimateInflightReservation(context.Background(), apiKey, req)
+	require.True(t, priced)
+	req.HostedWebSearchCalls = 1
+	withSearch, priced := svc.EstimateInflightReservation(context.Background(), apiKey, req)
+	require.True(t, priced)
+	require.InDelta(t, 0.03, withSearch-base, 1e-12, "0.02 per call × base multiplier 1.5")
+}
+
 // ---------------------------------------------------------------------------
 // reservation handle: hand-off to billing task, renewal
 // ---------------------------------------------------------------------------

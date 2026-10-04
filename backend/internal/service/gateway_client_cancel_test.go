@@ -50,6 +50,10 @@ func TestClaudeClientCancelSilentStream(t *testing.T) {
 	require.Error(t, err, "upstream body must be closed")
 }
 
+func TestClaudeUsage_WebSearchOnlyCountsAsObservedUsage(t *testing.T) {
+	require.True(t, (&ClaudeUsage{WebSearchRequests: 1}).hasObservedTokens())
+}
+
 type claudeFlushFailure struct{ *httptest.ResponseRecorder }
 
 func (w *claudeFlushFailure) FlushError() error { return io.ErrClosedPipe }

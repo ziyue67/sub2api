@@ -168,6 +168,63 @@ func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID
 	require.Equal(t, "local:req-local-123", billingRepo.lastCmd.RequestPayloadHash)
 }
 
+func TestGatewayServiceRecordUsage_AddsAnthropicWebSearchSurcharge(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		usage ClaudeUsage
+	}{
+		{
+			name: "token cost plus web search",
+			usage: ClaudeUsage{
+				InputTokens:       1000,
+				OutputTokens:      200,
+				WebSearchRequests: 3,
+			},
+		},
+		{
+			name:  "web search only",
+			usage: ClaudeUsage{WebSearchRequests: 3},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			userRepo := &openAIRecordUsageUserRepoStub{}
+			svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+			svc.cfg.Default.RateMultiplier = 0.75
+
+			err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+				Result: &ForwardResult{
+					RequestID: "anthropic_web_search_" + strings.ReplaceAll(tt.name, " ", "_"),
+					Usage:     tt.usage,
+					Model:     "claude-sonnet-4",
+					Duration:  time.Second,
+				},
+				APIKey:  &APIKey{ID: 1, Group: &Group{}},
+				User:    &User{ID: 2},
+				Account: &Account{ID: 3, Platform: PlatformAnthropic},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, usageRepo.lastLog)
+
+			expectedToken, calcErr := svc.billingService.CalculateCost("claude-sonnet-4", UsageTokens{
+				InputTokens:  tt.usage.InputTokens,
+				OutputTokens: tt.usage.OutputTokens,
+			}, 0.75)
+			require.NoError(t, calcErr)
+			require.InDelta(t, expectedToken.TotalCost+0.03, usageRepo.lastLog.TotalCost, 1e-12)
+			require.InDelta(t, expectedToken.ActualCost+0.0225, usageRepo.lastLog.ActualCost, 1e-12)
+			require.InDelta(t, usageRepo.lastLog.ActualCost, userRepo.lastAmount, 1e-12)
+			require.Equal(t, []ToolSurcharge{{
+				Name:           "web_search",
+				Count:          3,
+				Price:          10,
+				RateMultiplier: 0.75,
+				Cost:           0.0225,
+			}}, usageRepo.lastLog.ToolSurcharges)
+		})
+	}
+}
+
 func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})

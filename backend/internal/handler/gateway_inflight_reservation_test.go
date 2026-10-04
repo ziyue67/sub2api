@@ -25,6 +25,25 @@ func TestRequestMaxOutputTokens(t *testing.T) {
 	require.Equal(t, 0, requestMaxOutputTokens([]byte(`{}`)))
 }
 
+func TestHostedWebSearchInflightEstimate_DetectsOnlyProviderTools(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "openai", body: `{"tools":[{"type":"web_search_preview"}]}`, want: 1},
+		{name: "anthropic", body: `{"tools":[{"type":"web_search_20250305","name":"web_search"}]}`, want: 1},
+		{name: "client function", body: `{"tools":[{"type":"function","name":"web_search"}]}`, want: 0},
+		{name: "no tools", body: `{"input":"hello"}`, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := hostedWebSearchInflightEstimate("gpt-5.5", []byte(tt.body))
+			require.Equal(t, tt.want, req.HostedWebSearchCalls)
+		})
+	}
+}
+
 type countingEstimator struct {
 	calls  int
 	cost   float64

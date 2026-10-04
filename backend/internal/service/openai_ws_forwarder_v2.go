@@ -461,6 +461,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
+	webSearchCounter := newOpenAIWebSearchCallCounter()
 	var firstTokenMs *int
 	responseID := ""
 	var finalResponse []byte
@@ -513,7 +514,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 	resultWithUsage := func() *OpenAIForwardResult {
-		return &OpenAIForwardResult{
+		result := &OpenAIForwardResult{
 			RequestID:                     responseID,
 			ResponseID:                    responseID,
 			Usage:                         *usage,
@@ -532,6 +533,17 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			FirstTokenMs:                  firstTokenMs,
 			ClientDisconnect:              clientDisconnected,
 		}
+		if account != nil && !account.IsGrok() {
+			result.WebSearchCalls = webSearchCounter.Count()
+		}
+		return result
+	}
+	resultWithCompletedWebSearch := func() *OpenAIForwardResult {
+		result := resultWithUsage()
+		if result.WebSearchCalls <= 0 {
+			return nil
+		}
+		return result
 	}
 
 	var flusher http.Flusher
@@ -666,9 +678,9 @@ readLoop:
 				wroteDownstream,
 			)
 			if !wroteDownstream {
-				return nil, wrapOpenAIWSFallback("invalid_event_json", errors.New("upstream websocket returned malformed Responses event JSON"))
+				return resultWithCompletedWebSearch(), wrapOpenAIWSFallback("invalid_event_json", errors.New("upstream websocket returned malformed Responses event JSON"))
 			}
-			return nil, errors.New("upstream websocket returned malformed Responses event JSON after downstream output")
+			return resultWithCompletedWebSearch(), errors.New("upstream websocket returned malformed Responses event JSON after downstream output")
 		}
 		if readErr != nil {
 			lease.MarkBroken()
@@ -696,10 +708,10 @@ readLoop:
 				break
 			}
 			if !wroteDownstream {
-				return nil, wrapOpenAIWSFallback(classifyOpenAIWSReadFallbackReason(readErr), readErr)
+				return resultWithCompletedWebSearch(), wrapOpenAIWSFallback(classifyOpenAIWSReadFallbackReason(readErr), readErr)
 			}
 			setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(readErr.Error()), "")
-			return nil, fmt.Errorf("openai ws read event: %w", readErr)
+			return resultWithCompletedWebSearch(), fmt.Errorf("openai ws read event: %w", readErr)
 		}
 		if normalized, changed := normalizeCompletedImageGenerationStatus(message); changed {
 			message = normalized
@@ -761,6 +773,7 @@ readLoop:
 			parseOpenAIWSResponseUsageFromCompletedEvent(message, usage)
 		}
 		imageCounter.AddSSEData(message)
+		webSearchCounter.ObserveSSEData(message)
 
 		if eventType == "error" || eventType == "response.failed" {
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
@@ -816,7 +829,7 @@ readLoop:
 			// error 事件后连接不再可复用，避免回池后污染下一请求。
 			lease.MarkBroken()
 			if !wroteDownstream && canFallback {
-				return nil, wrapOpenAIWSFallback(fallbackReason, errors.New(errMsg))
+				return resultWithCompletedWebSearch(), wrapOpenAIWSFallback(fallbackReason, errors.New(errMsg))
 			}
 			statusCode := openAIWSErrorHTTPStatusFromRaw(errCodeRaw, errTypeRaw)
 			setOpsUpstreamError(c, statusCode, errMsg, "")
@@ -832,7 +845,7 @@ readLoop:
 					},
 				})
 			}
-			return nil, fmt.Errorf("openai ws error event: %s", errMsg)
+			return resultWithCompletedWebSearch(), fmt.Errorf("openai ws error event: %s", errMsg)
 		}
 
 		if reqStream {

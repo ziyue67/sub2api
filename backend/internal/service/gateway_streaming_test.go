@@ -541,3 +541,14 @@ func TestParseSSEUsage_StartOutputIsCumulativeNotAddedTwice(t *testing.T) {
 	s.parseSSEUsage(`{"type":"message_delta","usage":{"output_tokens":7}}`, usage)
 	require.Equal(t, 7, usage.OutputTokens)
 }
+
+func TestParseSSEUsage_WebSearchRequestsAreCumulative(t *testing.T) {
+	s := &GatewayService{}
+	usage := &ClaudeUsage{}
+
+	s.parseSSEUsage(`{"type":"message_start","message":{"usage":{"server_tool_use":{"web_search_requests":1}}}}`, usage)
+	require.Equal(t, 1, usage.WebSearchRequests)
+
+	s.parseSSEUsage(`{"type":"message_delta","usage":{"server_tool_use":{"web_search_requests":3}}}`, usage)
+	require.Equal(t, 3, usage.WebSearchRequests, "message_delta is cumulative and must replace, not add")
+}

@@ -39,6 +39,8 @@ const messages: Record<string, string> = {
   'usage.original': 'Original',
   'usage.userBilled': 'User billed',
   'usage.accountBilled': 'Account billed',
+  'usage.toolSurchargeLine': '{name} called {count} times, surcharge ${cost}',
+  'usage.toolSurchargeRate': '${price}/1,000 calls × {rate}x',
   'usage.imageUnit': ' images',
   'usage.imageCount': 'Image count',
   'usage.imageBillingSize': 'Billing size',
@@ -79,7 +81,13 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => messages[key] ?? key,
+      t: (key: string, params?: Record<string, string | number>) => {
+        let value = messages[key] ?? key
+        for (const [name, replacement] of Object.entries(params ?? {})) {
+          value = value.replaceAll(`{${name}}`, String(replacement))
+        }
+        return value
+      },
     }),
   }
 })
@@ -332,6 +340,38 @@ describe('admin UsageTable tooltip', () => {
       '$0.00000005', '$0.00000006', '$0.00000022', '$0.00000042', '$0.00000018',
     ]))
     if (billingMode === 'image') expect(amounts).toContain('$0.00000011')
+    wrapper.unmount()
+  })
+
+  it('shows hosted-tool surcharge in the shared usage row and cost details', async () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          request_id: 'req-web-search-surcharge',
+          billing_mode: 'token',
+          image_count: 0,
+          actual_cost: 0.0225,
+          total_cost: 0.03,
+          tool_surcharges: [{
+            name: 'web_search',
+            count: 3,
+            price: 10,
+            rate_multiplier: 0.75,
+            cost: 0.0225,
+          }],
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    expect(wrapper.text()).toContain('web_search called 3 times, surcharge $0.022500')
+    const triggers = wrapper.findAll('.group.relative')
+    await triggers[triggers.length - 1].trigger('mouseenter')
+    expect(wrapper.get('.fixed').text()).toContain('web_search × 3')
+    expect(wrapper.get('.fixed').text()).toContain('$0.02250000')
     wrapper.unmount()
   })
 

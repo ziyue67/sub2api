@@ -147,6 +147,57 @@ func TestNativeAnthropicPassthroughNoEffortStaysNil(t *testing.T) {
 	require.Nil(t, result.ReasoningEffort)
 }
 
+func TestNativeAnthropicPassthroughPropagatesWebSearchUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"k3","max_tokens":32,"stream":false,"messages":[{"role":"user","content":"search"}]}`)
+	response := nativeAnthropicBufferedResponse()
+	response.Body = io.NopCloser(strings.NewReader(
+		`{"id":"msg_1","type":"message","model":"k3","content":[],` +
+			`"usage":{"input_tokens":93,"output_tokens":16,"server_tool_use":{"web_search_requests":3}}}`,
+	))
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: &httpUpstreamRecorder{resp: response},
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(),
+		adaptiveProtocolTestContext("/v1/messages", body), nativeAnthropicTestAccount(), body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 3, result.WebSearchCalls)
+}
+
+func TestNativeAnthropicPassthroughStreamPropagatesCumulativeWebSearchUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"k3","max_tokens":32,"stream":true,"messages":[{"role":"user","content":"search"}]}`)
+	sse := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":1,"server_tool_use":{"web_search_requests":1}}}}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","usage":{"output_tokens":2,"server_tool_use":{"web_search_requests":3}}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(sse)),
+	}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: &httpUpstreamRecorder{resp: response},
+	}
+
+	result, err := svc.ForwardAsAnthropic(context.Background(),
+		adaptiveProtocolTestContext("/v1/messages", body), nativeAnthropicTestAccount(), body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 3, result.WebSearchCalls)
+}
+
 func TestNativeAnthropicPassthroughNormalizesGLM53Thinking(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
