@@ -559,13 +559,14 @@ func (s *OpenAIGatewayService) buildOpenAIToolSurcharges(result *OpenAIForwardRe
 			pricePer1K = *configured
 		}
 		cost := s.billingService.CalculateSearchCost(result.SearchCount, configured, multiplier)
-		if cost != nil && (cost.TotalCost > 0 || cost.ActualCost > 0) {
+		if cost != nil {
 			items = append(items, ToolSurcharge{
 				Name:           "web_search",
 				Count:          result.SearchCount,
 				Price:          pricePer1K,
 				RateMultiplier: multiplier,
 				Cost:           cost.ActualCost,
+				AccountCost:    defaultSearchPricePer1k / 1000 * float64(result.SearchCount),
 			})
 		}
 	}

@@ -228,6 +228,9 @@ type ToolSurcharge struct {
 	Price          float64 `json:"price"`
 	RateMultiplier float64 `json:"rate_multiplier"`
 	Cost           float64 `json:"cost"`
+	// AccountCost is the upstream tool cost before AccountRateMultiplier.
+	// It is persisted for audit, but intentionally omitted from user/admin DTOs.
+	AccountCost float64 `json:"account_cost,omitempty"`
 }
 
 func (u *UsageLog) TotalTokens() int {

@@ -220,6 +220,7 @@ func TestGatewayServiceRecordUsage_AddsAnthropicWebSearchSurcharge(t *testing.T)
 				Price:          10,
 				RateMultiplier: 0.75,
 				Cost:           0.0225,
+				AccountCost:    0.03,
 			}}, usageRepo.lastLog.ToolSurcharges)
 		})
 	}
@@ -261,6 +262,7 @@ func TestGatewayServiceRecordUsage_UsesAnthropicGroupWebSearchPrice(t *testing.T
 		Price:          20,
 		RateMultiplier: 0.75,
 		Cost:           0.03,
+		AccountCost:    0.02,
 	}}, usageRepo.lastLog.ToolSurcharges)
 }
 

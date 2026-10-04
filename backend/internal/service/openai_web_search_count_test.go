@@ -144,6 +144,34 @@ func TestBuildOpenAIToolSurcharges_MatchesNewAPIFormula(t *testing.T) {
 	)
 
 	require.Equal(t, []ToolSurcharge{{
-		Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225,
+		Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225, AccountCost: 0.03,
+	}}, items)
+}
+
+func TestBuildOpenAIToolSurcharges_TracksAccountCostWhenUserPriceIsFree(t *testing.T) {
+	zero := 0.0
+	svc := &OpenAIGatewayService{billingService: &BillingService{}}
+	items := svc.buildOpenAIToolSurcharges(
+		&OpenAIForwardResult{WebSearchCalls: 2},
+		&APIKey{Group: &Group{WebSearchPricePerCall: &zero}},
+		0.75,
+	)
+
+	require.Equal(t, []ToolSurcharge{{
+		Name: "web_search", Count: 2, Price: 0, RateMultiplier: 0.75, Cost: 0, AccountCost: 0.02,
+	}}, items)
+}
+
+func TestBuildOpenAIToolSurcharges_TracksXAIUpstreamSearchCost(t *testing.T) {
+	pricePer1K := 10.0
+	svc := &OpenAIGatewayService{billingService: &BillingService{}}
+	items := svc.buildOpenAIToolSurcharges(
+		&OpenAIForwardResult{SearchCount: 3},
+		&APIKey{Group: &Group{SearchPricePer1k: &pricePer1K}},
+		0.75,
+	)
+
+	require.Equal(t, []ToolSurcharge{{
+		Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225, AccountCost: 0.015,
 	}}, items)
 }

@@ -336,7 +336,7 @@ func TestUsageLogFromService_IncludesToolSurchargesForUserAndAdmin(t *testing.T)
 		RequestID: "req_web_search",
 		Model:     "gpt-5",
 		ToolSurcharges: []service.ToolSurcharge{{
-			Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225,
+			Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225, AccountCost: 0.03,
 		}},
 	}
 	want := []ToolSurcharge{{
@@ -345,6 +345,9 @@ func TestUsageLogFromService_IncludesToolSurchargesForUserAndAdmin(t *testing.T)
 
 	require.Equal(t, want, UsageLogFromService(log).ToolSurcharges)
 	require.Equal(t, want, UsageLogFromServiceAdmin(log).ToolSurcharges)
+	adminJSON, err := json.Marshal(UsageLogFromServiceAdmin(log))
+	require.NoError(t, err)
+	require.NotContains(t, string(adminJSON), "account_cost")
 }
 
 func f64Ptr(value float64) *float64 {

@@ -50,7 +50,7 @@ func buildWebSearchToolSurcharge(billingService *BillingService, callCount int, 
 		pricePerCall = *configured
 	}
 	cost := billingService.CalculateWebSearchCost(callCount, configured, multiplier)
-	if cost == nil || (cost.TotalCost == 0 && cost.ActualCost == 0) {
+	if cost == nil {
 		return ToolSurcharge{}, false
 	}
 	return ToolSurcharge{
@@ -59,6 +59,7 @@ func buildWebSearchToolSurcharge(billingService *BillingService, callCount int, 
 		Price:          pricePerCall * 1000,
 		RateMultiplier: multiplier,
 		Cost:           cost.ActualCost,
+		AccountCost:    defaultWebSearchPricePerCall * float64(callCount),
 	}, true
 }
 

@@ -1039,6 +1039,65 @@ func TestApplyAccountStatsCost_UsesUsageLogServiceTier(t *testing.T) {
 	require.InDelta(t, 0.4, *usageLog.AccountStatsCost, 1e-12)
 }
 
+func TestApplyAccountStatsCost_AddsUpstreamToolCostToCustomModelCost(t *testing.T) {
+	channel := &Channel{
+		ID:     1,
+		Status: StatusActive,
+		AccountStatsPricingRules: []AccountStatsPricingRule{{
+			AccountIDs: []int64{1},
+			Pricing: []ChannelModelPricing{{
+				Models:     []string{"claude-sonnet-4"},
+				InputPrice: testPtrFloat64(0.01),
+			}},
+		}},
+	}
+	cs := newTestChannelServiceForStats(t, channel, 10, PlatformAnthropic)
+	usageLog := &UsageLog{ToolSurcharges: []ToolSurcharge{{
+		Name: "web_search", Count: 2, Price: 20, RateMultiplier: 0.75, Cost: 0.03, AccountCost: 0.02,
+	}}}
+
+	applyAccountStatsCost(
+		context.Background(), usageLog, cs, nil,
+		1, 10, "claude-sonnet-4", "claude-sonnet-4",
+		UsageTokens{InputTokens: 100}, 1.04, time.Time{}, true,
+	)
+
+	require.NotNil(t, usageLog.AccountStatsCost)
+	require.InDelta(t, 1.02, *usageLog.AccountStatsCost, 1e-12)
+}
+
+func TestApplyAccountStatsCost_ReplacesUserToolPriceWithUpstreamCost(t *testing.T) {
+	channel := &Channel{ID: 1, Status: StatusActive, ApplyPricingToAccountStats: true}
+	cs := newTestChannelServiceForStats(t, channel, 10, PlatformAnthropic)
+
+	for _, tt := range []struct {
+		name      string
+		price     float64
+		userCost  float64
+		totalCost float64
+		wantCost  float64
+	}{
+		{name: "marked_up", price: 20, userCost: 0.03, totalCost: 0.79, wantCost: 0.77},
+		{name: "free_to_user", price: 0, userCost: 0, totalCost: 0.75, wantCost: 0.77},
+		{name: "free_tool_only", price: 0, userCost: 0, totalCost: 0, wantCost: 0.02},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usageLog := &UsageLog{ToolSurcharges: []ToolSurcharge{{
+				Name: "web_search", Count: 2, Price: tt.price, RateMultiplier: 0.75, Cost: tt.userCost, AccountCost: 0.02,
+			}}}
+
+			applyAccountStatsCost(
+				context.Background(), usageLog, cs, nil,
+				1, 10, "claude-sonnet-4", "claude-sonnet-4",
+				UsageTokens{InputTokens: 100}, tt.totalCost, time.Time{}, true,
+			)
+
+			require.NotNil(t, usageLog.AccountStatsCost)
+			require.InDelta(t, tt.wantCost, *usageLog.AccountStatsCost, 1e-12)
+		})
+	}
+}
+
 func TestApplyAccountStatsCost_LongContextFollowsAccountGate(t *testing.T) {
 	// 渠道售价不参与优先级 3：结果只取模型定价文件。
 	channel := &Channel{

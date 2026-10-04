@@ -328,13 +328,13 @@ func TestPrepareUsageLogInsert_PersistsToolSurchargesJSON(t *testing.T) {
 		RequestID: "req-tool-surcharge",
 		Model:     "gpt-5",
 		ToolSurcharges: []service.ToolSurcharge{{
-			Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225,
+			Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225, AccountCost: 0.03,
 		}},
 	})
 
 	encoded, ok := prepared.args[len(prepared.args)-2].(string)
 	require.True(t, ok)
-	require.JSONEq(t, `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225}]`, encoded)
+	require.JSONEq(t, `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225,"account_cost":0.03}]`, encoded)
 }
 
 func TestCoalesceTrimmedString(t *testing.T) {
@@ -981,7 +981,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
 			false, // native_compaction_v2
-			sql.NullString{Valid: true, String: `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225}]`}, // tool_surcharges
+			sql.NullString{Valid: true, String: `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225,"account_cost":0.03}]`}, // tool_surcharges
 			now,
 		}})
 		require.NoError(t, err)
@@ -996,7 +996,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.Equal(t, "output", *log.ImageSizeSource)
 		require.Equal(t, map[string]int{"4K": 2}, log.ImageSizeBreakdown)
 		require.Equal(t, []service.ToolSurcharge{{
-			Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225,
+			Name: "web_search", Count: 3, Price: 10, RateMultiplier: 0.75, Cost: 0.0225, AccountCost: 0.03,
 		}}, log.ToolSurcharges)
 	})
 
