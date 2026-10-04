@@ -236,7 +236,15 @@
               class="mt-0.5 flex items-center gap-1 text-[11px] text-cyan-600 dark:text-cyan-400"
               :title="t('usage.toolSurchargeRate', { price: item.price.toFixed(6), rate: formatMultiplier(item.rate_multiplier) })"
             >
-              <Icon name="search" size="xs" class="h-3 w-3 shrink-0" />
+              <span
+                v-if="isWebSearchSurcharge(item.name)"
+                data-testid="web-search-surcharge-badge"
+                class="inline-flex shrink-0 items-center gap-0.5 rounded bg-cyan-100 px-1 py-px text-[10px] font-semibold leading-tight text-cyan-700 ring-1 ring-inset ring-cyan-200 dark:bg-cyan-500/20 dark:text-cyan-300 dark:ring-cyan-500/30"
+              >
+                <Icon name="search" size="xs" class="h-2.5 w-2.5" />
+                WEB
+              </span>
+              <Icon v-else name="search" size="xs" class="h-3 w-3 shrink-0" />
               <span>{{ t('usage.toolSurchargeLine', { name: item.name, count: item.count, cost: item.cost.toFixed(6) }) }}</span>
             </div>
           </div>
@@ -513,7 +521,17 @@
               :key="`tooltip-${item.name}-${index}`"
               class="flex items-center justify-between gap-4"
             >
-              <span class="text-gray-400">{{ item.name }} × {{ item.count }}</span>
+              <span class="flex items-center gap-1.5 text-gray-400">
+                <span
+                  v-if="isWebSearchSurcharge(item.name)"
+                  data-testid="web-search-surcharge-tooltip-badge"
+                  class="inline-flex shrink-0 items-center gap-0.5 rounded bg-cyan-500/20 px-1 py-px text-[10px] font-semibold leading-tight text-cyan-300 ring-1 ring-inset ring-cyan-500/30"
+                >
+                  <Icon name="search" size="xs" class="h-2.5 w-2.5" />
+                  WEB
+                </span>
+                <span>{{ item.name }} × {{ item.count }}</span>
+              </span>
               <span class="font-medium text-cyan-300">${{ item.cost.toFixed(8) }}</span>
             </div>
           </div>
@@ -663,6 +681,8 @@ const ipGeoBatchLoading = ref(false)
 
 // 长上下文计费 x2 徽标展示开关（公开设置，默认开启；未加载/缺失时按开启处理）
 const showLongContextBadge = computed(() => appStore.cachedPublicSettings?.usage_show_long_context_badge !== false)
+
+const isWebSearchSurcharge = (name: string): boolean => name.trim().toLowerCase() === 'web_search'
 
 const billableToolSurcharges = (row: AdminUsageLog | null | undefined) =>
   (row?.tool_surcharges ?? []).filter((item) =>

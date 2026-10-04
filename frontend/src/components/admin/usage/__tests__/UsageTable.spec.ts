@@ -368,10 +368,39 @@ describe('admin UsageTable tooltip', () => {
     })
 
     expect(wrapper.text()).toContain('web_search called 3 times, surcharge $0.022500')
+    expect(wrapper.get('[data-testid="web-search-surcharge-badge"]').text()).toContain('WEB')
     const triggers = wrapper.findAll('.group.relative')
     await triggers[triggers.length - 1].trigger('mouseenter')
+    expect(wrapper.get('[data-testid="web-search-surcharge-tooltip-badge"]').text()).toContain('WEB')
     expect(wrapper.get('.fixed').text()).toContain('web_search × 3')
     expect(wrapper.get('.fixed').text()).toContain('$0.02250000')
+    wrapper.unmount()
+  })
+
+  it('does not mark other tool surcharges as web search', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          request_id: 'req-other-tool-surcharge',
+          billing_mode: 'token',
+          image_count: 0,
+          tool_surcharges: [{
+            name: 'code_interpreter',
+            count: 1,
+            price: 10,
+            rate_multiplier: 1,
+            cost: 0.01,
+          }],
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    expect(wrapper.text()).toContain('code_interpreter called 1 times, surcharge $0.010000')
+    expect(wrapper.find('[data-testid="web-search-surcharge-badge"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
