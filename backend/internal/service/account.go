@@ -2666,6 +2666,18 @@ func (a *Account) IsAnthropicAPIKeyPassthroughEnabled() bool {
 	return ok && enabled
 }
 
+// IsAnthropicAPIKeyForceCacheTTL1hEnabled reports whether this Anthropic API
+// Key account should upgrade existing ephemeral cache breakpoints to a real 1h
+// TTL. This is a request transformation only; it does not rewrite usage or
+// billing classifications.
+func (a *Account) IsAnthropicAPIKeyForceCacheTTL1hEnabled() bool {
+	if a == nil || a.Platform != PlatformAnthropic || a.Type != AccountTypeAPIKey || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra["force_anthropic_cache_ttl_1h"].(bool)
+	return ok && enabled
+}
+
 // WebSearch 模拟三态常量
 const (
 	WebSearchModeDefault  = "default"  // 跟随渠道配置
