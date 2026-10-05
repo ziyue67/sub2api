@@ -1701,6 +1701,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		responseID := ""
 		usage := OpenAIUsage{}
 		imageCounter := newOpenAIImageOutputCounter()
+		webSearchCounter := newOpenAIWebSearchCallCounter()
 		var firstTokenMs *int
 		reqStream := openAIWSPayloadBoolFromRaw(payload, "stream", true)
 		turnPreviousResponseID := openAIWSPayloadStringFromRaw(payload, "previous_response_id")
@@ -1728,14 +1729,56 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				mappedModelBytes = []byte(mappedModel)
 			}
 		}
+		resultWithUsage := func(terminalEvent string) *OpenAIForwardResult {
+			result := &OpenAIForwardResult{
+				RequestID:                     responseID,
+				Usage:                         usage,
+				Model:                         originalModel,
+				UpstreamModel:                 mappedModel,
+				UpstreamResponseModel:         responseModelObserver.Model(),
+				UpstreamResponseModelConflict: responseModelObserver.Conflict(),
+				UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
+				ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(payload)),
+				ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel),
+				RequestedReasoningEffort:      requestedReasoningEffort,
+				Stream:                        reqStream,
+				OpenAIWSMode:                  true,
+				UpstreamTerminalEvent:         terminalEvent,
+				ResponseHeaders:               lease.HandshakeHeaders(),
+				Duration:                      time.Since(turnStart),
+				FirstTokenMs:                  firstTokenMs,
+			}
+			if replayInput := replayCollector.Items(); len(replayInput) > 0 {
+				result.wsReplayInput = replayInput
+				result.wsReplayInputExists = true
+			}
+			if imageCount := imageCounter.Count(); imageCount > 0 {
+				result.ImageCount = imageCount
+				result.ImageSize = imageSizeTier
+				result.ImageInputSize = imageInputSize
+				result.ImageOutputSizes = imageCounter.Sizes()
+				result.BillingModel = imageBillingModel
+			}
+			if account != nil && !account.IsGrok() {
+				result.WebSearchCalls = webSearchCounter.Count()
+			}
+			return result
+		}
+		resultWithCompletedWebSearch := func() *OpenAIForwardResult {
+			result := resultWithUsage("")
+			if result.WebSearchCalls <= 0 {
+				return nil
+			}
+			return result
+		}
 		for {
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
 			if readErr != nil {
 				lease.MarkBroken()
 				if errors.Is(readErr, context.Canceled) && errors.Is(context.Cause(ctx), errOpenAIWSUsageDrainExpired) {
-					return nil, errOpenAIWSUsageDrainExpired
+					return resultWithCompletedWebSearch(), errOpenAIWSUsageDrainExpired
 				}
-				return nil, wrapOpenAIWSIngressTurnError(
+				return resultWithCompletedWebSearch(), wrapOpenAIWSIngressTurnError(
 					"read_upstream",
 					fmt.Errorf("read upstream websocket event: %w", readErr),
 					wroteDownstream,
@@ -1878,6 +1921,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				firstTokenMs = &ms
 			}
 			imageCounter.AddSSEData(upstreamMessage)
+			webSearchCounter.ObserveSSEData(upstreamMessage)
 
 			if !clientDisconnected {
 				if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && bytes.Contains(upstreamMessage, mappedModelBytes) {
@@ -1920,7 +1964,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 							truncateOpenAIWSLogValue(closeReason, openAIWSHeaderValueMaxLen),
 						)
 					} else {
-						return nil, wrapOpenAIWSIngressTurnError(
+						return resultWithCompletedWebSearch(), wrapOpenAIWSIngressTurnError(
 							"write_client",
 							fmt.Errorf("write client websocket event: %w", err),
 							wroteDownstream,
@@ -1958,37 +2002,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 						clientDisconnected,
 					)
 				}
-				imageCount := imageCounter.Count()
-				result := &OpenAIForwardResult{
-					RequestID:                     responseID,
-					Usage:                         usage,
-					Model:                         originalModel,
-					UpstreamModel:                 mappedModel,
-					UpstreamResponseModel:         responseModelObserver.Model(),
-					UpstreamResponseModelConflict: responseModelObserver.Conflict(),
-					UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
-					ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(payload)),
-					ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel),
-					RequestedReasoningEffort:      requestedReasoningEffort,
-					Stream:                        reqStream,
-					OpenAIWSMode:                  true,
-					UpstreamTerminalEvent:         terminalEvent,
-					ResponseHeaders:               lease.HandshakeHeaders(),
-					Duration:                      time.Since(turnStart),
-					FirstTokenMs:                  firstTokenMs,
-				}
-				if replayInput := replayCollector.Items(); len(replayInput) > 0 {
-					result.wsReplayInput = replayInput
-					result.wsReplayInputExists = true
-				}
-				if imageCount > 0 {
-					result.ImageCount = imageCount
-					result.ImageSize = imageSizeTier
-					result.ImageInputSize = imageInputSize
-					result.ImageOutputSizes = imageCounter.Sizes()
-					result.BillingModel = imageBillingModel
-				}
-				return result, nil
+				return resultWithUsage(terminalEvent), nil
 			}
 		}
 	}
@@ -2571,14 +2585,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				sessionLease.MarkBroken()
 				controlErr := clientReader.closeForControl(ctx)
 				if hooks != nil && hooks.AfterTurn != nil {
-					hooks.AfterTurn(turn, nil, controlErr)
+					hooks.AfterTurn(turn, result, controlErr)
 				}
 				return controlErr
 			}
 			if errors.Is(relayErr, errOpenAIWSUsageDrainExpired) && clientReader.disconnected() {
 				sessionLease.MarkBroken()
 				if hooks != nil && hooks.AfterTurn != nil {
-					hooks.AfterTurn(turn, nil, nil)
+					hooks.AfterTurn(turn, result, nil)
 				}
 				return nil
 			}
@@ -2590,7 +2604,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					relayErr = closeErr
 				}
 				if hooks != nil && hooks.AfterTurn != nil {
-					hooks.AfterTurn(turn, nil, relayErr)
+					hooks.AfterTurn(turn, result, relayErr)
 				}
 				return relayErr
 			default:
@@ -2614,7 +2628,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			sessionLease.MarkBroken()
 			if hooks != nil && hooks.AfterTurn != nil {
-				hooks.AfterTurn(turn, nil, finalErr)
+				hooks.AfterTurn(turn, result, finalErr)
 			}
 			return finalErr
 		}

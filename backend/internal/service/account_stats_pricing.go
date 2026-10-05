@@ -260,9 +260,8 @@ func calculateTokenStatsCost(pricing *ChannelModelPricing, tokens UsageTokens) *
 	return &cost
 }
 
-// applyAccountStatsCost resolves the account stats cost for a usage log entry.
-// It resolves the upstream model (falling back to the requested model) and calls
-// the 4-level priority chain via resolveAccountStatsCost.
+// applyAccountStatsCost resolves model cost through the 4-level priority chain,
+// then replaces the user-configured tool surcharge with its upstream cost.
 func applyAccountStatsCost(
 	ctx context.Context,
 	usageLog *UsageLog,
@@ -274,25 +273,58 @@ func applyAccountStatsCost(
 	pricingAt time.Time,
 	longContextPricingEnabled bool,
 ) {
+	if usageLog == nil {
+		return
+	}
 	model := upstreamModel
 	if model == "" {
 		model = requestedModel
 	}
 	requestCount := 1
-	if usageLog != nil && usageLog.ImageCount > 0 {
+	if usageLog.ImageCount > 0 {
 		requestCount = usageLog.ImageCount
 	}
 	serviceTier := ""
 	reasoningEffort := ""
-	if usageLog != nil && usageLog.ServiceTier != nil {
+	if usageLog.ServiceTier != nil {
 		serviceTier = *usageLog.ServiceTier
 	}
-	if usageLog != nil && usageLog.ReasoningEffort != nil {
+	if usageLog.ReasoningEffort != nil {
 		reasoningEffort = *usageLog.ReasoningEffort
 	}
-	usageLog.AccountStatsCost = resolveAccountStatsCost(
-		ctx, cs, bs, accountID, groupID, model, tokens, requestCount, totalCost, serviceTier, pricingAt, longContextPricingEnabled, reasoningEffort,
+	userToolCost, accountToolCost := toolSurchargeCostBases(usageLog.ToolSurcharges)
+	modelTotalCost := totalCost - userToolCost
+	if modelTotalCost < 0 {
+		modelTotalCost = 0
+	}
+
+	accountStatsCost := resolveAccountStatsCost(
+		ctx, cs, bs, accountID, groupID, model, tokens, requestCount, modelTotalCost, serviceTier, pricingAt, longContextPricingEnabled, reasoningEffort,
 	)
+	if accountToolCost > 0 {
+		if accountStatsCost == nil {
+			// Preserve the normal total-cost fallback for the non-tool portion,
+			// while replacing the user-configured tool price with upstream cost.
+			accountStatsCost = &modelTotalCost
+		}
+		*accountStatsCost += accountToolCost
+	}
+	usageLog.AccountStatsCost = accountStatsCost
+}
+
+func toolSurchargeCostBases(items []ToolSurcharge) (userCost, accountCost float64) {
+	for _, item := range items {
+		if item.Count <= 0 {
+			continue
+		}
+		if item.Price > 0 {
+			userCost += item.Price / 1000 * float64(item.Count)
+		}
+		if item.AccountCost > 0 {
+			accountCost += item.AccountCost
+		}
+	}
+	return userCost, accountCost
 }
 
 // accountStatsLongContextPricingEnabled 判断账号统计成本是否计入长上下文阶梯。

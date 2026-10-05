@@ -38,6 +38,31 @@ func webSearchPricePerCallFromAPIKey(apiKey *APIKey) *float64 {
 	return apiKey.Group.WebSearchPricePerCall
 }
 
+// buildWebSearchToolSurcharge keeps the persisted detail and the charged
+// amount on the same pricing path for OpenAI Responses and Anthropic Messages.
+func buildWebSearchToolSurcharge(billingService *BillingService, callCount int, apiKey *APIKey, multiplier float64) (ToolSurcharge, bool) {
+	if billingService == nil || callCount <= 0 {
+		return ToolSurcharge{}, false
+	}
+	pricePerCall := defaultWebSearchPricePerCall
+	configured := webSearchPricePerCallFromAPIKey(apiKey)
+	if configured != nil && *configured >= 0 {
+		pricePerCall = *configured
+	}
+	cost := billingService.CalculateWebSearchCost(callCount, configured, multiplier)
+	if cost == nil {
+		return ToolSurcharge{}, false
+	}
+	return ToolSurcharge{
+		Name:           "web_search",
+		Count:          callCount,
+		Price:          pricePerCall * 1000,
+		RateMultiplier: multiplier,
+		Cost:           cost.ActualCost,
+		AccountCost:    defaultWebSearchPricePerCall * float64(callCount),
+	}, true
+}
+
 func groupSearchPricePer1kFromAPIKey(apiKey *APIKey) *float64 {
 	if apiKey == nil || apiKey.Group == nil {
 		return nil

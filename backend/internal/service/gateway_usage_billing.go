@@ -807,6 +807,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
 	}
 	multiplier *= account.UserGroupRateMultiplier()
+	// Hosted-tool pricing follows the group/user rate but not token peak-hour
+	// adjustments, matching the existing OpenAI Responses billing contract.
+	baseMultiplier := multiplier
 	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
 	// 不并入上面的 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
 	pricingAt := input.PricingAt
@@ -851,7 +854,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		input.BillingModelSource,
 		result.UpstreamResponseModel,
 		result.UpstreamResponseModelConflict,
-		result.ImageCount > 0 || result.AudioUsage != nil || result.SearchCount > 0,
+		result.ImageCount > 0 || result.AudioUsage != nil || result.SearchCount > 0 || result.Usage.WebSearchRequests > 0,
 	); responseModel != "" && !strings.EqualFold(responseModel, strings.TrimSpace(billingModel)) {
 		if identified, responseChannelPriced := s.hasIdentifiedResponseModelPricing(ctx, responseModel, apiKey); identified {
 			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
@@ -864,6 +867,14 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			}
 		}
 	}
+	if result.Usage.WebSearchRequests > 0 {
+		webSearchCost := s.billingService.CalculateWebSearchCost(
+			result.Usage.WebSearchRequests,
+			webSearchPricePerCallFromAPIKey(apiKey),
+			baseMultiplier,
+		)
+		cost = addToolSurchargeCost(cost, webSearchCost)
+	}
 
 	// 判断计费方式：订阅模式 vs 余额模式
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
@@ -875,7 +886,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 创建使用日志
 	accountRateMultiplier := account.BillingRateMultiplier()
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
-		requestedModel, multiplier, imageMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
+		requestedModel, multiplier, imageMultiplier, baseMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
 	usageLog.RateMultiplier *= costModelBillingMultiplier(cost)
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
@@ -1189,6 +1200,7 @@ func (s *GatewayService) buildRecordUsageLog(
 	requestedModel string,
 	multiplier float64,
 	imageMultiplier float64,
+	toolMultiplier float64,
 	accountRateMultiplier float64,
 	billingType int8,
 	cacheTTLOverridden bool,
@@ -1242,6 +1254,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		ImageOutputSize:          optionalTrimmedStringPtr(result.ImageOutputSize),
 		ImageSizeSource:          optionalTrimmedStringPtr(result.ImageSizeSource),
 		ImageSizeBreakdown:       result.ImageSizeBreakdown,
+		ToolSurcharges:           gatewayToolSurcharges(s.billingService, result, apiKey, toolMultiplier),
 		CacheTTLOverridden:       cacheTTLOverridden,
 		ChannelID:                optionalInt64Ptr(input.ChannelID),
 		ModelMappingChain:        optionalTrimmedStringPtr(input.ModelMappingChain),
@@ -1267,6 +1280,17 @@ func (s *GatewayService) buildRecordUsageLog(
 	}
 
 	return usageLog
+}
+
+func gatewayToolSurcharges(billingService *BillingService, result *ForwardResult, apiKey *APIKey, multiplier float64) []ToolSurcharge {
+	if result == nil {
+		return nil
+	}
+	item, ok := buildWebSearchToolSurcharge(billingService, result.Usage.WebSearchRequests, apiKey, multiplier)
+	if !ok {
+		return nil
+	}
+	return []ToolSurcharge{item}
 }
 
 // resolveBillingMode 根据计费结果和请求类型确定计费模式。

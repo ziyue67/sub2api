@@ -384,6 +384,8 @@ export default {
     accountCost: 'Cost',
     userBilled: 'User billed',
     accountBilled: 'Account billed',
+    toolSurchargeLine: '{name} called {count} times, surcharge ${cost}',
+    toolSurchargeRate: '${price}/1,000 calls × {rate}x',
     resetNow: 'Now',
     resetPending: 'Pending refresh',
     accountMultiplier: 'Account rate',

@@ -649,7 +649,11 @@ func TestRelay_OnTurnComplete_PerTerminalEvent(t *testing.T) {
 	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
 		{
 			msgType: coderws.MessageText,
-			payload: []byte(`{"type":"response.completed","response":{"id":"resp_turn_1","usage":{"input_tokens":2,"output_tokens":1}}}`),
+			payload: []byte(`{"type":"response.completed","response":{"id":"resp_turn_1","output":[{"type":"web_search_call","id":"ws_turn_1"}],"usage":{"input_tokens":2,"output_tokens":1}}}`),
+		},
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_turn_2","status":"completed"}}`),
 		},
 		{
 			msgType: coderws.MessageText,
@@ -673,12 +677,48 @@ func TestRelay_OnTurnComplete_PerTerminalEvent(t *testing.T) {
 	require.Equal(t, "response.completed", turns[0].TerminalEventType)
 	require.Equal(t, 2, turns[0].Usage.InputTokens)
 	require.Equal(t, 1, turns[0].Usage.OutputTokens)
+	require.Equal(t, 1, turns[0].WebSearchCalls)
 	require.Equal(t, "resp_turn_2", turns[1].RequestID)
 	require.Equal(t, "response.failed", turns[1].TerminalEventType)
 	require.Equal(t, 3, turns[1].Usage.InputTokens)
 	require.Equal(t, 4, turns[1].Usage.OutputTokens)
+	require.Equal(t, 1, turns[1].WebSearchCalls)
 	require.Equal(t, 5, result.Usage.InputTokens)
 	require.Equal(t, 5, result.Usage.OutputTokens)
+}
+
+func TestRelay_OnTurnComplete_PreservesCompletedWebSearchBeforeTransportEOF(t *testing.T) {
+	t.Parallel()
+
+	clientConn := newPassthroughTestFrameConn(nil, false)
+	upstreamConn := newPassthroughTestFrameConn([]passthroughTestFrame{
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.created","response":{"id":"resp_interrupted_search"}}`),
+		},
+		{
+			msgType: coderws.MessageText,
+			payload: []byte(`{"type":"response.output_item.done","response_id":"resp_interrupted_search","output_index":0,"item":{"type":"web_search_call","id":"ws_interrupted","status":"completed"}}`),
+		},
+	}, true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	turns := make([]RelayTurnResult, 0, 1)
+	_, relayExit := Relay(
+		ctx,
+		clientConn,
+		upstreamConn,
+		[]byte(`{"type":"response.create","model":"gpt-5.3-codex","input":[]}`),
+		RelayOptions{OnTurnComplete: func(turn RelayTurnResult) { turns = append(turns, turn) }},
+	)
+
+	require.NotNil(t, relayExit)
+	require.Equal(t, "read_upstream", relayExit.Stage)
+	require.Len(t, turns, 1)
+	require.Equal(t, "resp_interrupted_search", turns[0].RequestID)
+	require.Equal(t, "relay.interrupted", turns[0].TerminalEventType)
+	require.Equal(t, 1, turns[0].WebSearchCalls)
 }
 
 func TestRelay_OnTurnComplete_BareErrorWithoutIDBeforeLaterCompleted(t *testing.T) {

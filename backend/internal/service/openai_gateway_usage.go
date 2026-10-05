@@ -421,6 +421,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageSizeSource:          optionalTrimmedStringPtr(result.ImageSizeSource),
 		ImageSizeBreakdown:       imageSizeBreakdown,
 		NativeCompactionV2:       input.NativeCompactionV2,
+		ToolSurcharges:           s.buildOpenAIToolSurcharges(result, apiKey, baseMultiplier),
 	}
 	isVideoUsage := isGrokVideoUsageResult(result, billingModels)
 	if isVideoUsage {
@@ -543,6 +544,38 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	return nil
 }
 
+func (s *OpenAIGatewayService) buildOpenAIToolSurcharges(result *OpenAIForwardResult, apiKey *APIKey, multiplier float64) []ToolSurcharge {
+	if s == nil || s.billingService == nil || result == nil {
+		return nil
+	}
+	items := make([]ToolSurcharge, 0, 2)
+	if item, ok := buildWebSearchToolSurcharge(s.billingService, result.WebSearchCalls, apiKey, multiplier); ok {
+		items = append(items, item)
+	}
+	if result.SearchCount > 0 {
+		pricePer1K := defaultSearchPricePer1k
+		configured := groupSearchPricePer1kFromAPIKey(apiKey)
+		if configured != nil {
+			pricePer1K = *configured
+		}
+		cost := s.billingService.CalculateSearchCost(result.SearchCount, configured, multiplier)
+		if cost != nil {
+			items = append(items, ToolSurcharge{
+				Name:           "web_search",
+				Count:          result.SearchCount,
+				Price:          pricePer1K,
+				RateMultiplier: multiplier,
+				Cost:           cost.ActualCost,
+				AccountCost:    defaultSearchPricePer1k / 1000 * float64(result.SearchCount),
+			})
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return items
+}
+
 // hasIdentifiedOpenAIResponsePricing 判断上游自报的响应模型是否可以作为计费基准，
 // 并回传它是否解析到了渠道级定价（供 responseModelBillingAdoptable 的跨定价源守卫使用，
 // 避免为此再解析一次）。
@@ -588,37 +621,53 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	pricingAt time.Time,
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
+	var toolSurchargeCost *CostBreakdown
 	if result != nil && result.WebSearchCalls > 0 {
-		// Codex alpha/search 网页搜索按次计费：上游不返回 usage/token 字段，单价只取
-		// 分组覆盖价（nil 时默认 0.01 = 官方 $10/1000 次），不参与渠道级模型定价。
-		// 倍率与 image/video 按次口径一致：使用不含高峰因子的基础倍率
-		//（用户专属 > 分组 rate_multiplier > 系统默认），与分组表单的价格预览承诺一致。
-		return s.billingService.CalculateWebSearchCost(result.WebSearchCalls, webSearchPricePerCallFromAPIKey(apiKey), webSearchMultiplier), nil
+		// OpenAI hosted web search is an additive per-call surcharge. The same
+		// pricing also covers the standalone alpha/search endpoint, which has no
+		// token usage and therefore settles to this surcharge alone below.
+		toolSurchargeCost = addToolSurchargeCost(
+			toolSurchargeCost,
+			s.billingService.CalculateWebSearchCost(result.WebSearchCalls, webSearchPricePerCallFromAPIKey(apiKey), webSearchMultiplier),
+		)
 	}
 	if isGrokVideoUsageResult(result, billingModels) {
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
-			return s.calculateOpenAIVideoCost(ctx, billingModel, apiKey, result, videoMultiplier), nil
+			return addToolSurchargeCost(
+				s.calculateOpenAIVideoCost(ctx, billingModel, apiKey, result, videoMultiplier),
+				toolSurchargeCost,
+			), nil
 		}
 	}
 	if result != nil && result.AudioUsage != nil {
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved != nil &&
 			(resolved.Mode == BillingModePerRequest) {
 			gid := apiKey.Group.ID
-			return s.billingService.CalculateCostUnified(CostInput{
+			cost, err := s.billingService.CalculateCostUnified(CostInput{
 				Ctx: ctx, Model: billingModel, GroupID: &gid, Group: apiKey.Group,
 				UsageUnits: result.AudioUsage.DurationOrUnits, SizeTier: result.AudioUsage.Mode,
 				RateMultiplier: webSearchMultiplier, Resolver: s.resolver, Resolved: resolved,
 				ReasoningEffort: optionalStringValue(result.ReasoningEffort),
 			})
+			if err != nil {
+				return nil, err
+			}
+			return addToolSurchargeCost(cost, toolSurchargeCost), nil
 		}
 		cfg := groupAudioPriceConfigFromAPIKey(apiKey)
-		return s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, cfg, webSearchMultiplier), nil
+		return addToolSurchargeCost(
+			s.billingService.CalculateAudioCost(result.AudioUsage.Mode, result.AudioUsage.DurationOrUnits, cfg, webSearchMultiplier),
+			toolSurchargeCost,
+		), nil
 	}
 
 	if result != nil && result.ImageCount > 0 {
 		// 渠道定价为 token 计费时走 token 路径，否则走图片计费
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
-			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
+			return addToolSurchargeCost(
+				s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier),
+				toolSurchargeCost,
+			), nil
 		}
 	}
 
@@ -664,6 +713,11 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 			)
 		}
 		searchCost = s.billingService.CalculateSearchCost(result.SearchCount, price, webSearchMultiplier)
+		toolSurchargeCost = addToolSurchargeCost(toolSurchargeCost, searchCost)
+	}
+
+	if !usageTokensHaveBillableUnits(tokens) && toolSurchargeCost != nil {
+		return toolSurchargeCost, nil
 	}
 
 	tokenBillingAttempted := len(billingModels) > 0 && billingModel != ""
@@ -675,8 +729,8 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 			return nil, fmt.Errorf("calculate OpenAI usage cost failed for billing models %s: %w", strings.Join(billingModels, ","), lastErr)
 		}
 		// Search-only (no model / pure tool path): allow search billing alone.
-		if searchCost != nil {
-			return searchCost, nil
+		if toolSurchargeCost != nil {
+			return toolSurchargeCost, nil
 		}
 		// 空候选按「无价可循」处理并携带 ErrModelPricingUnavailable：上层据此走
 		// 零成本+告警落账，而不是丢弃整条 usage 记录。CN 账号的 claude-* 候选被
@@ -686,13 +740,35 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		}
 		return nil, fmt.Errorf("calculate OpenAI usage cost failed for billing models %s: %w", strings.Join(billingModels, ","), lastErr)
 	}
-	if searchCost == nil || (searchCost.TotalCost == 0 && searchCost.ActualCost == 0) {
+	if toolSurchargeCost == nil || (toolSurchargeCost.TotalCost == 0 && toolSurchargeCost.ActualCost == 0) {
 		return tokenCost, nil
 	}
-	// Additive: tokens + search surcharge.
-	tokenCost.TotalCost += searchCost.TotalCost
-	tokenCost.ActualCost += searchCost.ActualCost
+	// Additive: tokens + hosted-tool surcharge.
+	tokenCost.TotalCost += toolSurchargeCost.TotalCost
+	tokenCost.ActualCost += toolSurchargeCost.ActualCost
 	return tokenCost, nil
+}
+
+func addToolSurchargeCost(base, surcharge *CostBreakdown) *CostBreakdown {
+	if surcharge == nil {
+		return base
+	}
+	if base == nil {
+		cloned := *surcharge
+		return &cloned
+	}
+	base.TotalCost += surcharge.TotalCost
+	base.ActualCost += surcharge.ActualCost
+	if base.BillingMode == "" {
+		base.BillingMode = surcharge.BillingMode
+	}
+	return base
+}
+
+func usageTokensHaveBillableUnits(tokens UsageTokens) bool {
+	return tokens.InputTokens > 0 || tokens.ImageInputTokens > 0 || tokens.ImageCacheReadTokens > 0 ||
+		tokens.OutputTokens > 0 || tokens.CacheCreationTokens > 0 || tokens.CacheReadTokens > 0 ||
+		tokens.CacheCreation5mTokens > 0 || tokens.CacheCreation1hTokens > 0 || tokens.ImageOutputTokens > 0
 }
 
 func isGrokVideoBillingModel(model string) bool {

@@ -1146,10 +1146,10 @@ export default {
         pricePlaceholder: 'optional'
       },
       webSearchPricing: {
-        title: 'Codex Web Search Pricing',
+        title: 'Hosted Web Search Pricing',
         pricePerCall: 'Price per search call (USD)',
         pricePerCallHint:
-          'Leave empty to use the default $0.01 per call (official pricing: $10 per 1,000 calls); 0 means free. The group rate multiplier is applied on top.',
+          'Applies to server-side web_search in OpenAI Responses and Anthropic Messages. Leave empty to use the default $0.01 per call (official pricing: $10 per 1,000 calls); 0 means free. The group rate multiplier is applied on top.',
         finalPricePreview: 'Per-call price after current multiplier: {price}'
       },
       peakRate: {

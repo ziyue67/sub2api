@@ -2063,7 +2063,7 @@ const (
 	defaultGrokImagineVideo15Price720P  = 0.14
 	defaultGrokImagineVideo15Price1080P = 0.25
 
-	// Codex alpha/search 网页搜索单次默认价：OpenAI 官方 web search 定价 $10/1000 次。
+	// 托管网页搜索单次默认价：OpenAI/Anthropic 官方 web search 定价 $10/1000 次。
 	defaultWebSearchPricePerCall = 0.01
 
 	// xAI server-side web/X search and code execution are $5/1000 calls.
@@ -2076,8 +2076,8 @@ const (
 	defaultAudioSTTPricePerHour         = 0.10
 )
 
-// CalculateWebSearchCost 计算 Codex alpha/search 网页搜索按次费用。
-// callCount: 搜索调用次数（每次请求为 1）
+// CalculateWebSearchCost 计算 OpenAI Responses / Anthropic Messages 托管网页搜索按次费用。
+// callCount: 上游 usage 报告或完成态事件中确认的搜索调用次数
 // groupPrice: 分组配置的单次价格（nil 表示使用默认价 0.01；0 表示免费）
 // rateMultiplier: 分组费率倍数
 func (s *BillingService) CalculateWebSearchCost(callCount int, groupPrice *float64, rateMultiplier float64) *CostBreakdown {

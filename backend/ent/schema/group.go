@@ -168,7 +168,7 @@ func (Group) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
-			Comment("Codex alpha/search 网页搜索单次价格（USD/次）；nil 表示使用默认价 0.01（官方 $10/1000 次）"),
+			Comment("托管网页搜索单次价格（USD/次，OpenAI Responses 与 Anthropic Messages 共用）；nil 表示使用默认价 0.01（官方 $10/1000 次）"),
 
 		// 搜索/工具调用显式定价（per 1k calls），用于 Grok web_search 等。
 		field.Float("search_price_per_1k").

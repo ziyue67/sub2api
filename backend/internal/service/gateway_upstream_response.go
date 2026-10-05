@@ -658,7 +658,8 @@ type streamingResult struct {
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
 }
 
-// hasObservedTokens 报告流式过程中是否已观测到任何上游计量的 token。
+// hasObservedTokens 报告流式过程中是否已观测到任何上游计量的用量。
+// 保留旧名称以减少调用面；server tool 次数同样代表可计费用量。
 func (u *ClaudeUsage) hasObservedTokens() bool {
 	if u == nil {
 		return false
@@ -666,7 +667,7 @@ func (u *ClaudeUsage) hasObservedTokens() bool {
 	return u.InputTokens > 0 || u.OutputTokens > 0 ||
 		u.CacheCreationInputTokens > 0 || u.CacheReadInputTokens > 0 ||
 		u.CacheCreation5mTokens > 0 || u.CacheCreation1hTokens > 0 ||
-		u.ImageOutputTokens > 0
+		u.ImageOutputTokens > 0 || u.WebSearchRequests > 0
 }
 
 // partialStreamUsageResult 在流式转发中途出错时，把已观测到 usage 的部分结果包装为
@@ -1213,6 +1214,8 @@ type sseUsagePatch struct {
 	hasCacheCreation5m       bool
 	cacheCreation1hTokens    int
 	hasCacheCreation1h       bool
+	webSearchRequests        int
+	hasWebSearchRequests     bool
 }
 
 func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePatch {
@@ -1258,6 +1261,12 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		if serverTools, ok := usageObj["server_tool_use"].(map[string]any); ok {
+			if v, exists := parseSSEUsageInt(serverTools["web_search_requests"]); exists {
+				patch.webSearchRequests = v
+				patch.hasWebSearchRequests = true
+			}
+		}
 		return patch
 
 	case "message_delta":
@@ -1293,6 +1302,12 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		if serverTools, ok := usageObj["server_tool_use"].(map[string]any); ok {
+			if v, exists := parseSSEUsageInt(serverTools["web_search_requests"]); exists {
+				patch.webSearchRequests = v
+				patch.hasWebSearchRequests = true
+			}
+		}
 		return patch
 	}
 
@@ -1321,6 +1336,11 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 	}
 	if patch.hasCacheCreation1h {
 		usage.CacheCreation1hTokens = patch.cacheCreation1hTokens
+	}
+	if patch.hasWebSearchRequests {
+		// Anthropic reports a cumulative request count. Replace the prior value;
+		// adding message_start and message_delta would double bill one request.
+		usage.WebSearchRequests = patch.webSearchRequests
 	}
 }
 
@@ -1455,6 +1475,7 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 		response.Usage.CacheCreation5mTokens = int(cc5m.Int())
 		response.Usage.CacheCreation1hTokens = int(cc1h.Int())
 	}
+	response.Usage.WebSearchRequests = int(gjson.GetBytes(body, "usage.server_tool_use.web_search_requests").Int())
 
 	// 兼容 Kimi cached_tokens → cache_read_input_tokens
 	if response.Usage.CacheReadInputTokens == 0 {

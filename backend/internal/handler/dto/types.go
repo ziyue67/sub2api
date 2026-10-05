@@ -130,7 +130,7 @@ type Group struct {
 	VideoPrice1080P    *float64 `json:"video_price_1080p"`
 	// VideoModelPrices 可选按模型族×分辨率覆盖视频每秒单价 (USD/s)。
 	VideoModelPrices map[string]map[string]float64 `json:"video_model_prices,omitempty"`
-	// Codex alpha/search 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
+	// 托管网页搜索单次价格（OpenAI Responses 与 Anthropic Messages）；null 表示使用默认价 0.01
 	WebSearchPricePerCall        *float64 `json:"web_search_price_per_call"`
 	SearchPricePer1k             *float64 `json:"search_price_per_1k"`
 	AudioRealtimePricePerMin     *float64 `json:"audio_realtime_price_per_min"`
@@ -676,6 +676,9 @@ type UsageLog struct {
 
 	// BillingMode 计费模式：token/image
 	BillingMode *string `json:"billing_mode,omitempty"`
+	// ToolSurcharges lists completed hosted-tool calls billed in addition to
+	// token usage. Price is USD per 1,000 calls.
+	ToolSurcharges []ToolSurcharge `json:"tool_surcharges,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 
@@ -683,6 +686,14 @@ type UsageLog struct {
 	APIKey       *APIKey           `json:"api_key,omitempty"`
 	Group        *Group            `json:"group,omitempty"`
 	Subscription *UserSubscription `json:"subscription,omitempty"`
+}
+
+type ToolSurcharge struct {
+	Name           string  `json:"name"`
+	Count          int     `json:"count"`
+	Price          float64 `json:"price"`
+	RateMultiplier float64 `json:"rate_multiplier"`
+	Cost           float64 `json:"cost"`
 }
 
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。

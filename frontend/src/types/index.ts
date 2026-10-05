@@ -609,7 +609,7 @@ export interface Group {
   video_price_1080p: number | null
   // Optional model-family x resolution overrides for Grok video pricing.
   video_model_prices?: VideoModelPrices
-  // Codex 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01
+  // 托管网页搜索单次价格（OpenAI Responses / Anthropic Messages）；null 表示使用默认价 0.01
   web_search_price_per_call: number | null
   // Grok Voice 显式定价（分组级）
   search_price_per_1k: number | null
@@ -1902,6 +1902,16 @@ export type UsageRequestType = 'unknown' | 'sync' | 'stream' | 'ws_v2' | 'cyber'
 export type ImageSizeSource = 'output' | 'input' | 'default' | 'legacy'
 export type ImageSizeBreakdown = Record<string, number>
 
+export interface ToolSurcharge {
+  name: string
+  count: number
+  /** USD per 1,000 calls. */
+  price: number
+  rate_multiplier: number
+  /** Actual user charge after rate_multiplier. */
+  cost: number
+}
+
 export interface UsageLog {
   id: number
   user_id: number
@@ -1962,6 +1972,8 @@ export interface UsageLog {
 
   // 计费模式
   billing_mode?: string | null
+
+  tool_surcharges?: ToolSurcharge[]
 
   created_at: string
 

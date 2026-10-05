@@ -208,6 +208,11 @@ type UsageLog struct {
 	VideoResolution      *string
 	VideoDurationSeconds *int
 
+	// ToolSurcharges records completed hosted-tool calls and their billed
+	// surcharge snapshot. Price is USD per 1,000 calls; Cost is the actual
+	// user charge after RateMultiplier.
+	ToolSurcharges []ToolSurcharge
+
 	CreatedAt time.Time
 
 	User         *User
@@ -215,6 +220,17 @@ type UsageLog struct {
 	Account      *Account
 	Group        *Group
 	Subscription *UserSubscription
+}
+
+type ToolSurcharge struct {
+	Name           string  `json:"name"`
+	Count          int     `json:"count"`
+	Price          float64 `json:"price"`
+	RateMultiplier float64 `json:"rate_multiplier"`
+	Cost           float64 `json:"cost"`
+	// AccountCost is the upstream tool cost before AccountRateMultiplier.
+	// It is persisted for audit, but intentionally omitted from user/admin DTOs.
+	AccountCost float64 `json:"account_cost,omitempty"`
 }
 
 func (u *UsageLog) TotalTokens() int {
