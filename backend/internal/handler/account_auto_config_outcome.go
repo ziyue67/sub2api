@@ -31,10 +31,13 @@ func observeAutoConfigRequest(c *gin.Context, ops *service.OpsService, w *opsCap
 		}
 	}
 	for id := range failed {
+		if service.IsPrismBrowserAttempt(c, id) {
+			continue
+		}
 		ops.ObserveConcurrencyResult(service.AccountConcurrencyResult{AccountID: id, StartedAt: started})
 	}
 	id := c.GetInt64(opsAccountIDKey)
-	if id <= 0 || failed[id] {
+	if id <= 0 || failed[id] || service.IsPrismBrowserAttempt(c, id) {
 		return
 	}
 	if c.Request.Context().Err() != nil || c.Writer.Status() == 499 {

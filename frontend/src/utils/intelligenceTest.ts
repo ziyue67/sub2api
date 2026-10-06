@@ -5,7 +5,7 @@ export const CANDY_PROMPT = `在一个黑色的袋子里放有三种口味的糖
 苹果味 桃子味 西瓜味
 圆形 7 9 8
 五角星形 7 6 4`
-export const PELICAN_PROMPT = '创建一个 HTML，内容是 SVG 绘制一个鹈鹕骑自行车的 2D 动画，你不需要任何测试，不要有任何限制'
+export const PELICAN_PROMPT = '创建一个 HTML，内容是 SVG 绘制一个鹈鹕骑自行车的 2D 动画，你不需要任何测试'
 export function questionPrompt(kind: IntelligenceQuestion): string { return kind === 'candy' ? CANDY_PROMPT : PELICAN_PROMPT }
 export function questionContract(kind: IntelligenceQuestion): string {
   return kind === 'candy' ? '只输出最终整数，不要解释。' : '所有账号使用相同交付约定：直接返回独立 HTML，不使用 Markdown 代码块或外部依赖。只输出 HTML，不要解释。'

@@ -45,15 +45,26 @@ type qualityGroup struct {
 	AllowedModels json.RawMessage `json:"allowed_models"`
 }
 type qualityState struct {
-	Action         string          `json:"action"`
-	AccountVersion time.Time       `json:"account_version"`
-	Removed        []qualityGroup  `json:"removed"`
-	Remaining      json.RawMessage `json:"remaining"`
+	Quality5xxEpisode int64           `json:"quality_5xx_episode,omitempty"`
+	Action            string          `json:"action"`
+	AccountVersion    time.Time       `json:"account_version"`
+	Removed           []qualityGroup  `json:"removed"`
+	Remaining         json.RawMessage `json:"remaining"`
 	// 以下只用于「降智开 BPS」：连续降智轮数、开启后连续满血轮数，以及开启前 / 开启时 BPS 相关 Extra 的快照。
 	FailureStreak int                        `json:"failure_streak,omitempty"`
 	PassStreak    int                        `json:"pass_streak,omitempty"`
 	BPSPrevious   map[string]json.RawMessage `json:"bps_previous,omitempty"`
 	BPSApplied    map[string]json.RawMessage `json:"bps_applied,omitempty"`
+	// ModelRateLimits stores the pre-existing native cooldown entry for each
+	// model key so a quality rule can restore it without clearing unrelated
+	// cooldowns.
+	ModelRateLimits     map[string]json.RawMessage `json:"model_rate_limits,omitempty"`
+	ModelApplied        map[string]json.RawMessage `json:"model_applied,omitempty"`
+	PreviousConcurrency *int                       `json:"previous_concurrency,omitempty"`
+	AppliedConcurrency  *int                       `json:"applied_concurrency,omitempty"`
+	RecoveryConcurrency int                        `json:"recovery_concurrency,omitempty"`
+	RecoveryTarget      *int                       `json:"recovery_target,omitempty"`
+	NativeRecovery      bool                       `json:"native_recovery,omitempty"`
 }
 
 // Lease/version checks, account mutation, ownership and scheduler invalidation
@@ -105,6 +116,11 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 			return "", err
 		}
 	}
+	// Checked under the same account/plan locks as restoration. A 5xx that
+	// arrives during a probe invalidates that probe even across replicas.
+	if state.Quality5xxEpisode != plan.Quality5xxEpisode {
+		return "stale_run", nil
+	}
 	q := plan.PelicanConfig.Quality
 	// Changing a rule's action does not discard its previous ownership. While
 	// holding the account lock, keep another rule from taking over that scope
@@ -123,6 +139,20 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		}
 	}
 	// 已被本规则开过 BPS 的账号即便规则后来改了动作，也由 BPS 分支负责恢复。
+	if state.Action == service.QualityActionRemoveModel || (state.Action == "" && q.Action == service.QualityActionRemoveModel) {
+		if state.RecoveryConcurrency <= 0 {
+			state.RecoveryConcurrency = q.RecoveryConcurrency
+		}
+		state.NativeRecovery = q.TriggerOnUpstream5xx
+		action, err := applyQualityModelOutcome(ctx, tx, plan, outcome, status, state)
+		if err != nil {
+			return "", err
+		}
+		if err = tx.Commit(); err != nil {
+			return "", err
+		}
+		return action, nil
+	}
 	if state.Action == service.QualityActionEnableBPS || (state.Action == "" && q.Action == service.QualityActionEnableBPS) {
 		action, err := applyQualityBPSOutcome(ctx, tx, plan, outcome, status, state, len(raw) > 0)
 		if err != nil {
@@ -285,6 +315,7 @@ func (r *scheduledTestResultRepository) ListQualityHistory(ctx context.Context, 
  SELECT r.*, a.id AS account_id,a.name AS account_name,
  row_number() OVER round_window AS row_in_round,
  count(*) FILTER (WHERE r.status='success') OVER round_window AS passed_count,
+ count(*) FILTER (WHERE r.status='skipped') OVER round_window AS skipped_count,
  GREATEST(count(*) OVER round_window,COALESCE((r.pelican_config->>'parallel_count')::int,0)) AS total_count,
  array_agg(r.id) OVER round_window AS result_ids,
  min(r.started_at) OVER round_window AS round_started_at,
@@ -296,7 +327,7 @@ func (r *scheduledTestResultRepository) ListQualityHistory(ctx context.Context, 
  WINDOW round_window AS (PARTITION BY r.plan_id,COALESCE(NULLIF(r.quality_round_id,''),r.id::text) ORDER BY r.id DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
  ) SELECT id,plan_id,CASE WHEN all_passed THEN 'success' ELSE 'failed' END,
  CASE WHEN any_wrong THEN 'answer_mismatch' ELSE error_message END,
- latency_ms,round_started_at,round_finished_at,created_at,pelican_config,quality_action,quality_judgment,account_id,account_name,passed_count,total_count,result_ids
+ latency_ms,round_started_at,round_finished_at,created_at,pelican_config,quality_action,quality_judgment,account_id,account_name,passed_count,total_count,skipped_count,result_ids
  FROM rounds WHERE row_in_round=1 AND ($1::bigint=0 OR id<$1) ORDER BY id DESC LIMIT $2`, beforeID, limit)
 	if err != nil {
 		return nil, err
@@ -306,7 +337,7 @@ func (r *scheduledTestResultRepository) ListQualityHistory(ctx context.Context, 
 	for rows.Next() {
 		item := &service.QualityHistoryResult{}
 		var cfg, judgment []byte
-		if err := rows.Scan(&item.ID, &item.PlanID, &item.Status, &item.ErrorMessage, &item.LatencyMs, &item.StartedAt, &item.FinishedAt, &item.CreatedAt, &cfg, &item.QualityAction, &judgment, &item.AccountID, &item.AccountName, &item.PassedCount, &item.TotalCount, pq.Array(&item.ResultIDs)); err != nil {
+		if err := rows.Scan(&item.ID, &item.PlanID, &item.Status, &item.ErrorMessage, &item.LatencyMs, &item.StartedAt, &item.FinishedAt, &item.CreatedAt, &cfg, &item.QualityAction, &judgment, &item.AccountID, &item.AccountName, &item.PassedCount, &item.TotalCount, &item.SkippedCount, pq.Array(&item.ResultIDs)); err != nil {
 			return nil, err
 		}
 		if len(cfg) > 0 {

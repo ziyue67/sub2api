@@ -70,6 +70,7 @@ func publicPelicanItem(item *service.PelicanShowcaseItem) pelicanPublicItem {
 }
 
 type pelicanPublicSource interface {
+	Settings(context.Context) (service.PelicanShowcaseRuntime, error)
 	View(context.Context, time.Time) (*service.PelicanShowcaseView, error)
 	Item(context.Context, int64, time.Time) (*service.PelicanShowcaseItem, error)
 }
@@ -298,6 +299,9 @@ func (p *pelicanPublicCache) item(ctx context.Context, snapshot *pelicanPublicSn
 // and cursor gaps. Clients fetch bodies only for IDs they have not stored yet.
 func (h *PelicanShowcaseHandler) PublicList(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	if !h.allowPublicRead(c) {
+		return
+	}
 	snapshot, err := h.public.manifest(c.Request.Context())
 	if err != nil {
 		c.Header("Retry-After", "60")
@@ -310,6 +314,9 @@ func (h *PelicanShowcaseHandler) PublicList(c *gin.Context) {
 // PublicItem GET/HEAD /api/v1/public/pelican-showcase/items/:id
 func (h *PelicanShowcaseHandler) PublicItem(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	if !h.allowPublicRead(c) {
+		return
+	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		response.BadRequest(c, "invalid item id")
@@ -327,6 +334,23 @@ func (h *PelicanShowcaseHandler) PublicItem(c *gin.Context) {
 		return
 	}
 	writePelicanPublicBody(c, body)
+}
+
+// Check the runtime switch before cached bodies and validators on every request.
+func (h *PelicanShowcaseHandler) allowPublicRead(c *gin.Context) bool {
+	runtime, err := h.public.source.Settings(c.Request.Context())
+	if err != nil {
+		c.Header("Retry-After", "60")
+		response.ErrorWithDetails(c, http.StatusServiceUnavailable, "Failed to load pelican showcase settings; retry later",
+			"PELICAN_SHOWCASE_API_UNAVAILABLE", nil)
+		return false
+	}
+	if !runtime.APIEnabled {
+		response.ErrorWithDetails(c, http.StatusForbidden, "Pelican showcase API access is disabled",
+			"PELICAN_SHOWCASE_API_DISABLED", nil)
+		return false
+	}
+	return true
 }
 
 func writePelicanPublicBody(c *gin.Context, body *pelicanPublicBody) {

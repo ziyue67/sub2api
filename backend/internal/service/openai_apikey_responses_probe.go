@@ -187,6 +187,7 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 	applyOpenAICodexProbeHeaders(req.Header)
 
 	// 账号级请求头覆写：能力探测与真实转发保持一致的最终头
+	applyOpenAIAPIKeyIdentityHeaders(req.Header, account, account.GetOpenAIUserAgent())
 	account.ApplyHeaderOverrides(req.Header)
 
 	proxyURL := ""

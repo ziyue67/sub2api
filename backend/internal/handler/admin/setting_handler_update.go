@@ -28,6 +28,9 @@ type UpdateSettingsRequest struct {
 	OpenAICodexTicketStrictResponse *bool                            `json:"openai_codex_ticket_strict_response"`
 	OpenAICodexTicketFailClosed     *bool                            `json:"openai_codex_ticket_fail_closed"`
 	OpenAICodexTicketStrategy       *string                          `json:"openai_codex_ticket_strategy"`
+	PrismBrowserEnabled             bool                             `json:"prism_browser_enabled"`
+	PrismBrowserBaseURL             string                           `json:"prism_browser_base_url"`
+	PrismBrowserAPIKey              string                           `json:"prism_browser_api_key"`
 	// 注册设置
 	RegistrationEnabled                 bool                         `json:"registration_enabled"`
 	EmailVerifyEnabled                  bool                         `json:"email_verify_enabled"`
@@ -540,6 +543,25 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	if req.OpenAICodexTicketHarvestScope != nil && req.OpenAICodexTicketHarvestScope.Mode == "" {
 		response.BadRequest(c, "harvest scope mode is required")
 		return
+	}
+	if req.PrismBrowserEnabled {
+		if strings.TrimSpace(req.PrismBrowserBaseURL) == "" {
+			response.BadRequest(c, "prism browser base URL is required when enabled")
+			return
+		}
+		if strings.TrimSpace(req.PrismBrowserAPIKey) != "" && len(strings.TrimSpace(req.PrismBrowserAPIKey)) < 32 {
+			response.BadRequest(c, "prism browser API key must contain at least 32 characters")
+			return
+		}
+		current, err := h.settingService.GetAllSettings(c.Request.Context())
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if len(strings.TrimSpace(req.PrismBrowserAPIKey)) < 32 && len(strings.TrimSpace(current.PrismBrowserAPIKey)) < 32 {
+			response.BadRequest(c, "configure a Prism browser API key with at least 32 characters before enabling")
+			return
+		}
 	}
 	if req.RequestCaptureQuotaMiB != nil && (*req.RequestCaptureQuotaMiB < 1 || *req.RequestCaptureQuotaMiB > (1<<63-1)/(1<<20)) {
 		response.BadRequest(c, "Capture quota must be positive MiB within int64 range")
@@ -1619,6 +1641,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AccountSchedulingThresholds: req.AccountSchedulingThresholds,
 
 		RegistrationEnabled:                 req.RegistrationEnabled,
+		PrismBrowserEnabled:                 req.PrismBrowserEnabled,
+		PrismBrowserBaseURL:                 req.PrismBrowserBaseURL,
+		PrismBrowserAPIKey:                  req.PrismBrowserAPIKey,
 		EmailVerifyEnabled:                  req.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:    req.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled: registrationEmailDomainQuotaEnabled,
@@ -2475,6 +2500,9 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 	payload := dto.SystemSettings{
 		RegistrationEnabled:                                    updatedSettings.RegistrationEnabled,
+		PrismBrowserEnabled:                                    updatedSettings.PrismBrowserEnabled,
+		PrismBrowserBaseURL:                                    updatedSettings.PrismBrowserBaseURL,
+		PrismBrowserAPIKeyConfigured:                           updatedSettings.PrismBrowserAPIKeyConfigured,
 		EmailVerifyEnabled:                                     updatedSettings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:                       updatedSettings.RegistrationEmailSuffixWhitelist,
 		RegistrationEmailDomainQuotaEnabled:                    updatedSettings.RegistrationEmailDomainQuotaEnabled,

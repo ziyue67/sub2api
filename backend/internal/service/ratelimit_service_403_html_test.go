@@ -130,6 +130,43 @@ func TestHandleUpstreamError_OpenAICloudflare1010DoesNotPenalizeAccount(t *testi
 	}
 }
 
+func TestHandleUpstreamError_AnthropicSafeguardPolicy403DoesNotPenalizeAccount(t *testing.T) {
+	cases := []string{
+		"Access forbidden (403): This request was blocked by safe guard policy.",
+		`{"error":{"message":"This request was blocked by safeguard policy."}}`,
+	}
+
+	for _, body := range cases {
+		repo := &rateLimitAccountRepoStub{}
+		blocker := &runtimeBlockRecorder{}
+		svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+		svc.SetAccountRuntimeBlocker(blocker)
+		account := &Account{ID: 602, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+		shouldDisable := svc.HandleUpstreamError(
+			context.Background(), account, http.StatusForbidden, http.Header{}, []byte(body),
+		)
+
+		require.False(t, shouldDisable)
+		require.Equal(t, 0, repo.setErrorCalls)
+		require.Equal(t, 0, repo.tempCalls)
+		require.Empty(t, blocker.accounts)
+	}
+}
+
+func TestHandleUpstreamError_AnthropicOther403StillPenalizesAccount(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{ID: 603, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	shouldDisable := svc.HandleUpstreamError(
+		context.Background(), account, http.StatusForbidden, http.Header{}, []byte(`{"error":{"message":"Organization access has been revoked"}}`),
+	)
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.setErrorCalls)
+}
+
 // 对照不变式：真正的结构化 JSON 403 是账号级证据，处罚链路必须原样保留。
 // 缺了这组断言，上面的跳过逻辑一旦写宽就会把真实的封号 403 也放过去。
 func TestHandleUpstreamError_OpenAIStructured403StillPenalizes(t *testing.T) {

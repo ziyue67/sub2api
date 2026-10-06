@@ -1118,6 +1118,30 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 	return apiKey, nil
 }
 
+// GetByKeyUncached reads current authorization state without consuming or
+// populating auth caches (or joining a possibly stale singleflight lookup).
+// Long-lived WS sessions use it at turn boundaries so cache invalidation is
+// not a prerequisite for revocation. The normal auth lookup concurrency bound
+// and the caller's admission timeout still apply.
+func (s *APIKeyService) GetByKeyUncached(ctx context.Context, key string) (*APIKey, error) {
+	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes {
+		return nil, ErrAPIKeyNotFound
+	}
+	apiKey, err := s.lookupAPIKeyForAuth(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("get api key: %w", err)
+	}
+	if apiKey == nil {
+		return nil, ErrAPIKeyNotFound
+	}
+	apiKey.Key = key
+	if err := s.loadUserGroupDeniedModels(ctx, apiKey); err != nil {
+		return nil, fmt.Errorf("get api key: load user group denied models: %w", err)
+	}
+	s.compileAPIKeyIPRules(apiKey)
+	return apiKey, nil
+}
+
 // Update 更新API Key
 func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req UpdateAPIKeyRequest) (*APIKey, error) {
 	if req.ConcurrencyLimit != nil && *req.ConcurrencyLimit < 0 {

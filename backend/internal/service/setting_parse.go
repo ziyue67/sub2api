@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,14 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
+
+func defaultPrismBrowserAPIKey() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
 
 // InitializeDefaultSettings 初始化默认设置
 func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
@@ -196,6 +206,11 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyChannelMonitorShowQuota:              "false",
 		SettingKeyChannelMonitorHideUserRanking:        "false",
 		SettingKeyLeaderboardShowActualCost:            "true",
+		SettingKeyPrismBrowserEnabled:                  "false",
+		SettingKeyPrismBrowserBaseURL:                  "http://127.0.0.1:8319/v1",
+		// Generate a disabled-by-default bridge key so enabling the feature does
+		// not require a fragile hand-written secret during first-run setup.
+		SettingKeyPrismBrowserAPIKey: defaultPrismBrowserAPIKey(),
 
 		// Grok compatibility defaults: cross-client mapping stays enabled unless
 		// operators explicitly disable it.
@@ -873,6 +888,13 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// missing or unrecognized values mean visible; only an explicit false-like
 	// value hides the actual deducted cost from ordinary users.
 	result.LeaderboardShowActualCost = !isFalseSettingValue(settings[SettingKeyLeaderboardShowActualCost])
+	result.PrismBrowserEnabled = settings[SettingKeyPrismBrowserEnabled] == "true"
+	result.PrismBrowserBaseURL = strings.TrimSpace(settings[SettingKeyPrismBrowserBaseURL])
+	if result.PrismBrowserBaseURL == "" {
+		result.PrismBrowserBaseURL = "http://127.0.0.1:8319/v1"
+	}
+	result.PrismBrowserAPIKey = settings[SettingKeyPrismBrowserAPIKey]
+	result.PrismBrowserAPIKeyConfigured = strings.TrimSpace(result.PrismBrowserAPIKey) != ""
 
 	// Grok default mapping policy
 	result.GrokDefaultTextModel = strings.TrimSpace(settings[SettingKeyGrokDefaultTextModel])

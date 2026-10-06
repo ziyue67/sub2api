@@ -530,6 +530,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			c.Set("excel_bps_upstream_attempt", c.GetInt("excel_bps_upstream_attempt")+1)
 			// Do not re-enter proxy acquisition or transport retries after sending.
 			resp, err = s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
+			s.rateLimitService.observeQualityResponse(retryReq.Context(), account, resp, err)
 			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(sent).Milliseconds())
 			if err != nil {
 				if isExcelBPSClientCancellation(c, err) {
@@ -623,6 +624,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return nil, err
 		}
 		repairResp, err := s.httpUpstream.Do(repairReq, proxyURL, account.ID, account.Concurrency)
+		s.rateLimitService.observeQualityResponse(repairReq.Context(), account, repairResp, err)
 		if err != nil {
 			if repairCtx.Err() != nil {
 				return nil, repairCtx.Err()
@@ -658,6 +660,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return nil, err
 		}
 		repaired, err := s.httpUpstream.Do(retry, proxyURL, account.ID, account.Concurrency)
+		s.rateLimitService.observeQualityResponse(retry.Context(), account, repaired, err)
 		if err != nil {
 			return nil, fmt.Errorf("excel BPS tool correction transport failed")
 		}
@@ -727,6 +730,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			}
 			switch kind {
 			case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
+				if kind != "response.completed" {
+					s.rateLimitService.observeQualityStatus(ctx, account, openAIStreamFailureStatus(payload, extractOpenAISSEErrorMessage(payload)))
+				}
 				if kind == "response.completed" && lease != nil {
 					lease.ReportSuccess()
 				}
@@ -781,6 +787,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		recordExcelBPSTransportFailure(ctx, c, account, scope, proxyURL, err, "stream", c.GetInt("excel_bps_upstream_attempt"), false)
 		MarkOpsStreamError(c, "basispoints_stream_incomplete", "Excel BPS stream ended before completion", http.StatusBadGateway)
+		s.rateLimitService.observeQualityStatus(ctx, account, http.StatusBadGateway)
 		MarkResponseCommitted(c)
 		if stream {
 			_, _ = c.Writer.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")

@@ -25,14 +25,22 @@ import (
 )
 
 type publicPelicanSourceStub struct {
-	view      *service.PelicanShowcaseView
-	item      *service.PelicanShowcaseItem
-	viewErr   error
-	itemErr   error
-	viewReads atomic.Int64
-	itemReads atomic.Int64
-	started   chan struct{}
-	release   chan struct{}
+	view          *service.PelicanShowcaseView
+	item          *service.PelicanShowcaseItem
+	viewErr       error
+	itemErr       error
+	apiDisabled   bool
+	settingsErr   error
+	settingsReads atomic.Int64
+	viewReads     atomic.Int64
+	itemReads     atomic.Int64
+	started       chan struct{}
+	release       chan struct{}
+}
+
+func (s *publicPelicanSourceStub) Settings(context.Context) (service.PelicanShowcaseRuntime, error) {
+	s.settingsReads.Add(1)
+	return service.PelicanShowcaseRuntime{Enabled: s.view.Enabled, APIEnabled: !s.apiDisabled}, s.settingsErr
 }
 
 func (s *publicPelicanSourceStub) View(ctx context.Context, _ time.Time) (*service.PelicanShowcaseView, error) {
@@ -212,6 +220,56 @@ func TestPelicanPublicErrorsAreNotCached(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, publicPelicanRequest(h, http.MethodGet, "7", nil).Code)
 	source.itemErr = nil
 	require.Equal(t, http.StatusOK, publicPelicanRequest(h, http.MethodGet, "7", nil).Code)
+}
+
+func TestPelicanPublicAPISwitchRejectsCachedAndConditionalReads(t *testing.T) {
+	h, source := newPublicPelicanFixture()
+	etags := map[string]string{}
+	for _, id := range []string{"", "7"} {
+		warm := publicPelicanRequest(h, http.MethodGet, id, nil)
+		require.Equal(t, http.StatusOK, warm.Code)
+		etags[id] = warm.Header().Get("ETag")
+	}
+	require.NotNil(t, h.public.snapshot.item(7), "warm both caches before toggling the API switch")
+	source.apiDisabled = true
+	for _, id := range []string{"", "7"} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			for _, validator := range []string{"", etags[id], "*"} {
+				w := publicPelicanRequest(h, method, id, map[string]string{"If-None-Match": validator})
+				require.Equal(t, http.StatusForbidden, w.Code, "%s id=%s validator=%s", method, id, validator)
+				require.Contains(t, w.Body.String(), `"reason":"PELICAN_SHOWCASE_API_DISABLED"`)
+				require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+				require.Empty(t, w.Header().Get("ETag"))
+				require.NotContains(t, w.Body.String(), source.item.ResponseText)
+			}
+		}
+	}
+	require.EqualValues(t, 1, source.viewReads.Load(), "denied reads cannot consult the manifest cache or source")
+	require.EqualValues(t, 1, source.itemReads.Load(), "denied reads cannot consult cached item bodies or source")
+	require.EqualValues(t, 14, source.settingsReads.Load(), "every request rechecks the runtime switch")
+	source.apiDisabled = false
+	require.Equal(t, http.StatusNotModified, publicPelicanRequest(h, http.MethodGet, "7", map[string]string{"If-None-Match": etags["7"]}).Code)
+}
+
+func TestPelicanPublicSettingsReadFailureRejectsCachedReads(t *testing.T) {
+	h, source := newPublicPelicanFixture()
+	for _, id := range []string{"", "7"} {
+		require.Equal(t, http.StatusOK, publicPelicanRequest(h, http.MethodGet, id, nil).Code)
+	}
+	source.settingsErr = errors.New("settings database unavailable")
+	for _, id := range []string{"", "7"} {
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			w := publicPelicanRequest(h, method, id, map[string]string{"If-None-Match": "*"})
+			require.Equal(t, http.StatusServiceUnavailable, w.Code)
+			require.Contains(t, w.Body.String(), `"reason":"PELICAN_SHOWCASE_API_UNAVAILABLE"`)
+			require.NotContains(t, w.Body.String(), "database")
+			require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+			require.Equal(t, "60", w.Header().Get("Retry-After"))
+			require.Empty(t, w.Header().Get("ETag"))
+		}
+	}
+	require.EqualValues(t, 1, source.viewReads.Load())
+	require.EqualValues(t, 1, source.itemReads.Load())
 }
 
 func TestPelicanPublicConcurrentReadersShareLoads(t *testing.T) {

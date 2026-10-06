@@ -56,3 +56,32 @@ func TestOpenAITurnAdmissionReadTransaction(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAITurnAdmissionLoadsOnlyMembershipAndModelRestrictions(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	defer func() { _ = client.Close() }()
+	repo := &accountRepository{client: client}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT .* FROM "accounts"`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "platform", "type", "status", "schedulable"}).
+			AddRow(7, "openai", "oauth", "active", true))
+	mock.ExpectQuery(`SELECT .* FROM "account_groups"`).
+		WillReturnRows(sqlmock.NewRows([]string{"account_id", "group_id", "priority", "allowed_models"}).
+			AddRow(7, 9, 3, []byte(`["gpt-6-astra"]`)))
+	mock.ExpectCommit()
+
+	account, parent, err := repo.GetOpenAITurnAdmission(context.Background(), 7)
+	require.NoError(t, err)
+	require.Nil(t, parent)
+	require.Equal(t, []int64{9}, account.GroupIDs)
+	require.Len(t, account.AccountGroups, 1)
+	require.Nil(t, account.AccountGroups[0].Group)
+	groupID := int64(9)
+	require.True(t, account.IsModelAllowedInGroup(&groupID, "gpt-6-astra"))
+	require.False(t, account.IsModelAllowedInGroup(&groupID, "gpt-5.5"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

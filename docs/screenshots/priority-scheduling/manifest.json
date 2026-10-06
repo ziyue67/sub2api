@@ -1,0 +1,18 @@
+{
+  "base_commit": "ab7cb27ceed6390441277784cc5560694d95fd73",
+  "component": "frontend/src/views/admin/PrioritySchedulingView.vue",
+  "component_sha256": "f14be1053ea5ad01738052b47507763c1b71c05709b792f56de26ec112b0d7ad",
+  "mode": "Actual Vue component with mocked layout/auth/API; not full application navigation or production",
+  "fixtures": "Fictional account 101 and synthetic model statistics; before/error use the same failing API fixture",
+  "screenshots": [
+    "before.png",
+    "after-error.png",
+    "after-ready.png"
+  ],
+  "interactions": [
+    "load failing history",
+    "click refresh scores",
+    "display ready history while retaining selection time"
+  ],
+  "browser_errors": []
+}

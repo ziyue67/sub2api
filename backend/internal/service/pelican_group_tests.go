@@ -505,17 +505,18 @@ func (s *PelicanGroupTestService) newResult(plan *PelicanGroupTestPlan, started,
 }
 
 // pelicanFailedBeforeOutput reports an account-side failure with no model output, such as
-// an upstream HTTP error or a missing token. Output problems (empty, oversized) are the
-// model's answer and do not trigger a retry on another account.
+// an upstream HTTP error or a missing token. Output problems (empty, oversized, cut off
+// at max_tokens, refused) are the model's answer and do not trigger a retry on another
+// account.
 func pelicanFailedBeforeOutput(result *ScheduledTestResult) bool {
 	if result.Status == "success" || result.ResponseText != "" {
 		return false
 	}
 	switch result.ErrorMessage {
-	case pelicanErrEmptyOutput, pelicanErrCaptureLimit, pelicanErrHistoryLimit:
+	case pelicanErrEmptyOutput, pelicanErrCaptureLimit, pelicanErrHistoryLimit, pelicanErrMaxTokens:
 		return false
 	}
-	return true
+	return !strings.HasPrefix(result.ErrorMessage, pelicanErrRefused)
 }
 
 func (s *PelicanGroupTestService) ListResults(ctx context.Context, planID int64, page, pageSize int) ([]*PelicanGroupTestResult, int64, error) {

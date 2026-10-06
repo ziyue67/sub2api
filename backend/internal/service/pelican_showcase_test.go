@@ -19,11 +19,14 @@ func (s *showcaseSettingsStub) GetPelicanShowcaseRuntime(context.Context) (Pelic
 	return s.runtime, s.err
 }
 
-func (s *showcaseSettingsStub) UpdatePelicanShowcaseSettings(_ context.Context, enabled bool, cfg PelicanShowcaseConfig) (PelicanShowcaseRuntime, error) {
+func (s *showcaseSettingsStub) UpdatePelicanShowcaseSettings(_ context.Context, enabled bool, cfg PelicanShowcaseConfig, apiEnabled *bool) (PelicanShowcaseRuntime, error) {
 	if s.err != nil {
 		return PelicanShowcaseRuntime{}, s.err
 	}
-	s.runtime = PelicanShowcaseRuntime{Enabled: enabled, Config: cfg}
+	if apiEnabled != nil {
+		s.runtime.APIEnabled = *apiEnabled
+	}
+	s.runtime.Enabled, s.runtime.Config = enabled, cfg
 	s.saved = append(s.saved, s.runtime)
 	return s.runtime, nil
 }
@@ -70,7 +73,7 @@ func (r *showcaseRepoStub) GetItem(context.Context, int64, int, time.Time) (*Pel
 func (r *showcaseRepoStub) Delete(context.Context, int64) (bool, error) { return r.deleted, nil }
 
 func enabledShowcase() *showcaseSettingsStub {
-	return &showcaseSettingsStub{runtime: PelicanShowcaseRuntime{Enabled: true, Config: PelicanShowcaseConfig{
+	return &showcaseSettingsStub{runtime: PelicanShowcaseRuntime{Enabled: true, APIEnabled: true, Config: PelicanShowcaseConfig{
 		MaxItems: 12, AutoCleanup: true, RetentionDays: 3,
 	}}}
 }
@@ -151,9 +154,9 @@ func TestPelicanShowcaseSettingsGoThroughSettingService(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, runtime.Enabled)
 
-	runtime, err = svc.UpdateSettings(ctx, false, PelicanShowcaseConfig{MaxItems: 30, RetentionDays: 9})
+	runtime, err = svc.UpdateSettings(ctx, false, PelicanShowcaseConfig{MaxItems: 30, RetentionDays: 9}, nil)
 	require.NoError(t, err)
-	require.Equal(t, PelicanShowcaseRuntime{Config: PelicanShowcaseConfig{MaxItems: 30, RetentionDays: 9}}, runtime)
+	require.Equal(t, PelicanShowcaseRuntime{APIEnabled: true, Config: PelicanShowcaseConfig{MaxItems: 30, RetentionDays: 9}}, runtime)
 	require.Len(t, settings.saved, 1)
 }
 
@@ -190,6 +193,7 @@ func TestPelicanShowcaseViewAndItemVisibility(t *testing.T) {
 	view, err := (&PelicanShowcaseService{repo: repo, settings: off}).View(ctx, now)
 	require.NoError(t, err)
 	require.False(t, view.Enabled)
+	require.False(t, view.APIEnabled)
 	require.Empty(t, view.Groups)
 	_, err = (&PelicanShowcaseService{repo: repo, settings: off}).Item(ctx, 1, now)
 	require.ErrorIs(t, err, ErrPelicanShowcaseItemNotFound)
@@ -200,10 +204,12 @@ func TestPelicanShowcaseViewAndItemVisibility(t *testing.T) {
 			{ID: 10, GroupID: 3}, {ID: 11, GroupID: 3}, {ID: 12, GroupID: 99},
 		},
 	}
-	svc := &PelicanShowcaseService{repo: repo, settings: enabledShowcase()}
+	apiSettings := enabledShowcase()
+	svc := &PelicanShowcaseService{repo: repo, settings: apiSettings}
 	view, err = svc.View(ctx, now)
 	require.NoError(t, err)
 	require.True(t, view.Enabled)
+	require.True(t, view.APIEnabled)
 	require.Equal(t, 12, view.MaxItems)
 	require.Equal(t, 3, view.RetentionDays)
 	require.Equal(t, []int64{5, 3}, repo.listIDs, "items are only read for groups with a plan that still exist and are active")
@@ -213,6 +219,13 @@ func TestPelicanShowcaseViewAndItemVisibility(t *testing.T) {
 	require.NotNil(t, view.Groups[0].Items)
 	require.Empty(t, view.Groups[0].Items, "a showcased group without snapshots is still listed")
 	require.Len(t, view.Groups[1].Items, 2)
+
+	apiSettings.runtime.APIEnabled = false
+	view, err = svc.View(ctx, now)
+	require.NoError(t, err)
+	require.True(t, view.Enabled)
+	require.False(t, view.APIEnabled)
+	require.Len(t, view.Groups[1].Items, 2, "disabling API reads does not hide the JWT gallery")
 
 	settings := enabledShowcase()
 	settings.runtime.Config.AutoCleanup = false

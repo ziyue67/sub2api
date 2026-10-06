@@ -1078,6 +1078,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// 裁掉它们，透传账号在选号阶段会退回按(常为过期的)白名单判定并被误判为
 		// model_not_supported —— 转发阶段却仍按透传工作，表现为"单独测账号能通、
 		// 走网关报 no available accounts"。
+		"astra_model_disabled",
+		"astra_model_blocked_keys",
+		"astra_model_empty_mapping",
 		"openai_passthrough",
 		"openai_oauth_passthrough",
 		"openai_excel_bps",

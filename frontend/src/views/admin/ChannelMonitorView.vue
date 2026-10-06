@@ -11,18 +11,48 @@
           {{ t('admin.channelMonitor.title') }}
         </h1>
         <p class="page-description mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-          {{
-            isV1Mode
-              ? t('channelMonitorV2.admin.descriptionV1')
-              : t('channelMonitorV2.admin.descriptionV2')
-          }}
+          {{ t(`channelMonitorV3.admin.description.${siteMode}`) }}
         </p>
+        <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-gray-50 px-4 py-3 dark:bg-dark-900/50" data-testid="monitor-mode-switch">
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ t('channelMonitorV3.admin.siteMode') }}</span>
+          <div class="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 dark:border-dark-600 dark:bg-dark-800" role="radiogroup" :aria-label="t('channelMonitorV3.admin.siteMode')">
+            <button
+              v-for="mode in modes"
+              :key="mode"
+              type="button"
+              role="radio"
+              :aria-checked="siteMode === mode"
+              class="rounded-md px-3 py-1 text-xs font-medium transition disabled:cursor-not-allowed"
+              :class="siteMode === mode ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900 dark:text-gray-300 dark:hover:text-white'"
+              :disabled="switchingMode || siteMode === 'off'"
+              :data-testid="`monitor-mode-${mode}`"
+              @click="pendingMode = mode"
+            >
+              {{ t(`channelMonitorV3.modes.${mode}`) }}
+            </button>
+          </div>
+          <span class="text-xs text-gray-500 dark:text-gray-400">
+            {{ siteMode === 'off' ? t('channelMonitorV3.admin.siteModeOff') : t('channelMonitorV3.admin.siteModeHint') }}
+            <router-link v-if="siteMode === 'off'" to="/admin/settings" class="ml-1 text-primary-600 hover:underline dark:text-primary-400">{{ t('admin.settings.tabs.features') }}</router-link>
+          </span>
+        </div>
         <div class="mt-4 border-t border-gray-100 pt-4 dark:border-dark-700">
           <div
-            class="tabs inline-flex w-full max-w-xl flex-wrap sm:w-auto"
+            class="tabs inline-flex w-full max-w-2xl flex-wrap sm:w-auto"
             role="tablist"
             :aria-label="t('channelMonitorV2.admin.tabAria')"
           >
+            <button
+              type="button"
+              role="tab"
+              class="tab flex-1 sm:flex-none"
+              :class="adminMonitorTab === 'v3' ? 'tab-active' : ''"
+              :aria-selected="adminMonitorTab === 'v3'"
+              data-testid="monitor-tab-v3"
+              @click="adminMonitorTab = 'v3'"
+            >
+              {{ t('channelMonitorV3.admin.tab') }}
+            </button>
             <button
               type="button"
               role="tab"
@@ -47,7 +77,8 @@
         </div>
       </header>
 
-      <MonitorSettingsPanel v-if="adminMonitorTab === 'v2'" />
+      <V3SettingsPanel v-if="adminMonitorTab === 'v3'" />
+      <MonitorSettingsPanel v-else-if="adminMonitorTab === 'v2'" />
 
       <TablePageLayout v-else>
       <template #filters>
@@ -156,6 +187,16 @@
     />
 
     <ConfirmDialog
+      :show="pendingMode !== null"
+      :title="t('channelMonitorV3.admin.switchTitle')"
+      :message="pendingMode ? t('channelMonitorV3.admin.switchConfirm', { mode: t(`channelMonitorV3.modes.${pendingMode}`), effect: t(`channelMonitorV3.admin.switchEffect.${pendingMode}`) }) : ''"
+      :confirm-text="t('channelMonitorV3.admin.switchAction')"
+      :cancel-text="t('common.cancel')"
+      @confirm="applyMode"
+      @cancel="pendingMode = null"
+    />
+
+    <ConfirmDialog
       :show="showDeleteDialog"
       :title="t('common.delete')"
       :message="deleteConfirmMessage"
@@ -199,12 +240,37 @@ import MonitorActionsCell from '@/components/admin/monitor/MonitorActionsCell.vu
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import MonitorSettingsPanel from '@/features/channel-monitor-v2/MonitorSettingsPanel.vue'
-import { isChannelMonitorV1Mode } from '@/utils/featureFlags'
+import V3SettingsPanel from '@/features/channel-monitor-v3/V3SettingsPanel.vue'
+import { setMonitorMode } from '@/api/channelMonitorV3'
+import { getChannelMonitorMode, isChannelMonitorV1Mode, type ChannelMonitorMode } from '@/utils/featureFlags'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 const isV1Mode = computed(() => isChannelMonitorV1Mode())
-const adminMonitorTab = ref<'v2' | 'legacy'>(isChannelMonitorV1Mode() ? 'legacy' : 'v2')
+const modes: ChannelMonitorMode[] = ['v1', 'v2', 'v3']
+const siteMode = computed(() => (appStore.cachedPublicSettings?.channel_monitor_enabled === false ? 'off' : getChannelMonitorMode()))
+const tabForMode = (mode: ChannelMonitorMode) => (mode === 'v1' ? 'legacy' : mode)
+const adminMonitorTab = ref<'v3' | 'v2' | 'legacy'>(tabForMode(getChannelMonitorMode()))
+const pendingMode = ref<ChannelMonitorMode | null>(null)
+const switchingMode = ref(false)
+
+async function applyMode() {
+  const mode = pendingMode.value
+  pendingMode.value = null
+  if (!mode || mode === siteMode.value) return
+  switchingMode.value = true
+  try {
+    await setMonitorMode(mode)
+    // Sidebar, the user page and the runners all follow the public settings.
+    await appStore.fetchPublicSettings(true)
+    adminMonitorTab.value = tabForMode(mode)
+    appStore.showSuccess(t('channelMonitorV3.admin.switched', { mode: t(`channelMonitorV3.modes.${mode}`) }))
+  } catch (err: unknown) {
+    appStore.showError(extractApiErrorMessage(err, t('channelMonitorV3.admin.switchFailed')))
+  } finally {
+    switchingMode.value = false
+  }
+}
 const {
   providerLabel,
   providerBadgeClass,

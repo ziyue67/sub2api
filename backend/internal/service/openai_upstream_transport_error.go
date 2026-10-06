@@ -120,8 +120,10 @@ func isClientCanceledTransportError(ctx context.Context, err error) bool {
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
-	if isClientCanceledTransportError(ctx, err) {
-		return err
+	// Astra 路由不可用先转为可失败转移的错误；客户端取消检查保留在本函数后段
+	// （与 ranxi 一致，先判定准入/RPM 与门票拒绝这类终结性错误）。
+	if routeErr, ok := s.astraRouteFailover(ctx, account, err).(*UpstreamFailoverError); ok {
+		return routeErr
 	}
 	if IsOpenAITurnAdmissionError(err) || IsOpenAIRPMError(err) {
 		return err
@@ -131,6 +133,9 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 			c.AbortWithStatusJSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "ticket_response_rejected", "message": err.Error()}})
 		}
 		return err // terminal: never convert an already-sent request into failover
+	}
+	if isClientCanceledTransportError(ctx, err) {
+		return err
 	}
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")

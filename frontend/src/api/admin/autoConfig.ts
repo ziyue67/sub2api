@@ -18,6 +18,7 @@ export interface AutoConfig {
  upgrade_step: number
  max_concurrency: number
  cooldown_seconds: number
+ cost_multiplier?: number
  revision: string
  runtime_blocked?: boolean
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/upstreamroute"
 	openaiwsv2 "github.com/Wei-Shaw/sub2api/internal/service/openai_ws_v2"
 	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -926,7 +927,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		if err != nil {
 			return fmt.Errorf("refresh ws authentication headers: %w", err)
 		}
-		dialCtx, cancelDial := context.WithTimeout(ctx, s.openAIWSDialTimeout())
+		dialCtx, cancelDial := context.WithTimeout(upstreamroute.WithAccountID(ctx, account.ID), s.openAIWSDialTimeout())
 		upstreamConn, statusCode, handshakeHeaders, err = dialer.Dial(dialCtx, wsURL, headers, proxyURL)
 		cancelDial()
 		if err == nil {

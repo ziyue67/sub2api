@@ -1,0 +1,10 @@
+{
+  "baseline": "bc83ff9c367883e5b7d0140e6bb42e2e7cc5239c",
+  "sourceHead": "bc83ff9c367883e5b7d0140e6bb42e2e7cc5239c",
+  "sourceModified": "M frontend/src/components/account/EditAccountModal.vue\n M frontend/src/i18n/locales/zh/admin/accounts.ts",
+  "scope": "Actual EditAccountModal, local mock API, synthetic account; not production or full navigation",
+  "savedModels": [
+    "gpt-6.1-sol"
+  ],
+  "errors": []
+}

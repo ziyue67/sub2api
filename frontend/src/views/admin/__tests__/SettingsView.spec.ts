@@ -818,6 +818,25 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
+  it("leaves the monitor mode alone unless it was changed here", async () => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, channel_monitor_enabled: true, channel_monitor_mode: "v3" });
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    // The monitor page may have switched the mode since this page loaded.
+    expect(updateSettings.mock.calls[0]?.[0]?.channel_monitor_mode).toBeUndefined();
+
+    const featuresTab = wrapper.findAll("button").find((node) => node.text().includes("admin.settings.tabs.features"));
+    await featuresTab?.trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="settings-monitor-mode-v1"]').trigger("click");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings.mock.calls[1]?.[0]).toMatchObject({ channel_monitor_mode: "v1" });
+    wrapper.unmount();
+  });
+
   it("saves expanded image capacity and rejects values above each ceiling", async () => {
     getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, excel_bps_image_mode: 'relay' });
     const wrapper = mountView();

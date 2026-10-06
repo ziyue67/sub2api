@@ -1,0 +1,17 @@
+{
+  "source_commit": "8d61a4f4f77cb4140136f7b6ede158a73efcd4bd",
+  "baseline": "dd1d9bdf5d996254a56e967a5c3b8e81039c48a3",
+  "source_modified": false,
+  "mode": "Actual HarvestFlowView with a slot-only layout and mocked APIs; not production or authenticated navigation acceptance",
+  "fixtures": "Fictional account IDs 101/202, documentation IP 192.0.2.10, no credentials or Cookie values",
+  "screenshots": [
+    "before-desktop.png",
+    "after-desktop.png",
+    "borrow-expanded.png",
+    "borrow-ready.png",
+    "borrow-dark.png",
+    "borrow-mobile.png"
+  ],
+  "browser_errors": [],
+  "captured_at": "2026-10-03T17:17:42.912Z"
+}

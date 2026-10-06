@@ -41,6 +41,17 @@ func EffortLevelsForModel(model string) []string {
 	return nil
 }
 
+// SupportsAdaptiveThinking reports whether a model accepts thinking.type=adaptive.
+// Every model in the effort catalog does except Claude Opus 4.5, which takes
+// output_config.effort but still enables thinking with a token budget.
+func SupportsAdaptiveThinking(model string) bool {
+	id := normalizeEffortModelID(model)
+	if id == "claude-opus-4-5" || strings.HasPrefix(id, "claude-opus-4-5-") {
+		return false
+	}
+	return EffortLevelsForModel(model) != nil
+}
+
 // IsOpus55 identifies the fixed Opus 5.5 ID after provider/local suffix normalization.
 func IsOpus55(model string) bool {
 	return normalizeEffortModelID(model) == "claude-opus-5-5"

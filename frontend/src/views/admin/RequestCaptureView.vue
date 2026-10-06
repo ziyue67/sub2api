@@ -1,6 +1,7 @@
 <template>
   <AppLayout>
     <div class="space-y-5">
+      <SmartOpsNav />
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div><h1 class="text-2xl font-semibold text-gray-900 dark:text-white">{{ t('admin.requestCapture.title') }}</h1><p class="mt-1 text-sm text-gray-500">{{ t('admin.requestCapture.description') }}</p></div>
         <button class="btn btn-secondary" :disabled="loading" @click="refresh">{{ t('admin.requestCapture.refresh') }}</button>
@@ -70,6 +71,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import { adminAPI } from '@/api'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 import * as api from '@/api/admin/requestCaptures'

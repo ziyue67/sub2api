@@ -1093,6 +1093,12 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		loadRateSumSquares += loadRate * loadRate
 	}
 	plan.loadSkew = calcLoadSkewByMoments(loadRateSum, loadRateSumSquares, len(candidates))
+	// Priority scheduling supplies its own scores and uses every overflow peer.
+	// Do not read legacy weights or calculate reset/cost factors only to discard them.
+	if s.applyPriorityScheduling(req, &plan) {
+		plan.selectionOrder = s.buildOpenAISelectionOrder(req, plan)
+		return plan
+	}
 
 	weights := s.service.openAIWSSchedulerWeightsForRequest(ctx)
 	now := time.Now()
@@ -1202,7 +1208,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAIAccountLoadPlan(
 		plan.topK = 1
 	}
 
-	s.applyPriorityScheduling(req, &plan)
 	plan.selectionOrder = s.buildOpenAISelectionOrder(req, plan)
 	return plan
 }
@@ -3120,7 +3125,7 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	}
 	// Prism runs one HTTP turn per request; the WS entry would only close the
 	// session after selection, so keep WS clients on the other accounts.
-	if accountHasPrismBrowser(account) {
+	if len(requestedModels) > 0 && account.IsPrismBrowserEnabledForModel(requestedModels[0]) {
 		return false
 	}
 	if requiredTransport == OpenAIUpstreamTransportResponsesWebsocketV2Ingress {
@@ -3140,6 +3145,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 
 func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Account, model string, success bool, firstTokenMs *int, observedErr ...error) bool {
 	if account == nil {
+		return false
+	}
+	if !success && len(observedErr) > 0 && isGrokRequestScopedFailure(observedErr[0]) {
 		return false
 	}
 	// A failed managed proxy acquisition says nothing about account health.
@@ -3175,7 +3183,7 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 // ObserveOpenAIAccountHealthFailure records failures that cannot reach the
 // scheduler-result path, for example after semantic response bytes were sent.
 func (s *OpenAIGatewayService) ObserveOpenAIAccountHealthFailure(ctx context.Context, account *Account, observedErr error) bool {
-	if s == nil || s.rateLimitService == nil || account == nil || observedErr == nil {
+	if s == nil || s.rateLimitService == nil || account == nil || observedErr == nil || isGrokRequestScopedFailure(observedErr) {
 		return false
 	}
 	return s.rateLimitService.ObserveOpenAIAPIKeyHealthFailure(ctx, account, observedErr)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -457,4 +458,17 @@ func TestMigration253ConvertsShowcaseGroupsToPausedPlans(t *testing.T) {
 	require.NoError(t, tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM pelican_group_test_plans WHERE group_id = ANY($1)`,
 		pq.Array([]int64{withItems, empty, deleted, planned})).Scan(&count))
 	require.Equal(t, 3, count)
+
+	strip, err := dbmigrations.FS.ReadFile("263_strip_pelican_prompt_restriction.sql")
+	require.NoError(t, err)
+	_, err = tx.ExecContext(ctx, string(strip))
+	require.NoError(t, err)
+	cleanedPrompt := strings.TrimSuffix(defaultPrompt, "，不要有任何限制")
+	require.NotContains(t, cleanedPrompt, "不要有任何限制")
+	for _, groupID := range []int64{withItems, empty} {
+		got := plansOf(groupID)
+		require.Len(t, got, 1)
+		require.Equal(t, cleanedPrompt, got[0].config.Prompt)
+	}
+	require.Equal(t, "kept", plansOf(planned)[0].config.Prompt)
 }

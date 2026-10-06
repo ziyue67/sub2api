@@ -157,16 +157,20 @@ func (s *ChannelMonitorV2Aggregator) loop() {
 			}
 			continue
 		}
-		if cfg, err := s.repo.GetConfig(ctx); err == nil {
-			if !cfg.Enabled {
-				cancel()
-				if !s.wait(interval) {
-					return
+		// The V2 summary switch and cadence belong to the V2 view; the V3 status
+		// page has no such switch and always reads minute-fresh facts.
+		if !s.v3Active(ctx) {
+			if cfg, err := s.repo.GetConfig(ctx); err == nil {
+				if !cfg.Enabled {
+					cancel()
+					if !s.wait(interval) {
+						return
+					}
+					continue
 				}
-				continue
-			}
-			if cfg.RefreshIntervalSeconds > 0 {
-				interval = time.Duration(cfg.RefreshIntervalSeconds) * time.Second
+				if cfg.RefreshIntervalSeconds > 0 {
+					interval = time.Duration(cfg.RefreshIntervalSeconds) * time.Second
+				}
 			}
 		}
 		cancel()
@@ -191,6 +195,10 @@ func (s *ChannelMonitorV2Aggregator) passiveAggregationAllowed(ctx context.Conte
 		return false
 	}
 	return s.settings.GetChannelMonitorRuntime(ctx).PassiveAggregationAllowed()
+}
+
+func (s *ChannelMonitorV2Aggregator) v3Active(ctx context.Context) bool {
+	return s != nil && s.settings != nil && s.settings.GetChannelMonitorRuntime(ctx).V3Active()
 }
 
 func (s *ChannelMonitorV2Aggregator) wait(interval time.Duration) bool {

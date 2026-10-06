@@ -668,6 +668,7 @@ const routes: RouteRecordRaw[] = [
       descriptionKey: 'admin.accounts.description'
     }
   },
+  { path: '/admin/astra-gateway', redirect: '/admin/harvest-flow' },
   {
     path: '/admin/harvest-flow',
     name: 'AdminHarvestFlow',

@@ -17,6 +17,9 @@ runtime:
 # 服务器配置
 # =============================================================================
 server:
+  # Shared PostgreSQL/Redis readiness budget: 0 = 1s (default), allowed 1..60s.
+  # If changed, Kubernetes readinessProbe.timeoutSeconds must exceed this budget.
+  readiness_timeout_seconds: 0
   # HTTP/WS request drain budget after load-balancer withdrawal (seconds).
   # Default 5 preserves existing deployments; Kubernetes example uses 240.
   graceful_shutdown_timeout: 5
@@ -228,6 +231,24 @@ security:
 # 网关配置
 # =============================================================================
 gateway:
+  # Route upstream hosts through operator-managed regional HTTP(S)/SOCKS5 exits.
+  # Disabled by default; reload requires a process restart. Explicit account
+  # proxies, Codex harvest proxies and BPS keep their existing exit policy.
+  upstream_routing:
+    enabled: false
+    regions: []
+    rules: []
+    # regions:
+    #   - id: us
+    #     proxy_url_env: SUB2API_EGRESS_US_PROXY_URL
+    # rules:
+    #   - domain: api.vendor.example
+    #     region: us
+    #     account_ids: [123] # optional upstream account IDs, not client API Key IDs
+    #   - domain: "*.us.vendor.example"
+    #     region: us
+    # Inject SUB2API_EGRESS_US_PROXY_URL via Secret/EnvironmentFile, for example
+    # socks5h://127.0.0.1:11080 (SSH SOCKS tunnel terminating on a US host).
   # Timeout for waiting upstream response headers (seconds)
   # 等待上游响应头超时时间（秒）
   response_header_timeout: 600
@@ -615,6 +636,9 @@ gateway:
     db_fallback_timeout_seconds: 0
     # 受控回源限流（实例级 QPS），0 表示不限制
     db_fallback_max_qps: 0
+    # OpenAI 发送前账户快照的进程内缓存 TTL（秒）；0 表示关闭。
+    # 启用后账户停用、换组或代理变更最坏可延迟该时长生效。
+    openai_turn_admission_cache_ttl_seconds: 0
     # outbox 轮询周期（秒）
     outbox_poll_interval_seconds: 1
     # outbox 滞后告警阈值（秒）

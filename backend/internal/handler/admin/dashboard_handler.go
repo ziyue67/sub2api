@@ -532,6 +532,7 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	if metric != "tokens" && metric != "actual_cost" {
 		metric = "tokens"
 	}
+	// 本函数使用 Fork 的 dashboardTimeRange（含 StartLabel/EndLabel 等展示信息）。
 	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), timeRange.Start, timeRange.End, granularity, limit, metric)
 	if err != nil {
 		response.Error(c, 500, "Failed to get user usage trend")

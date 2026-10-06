@@ -17,7 +17,7 @@ vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { tem
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin/autoConfig', () => ({ getAutoConfig: vi.fn(), saveAutoConfig: vi.fn() }))
 vi.mock('@/api/admin/groups', () => ({ getAll: vi.fn() }))
-const config: AutoConfig = { model_billing: defaultModelBillingConfig(), model_mappings: defaultOAuthModelMappings('openai'), excel_bps: defaultExcelBPSDefaults(), enabled: false, platform: 'openai', priority: 50, load_factor: 1, concurrency: 3, group_ids: [], upgrade_enabled: false, upgrade_group_ids: [], successes_per_step: 20, upgrade_step: 1, max_concurrency: 100, cooldown_seconds: 60, revision: '' }
+const config: AutoConfig = { model_billing: defaultModelBillingConfig(), model_mappings: defaultOAuthModelMappings('openai'), excel_bps: defaultExcelBPSDefaults(), enabled: false, platform: 'openai', priority: 50, load_factor: 1, concurrency: 3, cost_multiplier: 0.07, group_ids: [], upgrade_enabled: false, upgrade_group_ids: [], successes_per_step: 20, upgrade_step: 1, max_concurrency: 100, cooldown_seconds: 60, revision: '' }
 beforeEach(() => {
  vi.resetAllMocks(); state.auth = reactive({ user: { id: 1, role: 'admin' } })
  vi.mocked(getAutoConfig).mockResolvedValue(structuredClone(config)); vi.mocked(saveAutoConfig).mockImplementation(async c => c)

@@ -72,6 +72,8 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	// Realtime is not an HTTP streaming response; using reqStream=true here would
 	// let the wait queue flush an SSE ping before the WebSocket handshake succeeds.
 	failed := map[int64]struct{}{}
+	var forbiddenBudget grokForbiddenFailoverBudget
+	upstreamSwitchCount := 0
 	var selection *service.AccountSelectionResult
 	var release func()
 	var token string
@@ -113,6 +115,9 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		if credErr != nil {
 			release()
 			release = nil
+			if forbiddenBudget.active {
+				break
+			}
 			failed[account.ID] = struct{}{}
 			continue
 		}
@@ -122,13 +127,22 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		if openErr != nil {
 			reqLog.Warn("grok_realtime.pre_accept_failed", zap.Int64("account_id", account.ID), zap.Error(openErr))
 			statusCode := http.StatusBadGateway
+			var responseBody []byte
+			var responseHeaders http.Header
 			var dialErr *service.GrokRealtimeDialError
 			if errors.As(openErr, &dialErr) && dialErr.StatusCode > 0 {
 				statusCode = dialErr.StatusCode
+				responseBody = dialErr.ResponseBody
+				responseHeaders = dialErr.ResponseHeaders
 			}
-			h.gatewayService.HandleGrokRealtimeUpstreamError(c.Request.Context(), account, statusCode, []byte(openErr.Error()))
+			h.gatewayService.HandleGrokRealtimeUpstreamError(c.Request.Context(), account, statusCode, responseBody)
 			release()
 			release = nil
+			failoverErr := service.GrokRealtimeFailoverError(account, statusCode, responseHeaders, responseBody)
+			if !forbiddenBudget.canRetry(failoverErr, upstreamSwitchCount) {
+				break
+			}
+			upstreamSwitchCount++
 			failed[account.ID] = struct{}{}
 			continue
 		}
@@ -253,6 +267,8 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 	}
 
 	failed := map[int64]struct{}{}
+	var forbiddenBudget grokForbiddenFailoverBudget
+	upstreamSwitchCount := 0
 	var last *service.UpstreamFailoverError
 	reqLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
 	selectionModel := "grok-4.5"
@@ -315,7 +331,12 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			return
 		}
 		var failoverErr *service.UpstreamFailoverError
-		if errors.As(forwardErr, &failoverErr) && failoverErr.ShouldRetryNextAccount() {
+		if errors.As(forwardErr, &failoverErr) {
+			if c.Writer.Written() || !forbiddenBudget.canRetry(failoverErr, upstreamSwitchCount) {
+				h.handleFailoverExhausted(c, failoverErr, c.Writer.Written())
+				return
+			}
+			upstreamSwitchCount++
 			failed[account.ID] = struct{}{}
 			last = failoverErr
 			continue

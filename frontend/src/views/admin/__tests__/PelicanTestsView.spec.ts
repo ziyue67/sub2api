@@ -40,7 +40,7 @@ const plan = (overrides: Partial<PelicanGroupTestPlan> = {}): PelicanGroupTestPl
   last_run_at: '2026-09-28T04:00:00Z', next_run_at: '2026-09-28T04:30:00Z', last_result: result(), created_at: '', updated_at: '',
   ...overrides,
 })
-const settings = { enabled: false, max_items: 20, auto_cleanup: true, retention_days: 7 }
+const settings = { enabled: false, api_enabled: true, max_items: 20, auto_cleanup: true, retention_days: 7 }
 
 const SelectStub = {
   props: ['modelValue', 'options', 'disabled'],
@@ -65,6 +65,10 @@ const mountView = () => mount(PelicanTestsView, {
       Select: SelectStub,
       Toggle: ToggleStub,
       BaseDialog: { props: ['show', 'title'], template: '<div v-if="show" class="dialog"><h3>{{ title }}</h3><slot /><slot name="footer" /></div>' },
+      PelicanShowcaseApiDialog: {
+        props: ['show', 'enabled'],
+        template: '<div v-if="show" data-testid="api-info-dialog" :data-enabled="enabled" />',
+      },
       ConfirmDialog: {
         props: ['show'], emits: ['confirm', 'cancel'],
         template: `<div v-if="show" class="confirm"><button class="confirm-yes" @click="$emit('confirm')" /></div>`,
@@ -142,14 +146,39 @@ describe('PelicanTestsView', () => {
     const save = wrapper.get('[data-testid="pelican-showcase-save"]')
     expect(save.attributes('disabled')).toBeDefined()
     await wrapper.get('[data-testid="pelican-showcase-enabled"]').setValue(true)
+    await wrapper.get('[data-testid="pelican-showcase-api-enabled"]').setValue(false)
     await wrapper.get('[data-testid="pelican-showcase-max-items"]').setValue('40')
     await wrapper.get('[data-testid="pelican-showcase-auto-cleanup"]').setValue(false)
     expect(wrapper.find('[data-testid="pelican-showcase-retention-days"]').exists()).toBe(false)
     await wrapper.get('[data-testid="pelican-showcase-settings"] form').trigger('submit')
     await flushPromises()
-    expect(api.updateShowcaseSettings).toHaveBeenCalledWith({ enabled: true, max_items: 40, auto_cleanup: false, retention_days: 7 })
+    expect(api.updateShowcaseSettings).toHaveBeenCalledWith({ enabled: true, api_enabled: false, max_items: 40, auto_cleanup: false, retention_days: 7 })
     expect(fetchPublicSettings).toHaveBeenCalledWith(true)
     expect(wrapper.text()).toContain('pelicanTests.showcase.saved')
+  })
+
+  it('saves API access independently and reports the saved availability in its call information', async () => {
+    api.getShowcaseSettings.mockResolvedValue({ ...settings, enabled: true })
+    api.updateShowcaseSettings.mockImplementation(async (value) => value)
+    wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="pelican-showcase-api-enabled"]').setValue(false)
+    expect(wrapper.get('[data-testid="pelican-showcase-save"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="pelican-showcase-api-info"]').trigger('click')
+    expect(wrapper.get('[data-testid="api-info-dialog"]').attributes('data-enabled')).toBe('true')
+    await wrapper.get('[data-testid="pelican-showcase-settings"] form').trigger('submit')
+    await flushPromises()
+    expect(api.updateShowcaseSettings).toHaveBeenCalledWith({ ...settings, enabled: true, api_enabled: false })
+    expect(wrapper.get('[data-testid="api-info-dialog"]').attributes('data-enabled')).toBe('false')
+    expect(wrapper.get('[data-testid="pelican-showcase-enabled"]').element).toHaveProperty('checked', true)
+  })
+
+  it('shows that API output depends on opening the showcase to users', async () => {
+    wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="pelican-showcase-api-requires-gallery"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="pelican-showcase-enabled"]').setValue(true)
+    expect(wrapper.find('[data-testid="pelican-showcase-api-requires-gallery"]').exists()).toBe(false)
   })
 
   it('creates a group test on a preset schedule', async () => {

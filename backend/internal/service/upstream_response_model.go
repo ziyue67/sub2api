@@ -26,9 +26,11 @@ const (
 // separate from the final outbound request tier until usage recording resolves
 // the billable tier for the selected credential protocol.
 type upstreamResponseModelObserver struct {
-	first    string
-	terminal string
-	conflict bool
+	astraCompleted bool
+	astraHasText   bool
+	first          string
+	terminal       string
+	conflict       bool
 
 	// firstTier holds the first non-terminal tier declaration; it is discarded
 	// when later non-terminal declarations disagree. terminalTier comes from a
@@ -69,6 +71,15 @@ func normalizeObservedUpstreamResponseModel(model string) string {
 }
 
 func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType string) {
+	switch eventType {
+	case "response.output_text.delta":
+		o.astraHasText = o.astraHasText || strings.TrimSpace(gjson.GetBytes(payload, "delta").String()) != ""
+	case "response.completed", "response.done":
+		r := gjson.ParseBytes(payload).Get("response")
+		o.astraCompleted = codexAstraCompleted(r) || (o.astraHasText && r.Get("model").String() == "gpt-6-astra" && r.Get("status").String() == "completed" && !r.Get("error").IsObject())
+	case "response.failed", "response.incomplete", "error":
+		o.astraCompleted = false
+	}
 	model := firstValidTrimmedGJSONString(payload, "response.model", "model")
 	terminal := isUpstreamResponseModelTerminalEvent(eventType)
 	o.Observe(model, terminal)

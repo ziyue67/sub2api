@@ -4,6 +4,12 @@
 
 采用 **JSON 结果清单 + 按 ID 按需获取正文**。清单仅含元数据，完整 HTML/SVG 保存在单条结果的 `response_text` 中，不重复内联到清单、不转换为截图或 Base64。下游解析 JSON 后即可得到原始模型输出。
 
+## 管理与接入入口
+
+管理员在「智能运维 → 鹈鹕测智 → 用户展示」配置「允许 API Key 读取作品」，与「开放给用户」及保留规则一起保存。API 开关独立于网页展示：关闭 API 后，已登录用户仍可查看已开放的展示页，开放 API 请求返回 403。未配置新开关的已有站点默认保持 API 开放，兼容原有接入。旧客户端保存展示设置时省略 `api_enabled` 会保留当前开关值。
+
+用户在「鹈鹕测智」顶部点击「API 调用」可查看当前可用状态、清单和正文地址、鉴权方式，以及可复制的 curl 示例；弹窗也提供 API Key 管理入口。管理员可在配置旁查看已保存设置的同一组调用信息。地址使用当前面板站点的 origin，不使用可能指向纯 gateway 实例的模型 API 地址。
+
 ## 鉴权
 
 清单、正文、GET/HEAD 和条件请求都必须携带本站用户创建的 API Key，推荐 `Authorization: Bearer <API_KEY>`，兼容现有 `X-API-Key` / `X-Goog-API-Key` 请求头。不接受网页登录 JWT 或 URL 查询参数中的 Key。路径保留 `/public/` 表示已发布作品，**不表示允许匿名访问**。
@@ -64,7 +70,7 @@ Accept-Encoding: gzip
 - `generated_at` 沿用展示页口径，通常是该次测试的开始时间；`latency_ms` 为该份测试耗时（毫秒）。`latest_generated_at` 是当前作品中最大的生成时间；没有作品时为 `null`。它不是删除/设置变动游标，应使用 ETag 检查清单变化。
 - `result_scope=published_successes` 表示只包含已成功生成 HTML/SVG 并发布的作品，**不是全部测试记录，不是成功率、可用性或智力分数**。不公开账号身份、管理员错误记录、提示词配置和成本字段。
 - 保留数量、天数和分组可见性与展示页一致。`retention_days=0` 表示关闭按天清理，仍受每组数量上限约束。管理员删除、计划删除、分组停用、作品过期或收紧保留数量后，该作品会移出清单。
-- 展示开关关闭时返回 `enabled=false, groups=[]`，正文接口返回 404。API 与展示开关共用设置；开启展示后，已发布作品可供通过 API Key 鉴权的下游读取。
+- API 开关关闭时，清单和正文接口均返回 403（`reason=PELICAN_SHOWCASE_API_DISABLED`），GET/HEAD、缓存命中和条件请求都受此开关控制。API 开关开启但展示开关关闭时返回 `enabled=false, groups=[]`，正文接口返回 404；同时开启两个开关后，已发布作品可供通过 API Key 鉴权的下游读取。
 
 ## 2. 按需读取完整结果
 
@@ -106,10 +112,10 @@ curl --compressed -sS -D headers.txt \
   https://sub2api.example.com/api/v1/public/pelican-showcase \
   -o manifest.json
 
-# 后续：使用 headers.txt 中 ETag 的完整原值（包括 W/ 和双引号）
+# 后续：将 YOUR_ETAG 替换为 headers.txt 中 ETag 的完整原值（包括 W/ 和双引号）
 curl --compressed -i \
   -H "Authorization: Bearer $SUB2API_API_KEY" \
-  -H 'If-None-Match: W/"替换为实际ETag"' \
+  -H 'If-None-Match: YOUR_ETAG' \
   https://sub2api.example.com/api/v1/public/pelican-showcase
 
 # 仅在本地尚无该结果时，读取清单返回的 content_url
@@ -118,4 +124,4 @@ curl --compressed -sS \
   https://sub2api.example.com/api/v1/public/pelican-showcase/items/7
 ```
 
-错误状态：400 非法 ID/URL 传 Key；401 缺少、无效或停用 Key/用户；403 Key 过期、IP 或分组访问受限；404 作品不可见；429 IP/用户限流或无效鉴权防刷；503 清单或鉴权暂时不可用；500 存储读取失败。服务部署在主实例的面板 API 路由上，纯 gateway 角色实例不注册此接口。无需数据库迁移，也无需创建额外的定时测试。
+错误状态：400 非法 ID/URL 传 Key；401 缺少、无效或停用 Key/用户；403 API 读取关闭、Key 过期、IP 或分组访问受限；404 作品不可见；429 IP/用户限流或无效鉴权防刷；503 配置、清单或鉴权暂时不可用；500 存储读取失败。服务部署在主实例的面板 API 路由上，纯 gateway 角色实例不注册此接口。无需数据库迁移，也无需创建额外的定时测试。

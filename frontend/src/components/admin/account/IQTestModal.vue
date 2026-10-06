@@ -134,7 +134,7 @@
             v-model="modelId"
             :label="t('admin.accounts.pelicanTest.model')"
             :disabled="running"
-            :hint="t('admin.accounts.pelicanTest.modelHint')"
+            :hint="t('admin.accounts.pelicanTest.modelHint', { model: defaultModel })"
           />
           <div>
             <label class="input-label mb-1.5 block">{{ t('admin.accounts.pelicanTest.reasoning') }}</label>
@@ -334,7 +334,9 @@ const emit = defineEmits<{ (event: 'close'): void }>()
 
 const questionKind = ref<IntelligenceQuestion>('candy')
 const prompt = ref(questionPrompt('candy'))
-const modelId = ref('gpt-6-astra')
+// Claude accounts cannot serve the OpenAI default.
+const defaultModel = computed(() => props.account?.platform === 'anthropic' ? 'claude-opus-5-5' : 'gpt-6-astra')
+const modelId = ref(defaultModel.value)
 const reasoningEffort = ref('medium')
 const parallelCount = ref<string | number>(1)
 const activeTab = ref<'results' | 'history' | 'schedule'>('results')
@@ -643,7 +645,7 @@ watch(() => [props.show, props.account?.id] as const, ([show]) => {
     scheduledRecords.value = []
     questionKind.value = 'candy'
     prompt.value = questionPrompt('candy')
-    modelId.value = 'gpt-6-astra'
+    modelId.value = defaultModel.value
     reasoningEffort.value = 'medium'
     parallelCount.value = 1
     runs.value = []

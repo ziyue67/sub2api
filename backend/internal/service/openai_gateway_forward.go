@@ -45,6 +45,11 @@ func prismBrowserResponsesURL(baseURL string) string {
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, resultErr error) {
+	if astraSchedulingAppliesToRequest(s.cfg.AstraRouting(ctx), account, gjson.GetBytes(body, "model").String(), getOpenAIGroupIDFromContext(c)) {
+		if err := s.checkAstraSchedulingRoute(ctx, account); err != nil {
+			return nil, err
+		}
+	}
 	defer func() {
 		outcome := "success"
 		if resultErr != nil {
@@ -106,7 +111,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	modelForBPS := gjson.GetBytes(body, "model").String()
-	if accountHasPrismBrowser(account) {
+	if account.IsPrismBrowserEnabledForModel(modelForBPS) {
 		return s.forwardPrismBrowser(ctx, c, account, body, startTime)
 	}
 	if c.GetBool(bpsAccountProbeRequiredContextKey) &&
@@ -190,6 +195,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	// HTTP SSE may opt into the native WS pool on ordinary OAuth accounts.
 	wsDecision = s.resolveOpenAIHTTPWSSSEDecision(c, account, body, wsDecision)
 	accelerateHTTPSSE := wsDecision.Reason == openAIOAuthWSSSEAccelerationReason
+	anchorCtx, anchorFinish, anchorErr := s.prepareCodexWSAnchor(ctx, c, account, body)
+	if anchorErr != nil {
+		return nil, anchorErr
+	}
+	if anchorFinish != nil {
+		ctx = anchorCtx
+		defer func() { anchorFinish(result, resultErr) }()
+		wsDecision = OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2, Reason: "private_astra_ws_anchor"}
+	}
+
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	compactPath := isOpenAIResponsesCompactPath(c)
 	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
@@ -1004,6 +1019,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if wsErr == nil {
 				break
 			}
+			var capacityFailover *UpstreamFailoverError
+			if errors.As(wsErr, &capacityFailover) && !c.Writer.Written() {
+				return nil, capacityFailover
+			}
 			if IsOpenAITurnAdmissionError(wsErr) {
 				return nil, wsErr
 			}
@@ -1030,11 +1049,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			// previous_response_not_found 说明续链锚点不可用：
 			// 对非 function_call_output 场景，允许一次“去掉 previous_response_id 后重放”。
-			if reason == "previous_response_not_found" && recoverPrevResponseNotFound(attempt) {
+			if codexWSAnchorFromContext(ctx) == nil && reason == "previous_response_not_found" && recoverPrevResponseNotFound(attempt) {
 				continue
 			}
-			if reason == "invalid_encrypted_content" && recoverInvalidEncryptedContent(attempt) {
+			if codexWSAnchorFromContext(ctx) == nil && reason == "invalid_encrypted_content" && recoverInvalidEncryptedContent(attempt) {
 				continue
+			}
+			if codexWSAnchorFromContext(ctx) != nil {
+				break
 			}
 			if retryable && attempt < maxAttempts {
 				backoff := s.openAIWSRetryBackoff(attempt)
@@ -1847,6 +1869,8 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		req.Header.Set("content-type", "application/json")
 	}
 
+	applyOpenAIAPIKeyIdentityHeaders(req.Header, account, s.codexIdentityOverrideUA(account))
+
 	// 官方 OpenCode / Command Code 上游收敛为规范客户端 UA：客户端透传的编程库
 	// UA 会命中其前置 Cloudflare bot 拦截（CF 1010/403），并被计入账号 403 strike。
 	applyOpenCodeUpstreamUserAgent(account, targetURL, req.Header)
@@ -1871,6 +1895,9 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 // ForceCodexCLI 语义是「强制使用 Codex CLI 身份」，等价于使用网关规范身份，故返回空串；
 // 该优先级与历史行为一致（ForceCodexCLI 在账号自定义 UA 之后生效）。
 func (s *OpenAIGatewayService) codexIdentityOverrideUA(account *Account) string {
+	if account == nil {
+		return ""
+	}
 	if s != nil && s.cfg != nil && s.cfg.Gateway.ForceCodexCLI {
 		return ""
 	}

@@ -834,7 +834,7 @@ func (e *UpstreamFailoverError) IsCredentialFailure() bool {
 // and inference failures retain their existing scheduler-health behavior,
 // except an Excel BPS 429: it only cools the account's BPS route.
 func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
-	if e == nil || e.Reason == ExcelBPSRateLimitedReason {
+	if e == nil || e.Reason == ExcelBPSRateLimitedReason || e.Reason == GrokUnknownForbiddenReason {
 		return false
 	}
 	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount
@@ -1462,6 +1462,7 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 	account.ApplyHeaderOverrides(upstreamReq.Header)
 	proxyURL := AccountProxyURL(account)
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+	s.rateLimitService.observeQualityResponse(upstreamReq.Context(), account, resp, err)
 	if err != nil {
 		return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, Reason: GatewayFailureReason("grok_search_transport")}
 	}

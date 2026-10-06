@@ -42,10 +42,27 @@ server:
 对应环境变量为 `RUNTIME_ROLE`、`SERVER_GRACEFUL_SHUTDOWN_TIMEOUT`、`SERVER_SHUTDOWN_DRAIN_DELAY`。timeout 范围 0–3600，drain delay 范围 0–300。需要通过 Compose 使用时显式加入 service.environment，宿主 .env 文件本身不会自动进入容器。
 
 - `/health` 用作 liveness，只反映进程 HTTP 服务存活。
-- `/readyz` 用作 readiness：正常模式检查 PostgreSQL 和 Redis（共享 1 秒预算），依赖不可用时返回 503，不返回内部错误或凭据。
+- `/readyz` 用作 readiness：正常模式检查 PostgreSQL 和 Redis。默认共享 1 秒预算；使用远程共享依赖的 gateway 可将 `server.readiness_timeout_seconds` 设置为有界值（例如 3），依赖不可用时仍返回 503，不返回内部错误或凭据。
 - 未完成配置的 setup 模式对 /readyz 返回 503，避免把前端 SPA 的 200 当成准备就绪。
 - SIGTERM 到达后立即撤销 readiness，新业务请求返回 503/Retry-After，已有处理器继续运行；先等待 drain delay，再在 graceful timeout 内排空 HTTP 和仍在处理中的 hijacked/WS handler。到期后进程进入关闭流程。
 - 示例为 10 秒撤流等待、240 秒请求排空、320 秒 Pod 宽限期。宽限期要覆盖两个阶段和后台清理余量。更长的流需要更大的预算；本功能不保证无限长连接不中断，也不会将已经输出的请求自动重放到另一个 Pod。
+
+`server.readiness_timeout_seconds` 支持 YAML 或 `SERVER_READINESS_TIMEOUT_SECONDS` 环境变量，重启生效；省略或设为 `0` 保持 1 秒，显式值允许 `1..60` 秒。这是 PostgreSQL 与 Redis 顺序检查的总预算。先测量真实依赖操作的耗时，再决定是否调整；仅连接 SSH 本地转发监听端口的耗时无法反映远端数据库往返。
+
+例如依赖检查通常需要 1–2 秒时，可以为相应 gateway 显式配置 3 秒，并给 kubelet 留出余量：
+
+```yaml
+env:
+  - name: SERVER_READINESS_TIMEOUT_SECONDS
+    value: "3"
+readinessProbe:
+  httpGet: {path: /readyz, port: http}
+  timeoutSeconds: 5
+  periodSeconds: 5
+  failureThreshold: 2
+```
+
+`readinessProbe.timeoutSeconds` 必须大于应用探测预算；只修改 kubelet 的超时不会改变应用内的预算。Compose 部署需在 `service.environment` 显式传入环境变量。调大预算会延长依赖故障时的撤流等待，不能用来掩盖持续故障；本配置不改变 scheduler 重建或 outbox 超时。内部调用者（例如 Serverless heartbeat）自身更短的 deadline 仍优先。`/health` 的存活检查、draining 时立即返回 503 和 setup 模式行为保持原样。
 
 ## 配置和存储
 

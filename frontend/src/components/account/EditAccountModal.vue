@@ -41,9 +41,17 @@
           <span>{{ t('admin.accounts.openai.prismBrowser') }}</span>
         </label>
         <p class="input-hint">{{ t('admin.accounts.openai.prismBrowserDesc') }}</p>
-        <p v-if="prismBrowserEnabled" class="mt-2 text-xs text-primary-600 dark:text-primary-400">
-          {{ t('admin.accounts.openai.prismBrowserManagedEndpoint') }}
-        </p>
+        <fieldset v-if="prismBrowserEnabled" class="mt-3" data-testid="prism-model-scope">
+          <legend class="input-label">{{ t('admin.accounts.openai.prismBrowserModels') }}</legend>
+          <div class="grid grid-cols-2 gap-2">
+            <label v-for="model in prismSupportedModels" :key="model" class="flex items-center gap-2 text-sm">
+              <input v-model="prismBrowserModels" type="checkbox" :value="model" :data-testid="`prism-model-${model}`" />
+              <span>{{ model }}</span>
+            </label>
+          </div>
+          <p class="input-hint">{{ t('admin.accounts.openai.prismBrowserModelsHint') }}</p>
+          <p class="mt-2 text-xs text-primary-600 dark:text-primary-400">{{ t('admin.accounts.openai.prismBrowserManagedEndpoint') }}</p>
+        </fieldset>
       </div>
 
       <!-- API Key fields (only for apikey type) -->
@@ -646,6 +654,26 @@
           </div>
         </div>
 
+      </div>
+
+      <div
+        v-if="account.platform === 'grok'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <label class="input-label mb-0">{{ t('admin.accounts.grokSkipForbiddenPause.title') }}</label>
+            <p id="grok-skip-forbidden-pause-hint" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.grokSkipForbiddenPause.hint') }}
+            </p>
+          </div>
+          <Toggle
+            v-model="grokSkipForbiddenPause"
+            data-testid="grok-skip-forbidden-pause-toggle"
+            :aria-label="t('admin.accounts.grokSkipForbiddenPause.title')"
+            aria-describedby="grok-skip-forbidden-pause-hint"
+          />
+        </div>
       </div>
 
       <!-- Grok OAuth client-tool prompt cache opt-in -->
@@ -3654,6 +3682,8 @@ const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
 const prismBrowserEnabled = ref(false)
+const prismSupportedModels = ['gpt-6.1-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-luna']
+const prismBrowserModels = ref<string[]>([...prismSupportedModels])
 
 // OpenAI API Key protocol override. Empty means legacy Responses behavior.
 const editOpenAIApiProtocol = ref<OpenAIApiProtocol>('')
@@ -3864,6 +3894,7 @@ const allowedModels = ref<string[]>([])
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
+const GROK_SKIP_FORBIDDEN_PAUSE_EXTRA_KEY = 'grok_skip_forbidden_pause'
 const GROK_CLIENT_TOOL_CACHE_EXTRA_KEY = 'grok_client_tool_cache_enabled'
 const poolModeEnabled = ref(false)
 const poolModeRetryCount = ref(DEFAULT_POOL_MODE_RETRY_COUNT)
@@ -3913,6 +3944,7 @@ const headerOverrideCapable = computed(
 // Grok OAuth 自定义上游地址（仅转发端点；OAuth 授权/令牌刷新不受影响）
 const grokOAuthCustomBaseUrlEnabled = ref(false)
 const grokOAuthBaseUrl = ref('')
+const grokSkipForbiddenPause = ref(false)
 // Grok Free OAuth accounts use client-tool prompt caching by default. Keep an
 // explicit false in the account extra as the opt-out signal.
 const grokClientToolCacheEnabled = ref(true)
@@ -4587,6 +4619,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   excelBPSAutoMoveOn403.value = false
   excelBPS403TargetGroupID.value = ''
   prismBrowserEnabled.value = false
+  prismBrowserModels.value = [...prismSupportedModels]
   copilotSDKEnabled.value = false
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
@@ -4609,6 +4642,11 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     prismBrowserEnabled.value = newAccount.type === 'oauth' && extra?.openai_prism_browser === true
+    if (Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_prism_browser_models')) {
+      prismBrowserModels.value = Array.isArray(extra?.openai_prism_browser_models)
+        ? extra.openai_prism_browser_models.filter((model): model is string => typeof model === 'string' && prismSupportedModels.includes(model))
+        : []
+    }
     excelBPSEnabled.value = newAccount.type === 'oauth' && extra?.openai_excel_bps === true
     excelBPSMode.value = extra?.openai_excel_bps_config_mode === 'defaults' ? 'defaults' : 'initial'
     excelBPSAllModels.value = excelBPSEnabled.value && !Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')
@@ -4788,6 +4826,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Load Grok OAuth custom upstream URL state（存储的官方地址视同未定制）
   grokOAuthCustomBaseUrlEnabled.value = false
   grokOAuthBaseUrl.value = ''
+  grokSkipForbiddenPause.value =
+    newAccount.platform === 'grok' && newAccount.extra?.[GROK_SKIP_FORBIDDEN_PAUSE_EXTRA_KEY] === true
   const grokClientToolCacheSetting =
     newAccount.platform === 'grok' && newAccount.type === 'oauth'
       ? newAccount.extra?.[GROK_CLIENT_TOOL_CACHE_EXTRA_KEY]
@@ -6039,6 +6079,14 @@ const handleSubmit = async () => {
       updatePayload.extra = newExtra
     }
 
+    if (props.account.platform === 'grok') {
+      updatePayload.extra = {
+        ...((props.account.extra as Record<string, unknown>) || {}),
+        ...((updatePayload.extra as Record<string, unknown>) || {}),
+        [GROK_SKIP_FORBIDDEN_PAUSE_EXTRA_KEY]: grokSkipForbiddenPause.value
+      }
+    }
+
     // OpenAI: 手动覆盖订阅档位 plan_type（Plus / Pro 20x / Pro 5x / Business Standard / Business Premium / Free）。
     // 仅 OAuth 非影子账号：
     // 影子账号凭据由母账号管理(且后端会 sanitize),setup-token 无订阅调度语义。
@@ -6321,8 +6369,13 @@ const handleSubmit = async () => {
         newExtra.openai_compact_mode = openAICompactMode.value
       }
       if (props.account.type === 'oauth') {
-        if (prismBrowserEnabled.value) newExtra.openai_prism_browser = true
-        else delete newExtra.openai_prism_browser
+        if (prismBrowserEnabled.value) {
+          newExtra.openai_prism_browser = true
+          newExtra.openai_prism_browser_models = prismSupportedModels.filter(model => prismBrowserModels.value.includes(model))
+        } else {
+          delete newExtra.openai_prism_browser
+          delete newExtra.openai_prism_browser_models
+        }
       }
 		if (props.account.type === 'apikey') {
         if (!openAITextGenerationCapabilityEnabled.value || openAIResponsesMode.value === 'auto') {

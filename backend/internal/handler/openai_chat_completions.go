@@ -160,10 +160,12 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	// Fork 的多分组路由尝试集合 + ranxi 的 Grok 403 失败预算。
 	routeAttempts := make(map[int64]struct{}, len(apiKey.GroupRoutes))
 	if apiKey.GroupID != nil {
 		routeAttempts[*apiKey.GroupID] = struct{}{}
 	}
+	var forbiddenBudget grokForbiddenFailoverBudget
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
@@ -423,7 +425,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, nil), false, nil, err)
 					}
-					if !failoverErr.ShouldRetryNextAccount() {
+					if !forbiddenBudget.canRetry(failoverErr, switchCount) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

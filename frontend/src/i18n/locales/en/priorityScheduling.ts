@@ -1,4 +1,8 @@
 export default {
+  evaluatedAt: 'Scores evaluated', historyObservedAt: 'History read',
+  historyRetry: 'History refresh failed; recent cached evidence remains in use until expiry. Retry shortly.',
+  historyStates: { ready: 'History ready', stale: 'Using recent cached history while awaiting an update.', partial: 'Some candidates are still loading; known history remains in use.', loading: 'Loading history; missing evidence remains unknown.', error: 'History could not be read. Refresh to retry shortly.', unavailable: 'History is unavailable on this instance.', limited: 'Candidate or cache limit reached; using live capacity.' },
+
 
   profit: 'Recent profit / margin',
   economics: { usage: 'Usage records', rate: 'Rate estimate', unknown: 'Insufficient profit samples' },
@@ -21,7 +25,7 @@ export default {
   costHint: 'Profit = user charges − estimated cost. Estimated cost = account statistics price or base cost summed for the same group and model × the current account cost multiplier. Set it in account editing (default 0.1). When following is enabled, successful upstream probes update the same value. Turn it off to retain a manual cost; failures or expiry keep the saved value. Account and user billing remain independent. Changes re-estimate recent profit without rewriting usage logs. Margin = profit / user charges.',
   save: 'Save configuration', saving: 'Saving…', saved: 'Configuration saved', loading: 'Loading…', retry: 'Retry', error: 'Could not load or save. Please retry.', invalid: 'Check group IDs and parameter ranges',
   recent: 'Latest candidate scores', refresh: 'Refresh scores', empty: 'No scores yet. Eligible requests requiring free routing generate scores after enabling.', historyPending: 'History is not ready; live capacity balancing remains active. Missing history stays unknown and refreshes in the background.',
-  snapshotHint: 'Shows this instance’s latest pool, up to 100 accounts, ordered by risk, projected utilization band and preference. Similar-capacity peers use weighted selection; row order is not a fixed allocation. Live candidates remain visible while history is loading.',
+  snapshotHint: 'Shows this instance’s latest pool, up to 100 accounts. Refresh asynchronously reads history and re-evaluates scores; candidates, configuration and load remain those observed at selection time. Re-evaluated scores do not describe the original routing decision. Rows are ordered by risk, projected utilization band and preference. Similar-capacity peers use weighted selection; row order is not a fixed allocation. Live candidates remain visible while history is loading.',
   model: 'Model', group: 'Group', account: 'Account', score: 'Score', tier: 'Status', latency: 'P90 first token', load: 'Concurrency', rate: 'Cost rate', quality: 'Quality passed', samples: 'samples', unknown: 'Unknown',
   tiers: { eligible: 'Targets met', insufficient: 'Insufficient data', degraded: 'Targets missed' },
   reasons: { quality_below_target: 'Quality below target', quality_unknown: 'No fresh quality result', latency_above_target: 'Latency above target', latency_insufficient: 'Insufficient latency samples', busy: 'High concurrency or queueing', load_unknown: 'Concurrency unknown', cost_unknown: 'Cost unknown', recent_errors: 'Elevated recent errors', historical_loss: 'Recent charges below theoretical cost', profit_insufficient: 'Insufficient profit samples' }

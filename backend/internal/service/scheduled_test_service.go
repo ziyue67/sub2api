@@ -13,9 +13,11 @@ var scheduledTestCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom 
 
 // ScheduledTestService provides CRUD operations for scheduled test plans and results.
 type ScheduledTestService struct {
-	planRepo     ScheduledTestPlanRepository
-	resultRepo   ScheduledTestResultRepository
-	templateRepo QualityRuleTemplateRepository
+	planRepo      ScheduledTestPlanRepository
+	resultRepo    ScheduledTestResultRepository
+	templateRepo  QualityRuleTemplateRepository
+	accountTests  *AccountTestService
+	qualityModels func(context.Context, int64) ([]string, error)
 }
 
 // NewScheduledTestService creates a new ScheduledTestService.
@@ -34,6 +36,9 @@ func (s *ScheduledTestService) CreatePlan(ctx context.Context, plan *ScheduledTe
 	nextRun, err := nextPlanRun(plan, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("invalid test schedule: %w", err)
+	}
+	if err := s.validateQualityAccountModels(ctx, plan); err != nil {
+		return nil, err
 	}
 	plan.NextRunAt = &nextRun
 
@@ -59,6 +64,11 @@ func (s *ScheduledTestService) UpdatePlan(ctx context.Context, plan *ScheduledTe
 	nextRun, err := nextPlanRun(plan, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("invalid test schedule: %w", err)
+	}
+	if plan.Enabled {
+		if err := s.validateQualityAccountModels(ctx, plan); err != nil {
+			return nil, err
+		}
 	}
 	plan.NextRunAt = &nextRun
 
@@ -98,11 +108,41 @@ func computeNextRun(cronExpr string, from time.Time) (time.Time, error) {
 
 func nextPlanRun(plan *ScheduledTestPlan, now time.Time) (time.Time, error) {
 	if cfg := plan.PelicanConfig; cfg != nil {
+		cfg.QualityModelOutcomes = nil
+		cfg.QualityModelActions = nil
 		if cfg.TestChannel != "" && cfg.TestChannel != "account" && cfg.TestChannel != "bps" {
 			return time.Time{}, fmt.Errorf("invalid test channel")
 		}
 		if cfg.TestChannel == "bps" && (cfg.QuestionKind != "candy" || cfg.Quality == nil || cfg.Quality.Action != QualityActionObserveOnly) {
 			return time.Time{}, fmt.Errorf("BPS channel tests require a candy question and observation-only policy")
+		}
+		if len(cfg.ModelIDs) > 0 {
+			if cfg.Quality == nil {
+				return time.Time{}, fmt.Errorf("multiple models require a quality rule")
+			}
+			if len(cfg.ModelIDs) > 50 {
+				return time.Time{}, fmt.Errorf("select at most 50 quality models")
+			}
+			models := make([]string, 0, len(cfg.ModelIDs))
+			seen := map[string]bool{}
+			for _, raw := range cfg.ModelIDs {
+				model := strings.TrimSpace(raw)
+				if model == "" || len(model) > 100 {
+					return time.Time{}, fmt.Errorf("quality model must be 1–100 bytes")
+				}
+				if !seen[model] {
+					models = append(models, model)
+					seen[model] = true
+				}
+			}
+			if isOpenAICodexStateProbePlan(cfg) && len(models) > 1 {
+				return time.Time{}, fmt.Errorf("state probe supports only one model")
+			}
+			if len(models)*cfg.ParallelCount > 100 {
+				return time.Time{}, fmt.Errorf("quality round supports at most 100 samples")
+			}
+			cfg.ModelIDs = models
+			plan.ModelID = models[0]
 		}
 		// 探针题型不需要题目文本；其余题型题目必填。
 		if isOpenAICodexStateProbePlan(cfg) {
@@ -133,6 +173,9 @@ func nextPlanRun(plan *ScheduledTestPlan, now time.Time) (time.Time, error) {
 		}
 		if plan.MaxResults < 1 || plan.MaxResults > 200 {
 			return time.Time{}, fmt.Errorf("pelican history retention must be 1–200 results")
+		}
+		if len(cfg.ModelIDs) > 1 && plan.MaxResults < len(cfg.ModelIDs)*cfg.ParallelCount {
+			return time.Time{}, fmt.Errorf("history retention must hold every sample in a quality round")
 		}
 		cfg.ModelID = plan.ModelID
 	}

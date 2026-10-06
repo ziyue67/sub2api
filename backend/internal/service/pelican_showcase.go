@@ -33,6 +33,7 @@ type PelicanShowcaseGroup struct {
 // PelicanShowcaseView is the user gallery. RetentionDays is 0 when auto cleanup is off.
 type PelicanShowcaseView struct {
 	Enabled       bool                    `json:"enabled"`
+	APIEnabled    bool                    `json:"api_enabled"`
 	MaxItems      int                     `json:"max_items"`
 	RetentionDays int                     `json:"retention_days"`
 	Groups        []*PelicanShowcaseGroup `json:"groups"`
@@ -67,7 +68,7 @@ type PelicanShowcaseRepository interface {
 
 type pelicanShowcaseSettings interface {
 	GetPelicanShowcaseRuntime(ctx context.Context) (PelicanShowcaseRuntime, error)
-	UpdatePelicanShowcaseSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig) (PelicanShowcaseRuntime, error)
+	UpdatePelicanShowcaseSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig, apiEnabled *bool) (PelicanShowcaseRuntime, error)
 }
 
 // PelicanShowcaseService publishes Pelican group test HTML to the user gallery and
@@ -122,8 +123,8 @@ func (s *PelicanShowcaseService) Settings(ctx context.Context) (PelicanShowcaseR
 }
 
 // UpdateSettings saves the gallery switch and limits from the admin page.
-func (s *PelicanShowcaseService) UpdateSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig) (PelicanShowcaseRuntime, error) {
-	return s.settings.UpdatePelicanShowcaseSettings(ctx, enabled, cfg)
+func (s *PelicanShowcaseService) UpdateSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig, apiEnabled *bool) (PelicanShowcaseRuntime, error) {
+	return s.settings.UpdatePelicanShowcaseSettings(ctx, enabled, cfg, apiEnabled)
 }
 
 // Cleanup enforces the gallery limits: groups whose plans were deleted, snapshots
@@ -155,7 +156,8 @@ func (s *PelicanShowcaseService) View(ctx context.Context, now time.Time) (*Peli
 		return nil, err
 	}
 	cfg := runtime.Config
-	view := &PelicanShowcaseView{Enabled: runtime.Enabled, MaxItems: cfg.MaxItems, Groups: []*PelicanShowcaseGroup{}}
+	view := &PelicanShowcaseView{Enabled: runtime.Enabled, APIEnabled: runtime.Enabled && runtime.APIEnabled,
+		MaxItems: cfg.MaxItems, Groups: []*PelicanShowcaseGroup{}}
 	if cfg.AutoCleanup {
 		view.RetentionDays = cfg.RetentionDays
 	}

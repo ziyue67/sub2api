@@ -190,6 +190,7 @@ func prepareQualityTemplate(t *QualityRuleTemplate) error {
 	if _, err := nextPlanRun(sample, time.Now()); err != nil {
 		return fmt.Errorf("invalid test schedule: %w", err)
 	}
+	t.ModelID = sample.ModelID
 	t.MaxResults = sample.MaxResults
 	t.PelicanConfig = sample.PelicanConfig
 	return nil
@@ -260,7 +261,23 @@ func (s *ScheduledTestService) UpdateQualityTemplate(ctx context.Context, t *Qua
 		plan.MaxResults = saved.MaxResults
 		plan.Enabled = saved.Enabled
 		plan.PelicanConfig = cloneQualityPelicanConfig(saved.PelicanConfig)
-		if _, err := s.UpdatePlan(ctx, plan); err != nil {
+		supported, supportErr := s.filterQualityTemplatePlan(ctx, plan)
+		if supportErr != nil {
+			result.Failed++
+			continue
+		}
+		if !supported {
+			plan.Enabled = false
+		}
+		// A template may have no supported models for this linked account.
+		// Keep it paused rather than falsely classifying or deleting the rule.
+		next, validationErr := nextPlanRun(plan, time.Now())
+		if validationErr != nil {
+			result.Failed++
+			continue
+		}
+		plan.NextRunAt = &next
+		if _, err := s.planRepo.Update(ctx, plan); err != nil {
 			logger.LegacyPrintf("service.scheduled_test", "quality template %d update plan %d: %v", saved.ID, planID, err)
 			result.Failed++
 			continue
@@ -375,6 +392,16 @@ func (s *ScheduledTestService) syncQualityTemplate(ctx context.Context, t *Quali
 			continue
 		}
 		plan := t.planFor(account.ID)
+		supported, supportErr := s.filterQualityTemplatePlan(ctx, plan)
+		if supportErr != nil {
+			if firstErr == nil {
+				firstErr = supportErr
+			}
+			continue
+		}
+		if !supported {
+			continue
+		}
 		next, err := nextPlanRun(plan, now)
 		if err != nil {
 			return created, fmt.Errorf("invalid test schedule: %w", err)

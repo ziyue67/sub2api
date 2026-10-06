@@ -270,3 +270,10 @@ func TestObservedUpstreamResponseServiceTierFromContext(t *testing.T) {
 	observer.ObserveOpenAI([]byte(`{"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.6-sol","service_tier":"default"}}`), "response.completed")
 	require.Equal(t, "default", observedUpstreamResponseServiceTier(c))
 }
+
+func TestAstraGatewayCompletionUsesTextDelta(t *testing.T) {
+	o := &upstreamResponseModelObserver{}
+	o.ObserveOpenAI([]byte(`{"type":"response.output_text.delta","delta":"323"}`), "response.output_text.delta")
+	o.ObserveOpenAI([]byte(`{"type":"response.completed","response":{"model":"gpt-6-astra","status":"completed","output":[]}}`), "response.completed")
+	require.True(t, o.astraCompleted)
+}
