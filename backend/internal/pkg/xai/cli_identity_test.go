@@ -50,9 +50,11 @@ func TestResolveCLIVersionAcceptsValidOverride(t *testing.T) {
 }
 
 func TestResolveCLIVersionRejectsUnsafeOrTooOld(t *testing.T) {
+	// CLIStableVersion 是本 Fork 沿用上游的最低门槛（1.0.13），低于它的版本
+	// 与非法 semver 都必须回落到 CLIClientVersion。
 	for _, version := range []string{
-		"1.0.45",
-		"1.0.46-beta.1",
+		"1.0.12",
+		"1.0.13-beta.1",
 		"1.0.47\r\nX-Injected: true",
 		"1.0.046",
 		"1.1",
