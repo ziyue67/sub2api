@@ -238,6 +238,20 @@ WHEN ` + column + ` <= 300000 THEN 300000 WHEN ` + column + ` <= 600000 THEN 600
 ELSE 2147483647 END`
 }
 
+// Local user/business rejections remain in Ops history, but cannot measure
+// channel health. Preserve provider evidence and platform capacity failures.
+// The routing/model_not_found branch supports rows written before client
+// attribution was introduced, without rewriting production history.
+const channelMonitorClientRejectionSQL = `(COALESCE(current_error.is_business_limited, FALSE)
+  AND (COALESCE(current_error.error_owner, '') = 'client'
+    OR (COALESCE(current_error.error_owner, '') = 'platform' AND current_error.error_phase = 'routing'
+      AND current_error.error_type = 'model_not_found'
+      AND current_error.account_id IS NULL))
+  AND COALESCE(current_error.upstream_status_code, 0) = 0
+  AND COALESCE(current_error.error_source, '') <> 'upstream_http'
+  AND CASE WHEN jsonb_typeof(current_error.upstream_errors) = 'array'
+    THEN jsonb_array_length(current_error.upstream_errors) = 0 ELSE TRUE END)`
+
 // Error dedup lookback: request_id branch is bounded by chunk start minus 90
 // minutes so candidate_ids never forces a full-history scan of ops_error_logs.
 const channelMonitorV2ErrorAggregationSQL = `
@@ -261,6 +275,7 @@ WITH dedup AS (
     COALESCE(current_error.group_id, 0) AS group_id,
     COALESCE(NULLIF(TRIM(current_error.requested_model), ''), NULLIF(TRIM(current_error.model), ''), 'unknown') AS model,
     current_error.user_id, current_error.error_type, current_error.error_owner, COALESCE(current_error.status_code, 0) AS status_code,
+    ` + channelMonitorClientRejectionSQL + ` AS client_rejection,
     COALESCE(current_error.upstream_status_code, 0) AS upstream_status_code,
     lower(CONCAT_WS(' ', current_error.error_type, current_error.error_source, current_error.error_message, current_error.upstream_error_message, current_error.upstream_error_detail, current_error.error_body)) AS text,
     (CASE WHEN jsonb_typeof(current_error.upstream_errors) = 'array' THEN jsonb_array_length(current_error.upstream_errors) > 0 ELSE FALSE END
@@ -301,7 +316,7 @@ WITH dedup AS (
     WHEN status_code >= 500 OR error_type = 'internal' OR error_owner = 'system' THEN 'internal'
     ELSE 'other' END AS category
   FROM dedup
-  WHERE bucket_start >= $1 AND bucket_start < $2
+  WHERE bucket_start >= $1 AND bucket_start < $2 AND NOT client_rejection
 ), metric_rows AS (
   INSERT INTO channel_monitor_v2_metrics_1m (bucket_start, platform, group_id, model, error_requests, upstream_affected_requests, upstream_attempt_count, computed_at)
   SELECT bucket_start, platform, group_id, model, COUNT(*), COUNT(*) FILTER (WHERE upstream_affected), SUM(upstream_attempts), NOW()

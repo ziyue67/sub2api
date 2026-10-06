@@ -207,3 +207,43 @@ func TestForwardOpenAIWSV2_PreservesCompletedWebSearchOnReadFailureWithoutReplay
 	require.Equal(t, 1, result.WebSearchCalls)
 	require.Equal(t, 1, dialer.DialCount(), "a completed hosted search must make replay unsafe")
 }
+
+func TestForwardOpenAIWSV2_OverloadBeforeOutputAllowsAccountFailover(t *testing.T) {
+	for _, mode := range []string{"stream", "nonstream", "after_output"} {
+		stream := mode != "nonstream"
+		t.Run(mode, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			cfg := newOpenAIWSV2TestConfig()
+			cfg.Security.URLAllowlist.Enabled = false
+			cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+			conn := &openAIWSCaptureConn{events: [][]byte{
+				[]byte(`{"type":"response.created","response":{"id":"resp_test"}}`),
+				[]byte(`{"type":"error","error":{"code":"server_is_overloaded","type":"service_unavailable_error","message":"overloaded","headers":{"x-retry-metadata":"NO_MORE_RETRY"}}}`),
+			}}
+			if mode == "after_output" {
+				conn.events = append(conn.events[:1], append([][]byte{[]byte(`{"type":"response.output_text.delta","delta":"hello"}`)}, conn.events[1:]...)...)
+			}
+			pool := newOpenAIWSConnPool(cfg)
+			defer pool.Close()
+			pool.setClientDialerForTest(&openAIWSCaptureDialer{conn: conn})
+			svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: &httpUpstreamRecorder{}, cache: &stubGatewayCache{}, openaiWSResolver: NewOpenAIWSProtocolResolver(cfg), toolCorrector: NewCodexToolCorrector(), openaiWSPool: pool}
+			account := &Account{ID: 5884, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"api_key": "sk-test"}, Extra: map[string]any{"responses_websockets_v2_enabled": true}}
+			_, err := svc.Forward(context.Background(), c, account, []byte(fmt.Sprintf(`{"model":"gpt-6-astra","stream":%t,"input":"hi"}`, stream)))
+			var failover *UpstreamFailoverError
+			if mode == "after_output" {
+				require.Error(t, err)
+				require.False(t, errors.As(err, &failover))
+				require.Contains(t, rec.Body.String(), "hello")
+				return
+			}
+			require.ErrorAs(t, err, &failover)
+			require.Equal(t, http.StatusServiceUnavailable, failover.StatusCode)
+			require.False(t, failover.RetryableOnSameAccount)
+			require.True(t, failover.ShouldRetryNextAccount())
+			require.False(t, c.Writer.Written())
+			require.Empty(t, rec.Body.String())
+		})
+	}
+}

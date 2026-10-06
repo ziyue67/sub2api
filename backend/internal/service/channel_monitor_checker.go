@@ -27,7 +27,11 @@ var monitorPingHTTPClient = newSSRFSafeHTTPClient(monitorPingTimeout)
 // newSSRFSafeHTTPClient 返回一个使用 safeDialContext 的 http.Client。
 // 仅供监控模块对外发起请求使用——所有目标都应是公网 endpoint。
 func newSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
-	tr := &http.Transport{
+	return &http.Client{Timeout: timeout, Transport: servertiming.WrapRoundTripper(newSSRFSafeHTTPTransport())}
+}
+
+func newSSRFSafeHTTPTransport() *http.Transport {
+	return &http.Transport{
 		DialContext:           safeDialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          16,
@@ -35,7 +39,6 @@ func newSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
 		TLSHandshakeTimeout:   monitorTLSHandshakeTimeout,
 		ResponseHeaderTimeout: monitorResponseHeaderTimeout,
 	}
-	return &http.Client{Timeout: timeout, Transport: servertiming.WrapRoundTripper(tr)}
 }
 
 // CheckOptions 承载一次检测的自定义入参。

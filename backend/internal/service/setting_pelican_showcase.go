@@ -12,7 +12,10 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-const SettingKeyPelicanShowcaseConfig = "pelican_showcase_config"
+const (
+	SettingKeyPelicanShowcaseConfig     = "pelican_showcase_config"
+	SettingKeyPelicanShowcaseAPIEnabled = "pelican_showcase_api_enabled"
+)
 
 const (
 	PelicanShowcaseDefaultMaxItems      = 20
@@ -80,8 +83,9 @@ func (cfg PelicanShowcaseConfig) retentionCutoff(now time.Time) time.Time {
 
 // PelicanShowcaseRuntime is the gallery switch plus its limits, read on every use.
 type PelicanShowcaseRuntime struct {
-	Enabled bool
-	Config  PelicanShowcaseConfig
+	Enabled    bool
+	APIEnabled bool
+	Config     PelicanShowcaseConfig
 }
 
 var errPelicanShowcaseSettingsUnavailable = errors.New("pelican showcase settings unavailable")
@@ -93,7 +97,7 @@ func (s *SettingService) GetPelicanShowcaseRuntime(ctx context.Context) (Pelican
 	if s == nil || s.settingRepo == nil {
 		return PelicanShowcaseRuntime{}, errPelicanShowcaseSettingsUnavailable
 	}
-	vals, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyPelicanShowcaseEnabled, SettingKeyPelicanShowcaseConfig})
+	vals, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyPelicanShowcaseEnabled, SettingKeyPelicanShowcaseConfig, SettingKeyPelicanShowcaseAPIEnabled})
 	if err != nil {
 		return PelicanShowcaseRuntime{}, err
 	}
@@ -101,12 +105,21 @@ func (s *SettingService) GetPelicanShowcaseRuntime(ctx context.Context) (Pelican
 	if err != nil {
 		return PelicanShowcaseRuntime{}, err
 	}
-	return PelicanShowcaseRuntime{Enabled: vals[SettingKeyPelicanShowcaseEnabled] == "true", Config: cfg}, nil
+	return PelicanShowcaseRuntime{
+		Enabled: vals[SettingKeyPelicanShowcaseEnabled] == "true", APIEnabled: pelicanShowcaseAPIEnabled(vals), Config: cfg,
+	}, nil
 }
 
-// UpdatePelicanShowcaseSettings saves the gallery switch and limits from the Smart Ops
-// page. Only these two keys are written, so it never touches other system settings.
-func (s *SettingService) UpdatePelicanShowcaseSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig) (PelicanShowcaseRuntime, error) {
+// Missing API settings preserve the API introduced before the separate switch;
+// configured values other than "true" fail closed without disabling the gallery.
+func pelicanShowcaseAPIEnabled(vals map[string]string) bool {
+	raw, exists := vals[SettingKeyPelicanShowcaseAPIEnabled]
+	return !exists || raw == "true"
+}
+
+// UpdatePelicanShowcaseSettings saves the gallery switches and limits from the Smart Ops
+// page. An omitted API switch preserves its stored value for older clients.
+func (s *SettingService) UpdatePelicanShowcaseSettings(ctx context.Context, enabled bool, cfg PelicanShowcaseConfig, apiEnabled *bool) (PelicanShowcaseRuntime, error) {
 	if s == nil || s.settingRepo == nil {
 		return PelicanShowcaseRuntime{}, errPelicanShowcaseSettingsUnavailable
 	}
@@ -118,11 +131,23 @@ func (s *SettingService) UpdatePelicanShowcaseSettings(ctx context.Context, enab
 	if err != nil {
 		return PelicanShowcaseRuntime{}, err
 	}
-	if err := s.settingRepo.SetMultiple(ctx, map[string]string{
+	updates := map[string]string{
 		SettingKeyPelicanShowcaseEnabled: strconv.FormatBool(enabled),
 		SettingKeyPelicanShowcaseConfig:  string(raw),
-	}); err != nil {
+	}
+	var currentAPIEnabled bool
+	if apiEnabled != nil {
+		currentAPIEnabled = *apiEnabled
+		updates[SettingKeyPelicanShowcaseAPIEnabled] = strconv.FormatBool(*apiEnabled)
+	} else {
+		vals, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyPelicanShowcaseAPIEnabled})
+		if err != nil {
+			return PelicanShowcaseRuntime{}, err
+		}
+		currentAPIEnabled = pelicanShowcaseAPIEnabled(vals)
+	}
+	if err := s.settingRepo.SetMultiple(ctx, updates); err != nil {
 		return PelicanShowcaseRuntime{}, err
 	}
-	return PelicanShowcaseRuntime{Enabled: enabled, Config: normalized}, nil
+	return PelicanShowcaseRuntime{Enabled: enabled, APIEnabled: currentAPIEnabled, Config: normalized}, nil
 }

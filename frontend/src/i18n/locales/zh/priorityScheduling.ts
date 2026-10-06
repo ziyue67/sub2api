@@ -1,4 +1,8 @@
 export default {
+  evaluatedAt: '评分重算时间', historyObservedAt: '历史统计读取时间',
+  historyRetry: '历史查询失败，暂用有效期内的已有统计，稍后重试。',
+  historyStates: { ready: '历史已就绪', stale: '暂用近期缓存统计，正在等待更新。', partial: '部分候选历史正在加载；已有统计继续使用。', loading: '正在读取历史统计，缺失部分暂按未知处理。', error: '历史统计读取失败，请稍后刷新重试。', unavailable: '当前实例无法读取历史统计。', limited: '候选或缓存达到处理上限，暂按实时容量调度。' },
+
 
   profit: '近期利润 / 利润率',
   economics: { usage: '使用记录', rate: '倍率估算', unknown: '利润样本不足' },
@@ -29,7 +33,7 @@ export default {
   save: '保存配置', saving: '保存中…', saved: '配置已保存', loading: '加载中…', retry: '重试', error: '读取或保存失败，请重试', invalid: '请检查分组 ID 和参数范围',
   recent: '最近一次候选评分', refresh: '刷新评分', empty: '暂无评分。启用后，符合范围且需要自由选路的请求会生成评分。',
   historyPending: '历史统计尚未就绪，先按实时容量均衡；缺失历史按未知处理，后台继续刷新。',
-  snapshotHint: '仅展示当前实例最近一次候选池，最多 100 个账号。按风险、预计占用档位及分流偏好展示；占用接近的候选会加权抽样，表格不是固定选取顺序或流量比例。历史未就绪也会展示实时容量候选。',
+  snapshotHint: '展示当前实例最近一次候选池，最多 100 个账号。刷新会异步读取历史并重算评分；候选、配置与并发占用仍取自该次选号，顶部时间不会改变，重算结果不代表当时实际选路。按风险、预计占用档位及分流偏好展示；占用接近的候选会加权抽样，表格不是固定选取顺序或流量比例。历史未就绪也会展示实时容量候选。',
   model: '模型', group: '分组', account: '账号', score: '得分', tier: '状态', latency: 'P90 首 token', load: '并发占用', rate: '成本倍率', quality: '质量通过', samples: '条样本', unknown: '未知',
   tiers: { eligible: '体验达标', insufficient: '数据不足', degraded: '体验未达标' },
   reasons: { quality_below_target: '质量低于目标', quality_unknown: '无有效质量结果', latency_above_target: '延迟超过目标', latency_insufficient: '延迟样本不足', busy: '并发偏高或有排队', load_unknown: '并发数据未知', cost_unknown: '成本未知', recent_errors: '近期错误偏多', historical_loss: '近期用户扣费低于理论成本', profit_insufficient: '利润样本不足' }

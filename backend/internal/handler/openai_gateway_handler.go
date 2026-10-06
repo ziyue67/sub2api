@@ -931,10 +931,12 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	// Fork 的多分组路由尝试集合 + ranxi 的 Grok 403 失败预算。
 	routeAttempts := make(map[int64]struct{}, len(apiKey.GroupRoutes))
 	if apiKey.GroupID != nil {
 		routeAttempts[*apiKey.GroupID] = struct{}{}
 	}
+	var forbiddenBudget grokForbiddenFailoverBudget
 	firstOutputTimeoutSwitchCount := 0
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -1288,7 +1290,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, nil), false, nil, err)
 					}
-					if !failoverErr.ShouldRetryNextAccount() {
+					if !forbiddenBudget.canRetry(failoverErr, switchCount) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1732,6 +1734,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	var forbiddenBudget grokForbiddenFailoverBudget
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
@@ -1948,7 +1951,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					if failoverErr.ShouldReportAccountScheduleFailure() {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, nil), false, nil, err)
 					}
-					if !failoverErr.ShouldRetryNextAccount() {
+					if !forbiddenBudget.canRetry(failoverErr, switchCount) {
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -3174,6 +3177,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	var forbiddenBudget grokForbiddenFailoverBudget
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
@@ -3219,7 +3223,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		if !service.OpenAIWSIngressCanFailover(ctx, c) {
 			return false
 		}
-		if !failoverErr.ShouldRetryNextAccount() {
+		if !forbiddenBudget.canRetry(failoverErr, switchCount) {
 			closeOpenAIWSFailoverExhausted(c, wsConn, failoverErr)
 			return false
 		}
@@ -3473,6 +3477,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		var turnQueuePermissions service.APIKeyQueueRequestPermissions
 		var permissionsPreflightTurn int
 		// Passthrough ingress does not invoke BeforeTurn for the first frame.
+		// Recheck after account selection/credential lookup as the key may have
+		// been revoked since the first admission (also on a failover attempt).
+		if err := h.concurrencyHelper.RevalidateTurnAuth(ctx); err != nil {
+			closeOpenAIWSAdmissionError(wsConn, reqLog, "openai.websocket_key_auth_rejected", err)
+			return
+		}
 		if err := checkSimpleModeTurnBilling(); err != nil {
 			closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
 			return
@@ -3696,6 +3706,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 客户端断开或上游超时也要释放本轮并发槽位。
 				currentUserRelease = wrapReleaseOnDone(ctx, userReleaseFunc)
 				currentAccountRelease = wrapReleaseOnDone(ctx, accountReleaseFunc)
+				// Admission may wait: authorize again after the slots are held,
+				// before sending this turn upstream. Existing cleanup owns them.
+				if err := h.concurrencyHelper.RevalidateTurnAuth(turnQueueCtx); err != nil {
+					return mapOpenAIWSTurnAdmissionError(err)
+				}
 				return checkSimpleModeTurnBilling()
 			},
 			AfterTurn: func(turn int, result *service.OpenAIForwardResult, turnErr error) {
@@ -5247,10 +5262,12 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithIdentity(c *gin.Cont
 	// 类型化会话身份（identity.BlockKey）；上游的 transcript 写计划依赖已被本
 	// Fork 删除的 openai_cyber_transcript.go，故不引入。
 	cyberLogOnly := h.cyberPolicyLogOnly(c, apiKey)
-	if gwSvc != nil && apiKey != nil && !cyberLogOnly && identity.BlockKey != "" {
-		blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		gwSvc.MarkCyberSessionBlocked(blockCtx, "", []string{identity.BlockKey})
-		cancel()
+	if gwSvc != nil && apiKey != nil && !cyberLogOnly {
+		if identity.BlockKey != "" {
+			blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			gwSvc.MarkCyberSessionBlocked(blockCtx, "", []string{identity.BlockKey})
+			cancel()
+		}
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

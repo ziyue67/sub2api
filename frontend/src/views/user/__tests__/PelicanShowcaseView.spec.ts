@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PelicanShowcaseView from '../PelicanShowcaseView.vue'
 import type { PelicanShowcaseItem, PelicanShowcaseView as ShowcaseData } from '@/api/pelicanShowcase'
@@ -14,6 +14,7 @@ const { getShowcase, getShowcaseItem, removeShowcaseItem, showError, showSuccess
 vi.mock('@/api/pelicanShowcase', () => ({ getShowcase, getShowcaseItem, removeShowcaseItem }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError, showSuccess }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
+vi.mock('@/composables/useClipboard', () => ({ useClipboard: () => ({ copyToClipboard: vi.fn() }) }))
 vi.mock('vue-i18n', async () => ({
   ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'),
   useI18n: () => ({ t: (key: string, named?: Record<string, unknown>) => (named ? `${key} ${JSON.stringify(named)}` : key) }),
@@ -25,6 +26,7 @@ const item = (id: number, groupId: number): PelicanShowcaseItem => ({
 })
 const showcase = (overrides: Partial<ShowcaseData> = {}): ShowcaseData => ({
   enabled: true,
+  api_enabled: true,
   max_items: 20,
   retention_days: 7,
   groups: [
@@ -41,6 +43,7 @@ const mountView = () => mount(PelicanShowcaseView, {
       AppLayout: { template: '<div><slot /></div>' },
       Icon: true,
       PlatformIcon: true,
+      RouterLink: RouterLinkStub,
       EmptyState: { props: ['title', 'description'], template: '<div class="empty-state">{{ title }}</div>' },
       ConfirmDialog: {
         props: ['show'], emits: ['confirm', 'cancel'],
@@ -99,6 +102,35 @@ describe('PelicanShowcaseView', () => {
     expect(wrapper.get('.empty-state').text()).toBe('pelicanShowcase.disabled.title')
     expect(wrapper.findAll('[data-testid="pelican-showcase-card"]')).toHaveLength(0)
     expect(getShowcaseItem).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="showcase-api-open"]').exists()).toBe(false)
+  })
+
+  it('opens API examples with the effective access state and an existing result ID', async () => {
+    getShowcase.mockResolvedValue(showcase())
+    wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="showcase-api-dialog"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="showcase-api-open"]').trigger('click')
+    const dialog = wrapper.get('[data-testid="showcase-api-dialog"]')
+    expect(dialog.get('[data-testid="showcase-api-status"]').text()).toBe('pelicanShowcase.api.available')
+    expect(dialog.get('[data-testid="showcase-api-item-url"]').text()).toContain('/items/100')
+    expect(dialog.get('[data-testid="showcase-api-command"]').text()).toContain('Bearer YOUR_API_KEY')
+    await dialog.get('[data-testid="showcase-api-keys"]').trigger('click')
+    expect(wrapper.find('[data-testid="showcase-api-dialog"]').exists()).toBe(false)
+  })
+
+  it.each([false, undefined])('keeps API information available when api_enabled is %s', async (apiEnabled) => {
+    getShowcase.mockResolvedValue(showcase({ api_enabled: apiEnabled }))
+    wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="showcase-api-open"]').trigger('click')
+    const dialog = wrapper.get('[data-testid="showcase-api-dialog"]')
+    expect(dialog.get('[data-testid="showcase-api-status"]').text()).toBe('pelicanShowcase.api.unavailable')
+    expect(dialog.text()).toContain('pelicanShowcase.api.unavailableHint')
+    expect(dialog.get('[data-testid="showcase-api-command"]').text()).toContain('/api/v1/public/pelican-showcase')
+    expect(wrapper.findAll('[data-testid="pelican-showcase-card"]')).toHaveLength(11)
   })
 
   it('lists every group as one row with the gallery rules and loads visible cards in a sandbox', async () => {

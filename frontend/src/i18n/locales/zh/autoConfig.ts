@@ -32,6 +32,7 @@ export default {
   "priority": "优先级",
   "load_factor": "负载因子",
   "concurrency": "初始并发",
+  "cost_multiplier": "成本倍率",
   "groups": "首次加入分组",
   "noGroups": "暂无符合条件的启用分组，请先在分组管理中创建。",
   "loadHint": "优先级数值越小越优先；负载因子影响调度频率，与实际并发上限、计费倍率独立。",

@@ -14,6 +14,9 @@ func TestPelicanPayloadsDoNotChangeDefaultAccountTestPayloads(t *testing.T) {
 	defaultContent, ok := defaultMessages[0]["content"].([]map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "hi", defaultContent[0]["text"])
+	require.Equal(t, 1024, defaultClaude["max_tokens"])
+	require.NotContains(t, defaultClaude, "output_config")
+	require.NotContains(t, defaultClaude, "thinking")
 
 	defaultOpenAI := createOpenAITestPayload("gpt-6-astra", true)
 	defaultInput, ok := defaultOpenAI["input"].([]map[string]any)
@@ -23,7 +26,7 @@ func TestPelicanPayloadsDoNotChangeDefaultAccountTestPayloads(t *testing.T) {
 	require.Equal(t, "hi", defaultOpenAIContent[0]["text"])
 	require.NotContains(t, defaultOpenAI, "reasoning")
 
-	pelicanClaude, err := createPelicanClaudePayload("claude-sonnet-4-6", "draw the pelican animation")
+	pelicanClaude, err := createPelicanClaudePayload("claude-sonnet-4-6", "draw the pelican animation", "")
 	require.NoError(t, err)
 	pelicanMessages, ok := pelicanClaude["messages"].([]map[string]any)
 	require.True(t, ok)

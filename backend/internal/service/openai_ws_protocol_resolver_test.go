@@ -56,7 +56,7 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 	})
 
 	t.Run("v2关闭时回退v1", func(t *testing.T) {
-		cfg := *baseCfg
+		cfg := config.Config{Gateway: baseCfg.Gateway}
 		cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = false
 		cfg.Gateway.OpenAIWS.ResponsesWebsockets = true
 
@@ -88,7 +88,7 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 	})
 
 	t.Run("全局强制HTTP无需启用mode router", func(t *testing.T) {
-		cfg := *baseCfg
+		cfg := config.Config{Gateway: baseCfg.Gateway}
 		cfg.Gateway.OpenAIWS.ForceHTTP = true
 
 		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(openAIOAuthEnabled)
@@ -97,7 +97,7 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 	})
 
 	t.Run("全局关闭保持HTTP", func(t *testing.T) {
-		cfg := *baseCfg
+		cfg := config.Config{Gateway: baseCfg.Gateway}
 		cfg.Gateway.OpenAIWS.Enabled = false
 		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(openAIOAuthEnabled)
 		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
@@ -135,7 +135,7 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 	})
 
 	t.Run("按账号类型开关控制", func(t *testing.T) {
-		cfg := *baseCfg
+		cfg := config.Config{Gateway: baseCfg.Gateway}
 		cfg.Gateway.OpenAIWS.OAuthEnabled = false
 		decision := NewOpenAIWSProtocolResolver(&cfg).Resolve(openAIOAuthEnabled)
 		require.Equal(t, OpenAIUpstreamTransportHTTPSSE, decision.Transport)
@@ -143,7 +143,7 @@ func TestOpenAIWSProtocolResolver_Resolve(t *testing.T) {
 	})
 
 	t.Run("API Key 账号关闭开关时回退HTTP", func(t *testing.T) {
-		cfg := *baseCfg
+		cfg := config.Config{Gateway: baseCfg.Gateway}
 		cfg.Gateway.OpenAIWS.APIKeyEnabled = false
 		account := &Account{
 			Platform: PlatformOpenAI,

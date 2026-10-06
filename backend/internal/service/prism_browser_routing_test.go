@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,13 @@ func TestPrismBrowserResponsesURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrismBrowserForwardErrorKeepsKnownCodeWithoutReflectingSecrets(t *testing.T) {
+	err := prismBrowserForwardError(422, []byte(`{"error":{"type":"tools_disabled","message":"private input fixture"}}`))
+	require.EqualError(t, err, "prism adapter returned HTTP 422 (tools_disabled)")
+	err = prismBrowserForwardError(422, []byte(`{"error":{"type":"private input fixture","message":"private input fixture"}}`))
+	require.EqualError(t, err, "prism adapter returned HTTP 422")
 }
 
 func TestPrismBrowserSessionIDUsesExistingCodexIdentity(t *testing.T) {
@@ -145,6 +153,24 @@ func TestPrismBrowserInvalidSessionDoesNotDispatch(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, w.Code, "invalid identity must be rejected before contacting the adapter")
 		})
 	}
+}
+
+func TestPrismBrowserExplicitMappingReachesAdapter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, "gpt-6.1-sol", body["model"])
+		_, _ = io.WriteString(w, `{"id":"resp_fixture","status":"completed","model":"gpt-6.1-sol","usage":null,"output":[{"content":[{"text":"21"}]}]}`)
+	}))
+	defer server.Close()
+	s, account := prismTestService(server.URL)
+	account.Credentials["model_mapping"] = map[string]any{"my-sol": "gpt-6.1-sol"}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	result, err := s.forwardPrismBrowser(context.Background(), c, account, []byte(`{"model":"my-sol","input":"hi"}`), time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "my-sol", result.Model)
+	require.Equal(t, "gpt-6.1-sol", result.UpstreamModel)
 }
 
 func prismTestService(endpoint string) (*OpenAIGatewayService, *Account) {

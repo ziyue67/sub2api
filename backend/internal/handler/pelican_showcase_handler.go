@@ -68,6 +68,7 @@ func (h *PelicanShowcaseHandler) DeleteItem(c *gin.Context) {
 // pelicanShowcaseSettings is the gallery switch plus its limits, as edited on the admin page.
 type pelicanShowcaseSettings struct {
 	Enabled       bool `json:"enabled"`
+	APIEnabled    bool `json:"api_enabled"`
 	MaxItems      int  `json:"max_items"`
 	AutoCleanup   bool `json:"auto_cleanup"`
 	RetentionDays int  `json:"retention_days"`
@@ -76,6 +77,7 @@ type pelicanShowcaseSettings struct {
 func pelicanShowcaseSettingsFrom(runtime service.PelicanShowcaseRuntime) pelicanShowcaseSettings {
 	return pelicanShowcaseSettings{
 		Enabled:       runtime.Enabled,
+		APIEnabled:    runtime.APIEnabled,
 		MaxItems:      runtime.Config.MaxItems,
 		AutoCleanup:   runtime.Config.AutoCleanup,
 		RetentionDays: runtime.Config.RetentionDays,
@@ -94,7 +96,10 @@ func (h *PelicanShowcaseHandler) GetSettings(c *gin.Context) {
 
 // UpdateSettings PUT /api/v1/admin/pelican-showcase/settings
 func (h *PelicanShowcaseHandler) UpdateSettings(c *gin.Context) {
-	var req pelicanShowcaseSettings
+	var req struct {
+		pelicanShowcaseSettings
+		APIEnabled *bool `json:"api_enabled"`
+	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "invalid request body")
 		return
@@ -103,7 +108,7 @@ func (h *PelicanShowcaseHandler) UpdateSettings(c *gin.Context) {
 		MaxItems:      req.MaxItems,
 		AutoCleanup:   req.AutoCleanup,
 		RetentionDays: req.RetentionDays,
-	})
+	}, req.APIEnabled)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -111,7 +116,10 @@ func (h *PelicanShowcaseHandler) UpdateSettings(c *gin.Context) {
 	subject, _ := middleware.GetAuthSubjectFromContext(c)
 	h.public.invalidate()
 	role, _ := middleware.GetUserRoleFromContext(c)
-	slog.Info("settings updated", "audit", true, "user_id", subject.UserID, "role", role,
-		"changed", []string{"pelican_showcase_enabled", "pelican_showcase_config"})
+	changed := []string{service.SettingKeyPelicanShowcaseEnabled, service.SettingKeyPelicanShowcaseConfig}
+	if req.APIEnabled != nil {
+		changed = append(changed, service.SettingKeyPelicanShowcaseAPIEnabled)
+	}
+	slog.Info("settings updated", "audit", true, "user_id", subject.UserID, "role", role, "changed", changed)
 	response.Success(c, pelicanShowcaseSettingsFrom(runtime))
 }

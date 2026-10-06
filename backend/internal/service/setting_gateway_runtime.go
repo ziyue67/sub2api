@@ -175,7 +175,7 @@ const openAIQuotaAutoPauseSettingsRefreshKey = "openai_quota_auto_pause_settings
 // GetCyberSessionBlockRuntime 返回 (开关, TTL)，进程内缓存 ~60s，
 // 供网关热路径读取时避免 DB 往返。
 // 屏蔽开关、TTL、严格身份门控与用户白名单在单次 singleflight 里一起读取，
-// 减少 DB 往返。上游侧注释：屏蔽设置与用户白名单在单次 singleflight 中一起读取。
+// 减少 DB 往返（沿用 ranxi 的合并读法）。
 // 默认值：开关 false，TTL 1h（与粘性会话对齐）。
 func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool, time.Duration) {
 	if cached, ok := s.cyberSessionBlockRuntimeCache.Load().(*cachedCyberSessionBlockRuntime); ok && cached != nil {
@@ -200,20 +200,12 @@ func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool,
 
 		previous, _ := s.cyberSessionBlockRuntimeCache.Load().(*cachedCyberSessionBlockRuntime)
 		cacheTTL := cyberSessionBlockRuntimeCacheTTL
-		if enabledErr != nil && !errors.Is(enabledErr, ErrSettingNotFound) {
+		// 开关读取失败时不再提前返回：沿用错误 TTL 继续走完，
+		// 下面的 strict 门控与白名单读取都依赖 enabledLoadFailed。
+		enabledLoadFailed := enabledErr != nil && !errors.Is(enabledErr, ErrSettingNotFound)
+		if enabledLoadFailed {
 			slog.Warn("failed to get cyber_session_block_enabled setting", "error", enabledErr)
-			entry := &cachedCyberSessionBlockRuntime{
-				enabled:   false,
-				strict:    false,
-				ttl:       time.Hour,
-				expiresAt: time.Now().Add(cyberSessionBlockRuntimeErrorTTL).UnixNano(),
-			}
-			// Keep the last successfully loaded allowlist on refresh failure.
-			if previous != nil {
-				entry.allowlistedUsers = previous.allowlistedUsers
-			}
-			s.cyberSessionBlockRuntimeCache.Store(entry)
-			return entry, nil
+			cacheTTL = cyberSessionBlockRuntimeErrorTTL
 		}
 
 		if strictErr != nil && !errors.Is(strictErr, ErrSettingNotFound) {
@@ -223,7 +215,8 @@ func (s *SettingService) GetCyberSessionBlockRuntime(ctx context.Context) (bool,
 		}
 
 		enabled := enabledErr == nil && strings.TrimSpace(enabledVal) == "true"
-		strict := strictErr == nil && strings.TrimSpace(strictVal) == "true"
+		// A failed switch read also turns the strict identity gate off.
+		strict := !enabledLoadFailed && strictErr == nil && strings.TrimSpace(strictVal) == "true"
 
 		ttl := time.Hour
 		if ttlErr == nil {

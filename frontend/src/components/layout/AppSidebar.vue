@@ -288,7 +288,7 @@ const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
 
 // SVG Icon Components
-const RequestCaptureIcon = { render: () => h(Icon, { name: 'requestCapture' }) }
+const RequestCaptureIcon = { render: () => h(Icon, { name: 'requestCapture', size: 'sm' }) }
 const OpsMonitoringIcon = { render: () => h(Icon, { name: 'monitorPulse' }) }
 const SmartOpsIcon = { render: () => h(Icon, { name: 'cpu' }) }
 const QualityOpsIcon = { render: () => h(Icon, { name: 'badge', size: 'sm' }) }
@@ -493,7 +493,7 @@ const GlobeIcon = {
 }
 
 const FlowIcon = {
-  render: () => h(Icon, { name: 'swap' })
+  render: () => h(Icon, { name: 'swap', size: 'sm' })
 }
 
 const ServerIcon = {
@@ -858,8 +858,9 @@ const adminNavItems = computed((): NavItem[] => {
       { path: '/admin/token-guard', label: t('tokenGuard.title'), icon: TokenGuardIcon },
       { path: '/admin/token-guard-v2', label: t('tokenGuardV2.title'), icon: CredentialOpsIcon },
       { path: '/admin/pelican-tests', label: t('pelicanTests.title'), icon: PelicanTestsIcon },
+      { path: '/admin/request-captures', label: t('admin.requestCapture.title'), icon: RequestCaptureIcon, featureFlag: () => adminSettingsStore.requestCaptureEnabled },
+      { path: '/admin/harvest-flow', label: t('nav.harvestFlow'), icon: FlowIcon },
     ] },
-    { path: '/admin/harvest-flow', label: t('nav.harvestFlow'), icon: FlowIcon },
     { path: '/admin/plugins', label: t('nav.plugins'), icon: PluginIcon, featureFlag: flagPluginManagement },
     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },

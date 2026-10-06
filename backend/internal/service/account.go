@@ -331,6 +331,19 @@ func (a *Account) IsGrokOAuth() bool {
 	return a.IsGrok() && a.Type == AccountTypeOAuth
 }
 
+const grokSkipForbiddenPauseExtraKey = "grok_skip_forbidden_pause"
+
+// SkipGrokForbiddenPause reports the deployed per-account opt-out for pausing
+// a Grok account after an unknown inference 403. A missing or non-boolean value
+// preserves the legacy pause. Explicit entitlement and suspension markers are
+// protected by the caller even when this returns true.
+func (a *Account) SkipGrokForbiddenPause() bool {
+	if a == nil || !a.IsGrok() {
+		return false
+	}
+	return a.getExtraBool(grokSkipForbiddenPauseExtraKey)
+}
+
 // IsKimi / IsZhipu / IsDeepseek 标识国产 OpenAI 兼容供应商账号。
 func (a *Account) IsKimi() bool {
 	return a.Platform == PlatformKimi
@@ -945,6 +958,22 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // （isDeepseekServableModel）——未知模型名透传上游只会得到 404/400，并误触发
 // per-(账号,模型) 30 分钟冷却；带 [1m] 上下文后缀的写法先归一化再比对。
 func (a *Account) IsModelSupported(requestedModel string) bool {
+	if blocked, _ := a.Extra["astra_model_disabled"].(bool); blocked {
+		if empty, _ := a.Extra["astra_model_empty_mapping"].(bool); empty {
+			return false
+		}
+		if strings.EqualFold(strings.TrimSpace(requestedModel), "gpt-6-astra") || strings.EqualFold(a.GetMappedModel(requestedModel), "gpt-6-astra") {
+			return false
+		}
+		if keys, ok := a.Extra["astra_model_blocked_keys"].([]any); ok {
+			for _, key := range keys {
+				if k, ok := key.(string); ok && (strings.EqualFold(k, requestedModel) || (strings.HasSuffix(k, "*") && strings.HasPrefix(requestedModel, strings.TrimSuffix(k, "*")))) {
+					return false
+				}
+			}
+		}
+	}
+
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
 	// credentials 里常残留旧的非空 model_mapping，若不在此放行，透传账号会被

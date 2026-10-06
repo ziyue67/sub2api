@@ -49,6 +49,31 @@ func TestLifecycleReadinessAndSetupNeverReturnSPA(t *testing.T) {
 	require.Contains(t, response.Body.String(), "needs_setup")
 }
 
+func TestLifecycleReadinessUsesConfiguredDependencyTimeout(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	lifecycle := newLifecycleWithTimeout(50*time.Millisecond, func(context.Context) error {
+		close(entered)
+		<-release
+		return nil
+	})
+	t.Cleanup(func() { close(release) })
+	handler := lifecycle.Wrap(http.NotFoundHandler())
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+		close(done)
+	}()
+	<-entered
+	select {
+	case <-done:
+		require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	case <-time.After(time.Second):
+		t.Fatal("configured readiness probe budget was not enforced")
+	}
+}
+
 func TestLifecycleDrainPreservesStreamAndRejectsNewRequests(t *testing.T) {
 	lifecycle := NewLifecycle()
 	release := make(chan struct{})

@@ -39,6 +39,16 @@
                 <span><strong>{{ t('pelicanTests.showcase.enabled') }}</strong><small>{{ t('pelicanTests.showcase.enabledHint') }}</small></span>
                 <Toggle v-model="draft.enabled" data-testid="pelican-showcase-enabled" />
               </div>
+              <div class="enable-row mt-5">
+                <span><strong>{{ t('pelicanTests.showcase.apiEnabled') }}</strong><small>{{ t('pelicanTests.showcase.apiEnabledHint') }}</small></span>
+                <Toggle v-model="draft.api_enabled" :aria-label="t('pelicanTests.showcase.apiEnabled')" data-testid="pelican-showcase-api-enabled" />
+              </div>
+              <p v-if="!draft.enabled" class="field-hint text-amber-600 dark:text-amber-400" data-testid="pelican-showcase-api-requires-gallery">
+                {{ t('pelicanTests.showcase.apiRequiresGallery') }}
+              </p>
+              <button type="button" class="mt-2 inline-flex items-center gap-1.5 text-xs text-primary-600 hover:underline dark:text-primary-400" data-testid="pelican-showcase-api-info" @click="showApiInfo = true">
+                <Icon name="link" size="xs" />{{ t('pelicanTests.showcase.apiInfo') }}
+              </button>
               <label class="field-label" for="pelican-showcase-max-items">{{ t('pelicanTests.showcase.maxItems') }}</label>
               <div class="relative">
                 <input id="pelican-showcase-max-items" v-model.number="draft.max_items" type="number" min="1" max="100" required class="input w-full pr-12" data-testid="pelican-showcase-max-items" />
@@ -303,6 +313,12 @@
       </template>
     </BaseDialog>
 
+    <PelicanShowcaseApiDialog
+      :show="showApiInfo"
+      :enabled="!!settings?.enabled && settings?.api_enabled === true"
+      @close="showApiInfo = false"
+    />
+
     <ConfirmDialog
       :show="deleting !== null"
       :title="t('pelicanTests.plans.deleteTitle')"
@@ -329,6 +345,7 @@ import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PelicanArtworkPreview from '@/components/user/pelican/PelicanArtworkPreview.vue'
+import PelicanShowcaseApiDialog from '@/components/user/pelican/PelicanShowcaseApiDialog.vue'
 import { pelicanDurationLabel } from '@/components/user/pelican/pelicanShowcaseFormat'
 import { adminAPI } from '@/api'
 import {
@@ -376,6 +393,7 @@ const groups = ref<AdminGroup[]>([])
 const groupsLoadFailed = ref(false)
 const loading = ref(false)
 const savingSettings = ref(false)
+const showApiInfo = ref(false)
 const savingPlan = ref(false)
 const error = ref('')
 const notice = ref('')

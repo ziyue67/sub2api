@@ -9,11 +9,12 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import server as adapter
+from smoke_model_fixture import PICKER
 
 
 PAGE = '''<button onclick="document.querySelector('[role=menuitem]').hidden=false">New</button>
 <button role="menuitem" hidden onclick="location.href='/?u='+crypto.randomUUID()">Blank project</button>
-<button onclick="window.chat=[]">New chat tab</button><button>5.6 Sol</button>
+<button onclick="window.chat=[]">New chat tab</button>
 <textarea placeholder="Ask anything"></textarea><script>
 window.chat=[];
 document.querySelector('textarea').addEventListener('keydown', async (e) => {
@@ -22,14 +23,14 @@ document.querySelector('textarea').addEventListener('keydown', async (e) => {
   window.chat.push(e.target.value);
   const start = await fetch('/api/llm/response_with_tools_start', {
     method: 'POST', body: JSON.stringify({metadata: {
-      model: 'gpt-5.6-sol', reasoning_effort: 'medium',
+      model: currentModel, reasoning_effort: currentEffort,
       projectId: new URL(location.href).searchParams.get('u')
     }, input: window.chat})
   }).then(r => r.json());
   await fetch('/api/llm/response_with_tools_status', {
     method: 'POST', body: JSON.stringify(start)
   });
-});</script>'''
+});</script>''' + PICKER
 
 
 class FixtureHandler(BaseHTTPRequestHandler):
@@ -76,8 +77,11 @@ def main():
             worker = adapter.BrowserWorker(lambda: adapter.BrowserTurn(state, args.chrome))
             try:
                 for n, session in enumerate(('a' * 64, 'a' * 64, 'b' * 64)):
-                    request_id, answer = worker.run('300', 'synthetic-fixture-token', f'fixture-{n}', session)
+                    model, effort = list(adapter.MODELS)[n], list(adapter.EFFORTS)[n]
+                    request_id, answer = worker.run('300', 'synthetic-fixture-token', f'fixture-{n}', session, model, effort)
                     assert answer == f'fixture-{n}', (request_id, answer)
+                    assert FixtureHandler.turns[n]['metadata']['model'] == model
+                    assert FixtureHandler.turns[n]['metadata']['reasoning_effort'] == effort
                 assert [t['input'] for t in FixtureHandler.turns] == [['fixture-0'], ['fixture-1'], ['fixture-2']]
                 projects = [t['metadata']['projectId'] for t in FixtureHandler.turns]
                 assert projects[0] == projects[1] and projects[1] != projects[2]

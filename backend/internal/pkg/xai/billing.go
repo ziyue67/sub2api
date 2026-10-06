@@ -18,7 +18,8 @@ const (
 	// CLIClientVersion is the one place the pinned Grok CLI version lives. The
 	// repository and service layers build their own client identity from it, so
 	// one bump here covers OAuth traffic and billing probes together.
-	// Keep in sync with https://x.ai/cli/stable.
+	// Keep in sync with the latest stable @xai-official/grok release
+	// (see https://x.ai/cli/stable).
 	CLIClientVersion = "1.0.46"
 
 	BillingWeeklyPath  = "/billing?format=credits"

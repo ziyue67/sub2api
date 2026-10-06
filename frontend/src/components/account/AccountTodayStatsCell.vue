@@ -13,28 +13,28 @@
     </div>
 
     <!-- Stats data -->
-    <div v-else-if="props.stats" class="space-y-0.5 text-xs">
-      <div class="flex items-center gap-1">
-        <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.todayTokens') }}:</span>
-        <span class="font-medium text-emerald-600 dark:text-emerald-400">{{
+    <div v-else-if="props.stats" class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs sm:block sm:space-y-0.5">
+      <div class="flex min-w-0 items-center gap-1">
+        <span class="min-w-0 truncate text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.todayTokens') }}:</span>
+        <span class="whitespace-nowrap font-medium text-emerald-600 dark:text-emerald-400">{{
           formatTokens(props.stats.tokens)
         }}</span>
       </div>
-      <div class="flex items-center gap-1">
-        <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.lifetimeTokens') }}:</span>
-        <span class="font-medium text-gray-900 dark:text-gray-100">{{
+      <div class="flex min-w-0 items-center gap-1">
+        <span class="min-w-0 truncate text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.lifetimeTokens') }}:</span>
+        <span class="whitespace-nowrap font-medium text-gray-900 dark:text-gray-100">{{
           formatTokens(props.stats.lifetime_tokens ?? 0)
         }}</span>
       </div>
-      <div class="flex items-center gap-1">
-        <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.todayCost') }}:</span>
-        <span class="font-medium text-emerald-600 dark:text-emerald-400">{{
+      <div class="flex min-w-0 items-center gap-1">
+        <span class="min-w-0 truncate text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.todayCost') }}:</span>
+        <span class="whitespace-nowrap font-medium text-emerald-600 dark:text-emerald-400">{{
           formatCurrency(props.stats.cost)
         }}</span>
       </div>
-      <div class="flex items-center gap-1">
-        <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.lifetimeCost') }}:</span>
-        <span class="font-medium text-gray-900 dark:text-gray-100">{{
+      <div class="flex min-w-0 items-center gap-1">
+        <span class="min-w-0 truncate text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stats.lifetimeCost') }}:</span>
+        <span class="whitespace-nowrap font-medium text-gray-900 dark:text-gray-100">{{
           formatCurrency(props.stats.lifetime_cost ?? 0)
         }}</span>
       </div>

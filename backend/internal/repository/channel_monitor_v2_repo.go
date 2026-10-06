@@ -761,6 +761,7 @@ func (r *channelMonitorV2Repository) GetErrors(ctx context.Context, filter servi
 
 func (r *channelMonitorV2Repository) loadErrorDetails(ctx context.Context, filter service.ChannelMonitorV2Filter, cfg service.ChannelMonitorV2Config) (map[string][]service.ChannelMonitorV2ErrorDetail, error) {
 	conditions := []string{
+		"NOT " + channelMonitorClientRejectionSQL,
 		"current_error.created_at >= $1",
 		"current_error.created_at < $2",
 		"NOT current_error.is_count_tokens",

@@ -204,6 +204,27 @@
         <!-- Tab: Gateway -->
         <div v-show="activeTab === 'gateway'" class="space-y-6">
           <ServerlessSettings v-if="activeTab === 'gateway'" />
+          <div class="card" data-testid="prism-browser-settings">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Prism 浏览器桥</h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理员在这里启用全局开关；账号仍需单独勾选 Prism。</p>
+            </div>
+            <div class="space-y-4 p-6">
+              <label class="flex items-center gap-3">
+                <input v-model="form.prism_browser_enabled" type="checkbox" class="h-4 w-4" data-testid="prism-browser-enabled" />
+                <span class="font-medium text-gray-900 dark:text-white">启用 Prism 浏览器桥</span>
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-sm text-gray-600 dark:text-gray-300">适配器 Base URL</span>
+                <input v-model="form.prism_browser_base_url" class="input w-full" placeholder="http://127.0.0.1:8319/v1" />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-sm text-gray-600 dark:text-gray-300">桥接 API Key（留空保持原值）</span>
+                <input v-model="form.prism_browser_api_key" type="password" autocomplete="new-password" class="input w-full" />
+              </label>
+              <p v-if="form.prism_browser_enabled && !form.prism_browser_api_key_configured" class="text-sm text-amber-600">启用前必须配置至少 32 个字符的适配器密钥。</p>
+            </div>
+          </div>
           <!-- Overload Cooldown (529) Settings -->
           <div class="card">
             <div
@@ -7548,38 +7569,25 @@
                 <label class="input-label">
                   {{ t('admin.settings.features.channelMonitor.mode') }}
                 </label>
-                <div class="mt-1.5 inline-flex w-full max-w-md rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-dark-600 dark:bg-dark-900/40">
+                <div class="mt-1.5 inline-flex w-full max-w-xl rounded-lg border border-gray-200 bg-gray-50 p-1 dark:border-dark-600 dark:bg-dark-900/40">
                   <button
+                    v-for="mode in channelMonitorModes"
+                    :key="mode"
                     type="button"
                     class="inline-flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
                     :class="
-                      form.channel_monitor_mode === 'v2'
+                      form.channel_monitor_mode === mode
                         ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
                         : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
                     "
-                    @click="form.channel_monitor_mode = 'v2'"
+                    :data-testid="`settings-monitor-mode-${mode}`"
+                    @click="form.channel_monitor_mode = mode"
                   >
-                    {{ t('admin.settings.features.channelMonitor.modeV2') }}
-                  </button>
-                  <button
-                    type="button"
-                    class="inline-flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
-                    :class="
-                      form.channel_monitor_mode === 'v1'
-                        ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-800 dark:text-primary-300'
-                        : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-white'
-                    "
-                    @click="form.channel_monitor_mode = 'v1'"
-                  >
-                    {{ t('admin.settings.features.channelMonitor.modeV1') }}
+                    {{ t(`admin.settings.features.channelMonitor.mode${mode.toUpperCase()}`) }}
                   </button>
                 </div>
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                  {{
-                    form.channel_monitor_mode === 'v1'
-                      ? t('admin.settings.features.channelMonitor.modeV1Hint')
-                      : t('admin.settings.features.channelMonitor.modeV2Hint')
-                  }}
+                  {{ t(`admin.settings.features.channelMonitor.mode${(form.channel_monitor_mode || 'v1').toUpperCase()}Hint`) }}
                 </p>
                 <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
                   {{ t('admin.settings.features.channelMonitor.modeHint') }}
@@ -10190,11 +10198,21 @@ type SettingsForm = Omit<
   // 系统全局平台限额 map；form 内始终归一化为全 4 平台对象（模板非空绑定依赖此不变量）
   default_platform_quotas: DefaultPlatformQuotasMap;
   account_scheduling_thresholds: ReturnType<typeof normalizeAccountSchedulingThresholdsMap>;
+  prism_browser_api_key: string;
 };
 
 const schedulingThresholdPlatforms = SCHEDULING_THRESHOLD_PLATFORMS;
 
+// The stored monitor mode; the save payload omits an unchanged mode so a switch
+// made on the monitor page is not overwritten by this page's older copy.
+let loadedChannelMonitorMode: 'v1' | 'v2' | 'v3' = 'v1'
+const channelMonitorModes = ['v1', 'v2', 'v3'] as const
+
 const form = reactive<SettingsForm>({
+  prism_browser_enabled: false,
+  prism_browser_base_url: "http://127.0.0.1:8319/v1",
+  prism_browser_api_key_configured: false,
+  prism_browser_api_key: "",
   registration_enabled: true,
   email_verify_enabled: false,
   registration_email_suffix_whitelist: [],
@@ -10481,7 +10499,7 @@ const form = reactive<SettingsForm>({
   account_quota_notify_emails: [] as NotifyEmailEntry[],
   // Channel Monitor feature switch
   channel_monitor_enabled: true,
-  channel_monitor_mode: 'v1' as 'v1' | 'v2',
+  channel_monitor_mode: 'v1' as 'v1' | 'v2' | 'v3',
   channel_monitor_default_interval_seconds: 60,
   channel_monitor_hide_throughput: false,
   channel_monitor_show_quota: false,
@@ -11592,7 +11610,10 @@ async function loadSettings() {
     form.login_agreement_mode =
       settings.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
     form.channel_monitor_mode =
-      settings.channel_monitor_mode === "v2" ? "v2" : "v1";
+      settings.channel_monitor_mode === "v2" || settings.channel_monitor_mode === "v3"
+        ? settings.channel_monitor_mode
+        : "v1";
+    loadedChannelMonitorMode = form.channel_monitor_mode;
     form.channel_monitor_hide_throughput = Boolean(
       settings.channel_monitor_hide_throughput
     );
@@ -11603,6 +11624,10 @@ async function loadSettings() {
       settings.channel_monitor_hide_user_ranking
     );
     form.leaderboard_show_actual_cost = settings.leaderboard_show_actual_cost !== false;
+    form.prism_browser_enabled = Boolean(settings.prism_browser_enabled);
+    form.prism_browser_base_url = settings.prism_browser_base_url || "http://127.0.0.1:8319/v1";
+    form.prism_browser_api_key_configured = Boolean(settings.prism_browser_api_key_configured);
+    form.prism_browser_api_key = "";
     form.login_agreement_updated_at =
       settings.login_agreement_updated_at || "2026-03-31";
     form.login_agreement_documents =
@@ -12044,6 +12069,9 @@ async function saveSettings() {
     }
 
     const payload: UpdateSettingsRequest = {
+      prism_browser_enabled: form.prism_browser_enabled,
+      prism_browser_base_url: form.prism_browser_base_url,
+      ...(form.prism_browser_api_key ? { prism_browser_api_key: form.prism_browser_api_key } : {}),
       registration_enabled: form.registration_enabled,
       email_verify_enabled: form.email_verify_enabled,
       registration_email_suffix_whitelist:
@@ -12368,7 +12396,9 @@ async function saveSettings() {
       ).filter((e) => e.email.trim() !== ""),
       // Channel Monitor feature switch
       channel_monitor_enabled: form.channel_monitor_enabled,
-      channel_monitor_mode: form.channel_monitor_mode === 'v1' ? 'v1' : 'v2',
+      // Sent only when changed here: the monitor page can switch the mode on its own.
+      channel_monitor_mode:
+        form.channel_monitor_mode === loadedChannelMonitorMode ? undefined : form.channel_monitor_mode,
       channel_monitor_default_interval_seconds:
         Number(form.channel_monitor_default_interval_seconds) || 60,
       channel_monitor_hide_throughput: Boolean(form.channel_monitor_hide_throughput),
@@ -12460,6 +12490,7 @@ async function saveSettings() {
       form.openai_oauth_scheduling_rate_multiplier = null;
     }
     Object.assign(authSourceDefaults, buildAuthSourceDefaultsState(updated));
+    loadedChannelMonitorMode = form.channel_monitor_mode || 'v1';
     form.default_platform_quotas = normalizePlatformQuotasMap(updated.default_platform_quotas);
     form.account_scheduling_thresholds = normalizeAccountSchedulingThresholdsMap(
       updated.account_scheduling_thresholds,

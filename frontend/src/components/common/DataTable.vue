@@ -32,6 +32,34 @@
     </template>
 
     <template v-else>
+      <div
+        v-if="serverSideSort && sortableColumns.length > 0"
+        class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-dark-700 dark:bg-dark-900"
+        data-test="mobile-sort-controls"
+      >
+        <label class="shrink-0 text-xs font-medium text-gray-500 dark:text-dark-400" :for="mobileSortId">
+          {{ t('common.sort') }}
+        </label>
+        <select
+          :id="mobileSortId"
+          class="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200"
+          :value="sortKey"
+          @change="handleMobileSortKey(($event.target as HTMLSelectElement).value)"
+        >
+          <option v-for="column in sortableColumns" :key="column.key" :value="column.key">
+            {{ column.label }}
+          </option>
+        </select>
+        <button
+          type="button"
+          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-dark-700"
+          :aria-label="sortOrder === 'asc' ? t('common.sortDescending') : t('common.sortAscending')"
+          :title="sortOrder === 'asc' ? t('common.sortDescending') : t('common.sortAscending')"
+          @click="handleMobileSortOrder"
+        >
+          <span aria-hidden="true">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+        </button>
+      </div>
       <div v-if="selectable" class="flex items-center justify-end gap-2 px-1">
         <label class="flex items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-300">
           <input
@@ -641,6 +669,8 @@ const resolveStableRowKey = (row: any): string | number | undefined => {
 const resolveRowKey = (row: any, index: number) => resolveStableRowKey(row) ?? index
 
 const dataColumns = computed(() => props.columns.filter((column) => column.key !== 'actions'))
+const sortableColumns = computed(() => props.columns.filter((column) => column.sortable))
+const mobileSortId = 'mobile-sort'
 const columnsSignature = computed(() =>
   props.columns.map((column) => `${column.key}:${column.sortable ? '1' : '0'}`).join('|')
 )
@@ -690,6 +720,16 @@ const handleSort = (key: string) => {
     sortKey.value = key
     sortOrder.value = newOrder
   }
+}
+
+const handleMobileSortKey = (key: string) => {
+  if (key && key !== sortKey.value) {
+    handleSort(key)
+  }
+}
+
+const handleMobileSortOrder = () => {
+  if (sortKey.value) handleSort(sortKey.value)
 }
 
 const sortedData = computed(() => {

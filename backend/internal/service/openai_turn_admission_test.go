@@ -104,6 +104,31 @@ func TestOpenAITurnAdmissionLatestState(t *testing.T) {
 	}
 }
 
+func TestOpenAITurnAdmissionLocalCache(t *testing.T) {
+	selected := ticketTestAccount(980)
+	selected.GroupIDs = []int64{9}
+	latest := *selected
+	latest.Credentials = maps.Clone(selected.Credentials)
+	latest.Extra = maps.Clone(selected.Extra)
+	repo := &turnAdmissionRepo{account: &latest}
+	cfg := &config.Config{}
+	cfg.Gateway.Scheduling.OpenAITurnAdmissionCacheTTLSeconds = 300
+	svc := &OpenAIGatewayService{accountRepo: repo, cfg: cfg}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	group := int64(9)
+	c.Set("api_key", &APIKey{GroupID: &group})
+
+	first, err := svc.admitOpenAITurn(context.Background(), c, selected, "gpt-6-astra")
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.reads)
+	first.Credentials["base_url"] = "https://mutated.example.invalid"
+
+	second, err := svc.admitOpenAITurn(context.Background(), c, selected, "gpt-6-astra")
+	require.NoError(t, err)
+	require.Equal(t, 1, repo.reads, "cache hit must avoid another authoritative read")
+	require.NotEqual(t, "https://mutated.example.invalid", second.Credentials["base_url"])
+}
+
 func TestOpenAITurnAdmissionExplicitGroupRejectsRemovedMembership(t *testing.T) {
 	selected := ticketTestAccount(905)
 	selected.GroupIDs = []int64{9}

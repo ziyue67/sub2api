@@ -97,3 +97,47 @@ func TestPriorityAccountCostMultiplierRoundTrip(t *testing.T) {
 	}
 	require.True(t, shouldEnqueueSchedulerOutboxForExtraUpdates(map[string]any{service.AccountCostMultiplierExtraKey: 0.1}), "cost edits invalidate cached scheduler accounts")
 }
+
+// Multi-model plans save the executed model on each result. Plan.ModelID is
+// only the legacy fallback, and a malformed legacy round cannot poison usage.
+func TestPriorityQualityUsesResultModelAndIgnoresMalformedRounds(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	repo := newUsageLogRepositoryWithSQL(tx.Client(), tx)
+	account := mustCreateAccount(t, tx.Client(), &service.Account{Name: "multi-quality", Platform: service.PlatformOpenAI})
+	rows, err := tx.QueryContext(ctx, `INSERT INTO scheduled_test_plans(account_id,model_id,cron_expression,enabled,pelican_config,updated_at) VALUES($1,'model-a','*/30 * * * *',true,'{"quality":{},"model_ids":["model-a","model-b"],"parallel_count":2}',NOW()-INTERVAL '1 hour') RETURNING id`, account.ID)
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	var plan int64
+	require.NoError(t, rows.Scan(&plan))
+	require.NoError(t, rows.Close())
+	for _, model := range []string{"model-a", "model-b"} {
+		status, verdict, message := "success", "correct", ""
+		if model == "model-b" {
+			status, verdict, message = "failed", "incorrect", "answer_mismatch"
+		}
+		for i := 0; i < 2; i++ {
+			_, err = tx.ExecContext(ctx, `INSERT INTO scheduled_test_results(plan_id,status,started_at,finished_at,created_at,pelican_config,quality_round_id,quality_action,quality_judgment,error_message) VALUES($1,$2,NOW()-INTERVAL '1 minute',NOW()-INTERVAL '1 minute',NOW()-INTERVAL '1 minute',jsonb_build_object('model_id',$3::text,'parallel_count',2),'multi','passed',jsonb_build_object('verdict',$4::text),$5)`, plan, status, model, verdict, message)
+			require.NoError(t, err)
+		}
+	}
+	for _, parallel := range []string{`"oops"`, `2147483648`, `0`, `null`} {
+		_, err = tx.ExecContext(ctx, `INSERT INTO scheduled_test_results(plan_id,status,started_at,created_at,pelican_config,quality_round_id,quality_action,quality_judgment) VALUES($1,'success',NOW()-INTERVAL '1 minute',NOW()-INTERVAL '1 minute',$2::jsonb,$3,'passed','{"verdict":"correct"}')`, plan, `{"model_id":"model-b","parallel_count":`+parallel+`}`, "invalid-"+parallel)
+		require.NoError(t, err)
+	}
+	for _, model := range []string{"model-a", "model-b"} {
+		got, readErr := repo.ReadPrioritySchedulingSignals(ctx, service.PrioritySchedulingQuery{AccountIDs: []int64{account.ID}, Model: model, UsageSince: time.Now().Add(-time.Hour), QualitySince: time.Now().Add(-time.Hour)})
+		require.NoError(t, readErr)
+		require.Equal(t, 1, got[account.ID].QualitySamples)
+		if model == "model-a" {
+			require.Equal(t, 1, got[account.ID].QualityPassed)
+		} else {
+			require.Zero(t, got[account.ID].QualityPassed)
+		}
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE scheduled_test_plans SET pelican_config='{"quality":null}' WHERE id=$1`, plan)
+	require.NoError(t, err)
+	got, err := repo.ReadPrioritySchedulingSignals(ctx, service.PrioritySchedulingQuery{AccountIDs: []int64{account.ID}, Model: "model-a", UsageSince: time.Now().Add(-time.Hour), QualitySince: time.Now().Add(-time.Hour)})
+	require.NoError(t, err)
+	require.Zero(t, got[account.ID].QualitySamples)
+}

@@ -10,7 +10,9 @@ import (
 // 这些是 MVP 阶段的硬编码值，按需可以提到 config 中。
 const (
 	// monitorRequestTimeout 单次模型请求总超时（含 Body 读取）。
-	monitorRequestTimeout = 45 * time.Second
+	// Prism 浏览器适配器在资源准入后才会返回响应头，因此需要保留足够的
+	// 等待空间；其他渠道仍受这个明确的总上限约束。
+	monitorRequestTimeout = 90 * time.Second
 	// monitorPingTimeout HEAD 请求 endpoint origin 的超时。
 	monitorPingTimeout = 8 * time.Second
 	// monitorDegradedThreshold 主请求成功但耗时超过该阈值视为 degraded。
@@ -136,7 +138,8 @@ const (
 	// monitorTLSHandshakeTimeout HTTP transport TLS 握手超时。
 	monitorTLSHandshakeTimeout = 10 * time.Second
 	// monitorResponseHeaderTimeout HTTP transport 等待响应头超时。
-	monitorResponseHeaderTimeout = 30 * time.Second
+	// 必须小于总请求超时，避免 Prism 等待资源后已完成的探测被过早记为失败。
+	monitorResponseHeaderTimeout = 75 * time.Second
 	// monitorPingDiscardMaxBytes ping 时丢弃响应体的最大字节数。
 	monitorPingDiscardMaxBytes = 1024
 
@@ -216,5 +219,9 @@ var (
 	ErrChannelMonitorModeMismatch = infraerrors.Forbidden(
 		"CHANNEL_MONITOR_MODE_MISMATCH",
 		"channel monitor mode does not allow this operation",
+	)
+	ErrChannelMonitorInvalidMode = infraerrors.BadRequest(
+		"CHANNEL_MONITOR_INVALID_MODE",
+		"channel monitor mode must be v1, v2 or v3",
 	)
 )

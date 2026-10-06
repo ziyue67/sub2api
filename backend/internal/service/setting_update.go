@@ -493,6 +493,15 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyChannelMonitorShowQuota] = strconv.FormatBool(settings.ChannelMonitorShowQuota)
 	updates[SettingKeyChannelMonitorHideUserRanking] = strconv.FormatBool(settings.ChannelMonitorHideUserRanking)
 	updates[SettingKeyLeaderboardShowActualCost] = strconv.FormatBool(settings.LeaderboardShowActualCost)
+	updates[SettingKeyPrismBrowserEnabled] = strconv.FormatBool(settings.PrismBrowserEnabled)
+	baseURL := strings.TrimSpace(settings.PrismBrowserBaseURL)
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:8319/v1"
+	}
+	updates[SettingKeyPrismBrowserBaseURL] = baseURL
+	if strings.TrimSpace(settings.PrismBrowserAPIKey) != "" {
+		updates[SettingKeyPrismBrowserAPIKey] = strings.TrimSpace(settings.PrismBrowserAPIKey)
+	}
 
 	// Grok model mapping policy
 	if v := strings.TrimSpace(settings.GrokDefaultTextModel); v != "" {
@@ -958,7 +967,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	s.codexRestrictionPolicySF.Forget("codex_restriction_policy")
 	s.codexRestrictionPolicyCache.Store(&cachedCodexRestrictionPolicy{expiresAt: 0})
 	// Cyber 会话屏蔽与严格身份门控必须在后台保存后立即生效，不能继续
-	// 使用最长 60 秒的旧开关快照。
+	// 使用最长 60 秒的旧开关快照。保留刚保存成功的白名单，下一次 DB 刷新失败时沿用。
 	s.cyberSessionBlockRuntimeSF.Forget("cyber_session_block_runtime")
 	s.cyberSessionBlockRuntimeCache.Store(&cachedCyberSessionBlockRuntime{expiresAt: 0})
 	// Retain the successfully saved allowlist if the next DB refresh fails.

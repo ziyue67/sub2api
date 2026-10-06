@@ -11,8 +11,30 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/upstreamroute"
 	"github.com/stretchr/testify/require"
 )
+
+type openAIWSAccountRouteCaptureDialer struct{ accountID int64 }
+
+func (d *openAIWSAccountRouteCaptureDialer) Dial(ctx context.Context, _ string, _ http.Header, _ string) (openAIWSClientConn, int, http.Header, error) {
+	d.accountID = upstreamroute.AccountIDFromContext(ctx)
+	return &openAIWSFakeConn{}, 0, nil, nil
+}
+
+func TestOpenAIWSConnPoolDialPassesAccountToRegionalRoute(t *testing.T) {
+	pool := newOpenAIWSConnPool(&config.Config{})
+	t.Cleanup(pool.Close)
+	dialer := &openAIWSAccountRouteCaptureDialer{}
+	pool.setClientDialerForTest(dialer)
+	conn, err := pool.dialConn(t.Context(), openAIWSAcquireRequest{
+		Account: &Account{ID: 101},
+		WSURL:   "wss://api.example.com/v1/responses",
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 101, dialer.accountID)
+	conn.close()
+}
 
 func TestOpenAIWSConnPool_CleanupStaleAndTrimIdle(t *testing.T) {
 	cfg := &config.Config{}

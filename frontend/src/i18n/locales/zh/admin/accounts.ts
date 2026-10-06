@@ -836,8 +836,11 @@ export default {
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
         prismBrowser: '自动使用 Prism 浏览器协议',
-        prismBrowserDesc: '使用此 OpenAI OAuth 账号接入服务器管理的 Prism 适配器，无需另填 Prism 凭据。目前支持 gpt-5.6-sol 纯文本请求。',
-        prismBrowserManagedEndpoint: '已启用：请求将自动发送到服务器的 Prism 适配器。',
+        prismBrowserDesc: '使用此 OpenAI OAuth 账号接入服务器管理的 Prism 适配器，无需另填 Prism 凭据。支持以下四个模型的文本请求，以及 6.1 Sol 的客户端函数和自定义工具。',
+        prismBrowserModels: '勾选使用 Prism 的模型',
+        prismBrowserModelsHint: '按账号映射后的模型名称匹配。仅勾选模型走 Prism；未选模型保留原 Codex / Excel 路由。全部取消时不使用 Prism。模型权限仍以上游账号为准。',
+        prismBrowserManagedEndpoint: '所选模型使用 HTTP/SSE。工具请求需同步升级服务器适配器；联网搜索、图片生成等托管工具不受支持。',
+        prismBrowserConcurrencyHint: 'Prism 另受适配器并发限制，其请求不计入本档升降级统计。',
         apiKeyHint: '您的 OpenAI API Key',
         apiProtocol: {
           title: 'API 协议（可选）',
@@ -1168,6 +1171,10 @@ export default {
           cli: 'Grok Build CLI',
           official: '官方 API'
         }
+      },
+      grokSkipForbiddenPause: {
+        title: '未分类 Grok 403 后保持调度',
+        hint: '默认关闭。开启后，未分类的推理 403 不再触发默认 30 分钟全账号暂停或健康惩罚，每次请求最多尝试一个备用账号。明确的凭据撤销、封禁、资格拒绝、内容、计费/配额处理及管理员规则仍然生效。'
       },
       grokClientToolCache: {
         title: '客户端工具缓存（可能改变自动工具选择）',
@@ -1923,7 +1930,7 @@ export default {
         promptLabel: '测试消息',
         promptHint: '同一题目会原样发给每个并行任务。',
         model: '模型',
-        modelHint: '默认使用 gpt-6-astra，可按账号实际支持情况修改。',
+        modelHint: '默认使用 {model}，可按账号实际支持情况修改。',
         reasoning: '思考强度',
         reasoningLow: '低',
         reasoningMedium: '中',

@@ -23,6 +23,20 @@ func swapMonitorHTTPClient(t *testing.T) {
 	t.Cleanup(func() { monitorHTTPClient = orig })
 }
 
+func TestNewSSRFSafeHTTPClientUsesMonitorTimeoutBudget(t *testing.T) {
+	client := newSSRFSafeHTTPClient(monitorRequestTimeout)
+	transport := newSSRFSafeHTTPTransport()
+	if client.Timeout != monitorRequestTimeout {
+		t.Fatalf("client timeout = %s, want %s", client.Timeout, monitorRequestTimeout)
+	}
+	if transport.ResponseHeaderTimeout != monitorResponseHeaderTimeout {
+		t.Fatalf("response header timeout = %s, want %s", transport.ResponseHeaderTimeout, monitorResponseHeaderTimeout)
+	}
+	if transport.ResponseHeaderTimeout >= client.Timeout {
+		t.Fatalf("response header timeout %s must be below client timeout %s", transport.ResponseHeaderTimeout, client.Timeout)
+	}
+}
+
 // captureHandler 把每次收到的请求 body 和 headers 存起来，测试断言用。
 type captureHandler struct {
 	lastBody    map[string]any

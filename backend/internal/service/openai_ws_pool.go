@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/upstreamroute"
 	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"golang.org/x/sync/errgroup"
 )
@@ -69,9 +70,11 @@ func (e *openAIWSDialError) Unwrap() error {
 }
 
 type openAIWSAcquireRequest struct {
-	Account *Account
-	WSURL   string
-	Headers http.Header
+	// Private experiment connections must never serve a different client scope.
+	AnchorScope string
+	Account     *Account
+	WSURL       string
+	Headers     http.Header
 	// HeadersFactory is evaluated inside dialConn. It exists so credentials
 	// whose authorization is per-dial (Agent Identity) are never cached in
 	// lastAcquire or delayed prewarm state.
@@ -87,6 +90,7 @@ type openAIWSAcquireRequest struct {
 }
 
 type openAIWSHandshakeCompatibilityKey struct {
+	anchorScope         string
 	betaFeatures        string
 	codexInstallationID string
 	sessionIDHyphen     string
@@ -309,10 +313,11 @@ type openAIWSConn struct {
 	// unusable 表示空闲期收到数据被判为脏连接：持有令牌不再借出，由池在锁外关闭。
 	unusable atomic.Bool
 
-	waiters       atomic.Int32
-	createdAtNano atomic.Int64
-	lastUsedNano  atomic.Int64
-	prewarmed     atomic.Bool
+	waiters         atomic.Int32
+	createdAtNano   atomic.Int64
+	lastUsedNano    atomic.Int64
+	anchorUntilNano atomic.Int64
+	prewarmed       atomic.Bool
 }
 
 func newOpenAIWSConn(id string, _ int64, ws openAIWSClientConn, handshakeHeaders http.Header) *openAIWSConn {
@@ -869,7 +874,7 @@ type openAIWSConnPool struct {
 func newOpenAIWSConnPool(cfg *config.Config) *openAIWSConnPool {
 	pool := &openAIWSConnPool{
 		cfg:          cfg,
-		clientDialer: newDefaultOpenAIWSClientDialer(),
+		clientDialer: newConfiguredOpenAIWSClientDialer(cfg),
 		workerStopCh: make(chan struct{}),
 	}
 	pool.startBackgroundWorkers()
@@ -1686,7 +1691,7 @@ func (p *openAIWSConnPool) cleanupAccountLocked(ap *openAIWSAccountPool, now tim
 			evicted = append(evicted, conn)
 			continue
 		}
-		if p.isConnPinnedLocked(ap, id) {
+		if now.UnixNano() < conn.anchorUntilNano.Load() || p.isConnPinnedLocked(ap, id) {
 			continue
 		}
 		if !conn.isLeased() && conn.waiters.Load() == 0 &&
@@ -1727,7 +1732,7 @@ func (p *openAIWSConnPool) cleanupAccountLocked(ap *openAIWSAccountPool, now tim
 				continue
 			}
 			// 有等待者的连接不能在清理阶段被淘汰，否则等待中的 acquire 会收到 closed 错误。
-			if conn.isLeased() || conn.waiters.Load() > 0 || p.isConnPinnedLocked(ap, conn.id) {
+			if conn.isLeased() || conn.waiters.Load() > 0 || now.UnixNano() < conn.anchorUntilNano.Load() || p.isConnPinnedLocked(ap, conn.id) {
 				continue
 			}
 			idleConns = append(idleConns, conn)
@@ -2149,6 +2154,9 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 			return nil, err
 		}
 	}
+	if req.Account != nil {
+		ctx = upstreamroute.WithAccountID(ctx, req.Account.ID)
+	}
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
 	if err != nil {
 		var handshakeErr *openAIWSHandshakeError
@@ -2344,6 +2352,7 @@ func (p *openAIWSConnPool) dialTimeout() time.Duration {
 func openAIWSAcquireCompatibility(req openAIWSAcquireRequest) openAIWSHandshakeCompatibilityKey {
 	key := normalizeOpenAIWSHandshakeCompatibility(req.Account, req.Headers)
 	key.proxyURL = stringsTrim(req.ProxyURL)
+	key.anchorScope = req.AnchorScope
 	return key
 }
 

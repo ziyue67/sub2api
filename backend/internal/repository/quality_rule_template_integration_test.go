@@ -45,7 +45,7 @@ func TestQualityRuleTemplateFollowsGroupAccounts(t *testing.T) {
 
 	plans := NewScheduledTestPlanRepository(integrationDB)
 	templates := NewQualityRuleTemplateRepository(integrationEntClient, integrationDB)
-	svc := service.ProvideScheduledTestService(plans, NewScheduledTestResultRepository(integrationDB), templates)
+	svc := service.ProvideScheduledTestService(plans, NewScheduledTestResultRepository(integrationDB), templates, nil)
 	countPlans := func(accountID int64) int {
 		var n int
 		require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT count(*) FROM scheduled_test_plans WHERE account_id=$1`, accountID).Scan(&n))

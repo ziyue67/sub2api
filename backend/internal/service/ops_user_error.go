@@ -54,7 +54,7 @@ func MapUserErrorCategory(phase, errType string) string {
 			return "rate_limit"
 		case "billing_error", "subscription_error":
 			return "quota"
-		case "invalid_request_error":
+		case "invalid_request_error", "model_not_found":
 			return "invalid_request"
 		case "cyber_policy":
 			return "cyber"
@@ -81,7 +81,7 @@ func CategoryToFilter(category string) (phases []string, errorTypes []string) {
 	case "quota":
 		return nil, []string{"billing_error", "subscription_error"}
 	case "invalid_request":
-		return nil, []string{"invalid_request_error"}
+		return []string{"request"}, []string{"invalid_request_error", "model_not_found"}
 	case "cyber":
 		return []string{"request"}, []string{"cyber_policy"}
 	default:

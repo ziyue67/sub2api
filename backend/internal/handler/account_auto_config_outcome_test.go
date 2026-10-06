@@ -146,3 +146,24 @@ func TestAutoConfigSplitSSEAndWriterReuse(t *testing.T) {
 	require.False(t, state.terminalSuccess)
 	state.mu.RUnlock()
 }
+
+func TestAutoConfigPrismDoesNotChangeNativeTier(t *testing.T) {
+	for _, status := range []int{200, 422, 429, 502} {
+		ops := service.NewOpsService(nil, nil, &config.Config{}, nil, nil, nil, nil, nil, nil, nil, nil)
+		var got []service.AccountConcurrencyResult
+		ops.SetAutoConfigObserver(func(r service.AccountConcurrencyResult) { got = append(got, r) })
+		router := gin.New()
+		router.Use(OpsErrorLoggerMiddleware(ops))
+		router.POST("/v1/responses", func(c *gin.Context) {
+			c.Set(opsAccountIDKey, int64(8))
+			service.MarkPrismBrowserAttempt(c, 7)
+			service.MarkPrismBrowserAttempt(c, 8)
+			c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{{AccountID: 7}, {AccountID: 9}})
+			c.JSON(status, gin.H{"fixture": true})
+		})
+		router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+		require.Len(t, got, 1)
+		require.Equal(t, int64(9), got[0].AccountID)
+		require.False(t, got[0].Success)
+	}
+}

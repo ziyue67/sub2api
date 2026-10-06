@@ -134,6 +134,7 @@ func (s *OpenAIGatewayService) doOpenAIProxyAttempt(req *http.Request, account *
 	if err := s.acquireOpenAIRPMForSend(req.Context(), account); err != nil {
 		return nil, err
 	}
+	defer func() { s.rateLimitService.observeQualityResponse(req.Context(), account, resp, err) }()
 	req, timingTrace := requesttiming.StartAttempt(req, account.ID, target.proxyID)
 	defer func() { timingTrace.Response(resp, err) }()
 	defer func() {

@@ -718,8 +718,11 @@ export default {
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
         prismBrowser: 'Use Prism browser protocol automatically',
-        prismBrowserDesc: 'Uses the server-managed Prism adapter with this OpenAI OAuth account. No separate Prism credentials are needed. Currently supports text requests with gpt-5.6-sol.',
-        prismBrowserManagedEndpoint: 'Enabled: requests are routed to the server-managed Prism adapter.',
+        prismBrowserDesc: 'Uses this OpenAI OAuth account with the server-managed Prism adapter. No separate credentials are needed. Supports text for these four models and client function/custom tools for 6.1 Sol.',
+        prismBrowserModels: 'Models to route through Prism',
+        prismBrowserModelsHint: 'Matches model names after account mapping. Only selected models use Prism; others keep their Codex / Excel routing. Selecting none disables Prism routing. Availability depends on the upstream account.',
+        prismBrowserManagedEndpoint: 'Selected models use HTTP/SSE. Tool requests require an updated server adapter. Hosted tools such as web search and image generation are unsupported.',
+        prismBrowserConcurrencyHint: 'Prism also has adapter concurrency limits; its requests do not affect this tier’s progress.',
         apiKeyHint: 'Your OpenAI API Key',
         apiProtocol: {
           title: 'API Protocol (Optional)',
@@ -1066,6 +1069,10 @@ export default {
           cli: 'Grok Build CLI',
           official: 'Official API'
         }
+      },
+      grokSkipForbiddenPause: {
+        title: 'Keep scheduling after unclassified Grok 403',
+        hint: 'Off by default. When enabled, an unclassified inference 403 skips the default 30-minute account-wide pause and health penalty, with at most one alternate account per request. Explicit revocation, suspension, entitlement denial, content, billing/quota handling and admin rules remain in effect.'
       },
       grokClientToolCache: {
         title: 'Client Tool Cache (May Change Automatic Tool Selection)',
@@ -1835,7 +1842,7 @@ export default {
         promptLabel: 'Test message',
         promptHint: 'The same prompt is sent unchanged to every parallel run.',
         model: 'Model',
-        modelHint: 'Defaults to gpt-6-astra; adjust it for the account when needed.',
+        modelHint: 'Defaults to {model}; adjust it for the account when needed.',
         reasoning: 'Reasoning effort',
         reasoningLow: 'Low',
         reasoningMedium: 'Medium',

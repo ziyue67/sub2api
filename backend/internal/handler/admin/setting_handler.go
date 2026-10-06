@@ -395,6 +395,9 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ChannelMonitorShowQuota:              settings.ChannelMonitorShowQuota,
 		ChannelMonitorHideUserRanking:        settings.ChannelMonitorHideUserRanking,
 		LeaderboardShowActualCost:            settings.LeaderboardShowActualCost,
+		PrismBrowserEnabled:                  settings.PrismBrowserEnabled,
+		PrismBrowserBaseURL:                  settings.PrismBrowserBaseURL,
+		PrismBrowserAPIKeyConfigured:         settings.PrismBrowserAPIKeyConfigured,
 
 		GrokDefaultTextModel:           settings.GrokDefaultTextModel,
 		GrokCrossClientModelMapEnabled: settings.GrokCrossClientModelMapEnabled,

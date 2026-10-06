@@ -31,6 +31,18 @@ func TestEffortLevelsForModel(t *testing.T) {
 	}
 }
 
+func TestSupportsAdaptiveThinking(t *testing.T) {
+	t.Parallel()
+
+	for _, model := range []string{"claude-opus-5-5", "claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-8-20260501", "anthropic/claude-opus-5.5"} {
+		require.True(t, SupportsAdaptiveThinking(model), model)
+	}
+	// Opus 4.5 takes effort but needs a thinking budget; the rest take neither.
+	for _, model := range []string{"claude-opus-4-5", "claude-opus-4-5-20251101", "claude-haiku-4-5-20251001", "claude-sonnet-4-5", "gpt-6-astra"} {
+		require.False(t, SupportsAdaptiveThinking(model), model)
+	}
+}
+
 func TestIsOpus55OpenRouterExactAlias(t *testing.T) {
 	t.Parallel()
 	for _, model := range []string{"claude-opus-5-5", "anthropic/claude-opus-5.5"} {

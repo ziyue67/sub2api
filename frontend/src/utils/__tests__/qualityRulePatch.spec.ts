@@ -35,6 +35,15 @@ describe('quality rule partial updates', () => {
     })
   })
 
+  it('replaces the full model selection without overwriting the rule’s grading policy', () => {
+    const source = draft()
+    Object.assign(source.pelican_config, { model_ids: ['second-model', 'second-model'] })
+    const updated = buildQualityRulePatch(plan(), source, ['model'])
+    expect(updated.model_id).toBe('new-model')
+    expect(updated.pelican_config).toMatchObject({ model_ids: ['new-model', 'second-model'],
+      quality: { expected_answer: '7', judge: { model_id: 'own-judge' } } })
+  })
+
   it('preserves different questions, judges and target groups when changing restoration', () => {
     const first = plan(), second = plan()
     second.pelican_config!.quality!.remove_group_ids = [100]

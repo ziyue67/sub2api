@@ -32,6 +32,7 @@ export default {
   "priority": "Priority",
   "load_factor": "Load factor",
   "concurrency": "Initial concurrency",
+  "cost_multiplier": "Cost multiplier",
   "groups": "Initial groups",
   "noGroups": "No active matching groups. Create one in group management first.",
   "loadHint": "Lower priority values run first. Load factor controls scheduling frequency independently of concurrency limits and billing multipliers.",

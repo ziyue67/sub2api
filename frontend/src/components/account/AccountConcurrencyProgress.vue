@@ -8,6 +8,7 @@
       :aria-label="t('autoConfig.progress', { count: progress.successes, required: progress.required, next: Math.min(account.concurrency + progress.step, progress.maximum) })"
     />
     <div>{{ t('autoConfig.progress', { count: progress.successes, required: progress.required, next: Math.min(account.concurrency + progress.step, progress.maximum) }) }}</div>
+    <p v-if="account.extra?.openai_prism_browser === true" class="mt-1">{{ t('admin.accounts.openai.prismBrowserConcurrencyHint') }}</p>
   </div>
 </template>
 <script setup lang="ts">

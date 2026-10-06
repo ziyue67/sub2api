@@ -151,6 +151,12 @@ func normalizeGrokAccountTestMode(mode string) string {
 
 // AccountTestService handles account testing operations
 type AccountTestService struct {
+	astraGatewayActionMu      sync.Mutex
+	astraSetupMu              sync.Mutex
+	astraSetupCancel          context.CancelFunc
+	astraSetupStatus          AstraSetupStatus
+	astraGatewayTestMu        sync.Mutex
+	astraGatewayLastTest      *AstraGatewayTestResult
 	accountRepo               AccountRepository
 	geminiTokenProvider       *GeminiTokenProvider
 	claudeTokenProvider       *ClaudeTokenProvider
@@ -375,7 +381,8 @@ func createTestPayload(modelID string) (map[string]any, error) {
 // mode is optional - "compact" routes OpenAI accounts to the /responses/compact probe path
 // opts is optional media (image/audio data URLs for real generation / STT).
 func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int64, modelID string, prompt string, mode string, opts ...AccountTestOptions) error {
-	ctx := c.Request.Context()
+	ctx := context.WithValue(c.Request.Context(), qualityProbeContextKey{}, true)
+	c.Request = c.Request.WithContext(ctx)
 	testOpts := firstAccountTestOptions(opts)
 
 	// Get account
@@ -424,7 +431,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	if account.IsOpenAI() {
-		if accountHasPrismBrowser(account) {
+		if account.IsPrismBrowserEnabledForModel(modelID) {
 			if normalizeAccountTestMode(mode) != AccountTestModeDefault || testOpts.ImageDataURL != "" || testOpts.AudioDataURL != "" {
 				return s.sendErrorAndEnd(c, "Prism supports the default text test only")
 			}
@@ -464,6 +471,7 @@ func (s *AccountTestService) testPrismBrowserConnection(c *gin.Context, account 
 	if modelID == "" {
 		modelID = "gpt-5.6-sol"
 	}
+	modelID = account.GetMappedModel(modelID)
 	if prompt == "" {
 		prompt = "hi"
 	}
@@ -620,7 +628,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 	// Create Claude Code style payload (same for all account types)
 	payload, err := createTestPayload(testModelID)
 	if options, ok := pelicanTestOptionsFromContext(ctx); ok {
-		payload, err = createPelicanClaudePayload(testModelID, options.prompt)
+		payload, err = createPelicanClaudePayload(testModelID, options.prompt, options.reasoningEffort)
 	}
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
@@ -700,6 +708,9 @@ func (s *AccountTestService) testClaudeVertexServiceAccountConnection(c *gin.Con
 	c.Writer.Flush()
 
 	payload, err := createTestPayload(testModelID)
+	if options, ok := pelicanTestOptionsFromContext(ctx); ok {
+		payload, err = createPelicanClaudePayload(testModelID, options.prompt, options.reasoningEffort)
+	}
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Failed to create test payload")
 	}
@@ -1053,6 +1064,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
+	applyOpenAIAPIKeyIdentityHeaders(req.Header, credentialAccount, credentialAccount.GetOpenAIUserAgent())
 	credentialAccount.ApplyHeaderOverrides(req.Header)
 
 	// Get proxy URL
@@ -1358,6 +1370,11 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(responseBody))
 	}
+	if isGrokContentPolicyRejection(resp.StatusCode, responseBody) {
+		return
+	}
+	decision := classifyGrokUpstreamFailure(resp.StatusCode, responseBody, grokRequestedModelFromCtx(ctx))
+	skipAccountState := isGrokExplicitModelFreeUsage(decision) || account.SkipGrokForbiddenPause() && isGrokUnknownForbidden(resp.StatusCode, responseBody)
 	snapshot := parseGrokQuotaSnapshot(resp.Header, resp.StatusCode, now)
 	stampGrokQuotaSnapshotForPlan(account, snapshot, grokRequestedModelFromCtx(ctx))
 	if snapshot != nil && s.accountRepo != nil {
@@ -1365,10 +1382,14 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 		if limited {
 			normalizeGrokExhaustedWindowResets(snapshot, resetAt, now)
 		}
-		_ = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
-			grokQuotaSnapshotExtraKey: snapshot,
-		})
-		if limited {
+		updates := map[string]any{grokQuotaSnapshotExtraKey: snapshot}
+		if !skipAccountState {
+			for key, value := range buildGrokSchedulerExtraUpdates(snapshot) {
+				updates[key] = value
+			}
+		}
+		_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
+		if limited && !skipAccountState {
 			persistGrokRateLimit(ctx, s.accountRepo, account, resetAt)
 		} else if isSuccessfulGrokRateLimitRecovery(account, snapshot) {
 			clearGrokRateLimitAfterRecovery(ctx, s.accountRepo, account)
@@ -1384,11 +1405,15 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 		}
 		return
 	}
-	if isGrokContentPolicyRejection(resp.StatusCode, responseBody) {
-		return
-	}
-	decision := classifyGrokUpstreamFailure(resp.StatusCode, responseBody, "")
 	if decision.Class == GrokFailureFreeUsage {
+		if isGrokExplicitModelFreeUsage(decision) {
+			resetAt := now.Add(decision.Cooldown)
+			if observed, limited := grokRateLimitResetAtForAccount(account, snapshot, now); limited && observed.After(now) {
+				resetAt = observed
+			}
+			markGrokModelQuotaBlock(account.ID, decision.Model, resetAt)
+			return
+		}
 		if resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, now); limited && resetAt.After(now) {
 			persistGrokRateLimit(ctx, s.accountRepo, account, resetAt)
 		} else {
@@ -1400,6 +1425,12 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 	}
 	if decision.Class == GrokFailureBilling && (isGrokSpendingLimitError(responseBody) || strings.Contains(strings.ToLower(decision.Reason), "credit")) {
 		persistGrokRateLimit(ctx, s.accountRepo, account, grokSpendingLimitResetAt(account, now))
+		return
+	}
+	if resp.StatusCode == http.StatusForbidden && s.applyGrokTestForbiddenPolicy(ctx, account, responseBody) {
+		return
+	}
+	if account.SkipGrokForbiddenPause() && isGrokUnknownForbidden(resp.StatusCode, responseBody) {
 		return
 	}
 	cooldown := time.Duration(0)
@@ -1433,6 +1464,21 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 			reason,
 		)
 	}
+}
+
+func (s *AccountTestService) applyGrokTestForbiddenPolicy(ctx context.Context, account *Account, responseBody []byte) bool {
+	matches := matchTempUnschedulableRules(account, http.StatusForbidden, responseBody)
+	if len(matches) == 0 || s == nil || s.accountRepo == nil {
+		return false
+	}
+	cooldown := time.Duration(matches[0].rule.DurationMinutes) * time.Minute
+	if cooldown <= 0 {
+		return true
+	}
+	stateCtx, cancel := openAIAccountStateContext(ctx)
+	defer cancel()
+	_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, time.Now().Add(cooldown), "grok configured forbidden rule")
+	return true
 }
 
 func (s *AccountTestService) testGrokResponsesConnection(c *gin.Context, ctx context.Context, account *Account, authToken, testModelID string) error {
@@ -2343,6 +2389,8 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+authToken)
 
+	applyOpenAIAPIKeyIdentityHeaders(req.Header, account, account.GetOpenAIUserAgent())
+
 	// 官方 OpenCode / Command Code 上游收敛为规范客户端 UA，与真实转发路径一致。
 	applyOpenCodeUpstreamUserAgent(account, apiURL, req.Header)
 
@@ -2481,6 +2529,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
+	applyOpenAIAPIKeyIdentityHeaders(req.Header, credentialAccount, credentialAccount.GetOpenAIUserAgent())
 	account.ApplyHeaderOverrides(req.Header)
 
 	proxyURL := ""
@@ -3020,13 +3069,25 @@ func createOpenAIChatCompletionsTestPayload(modelID string, prompt string) map[s
 func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader) error {
 	reader := bufio.NewReader(body)
 	usage := startPelicanTestStream(c, "anthropic")
+	// The connection probe only proves the account answers; a Pelican answer
+	// that stopped early is reported with the reason instead of as a success.
+	pelican := pelicanTestRequested(c)
+	stopReason, refusalCategory := "", ""
+	complete := func() error {
+		if pelican {
+			if failure := pelicanClaudeStopFailure(stopReason, refusalCategory); failure != "" {
+				return s.sendErrorAndEnd(c, failure)
+			}
+		}
+		s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+		return nil
+	}
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
-				s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-				return nil
+				return complete()
 			}
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Stream read error: %s", err.Error()))
 		}
@@ -3039,8 +3100,7 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		usage.read(jsonStr)
 		if jsonStr == "[DONE]" {
-			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-			return nil
+			return complete()
 		}
 
 		var data map[string]any
@@ -3057,9 +3117,17 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 					s.sendEvent(c, TestEvent{Type: "content", Text: text})
 				}
 			}
+		case "message_delta":
+			if delta, ok := data["delta"].(map[string]any); ok {
+				if reason, ok := delta["stop_reason"].(string); ok {
+					stopReason = reason
+				}
+				if details, ok := delta["stop_details"].(map[string]any); ok {
+					refusalCategory, _ = details["category"].(string)
+				}
+			}
 		case "message_stop":
-			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-			return nil
+			return complete()
 		case "error":
 			errorMsg := "Unknown error"
 			if errData, ok := data["error"].(map[string]any); ok {
@@ -3286,6 +3354,7 @@ func (s *AccountTestService) testOpenAIImageAPIKey(c *gin.Context, ctx context.C
 	req.Header.Set("Authorization", "Bearer "+authToken)
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
+	applyOpenAIAPIKeyIdentityHeaders(req.Header, account, account.GetOpenAIUserAgent())
 	account.ApplyHeaderOverrides(req.Header)
 
 	proxyURL := ""

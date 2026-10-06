@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import View from '../RequestCaptureView.vue'
 const mocks = vi.hoisted(() => ({ listTasks: vi.fn(), createTask: vi.fn(), listRecords: vi.fn(), getRecord: vi.fn(), getContent: vi.fn(), list: vi.fn(), replace: vi.fn() }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
+vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { template: '<nav />' } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ replace: mocks.replace }) }))
 vi.mock('@/stores/adminSettings', () => ({ useAdminSettingsStore: () => ({ setRequestCaptureEnabledLocal: vi.fn() }) }))

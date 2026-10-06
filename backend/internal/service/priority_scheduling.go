@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"slices"
 	"sync"
@@ -196,21 +195,8 @@ type PrioritySchedulingSignalReader interface {
 	ReadPrioritySchedulingSignals(context.Context, PrioritySchedulingQuery) (map[int64]PrioritySchedulingSignal, error)
 }
 
-type prioritySignalEntry struct {
-	signals    map[int64]PrioritySchedulingSignal
-	expires    time.Time
-	observed   time.Time
-	refreshing bool
-}
-
-type prioritySchedulingState struct {
-	mu      sync.Mutex
-	entries map[string]*prioritySignalEntry
-	active  int
-	latest  *PrioritySchedulingSnapshot
-}
-
 type PrioritySchedulingScore struct {
+	HistoryStatus       string   `json:"history_status"`
 	CapacityBand        int      `json:"capacity_band"`
 	BoundGroups         int      `json:"bound_groups"`
 	SelectionWeight     float64  `json:"selection_weight"`
@@ -233,97 +219,31 @@ type PrioritySchedulingScore struct {
 	PrioritySchedulingSignal
 }
 type PrioritySchedulingSnapshot struct {
-	SelectionPolicy string                    `json:"selection_policy"`
-	At              time.Time                 `json:"at"`
-	Model           string                    `json:"model"`
-	GroupID         *int64                    `json:"group_id"`
-	Mode            string                    `json:"mode"`
-	HistoryReady    bool                      `json:"history_ready"`
-	Candidates      []PrioritySchedulingScore `json:"candidates"`
-}
-
-func (s *OpenAIGatewayService) PrioritySchedulingSnapshot() *PrioritySchedulingSnapshot {
-	if s == nil {
-		return nil
-	}
-	s.priorityScheduling.mu.Lock()
-	defer s.priorityScheduling.mu.Unlock()
-	// Published snapshots are immutable.
-	return s.priorityScheduling.latest
-}
-
-func (s *OpenAIGatewayService) prioritySignals(req OpenAIAccountScheduleRequest, c PrioritySchedulingConfig, accounts []openAIAccountCandidateScore) (map[int64]PrioritySchedulingSignal, bool) {
-	reader, ok := s.usageLogRepo.(PrioritySchedulingSignalReader)
-	if !ok {
-		return nil, false
-	}
-	ids := make([]int64, 0, len(accounts))
-	for _, a := range accounts {
-		ids = append(ids, a.account.ID)
-	}
-	slices.Sort(ids)
-	// Bound both aggregation and the memory used by client-controlled model names.
-	if len(ids) > 2000 || len(req.RequestedModel) > 200 {
-		return nil, false
-	}
-	key := fmt.Sprintf("%q/%d/%d/%d/%v", req.RequestedModel, derefGroupID(req.GroupID), c.WindowMinutes, c.QualityMaxAgeHours, ids)
-	state := &s.priorityScheduling
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.entries == nil {
-		state.entries = make(map[string]*prioritySignalEntry)
-	}
-	now := time.Now()
-	entry := state.entries[key]
-	if entry == nil {
-		if len(state.entries) >= 32 {
-			for k, e := range state.entries {
-				if !e.refreshing && now.After(e.expires) {
-					delete(state.entries, k)
-				}
-			}
-			if len(state.entries) >= 32 {
-				return nil, false
-			}
-		}
-		entry = &prioritySignalEntry{}
-		state.entries[key] = entry
-	}
-	if !entry.refreshing && now.After(entry.expires) && state.active < 2 {
-		entry.refreshing = true
-		state.active++
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			signals, err := reader.ReadPrioritySchedulingSignals(ctx, PrioritySchedulingQuery{AccountIDs: ids, Model: req.RequestedModel, GroupID: req.GroupID, UsageSince: now.Add(-time.Duration(c.WindowMinutes) * time.Minute), QualitySince: now.Add(-time.Duration(c.QualityMaxAgeHours) * time.Hour)})
-			state.mu.Lock()
-			defer state.mu.Unlock()
-			state.active--
-			entry.refreshing = false
-			entry.expires = time.Now().Add(30 * time.Second)
-			if err == nil {
-				entry.signals = signals
-				entry.observed = time.Now()
-			} else {
-				entry.signals = nil
-				entry.observed = time.Time{}
-			}
-		}()
-	}
-	if entry.observed.IsZero() || now.Sub(entry.observed) > time.Minute {
-		return nil, false
-	}
-	return entry.signals, true
+	EvaluatedAt       time.Time                 `json:"evaluated_at"`
+	HistoryStatus     string                    `json:"history_status"`
+	HistoryObservedAt *time.Time                `json:"history_observed_at,omitempty"`
+	HistoryError      string                    `json:"history_error,omitempty"`
+	HistoryRefreshing bool                      `json:"history_refreshing"`
+	SelectionPolicy   string                    `json:"selection_policy"`
+	At                time.Time                 `json:"at"`
+	Model             string                    `json:"model"`
+	GroupID           *int64                    `json:"group_id"`
+	Mode              string                    `json:"mode"`
+	HistoryReady      bool                      `json:"history_ready"`
+	Candidates        []PrioritySchedulingScore `json:"candidates"`
 }
 
 func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandidateScore, signal PrioritySchedulingSignal, _ time.Time) PrioritySchedulingScore {
 	rate := item.account.CostMultiplier()
 	theoreticalCost := signal.BaseCost * rate
-	out := PrioritySchedulingScore{Rate: &rate, TheoreticalCost: theoreticalCost, AccountID: item.account.ID, AccountName: item.account.Name, Priority: openAIAccountSchedulingPriority(item.account), Concurrency: item.account.Concurrency, LoadFactor: item.account.EffectiveLoadFactor(), Tier: "eligible", Reasons: []string{}, PrioritySchedulingSignal: signal, Waiting: item.loadInfo.WaitingCount}
+	out := PrioritySchedulingScore{Rate: &rate, TheoreticalCost: theoreticalCost, AccountID: item.account.ID, AccountName: item.account.Name, Priority: openAIAccountSchedulingPriority(item.account), Concurrency: item.account.Concurrency, LoadFactor: item.account.EffectiveLoadFactor(), Tier: "eligible", Reasons: []string{}, PrioritySchedulingSignal: signal}
+	if item.loadInfo != nil {
+		out.Waiting = max(0, item.loadInfo.WaitingCount)
+	}
 	quality, latency, load, cost := 0.5, 0.5, 0.5, 0.5
 	degraded, unknown := false, false
 	if signal.QualitySamples > 0 {
-		quality = float64(signal.QualityPassed) / float64(signal.QualitySamples)
+		quality = clamp01(float64(signal.QualityPassed) / float64(signal.QualitySamples))
 		if quality*100 < float64(c.MinQualityPercent) {
 			degraded = true
 			out.Reasons = append(out.Reasons, "quality_below_target")
@@ -342,7 +262,7 @@ func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandid
 		unknown = true
 		out.Reasons = append(out.Reasons, "latency_insufficient")
 	}
-	if item.loadKnown {
+	if item.loadKnown && item.loadInfo != nil {
 		percent := 0
 		if item.account.Concurrency > 0 {
 			percent = int(100 * float64(item.loadInfo.CurrentConcurrency) / float64(item.account.Concurrency))
@@ -360,7 +280,13 @@ func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandid
 		out.Reasons = append(out.Reasons, "load_unknown")
 	}
 	if signal.ProfitSamples >= c.MinSamples && signal.Revenue >= 0 && theoreticalCost >= 0 && signal.Revenue+theoreticalCost > 0 {
-		profit := signal.Revenue - theoreticalCost
+		// Round the multiplication before subtracting, matching the displayed
+		// cost even on architectures that fuse multiply/subtract. Decimal money
+		// can still differ by a few ulps at break-even; that is not loss evidence.
+		profit := signal.Revenue - float64(theoreticalCost)
+		if math.Abs(profit) <= 1e-12*math.Max(signal.Revenue, theoreticalCost) {
+			profit = 0
+		}
 		out.Profit = &profit
 		if signal.Revenue > 0 {
 			margin := profit / signal.Revenue
@@ -399,92 +325,53 @@ func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandid
 	return out
 }
 
-func (s *defaultOpenAIAccountScheduler) applyPriorityScheduling(req OpenAIAccountScheduleRequest, plan *openAIAccountLoadPlan) {
+func (s *defaultOpenAIAccountScheduler) applyPriorityScheduling(req OpenAIAccountScheduleRequest, plan *openAIAccountLoadPlan) bool {
 	c := s.service.prioritySchedulingRuntimeConfig()
 	if req.Platform != PlatformOpenAI || req.RequiredImageCapability != "" || !req.UseUpstreamTokenCost || !c.applies(req.GroupID, req.RequestedModel) {
-		return
+		return false
 	}
-	signals, ready := s.service.prioritySignals(req, c, plan.candidates)
-	snapshot := &PrioritySchedulingSnapshot{At: time.Now(), Model: req.RequestedModel, GroupID: req.GroupID, Mode: c.Mode, SelectionPolicy: "capacity_first", HistoryReady: ready, Candidates: []PrioritySchedulingScore{}}
-	// Cold/failed history must not restore a tiny fixed Top-K and strand idle
-	// accounts. Missing history stays unknown while live capacity still balances.
+	history := s.service.priorityHistory(req, c, plan.candidates)
+	now := time.Now()
 	for i := range plan.candidates {
-		item := &plan.candidates[i]
-		score := scorePriorityCandidate(c, *item, signals[item.account.ID], snapshot.At)
-		item.priorityUnhealthy = slices.Contains(score.Reasons, "quality_below_target") ||
-			slices.Contains(score.Reasons, "recent_errors") || slices.Contains(score.Reasons, "historical_loss")
-		item.priorityLatencyFactor = 1
-		if score.Samples >= c.MinSamples && score.P90TTFTMs > 0 {
-			ratio := score.P90TTFTMs / float64(c.TargetTTFTMs)
-			// Experience constrains profit preference even when every account
-			// misses the target. Keep a floor for recovery/overflow traffic.
-			item.priorityLatencyFactor = math.Max(0.02, 1/(1+ratio*ratio))
-		}
-		// Experience tiers remain distinct within the same risk/capacity cohort;
-		// current congestion is considered before historical score differences.
-		offset := 0.0
-		switch score.Tier {
-		case "eligible":
-			offset = 400
-		case "insufficient":
-			offset = 200
-		}
-		item.score = offset + score.Score
-		item.priorityExploration = item.account.IsOpenAIOAuth() && score.Tier == "insufficient" &&
-			score.ProfitSamples < c.MinSamples && score.Samples < c.MinSamples &&
-			item.loadKnown && score.LoadPercent != nil && *score.LoadPercent < c.MaxLoadPercent
-		score.ExplorationEligible = item.priorityExploration
-		score.BoundGroups = priorityAccountGroupCount(item.account)
-		score.SelectionWeight = prioritySelectionWeight(*item, snapshot.At)
-		score.CapacityBand = priorityCapacityBand(*item)
-		snapshot.Candidates = append(snapshot.Candidates, score)
+		applyPriorityCandidate(c, &plan.candidates[i], history.signals[plan.candidates[i].account.ID], now)
 	}
 	plan.priorityScheduling = true
+	plan.topK = len(plan.candidates)
 	plan.includeOverflowFallback = true
-	slices.SortStableFunc(snapshot.Candidates, func(a, b PrioritySchedulingScore) int {
-		unhealthy := func(v PrioritySchedulingScore) bool {
-			return slices.Contains(v.Reasons, "quality_below_target") || slices.Contains(v.Reasons, "recent_errors") || slices.Contains(v.Reasons, "historical_loss")
-		}
-		if unhealthy(a) != unhealthy(b) {
-			if unhealthy(a) {
-				return 1
-			}
-			return -1
-		}
-		if a.CapacityBand != b.CapacityBand {
-			return a.CapacityBand - b.CapacityBand
-		}
-		tier := func(t string) int {
-			if t == "eligible" {
-				return 2
-			}
-			if t == "insufficient" {
-				return 1
-			}
-			return 0
-		}
-		if tier(a.Tier) != tier(b.Tier) {
-			return tier(b.Tier) - tier(a.Tier)
-		}
-		if a.Priority != b.Priority {
-			if a.Priority < b.Priority {
-				return -1
-			}
-			return 1
-		}
-		if a.SelectionWeight > b.SelectionWeight {
-			return -1
-		}
-		if a.SelectionWeight < b.SelectionWeight {
-			return 1
-		}
-		return 0
-	})
-	if len(snapshot.Candidates) > 100 {
-		snapshot.Candidates = snapshot.Candidates[:100]
-	}
+	input := newPrioritySnapshotInput(req, c, plan.candidates, now)
 	state := &s.service.priorityScheduling
 	state.mu.Lock()
-	state.latest = snapshot
+	// A slower earlier selection must not replace a newer observation.
+	if state.latestInput == nil || !state.latestInput.at.After(now) {
+		state.latestInput = input
+	}
 	state.mu.Unlock()
+	return true
+}
+
+func applyPriorityCandidate(c PrioritySchedulingConfig, item *openAIAccountCandidateScore, signal PrioritySchedulingSignal, now time.Time) PrioritySchedulingScore {
+	score := scorePriorityCandidate(c, *item, signal, now)
+	item.priorityUnhealthy = slices.Contains(score.Reasons, "quality_below_target") ||
+		slices.Contains(score.Reasons, "recent_errors") || slices.Contains(score.Reasons, "historical_loss")
+	item.priorityLatencyFactor = 1
+	if score.Samples >= c.MinSamples && score.P90TTFTMs > 0 {
+		ratio := score.P90TTFTMs / float64(c.TargetTTFTMs)
+		// Experience constrains profit preference even when every account
+		// misses the target. Keep a floor for recovery/overflow traffic.
+		item.priorityLatencyFactor = math.Max(0.02, 1/(1+ratio*ratio))
+	}
+	// Experience tiers remain distinct within the same risk/capacity cohort;
+	// current congestion is considered before historical score differences.
+	offset := 0.0
+	switch score.Tier {
+	case "eligible":
+		offset = 400
+	case "insufficient":
+		offset = 200
+	}
+	item.score = offset + score.Score
+	item.priorityExploration = score.Tier == "insufficient" &&
+		(score.ProfitSamples < c.MinSamples || score.Samples < c.MinSamples) &&
+		item.loadKnown && score.LoadPercent != nil && *score.LoadPercent < c.MaxLoadPercent
+	return score
 }

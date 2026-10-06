@@ -117,6 +117,13 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 		existing.PelicanConfig = req.PelicanConfig
 	}
 	if req.ModelID != "" {
+		if req.PelicanConfig == nil && existing.PelicanConfig != nil {
+			for i, model := range existing.PelicanConfig.ModelIDs {
+				if model == existing.ModelID {
+					existing.PelicanConfig.ModelIDs[i] = req.ModelID
+				}
+			}
+		}
 		existing.ModelID = req.ModelID
 	}
 	if req.CronExpression != "" {

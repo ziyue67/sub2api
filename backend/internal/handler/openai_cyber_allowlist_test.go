@@ -44,9 +44,12 @@ func TestCyberAllowlistedUserBypassesExistingBlocksAndContinuesWebSocket(t *test
 		service.SettingKeyCyberPolicyUserAllowlist: "1751",
 	})
 	payload := []byte(`{"type":"response.create","model":"gpt-5.1","prompt_cache_key":"trusted-session","input":"test"}`)
+	// 本 Fork 的屏蔽键只用显式会话身份，HTTP 准入用自己的预置会话 ID。
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(string(payload)))
+	c.Request.Header.Set("session_id", "trusted-http-session")
 	explicitKey := service.CyberSessionExplicitBlockKey(harness.apiKey.ID, c, payload)
+	require.NotEmpty(t, explicitKey)
 	store, ok := harness.gatewayCache.(service.CyberSessionBlockStore)
 	require.True(t, ok)
 	require.NoError(t, store.SetCyberSessionBlocked(context.Background(), "", []string{explicitKey}, time.Minute))

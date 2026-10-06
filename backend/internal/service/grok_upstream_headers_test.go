@@ -28,7 +28,7 @@ func TestApplyDefaultGrokUpstreamHeadersUsesCLIUserAgent(t *testing.T) {
 }
 
 func TestApplyDefaultGrokUpstreamHeadersHonorsCLIVersionOverride(t *testing.T) {
-	t.Setenv(xai.CLIVersionEnv, "1.0.14")
+	t.Setenv(xai.CLIVersionEnv, "1.0.47-alpha.1")
 
 	req, err := http.NewRequest(http.MethodGet, "https://api.x.ai/v1/responses", nil)
 	require.NoError(t, err)
@@ -36,8 +36,8 @@ func TestApplyDefaultGrokUpstreamHeadersHonorsCLIVersionOverride(t *testing.T) {
 
 	applyDefaultGrokUpstreamHeaders(req)
 
-	require.Equal(t, "1.0.14", req.Header.Get("x-grok-client-version"))
-	require.Equal(t, xai.CLIUserAgent("1.0.14"), req.Header.Get("User-Agent"))
+	require.Equal(t, "1.0.47-alpha.1", req.Header.Get("x-grok-client-version"))
+	require.Equal(t, xai.CLIUserAgent("1.0.47-alpha.1"), req.Header.Get("User-Agent"))
 	require.Equal(t, "grok-pager", req.Header.Get("x-grok-client-identifier"))
 }
 

@@ -72,3 +72,44 @@ describe('priority scheduling', () => {
     expect(wrapper.find('form').exists()).toBe(false); wrapper.unmount()
   })
 })
+
+describe('priority history refresh', () => {
+  it('distinguishes a failed refresh from an empty successful history', async () => {
+    vi.mocked(getPrioritySnapshot).mockResolvedValue({ at: '2026-10-06T00:00:00Z', evaluated_at: '2026-10-06T00:01:00Z', model: 'test', group_id: 11, mode: 'balanced', history_ready: false, history_status: 'error', history_error: 'timeout', candidates: [] })
+    const wrapper = mount(PrioritySchedulingView); await flushPromises()
+    expect(wrapper.text()).toContain('priorityScheduling.historyStates.error')
+    expect(wrapper.text()).not.toContain('priorityScheduling.historyPending')
+    vi.mocked(getPrioritySnapshot).mockResolvedValue({ at: '2026-10-06T00:00:00Z', model: 'test', group_id: 11, mode: 'balanced', history_ready: true, history_status: 'ready', candidates: [] })
+    await (wrapper.vm as any).refresh()
+    expect(wrapper.text()).not.toContain('priorityScheduling.historyStates.error')
+    wrapper.unmount()
+  })
+  it.each([true, false])('picks up history while refreshing=%s and stops polling once complete', async (refreshing) => {
+    vi.useFakeTimers()
+    try {
+      const snapshot = { at: '2026-10-06T00:00:00Z', model: 'test', group_id: 11, mode: 'balanced', history_ready: false, history_status: 'loading' as const, history_refreshing: refreshing, candidates: [] }
+      vi.mocked(getPrioritySnapshot).mockResolvedValueOnce(snapshot).mockResolvedValue({ ...snapshot, history_ready: true, history_status: 'ready', history_refreshing: false })
+      const wrapper = mount(PrioritySchedulingView); await flushPromises()
+      await vi.advanceTimersByTimeAsync(1000); await flushPromises()
+      expect(getPrioritySnapshot).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(getPrioritySnapshot).toHaveBeenCalledTimes(2)
+      wrapper.unmount()
+    } finally { vi.useRealTimers() }
+  })
+  it('bounds background reads and cancels them on logout', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(getPrioritySnapshot).mockResolvedValue({ at: '2026-10-06T00:00:00Z', model: 'test', group_id: 11, mode: 'balanced', history_ready: false, history_refreshing: true, candidates: [] })
+      const wrapper = mount(PrioritySchedulingView); await flushPromises()
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(getPrioritySnapshot).toHaveBeenCalledTimes(4)
+      await (wrapper.vm as any).refresh()
+      state.auth.user = null
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(getPrioritySnapshot).toHaveBeenCalledTimes(5)
+      expect(wrapper.text()).not.toContain('2026')
+      wrapper.unmount()
+    } finally { vi.useRealTimers() }
+  })
+})
