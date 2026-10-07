@@ -615,10 +615,15 @@ func easyPayVerifySign(params map[string]string, pkey string, sign string) bool 
 }
 
 // easyPayNotifyAllowedParams is the exact parameter set a genuine EasyPay
-// async notification carries. Order-creation fields such as notify_url and
-// return_url must never be accepted here: the signature format concatenates
-// values without escaping, so accepting them enables parameter smuggling from
-// a signed checkout URL into a forged payment-success callback (issue #7881).
+// (彩虹易支付-compatible) async notification carries. Order-creation-only
+// fields (notify_url, return_url, cid, device, clientip, ...) must never
+// appear in a callback: because the sign base string concatenates values
+// unescaped, a signed order URL whose return_url embeds e.g.
+// "trade_status=TRADE_SUCCESS" could otherwise be replayed as a forged
+// payment-success notification (issue #7881). Rejecting unknown keys closes
+// the whole smuggling class; genuinely paid orders rejected by an exotic
+// upstream variant are still recovered by the upstream QueryOrder reconcile
+// path.
 var easyPayNotifyAllowedParams = map[string]bool{
 	"pid":          true,
 	"trade_no":     true,
