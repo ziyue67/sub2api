@@ -285,6 +285,18 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 		return
 	}
 
+	// Keep upstream TTL classifications through protocol conversion. Never infer
+	// them from account flags or aggregate creation tokens. Later SSE usage is
+	// cumulative: replace present fields (including zero), retain omitted ones.
+	if cc := src.CacheCreation; cc != nil {
+		if cc.Ephemeral5mInputTokens != nil {
+			dst.CacheCreation5mTokens = *cc.Ephemeral5mInputTokens
+		}
+		if cc.Ephemeral1hInputTokens != nil {
+			dst.CacheCreation1hTokens = *cc.Ephemeral1hInputTokens
+		}
+	}
+
 	cacheReadTokens := src.CacheReadInputTokens
 	if cacheReadTokens == 0 && src.CachedTokens > 0 {
 		cacheReadTokens = src.CachedTokens
