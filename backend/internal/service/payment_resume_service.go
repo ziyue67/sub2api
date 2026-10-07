@@ -245,6 +245,11 @@ func CanonicalizeReturnURL(raw string, srcHost string, srcURL string) (string, e
 		return "", infraerrors.BadRequest("INVALID_RETURN_URL", "return_url must use http or https")
 	}
 	parsed.Fragment = ""
+	// Never preserve client-controlled query parameters in the signed return
+	// URL. EasyPay signs values without escaping, so a nested
+	// "trade_status=TRADE_SUCCESS" could otherwise be promoted into a forged
+	// callback parameter (issue #7881).
+	parsed.RawQuery = ""
 	if parsed.Path == "" {
 		parsed.Path = "/"
 	}

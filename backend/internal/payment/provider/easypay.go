@@ -377,6 +377,9 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	// url.ParseQuery already decodes values — no additional decode needed.
 	params := make(map[string]string)
 	for k := range values {
+		if !easyPayNotifyAllowedParams[k] {
+			return nil, fmt.Errorf("unexpected notify param: %s", k)
+		}
 		params[k] = values.Get(k)
 	}
 	sign := params["sign"]
@@ -389,6 +392,14 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	status := payment.ProviderStatusFailed
 	if params["trade_status"] == tradeStatusSuccess {
 		status = payment.ProviderStatusSuccess
+	}
+	if status == payment.ProviderStatusSuccess {
+		if strings.TrimSpace(params["trade_no"]) == "" {
+			return nil, fmt.Errorf("missing trade_no")
+		}
+		if strings.TrimSpace(params["out_trade_no"]) == "" {
+			return nil, fmt.Errorf("missing out_trade_no")
+		}
 	}
 	amount, _ := strconv.ParseFloat(params["money"], 64)
 
@@ -601,4 +612,22 @@ func easyPaySign(params map[string]string, pkey string) string {
 
 func easyPayVerifySign(params map[string]string, pkey string, sign string) bool {
 	return hmac.Equal([]byte(easyPaySign(params, pkey)), []byte(sign))
+}
+
+// easyPayNotifyAllowedParams is the exact parameter set a genuine EasyPay
+// async notification carries. Order-creation fields such as notify_url and
+// return_url must never be accepted here: the signature format concatenates
+// values without escaping, so accepting them enables parameter smuggling from
+// a signed checkout URL into a forged payment-success callback (issue #7881).
+var easyPayNotifyAllowedParams = map[string]bool{
+	"pid":          true,
+	"trade_no":     true,
+	"out_trade_no": true,
+	"type":         true,
+	"name":         true,
+	"money":        true,
+	"trade_status": true,
+	"param":        true,
+	"sign":         true,
+	"sign_type":    true,
 }
