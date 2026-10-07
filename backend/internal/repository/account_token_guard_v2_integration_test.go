@@ -132,3 +132,55 @@ func TestAccountTokenGuardV2ManagedWorkerOnlyClaimsPasswordTasks(t *testing.T) {
 	require.NotNil(t, external)
 	require.Equal(t, tasks[0].ID, external.ID)
 }
+
+func TestAccountTokenGuardV2PruneDeletedAccounts(t *testing.T) {
+	ctx := context.Background()
+	guard := NewAccountTokenGuardV2Repository(integrationDB)
+	for _, tc := range []struct {
+		name    string
+		deleted bool
+		enabled bool
+	}{
+		{"deleted-enabled", true, true},
+		{"deleted-paused", true, false},
+		{"live-auth-failure", false, true},
+		{"live-paused", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := mustCreateAccount(t, testEntClient(t), &service.Account{
+				Name: tc.name, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+				Credentials: map[string]any{"access_token": "synthetic"},
+			})
+			t.Cleanup(func() {
+				_, err := integrationDB.ExecContext(context.Background(), `DELETE FROM accounts WHERE id = $1`, account.ID)
+				require.NoError(t, err)
+			})
+			require.NoError(t, guard.UpsertAccount(ctx, account.ID, tc.enabled, true))
+			// Even repeated authentication failures and missing login configs must
+			// not remove live accounts; future schedules must not delay cleanup.
+			_, err := integrationDB.ExecContext(ctx, `UPDATE account_token_guard_v2_accounts
+				SET probe_state = 'auth', fail_streak = 50, next_probe_at = NOW() + INTERVAL '1 day'
+				WHERE account_id = $1`, account.ID)
+			require.NoError(t, err)
+			if tc.deleted {
+				_, err = integrationDB.ExecContext(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1`, account.ID)
+				require.NoError(t, err)
+			}
+			removed, err := guard.PruneDeletedAccounts(ctx)
+			require.NoError(t, err)
+			record, err := guard.GetAccount(ctx, account.ID)
+			require.NoError(t, err)
+			if tc.deleted {
+				require.EqualValues(t, 1, removed)
+				require.Nil(t, record)
+			} else {
+				require.Zero(t, removed)
+				require.NotNil(t, record)
+				require.Equal(t, 50, record.FailStreak)
+			}
+			removed, err = guard.PruneDeletedAccounts(ctx)
+			require.NoError(t, err)
+			require.Zero(t, removed)
+		})
+	}
+}

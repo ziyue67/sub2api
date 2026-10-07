@@ -71,11 +71,28 @@ func TestPrioritySchedulingSignalsSeparateModelsAndCompletedRounds(t *testing.T)
 	require.InDelta(t, 910, got[account.ID].P90TTFTMs, 0.01)
 	require.Equal(t, 2, got[account.ID].QualitySamples)
 	require.Equal(t, 1, got[account.ID].QualityPassed)
+	require.NotNil(t, got[account.ID].LatestQualityPassed)
+	require.False(t, *got[account.ID].LatestQualityPassed, "same-time failure must win over success")
+	probe("recovered", "success", "correct", "", "passed", now.Add(10*time.Second))
+	probe("recovered", "success", "correct", "", "passed", now.Add(10*time.Second))
+	query := service.PrioritySchedulingQuery{AccountIDs: []int64{account.ID}, Model: "gpt-test", UsageSince: time.Now().Add(-time.Hour), QualitySince: time.Now().Add(-time.Hour)}
+	recovered, err := repo.ReadPrioritySchedulingSignals(ctx, query)
+	require.NoError(t, err)
+	require.NotNil(t, recovered[account.ID].LatestQualityPassed)
+	require.True(t, *recovered[account.ID].LatestQualityPassed)
+	probe("new_failure", "failed", "incorrect", "state_degraded", "failure_counted:1/2", now.Add(20*time.Second))
+	probe("new_failure", "success", "correct", "", "failure_counted:1/2", now.Add(20*time.Second))
+	failed, err := repo.ReadPrioritySchedulingSignals(ctx, query)
+	require.NoError(t, err)
+	require.NotNil(t, failed[account.ID].LatestQualityPassed)
+	require.False(t, *failed[account.ID].LatestQualityPassed)
+
 	_, err = tx.ExecContext(ctx, `UPDATE scheduled_test_plans SET enabled=false WHERE id=$1`, plan)
 	require.NoError(t, err)
 	got, err = repo.ReadPrioritySchedulingSignals(ctx, service.PrioritySchedulingQuery{AccountIDs: []int64{account.ID}, Model: "gpt-test", UsageSince: time.Now().Add(-time.Hour), QualitySince: time.Now().Add(-time.Hour)})
 	require.NoError(t, err)
 	require.Zero(t, got[account.ID].QualitySamples)
+	require.Nil(t, got[account.ID].LatestQualityPassed)
 }
 
 func TestPriorityAccountCostMultiplierRoundTrip(t *testing.T) {
@@ -131,8 +148,12 @@ func TestPriorityQualityUsesResultModelAndIgnoresMalformedRounds(t *testing.T) {
 		require.Equal(t, 1, got[account.ID].QualitySamples)
 		if model == "model-a" {
 			require.Equal(t, 1, got[account.ID].QualityPassed)
+			require.NotNil(t, got[account.ID].LatestQualityPassed)
+			require.True(t, *got[account.ID].LatestQualityPassed)
 		} else {
 			require.Zero(t, got[account.ID].QualityPassed)
+			require.NotNil(t, got[account.ID].LatestQualityPassed)
+			require.False(t, *got[account.ID].LatestQualityPassed)
 		}
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE scheduled_test_plans SET pelican_config='{"quality":null}' WHERE id=$1`, plan)
@@ -140,4 +161,5 @@ func TestPriorityQualityUsesResultModelAndIgnoresMalformedRounds(t *testing.T) {
 	got, err := repo.ReadPrioritySchedulingSignals(ctx, service.PrioritySchedulingQuery{AccountIDs: []int64{account.ID}, Model: "model-a", UsageSince: time.Now().Add(-time.Hour), QualitySince: time.Now().Add(-time.Hour)})
 	require.NoError(t, err)
 	require.Zero(t, got[account.ID].QualitySamples)
+	require.Nil(t, got[account.ID].LatestQualityPassed)
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useResizeObserver } from '@vueuse/core'
 import { onBeforeUnmount, onMounted, ref, useTemplateRef, nextTick } from 'vue'
 
 const props = withDefaults(defineProps<{
@@ -14,6 +15,12 @@ const show = ref(false)
 const triggerRef = useTemplateRef<HTMLElement>('trigger')
 const tooltipRef = useTemplateRef<HTMLElement>('tooltip')
 const tooltipStyle = ref({ top: '0px', left: '0px' })
+const arrowLeft = ref('50%')
+const below = ref(false)
+const touchInteraction = ref(false)
+function trackPointer(event: PointerEvent) {
+  touchInteraction.value = event.pointerType === 'touch'
+}
 
 function openTooltip() {
   show.value = true
@@ -25,7 +32,7 @@ function closeTooltip() {
 }
 
 function onEnter() {
-  if (props.trigger !== 'hover') return
+  if (props.trigger !== 'hover' || touchInteraction.value) return
   openTooltip()
 }
 
@@ -35,19 +42,19 @@ function isInside(container: HTMLElement | null, target: EventTarget | null): bo
 
 // 悬停模式下指针在触发图标与提示框之间往返时保持打开，便于选中提示里的文字。
 function onLeave(event: MouseEvent) {
-  if (props.trigger !== 'hover') return
+  if (props.trigger !== 'hover' || touchInteraction.value) return
   if (isInside(tooltipRef.value, event.relatedTarget)) return
   closeTooltip()
 }
 
 function onTooltipLeave(event: MouseEvent) {
-  if (props.trigger !== 'hover') return
+  if (props.trigger !== 'hover' || touchInteraction.value) return
   if (isInside(triggerRef.value, event.relatedTarget)) return
   closeTooltip()
 }
 
 function onClick(event: MouseEvent) {
-  if (props.trigger !== 'click') return
+  if (props.trigger !== 'click' && !touchInteraction.value) return
   event.stopPropagation()
   if (show.value) {
     closeTooltip()
@@ -57,7 +64,7 @@ function onClick(event: MouseEvent) {
 }
 
 function onDocumentClick(event: MouseEvent) {
-  if (props.trigger !== 'click' || !show.value) return
+  if (!show.value) return
   const target = event.target as Node | null
   if (!target) return
   if (triggerRef.value?.contains(target) || tooltipRef.value?.contains(target)) return
@@ -65,7 +72,6 @@ function onDocumentClick(event: MouseEvent) {
 }
 
 function onDocumentKeydown(event: KeyboardEvent) {
-  if (props.trigger !== 'click') return
   if (event.key === 'Escape') {
     closeTooltip()
   }
@@ -79,12 +85,27 @@ function onViewportChange() {
 function updatePosition() {
   const el = triggerRef.value
   if (!el) return
+  const tooltip = tooltipRef.value
+  if (!tooltip) return
   const rect = el.getBoundingClientRect()
-  tooltipStyle.value = {
-    top: `${rect.top + window.scrollY}px`,
-    left: `${rect.left + rect.width / 2 + window.scrollX}px`,
-  }
+  const { width, height } = tooltip.getBoundingClientRect()
+  const padding = 8
+  const gap = 8
+  const viewportWidth = document.documentElement.clientWidth || window.innerWidth
+  const viewportHeight = window.innerHeight
+  // Right-align on phones so details expand left, then clamp both edges.
+  const preferredLeft = viewportWidth < 768 ? rect.right - width : rect.left + rect.width / 2 - width / 2
+  const left = Math.max(padding, Math.min(preferredLeft, viewportWidth - width - padding))
+  below.value = rect.top - height - gap < padding
+  const preferredTop = below.value ? rect.bottom + gap : rect.top - height - gap
+  const top = Math.max(padding, Math.min(preferredTop, viewportHeight - height - padding))
+  tooltipStyle.value = { top: `${top}px`, left: `${left}px` }
+  arrowLeft.value = `${Math.max(8, Math.min(rect.left + rect.width / 2 - left, width - 8))}px`
 }
+
+useResizeObserver(tooltipRef, () => {
+  if (show.value) updatePosition()
+})
 
 onMounted(() => {
   document.addEventListener('click', onDocumentClick, true)
@@ -105,6 +126,8 @@ onBeforeUnmount(() => {
   <div
     ref="trigger"
     class="group relative ml-1 inline-flex items-center align-middle"
+    @pointerenter="trackPointer"
+    @pointerdown="trackPointer"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
     @click="onClick"
@@ -134,10 +157,11 @@ onBeforeUnmount(() => {
         v-show="show"
         role="tooltip"
         :class="[
-          'fixed z-[99999] -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:top-full before:h-3 dark:bg-gray-800 dark:selection:bg-primary-200 dark:selection:text-gray-900',
+          'fixed z-[99999] max-w-[calc(100vw-1rem)] max-h-[calc(100dvh-1rem)] whitespace-normal break-words rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 selection:bg-primary-200 selection:text-gray-900 before:absolute before:inset-x-0 before:h-3 dark:bg-gray-800 dark:selection:bg-primary-200 dark:selection:text-gray-900',
           props.widthClass,
+          below ? 'before:bottom-full' : 'before:top-full',
         ]"
-        :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left }"
+        :style="tooltipStyle"
         @mouseleave="onTooltipLeave"
       >
         <button
@@ -151,8 +175,8 @@ onBeforeUnmount(() => {
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
-        <slot>{{ content }}</slot>
-        <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+        <div class="max-h-[calc(100dvh-3rem)] overflow-y-auto"><slot>{{ content }}</slot></div>
+        <div class="absolute h-2 w-2 -translate-x-1/2 rotate-45 bg-gray-900 dark:bg-gray-800" :class="below ? '-top-1' : '-bottom-1'" :style="{ left: arrowLeft }"></div>
       </div>
     </Teleport>
   </div>

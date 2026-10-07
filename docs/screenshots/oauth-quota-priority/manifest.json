@@ -1,0 +1,20 @@
+{
+  "base_commit": "7719df8be40dcc612b3ce63bdbbe67f136d009b6",
+  "component": "frontend/src/views/admin/PrioritySchedulingView.vue",
+  "component_sha256": "c31965e7fa4f10779e83cf9ecd1625f657477f0390e6ed7fba3c33c9635afb0d",
+  "mode": "Actual Vue component with mocked layout/auth/API; not full application navigation or production",
+  "fixtures": "Fictional OAuth/API accounts and synthetic statistics",
+  "screenshots": [
+    "before.png",
+    "after-enabled.png",
+    "after-disabled.png",
+    "after-mobile.png"
+  ],
+  "interactions": [
+    "read default cutoff 90",
+    "save cutoff 85",
+    "disable and save",
+    "re-enable and inspect mobile overflow"
+  ],
+  "browser_errors": []
+}

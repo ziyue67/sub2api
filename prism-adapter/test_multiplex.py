@@ -363,6 +363,35 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(json.loads(blocked.path.read_text())['request_id'], 'unknown')
 
 class MemoryAdmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_configured_budget_controls_admission_and_idle_collection(self):
+        for limit in (1280, 3584):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.dict('os.environ', {'PRISM_ADAPTER_MEMORY_LIMIT_MIB': str(limit)}):
+                engine = multiplex_browser.MultiplexBrowser(adapter.State(directory), 'fixture', adapter)
+                engine.memory_wait_seconds = 0
+                idle = SimpleNamespace(refs=0, used=float('inf'), created=float('inf'), close=mock.AsyncMock())
+                active = SimpleNamespace(refs=1, used=0, created=0, close=mock.AsyncMock())
+                engine.actors = {'idle': idle, 'active': active}
+                with mock.patch.object(multiplex_browser, 'cgroup_memory_bytes', return_value=(limit-1)*1024*1024):
+                    await engine.wait_for_memory(None, None)
+                    await engine.prune()
+                idle.close.assert_not_awaited()
+                with mock.patch.object(multiplex_browser, 'cgroup_memory_bytes', return_value=limit*1024*1024), \
+                        mock.patch.object(engine, 'observe'):
+                    with self.assertRaises(adapter.AdapterError) as error:
+                        await engine.wait_for_memory(None, None)
+                    self.assertEqual(error.exception.code, 'resource_pressure')
+                    await engine.prune()
+                idle.close.assert_awaited_once()
+                active.close.assert_not_awaited()
+
+    async def test_invalid_memory_budget_is_rejected(self):
+        for value in ('0', '-1', '1.5', 'bad', ''):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.dict('os.environ', {'PRISM_ADAPTER_MEMORY_LIMIT_MIB': value}):
+                with self.assertRaisesRegex(ValueError, 'PRISM_ADAPTER_MEMORY_LIMIT_MIB'):
+                    multiplex_browser.MultiplexBrowser(adapter.State(directory), 'fixture', adapter)
+
     async def test_transient_pressure_collects_and_waits_without_submitting(self):
         with tempfile.TemporaryDirectory() as directory:
             engine = multiplex_browser.MultiplexBrowser(adapter.State(directory), 'fixture', adapter)

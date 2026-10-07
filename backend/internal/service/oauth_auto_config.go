@@ -18,30 +18,34 @@ const AutoConfigConcurrencyExtraKey = "auto_config_concurrency"
 
 // Initial account fields, BPS defaults, model billing and concurrency upgrades are independent.
 type OAuthAutoConfig struct {
-	ModelMappings    []OAuthModelMappingRule `json:"model_mappings"`
-	ModelBilling     ModelBillingConfig      `json:"model_billing"`
-	ExcelBPS         ExcelBPSDefaults        `json:"excel_bps"`
-	UpdatedAt        time.Time               `json:"updated_at"`
-	Enabled          bool                    `json:"enabled"`
-	Platform         string                  `json:"platform"`
-	Priority         int                     `json:"priority"`
-	LoadFactor       int                     `json:"load_factor"`
-	Concurrency      int                     `json:"concurrency"`
-	GroupIDs         []int64                 `json:"group_ids"`
-	UpgradeEnabled   bool                    `json:"upgrade_enabled"`
-	UpgradeGroupIDs  []int64                 `json:"upgrade_group_ids"`
-	SuccessesPerStep int                     `json:"successes_per_step"`
-	UpgradeStep      int                     `json:"upgrade_step"`
-	MaxConcurrency   int                     `json:"max_concurrency"`
-	CooldownSeconds  int                     `json:"cooldown_seconds"`
-	CostMultiplier   float64                 `json:"cost_multiplier"`
-	Revision         string                  `json:"revision"`
+	QualityRule      *OAuthInitialQualityRule `json:"quality_rule,omitempty"`
+	ModelMappings    []OAuthModelMappingRule  `json:"model_mappings"`
+	ModelBilling     ModelBillingConfig       `json:"model_billing"`
+	ExcelBPS         ExcelBPSDefaults         `json:"excel_bps"`
+	UpdatedAt        time.Time                `json:"updated_at"`
+	Enabled          bool                     `json:"enabled"`
+	Platform         string                   `json:"platform"`
+	Priority         int                      `json:"priority"`
+	LoadFactor       int                      `json:"load_factor"`
+	Concurrency      int                      `json:"concurrency"`
+	GroupIDs         []int64                  `json:"group_ids"`
+	UpgradeEnabled   bool                     `json:"upgrade_enabled"`
+	UpgradeGroupIDs  []int64                  `json:"upgrade_group_ids"`
+	SuccessesPerStep int                      `json:"successes_per_step"`
+	UpgradeStep      int                      `json:"upgrade_step"`
+	MaxConcurrency   int                      `json:"max_concurrency"`
+	CooldownSeconds  int                      `json:"cooldown_seconds"`
+	CostMultiplier   float64                  `json:"cost_multiplier"`
+	Revision         string                   `json:"revision"`
 }
 
 func DefaultOAuthAutoConfig() OAuthAutoConfig {
 	return OAuthAutoConfig{ModelMappings: defaultOAuthModelMappings(PlatformOpenAI), ModelBilling: DefaultModelBillingConfig(), ExcelBPS: DefaultExcelBPSDefaults(), Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, CostMultiplier: 0.07, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
 }
 func ValidateOAuthAutoConfig(c OAuthAutoConfig) error {
+	if _, err := c.QualityRule.plan(c.Platform); err != nil {
+		return err
+	}
 	if err := validateOAuthModelMappings(c.ModelMappings); err != nil {
 		return err
 	}
@@ -126,6 +130,7 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 	if input == nil {
 		return ErrAccountNilInput
 	}
+	input.InitialQualityPlan = nil
 	// Imported/user-supplied markers must not fabricate automatic-configuration history.
 	input.Extra = maps.Clone(input.Extra)
 	delete(input.Extra, "auto_config_initial_revision")
@@ -157,6 +162,11 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 			return infraerrors.BadRequest("AUTO_CONFIG_GROUP_INVALID", "automatic configuration group is unavailable for this platform")
 		}
 	}
+	plan, err := c.QualityRule.plan(c.Platform)
+	if err != nil {
+		return err
+	}
+	input.InitialQualityPlan = plan
 	applyOAuthModelMappings(input, c.ModelMappings)
 	input.Priority = c.Priority
 	lf := c.LoadFactor
@@ -183,6 +193,15 @@ func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAuto
 	}
 	if err := ValidateOAuthAutoConfig(c); err != nil {
 		return c, err
+	}
+	if c.QualityRule != nil {
+		// Keep only the normalized configuration, never source runtime metadata.
+		plan, err := c.QualityRule.plan(c.Platform)
+		if err != nil {
+			return c, err
+		}
+		c.QualityRule = &OAuthInitialQualityRule{ModelID: plan.ModelID, CronExpression: plan.CronExpression,
+			Enabled: plan.Enabled, MaxResults: plan.MaxResults, PelicanConfig: plan.PelicanConfig}
 	}
 	if s.autoGroups == nil {
 		return c, errors.New("group repository unavailable")

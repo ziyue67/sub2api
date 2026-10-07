@@ -3,6 +3,7 @@ import { reactive } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import AutoConfigView from '../AutoConfigView.vue'
 import { getAutoConfig, saveAutoConfig, type AutoConfig } from '@/api/admin/autoConfig'
+import { listQualityPlans } from '@/api/admin/accountQuality'
 import { getAll } from '@/api/admin/groups'
 import type { Group } from '@/types'
 import { defaultModelBillingConfig } from '@/utils/modelBilling'
@@ -16,10 +17,11 @@ vi.mock('@/components/admin/operations/AutoConfigHistory.vue', () => ({ default:
 vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { template: '<nav />' } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin/autoConfig', () => ({ getAutoConfig: vi.fn(), saveAutoConfig: vi.fn() }))
+vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn() }))
 vi.mock('@/api/admin/groups', () => ({ getAll: vi.fn() }))
 const config: AutoConfig = { model_billing: defaultModelBillingConfig(), model_mappings: defaultOAuthModelMappings('openai'), excel_bps: defaultExcelBPSDefaults(), enabled: false, platform: 'openai', priority: 50, load_factor: 1, concurrency: 3, cost_multiplier: 0.07, group_ids: [], upgrade_enabled: false, upgrade_group_ids: [], successes_per_step: 20, upgrade_step: 1, max_concurrency: 100, cooldown_seconds: 60, revision: '' }
 beforeEach(() => {
- vi.resetAllMocks(); state.auth = reactive({ user: { id: 1, role: 'admin' } })
+ vi.resetAllMocks(); vi.mocked(listQualityPlans).mockResolvedValue([]); state.auth = reactive({ user: { id: 1, role: 'admin' } })
  vi.mocked(getAutoConfig).mockResolvedValue(structuredClone(config)); vi.mocked(saveAutoConfig).mockImplementation(async c => c)
  vi.mocked(getAll).mockResolvedValue([{ id: 5, name: 'OpenAI test', platform: 'openai', status: 'active' }, { id: 6, name: 'Anthropic test', platform: 'anthropic', status: 'active' }] as Group[])
 })
@@ -101,7 +103,7 @@ describe('AutoConfigView', () => {
   await w.get('[data-testid="mapping-from-0"]').setValue('claude-*')
   await w.get('[data-testid="mapping-to-0"]').setValue('claude-example')
   await w.get('form').trigger('submit'); await flushPromises()
-  expect(saveAutoConfig).toHaveBeenCalledWith({ ...config, platform: 'anthropic', model_mappings: [{ from: 'claude-*', to: 'claude-example' }] })
+  expect(saveAutoConfig).toHaveBeenCalledWith({ ...config, quality_rule: null, platform: 'anthropic', model_mappings: [{ from: 'claude-*', to: 'claude-example' }] })
   w.unmount()
  })
  it('saves model mappings and billing rules together without resetting either', async () => {
@@ -166,7 +168,7 @@ describe('AutoConfigView', () => {
  it('clears incompatible initial groups when platform changes', async () => {
   const w = mount(AutoConfigView); await flushPromises(); await w.get('[data-testid="initial-group-5"]').setValue(true)
   await w.get('[data-testid="platform"]').setValue('anthropic'); await w.get('form').trigger('submit'); await flushPromises()
-  expect(saveAutoConfig).toHaveBeenCalledWith({ ...config, platform: 'anthropic', model_mappings: [] }); w.unmount()
+  expect(saveAutoConfig).toHaveBeenCalledWith({ ...config, quality_rule: null, platform: 'anthropic', model_mappings: [] }); w.unmount()
  })
  it('does not allow saving before a successful load and supports retry', async () => {
   vi.mocked(getAutoConfig).mockRejectedValueOnce(new Error('offline')); const w = mount(AutoConfigView); await flushPromises()
@@ -182,4 +184,35 @@ describe('AutoConfigView', () => {
   let resolve!: (v: AutoConfig) => void; vi.mocked(getAutoConfig).mockReturnValueOnce(new Promise(r => { resolve = r }))
   const w = mount(AutoConfigView); state.auth.user = null; resolve(config); await flushPromises(); expect(w.find('form').exists()).toBe(false); w.unmount()
  })
+})
+
+const qualityPlan = { id: 81, account_id: 21, account_name: 'Source account', model_id: 'gpt-5.4', cron_expression: '*/5 * * * *', enabled: true, max_results: 100, pelican_config: { question_kind: 'state_probe', parallel_count: 1, reasoning_effort: 'high', quality: { action: 'observe_only' } } } as any
+it('copies a selected quality rule without account identity and clears it on platform change', async () => {
+ vi.mocked(listQualityPlans).mockResolvedValue([structuredClone(qualityPlan)])
+ const w = mount(AutoConfigView); await flushPromises()
+ await w.get('[data-testid="quality-rule-select"]').setValue('81')
+ await w.get('form').trigger('submit'); await flushPromises()
+ const saved = vi.mocked(saveAutoConfig).mock.calls[0][0].quality_rule!
+ expect(saved).toEqual({ model_id: 'gpt-5.4', cron_expression: '*/5 * * * *', enabled: true, max_results: 100, pelican_config: qualityPlan.pelican_config })
+ expect(saved).not.toHaveProperty('account_id')
+ expect(w.get('[data-testid="quality-rule-summary"]').text()).toContain('gpt-5.4')
+ await w.get('[data-testid="platform"]').setValue('anthropic')
+ expect(w.find('[data-testid="quality-rule-select"] option[value="81"]').exists()).toBe(false)
+ await w.get('form').trigger('submit'); await flushPromises()
+ expect(vi.mocked(saveAutoConfig).mock.calls[1][0].quality_rule).toBeNull()
+ w.unmount()
+})
+it('preserves the saved quality copy if listing fails and allows opting out', async () => {
+ const { model_id, cron_expression, enabled, max_results, pelican_config } = qualityPlan
+ const quality_rule = { model_id, cron_expression, enabled, max_results, pelican_config }
+ vi.mocked(getAutoConfig).mockResolvedValue({ ...structuredClone(config), quality_rule })
+ vi.mocked(listQualityPlans).mockRejectedValue(new Error('offline'))
+ const w = mount(AutoConfigView); await flushPromises()
+ expect(w.get('[data-testid="quality-rule-summary"]').text()).toContain('gpt-5.4')
+ await w.get('form').trigger('submit'); await flushPromises()
+ expect(vi.mocked(saveAutoConfig).mock.calls[0][0].quality_rule).toEqual(quality_rule)
+ await w.get('[data-testid="quality-rule-select"]').setValue('')
+ await w.get('form').trigger('submit'); await flushPromises()
+ expect(vi.mocked(saveAutoConfig).mock.calls[1][0].quality_rule).toBeNull()
+ w.unmount()
 })

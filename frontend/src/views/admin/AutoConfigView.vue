@@ -31,10 +31,22 @@
           <section class="card space-y-5">
             <header class="flex items-center justify-between gap-3"><h2 class="text-lg font-semibold">{{ t('autoConfig.initial') }}</h2><label class="flex items-center gap-2 text-sm"><input v-model="draft.enabled" data-testid="initial-enabled" type="checkbox" role="switch" />{{ t('autoConfig.enable') }}</label></header>
             <p class="text-sm leading-6 text-gray-500">{{ t('autoConfig.initialHint') }}</p>
-            <label class="block"><span class="field-label">{{ t('autoConfig.platform') }}</span><select v-model="draft.platform" data-testid="platform" class="input w-full" @change="draft.group_ids = []; draft.model_mappings = defaultOAuthModelMappings(draft.platform)"><option v-for="p in platforms" :key="p.value" :value="p.value">{{ p.label }}</option></select></label>
+            <label class="block"><span class="field-label">{{ t('autoConfig.platform') }}</span><select v-model="draft.platform" data-testid="platform" class="input w-full" @change="draft.group_ids = []; draft.model_mappings = defaultOAuthModelMappings(draft.platform); draft.quality_rule = null; selectedQualityRule = ''"><option v-for="p in platforms" :key="p.value" :value="p.value">{{ p.label }}</option></select></label>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><label v-for="field in initialFields" :key="field.key"><span class="field-label">{{ t('autoConfig.' + field.key) }}</span><input v-model.number="draft[field.key]" :data-testid="field.key" type="number" :min="field.min" max="10000" step="1" required class="input w-full" /></label><label><span class="field-label">{{ t('autoConfig.cost_multiplier') }}</span><input v-model.number="draft.cost_multiplier" data-testid="cost_multiplier" type="number" min="0" max="1000000" step="0.001" required class="input w-full" /></label></div>
             <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.loadHint') }}</p>
             <fieldset><legend class="field-label">{{ t('autoConfig.groups') }}</legend><div class="group-list"><label v-for="g in initialGroups" :key="g.id" class="group-option"><input v-model="draft.group_ids" :value="g.id" type="checkbox" :data-testid="'initial-group-' + g.id" /><span>{{ g.name }} <small class="text-gray-400">#{{ g.id }}</small></span></label><p v-if="!initialGroups.length" class="text-sm text-gray-500">{{ t('autoConfig.noGroups') }}</p></div></fieldset>
+            <fieldset class="space-y-3" data-testid="initial-quality-rule">
+              <legend class="field-label">{{ t('autoConfig.quality.title') }}</legend>
+              <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.quality.hint') }}</p>
+              <select v-model="selectedQualityRule" data-testid="quality-rule-select" class="input w-full" :aria-label="t('autoConfig.quality.title')" @change="selectQualityRule">
+                <option value="">{{ t('autoConfig.quality.none') }}</option>
+                <option v-if="draft.quality_rule" value="saved">{{ t('autoConfig.quality.saved') }}</option>
+                <option v-for="plan in availableQualityPlans" :key="plan.id" :value="String(plan.id)">{{ plan.account_name || '#' + plan.account_id }} · #{{ plan.id }} · {{ plan.model_id }} · {{ qualityActionLabel(plan) }}</option>
+              </select>
+              <p v-if="qualityLoadFailed" role="alert" class="text-sm text-red-600">{{ t('autoConfig.quality.loadFailed') }} <button type="button" class="underline" @click="loadQualityPlans">{{ t('autoConfig.retry') }}</button></p>
+              <p v-if="draft.quality_rule" data-testid="quality-rule-summary" class="text-sm text-gray-500">{{ draft.quality_rule.model_id }} · {{ draft.quality_rule.cron_expression }} · {{ t(draft.quality_rule.enabled ? 'qualityOps.activeShort' : 'qualityOps.paused') }}</p>
+              <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.quality.copyHint') }}</p>
+            </fieldset>
             <fieldset class="space-y-3 border-t border-gray-100 pt-4 dark:border-dark-700" data-testid="initial-model-mappings">
               <legend class="field-label">{{ t('autoConfig.mapping.title') }}</legend>
               <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.mapping.hint') }}</p>
@@ -73,11 +85,30 @@ import { defaultExcelBPSDefaults, excelBPSDefaultsError, excelBPSDefaultsPayload
 import AutoConfigHistory from '@/components/admin/operations/AutoConfigHistory.vue'
 import { getAll } from '@/api/admin/groups'
 import { getAutoConfig, saveAutoConfig, type AutoConfig } from '@/api/admin/autoConfig'
+import { listQualityPlans } from '@/api/admin/accountQuality'
+import type { ScheduledTestPlan } from '@/types'
 import type { Group } from '@/types'
 import { defaultModelBillingConfig, modelBillingConfigError, modelBillingPayload, type ModelBillingConfig } from '@/utils/modelBilling'
 const { t } = useI18n(), auth = useAuthStore()
 const draft = ref<(AutoConfig & { excel_bps: ExcelBPSDefaults; model_billing: ModelBillingConfig; model_mappings: OAuthModelMappingRule[] }) | null>(null), groups = ref<Group[]>([])
 const loading = ref(false), saving = ref(false), error = ref(''), notice = ref('')
+const qualityPlans = ref<ScheduledTestPlan[]>([]), selectedQualityRule = ref(''), qualityLoadFailed = ref(false)
+const availableQualityPlans = computed(() => qualityPlans.value.filter(p => p.pelican_config?.quality && (draft.value?.platform === 'openai' || p.pelican_config.question_kind !== 'state_probe')))
+function qualityActionLabel(plan: ScheduledTestPlan) {
+ const keys: Record<string, string> = { observe_only: 'observeOnly', remove_groups: 'removeGroups', remove_models: 'removeModels', disable_scheduling: 'disableScheduling', enable_bps: 'enableBPSShort' }
+ return t('qualityOps.' + keys[plan.pelican_config?.quality?.action ?? 'observe_only'])
+}
+async function loadQualityPlans() {
+ const v = generation
+ qualityLoadFailed.value = false
+ try { const plans = await listQualityPlans(); if (validGeneration(v)) qualityPlans.value = plans }
+ catch { if (validGeneration(v)) qualityLoadFailed.value = true }
+}
+function selectQualityRule() {
+ if (!draft.value || selectedQualityRule.value === 'saved') return
+ const plan = availableQualityPlans.value.find(p => String(p.id) === selectedQualityRule.value)
+ draft.value.quality_rule = plan ? JSON.parse(JSON.stringify({ model_id: plan.model_id, cron_expression: plan.cron_expression, enabled: plan.enabled, max_results: plan.max_results, pelican_config: plan.pelican_config })) : null
+}
 const historyRefreshKey = ref(0)
 let generation = 0, alive = true
 const validGeneration = (v: number) => alive && generation === v
@@ -87,7 +118,7 @@ const upgradeFields = [{ key: 'successes_per_step', max: 100000 }, { key: 'upgra
 const initialGroups = computed(() => groups.value.filter(g => g.platform === draft.value?.platform))
 async function load() {
  const v = generation; loading.value = true; error.value = ''
- try { const [config, available] = await Promise.all([getAutoConfig(), getAll()]); if (validGeneration(v)) { draft.value = { ...config, cost_multiplier: config.cost_multiplier ?? 0.07, model_mappings: config.model_mappings ?? defaultOAuthModelMappings(config.platform), model_billing: config.model_billing ?? defaultModelBillingConfig(), excel_bps: config.excel_bps ?? defaultExcelBPSDefaults() }; groups.value = available.filter(g => g.status === 'active') } }
+ try { const [config, available] = await Promise.all([getAutoConfig(), getAll()]); if (validGeneration(v)) { draft.value = { ...config, cost_multiplier: config.cost_multiplier ?? 0.07, model_mappings: config.model_mappings ?? defaultOAuthModelMappings(config.platform), model_billing: config.model_billing ?? defaultModelBillingConfig(), excel_bps: config.excel_bps ?? defaultExcelBPSDefaults() }; selectedQualityRule.value = config.quality_rule ? 'saved' : ''; groups.value = available.filter(g => g.status === 'active') } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.loadFailed') }
  finally { if (validGeneration(v)) loading.value = false }
 }
@@ -103,12 +134,12 @@ async function save() {
  const costMultiplier = c.cost_multiplier ?? 0.07
  if (c.enabled && !c.group_ids.length || c.upgrade_enabled && !c.upgrade_group_ids.length || !Number.isFinite(costMultiplier) || costMultiplier < 0 || costMultiplier > 1000000 || [...initialFields, ...upgradeFields].some(f => !Number.isInteger(c[f.key]) || c[f.key] < ('min' in f ? f.min : 1) || c[f.key] > ('max' in f ? f.max : 10000))) { error.value = t('autoConfig.invalid'); return }
  const v = generation; saving.value = true; error.value = ''; notice.value = ''
- try { const { runtime_blocked: _blocked, ...payload } = c; const result = await saveAutoConfig({ ...payload, cost_multiplier: costMultiplier, model_mappings: oauthModelMappingsPayload(c.model_mappings), model_billing: modelBillingPayload(c.model_billing), excel_bps: excelBPSDefaultsPayload(c.excel_bps) }); if (validGeneration(v)) { draft.value = { ...result, cost_multiplier: result.cost_multiplier ?? 0.07, model_mappings: result.model_mappings ?? defaultOAuthModelMappings(result.platform), model_billing: result.model_billing ?? defaultModelBillingConfig(), excel_bps: result.excel_bps ?? defaultExcelBPSDefaults() }; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
+ try { const { runtime_blocked: _blocked, ...payload } = c; const result = await saveAutoConfig({ ...payload, cost_multiplier: costMultiplier, model_mappings: oauthModelMappingsPayload(c.model_mappings), model_billing: modelBillingPayload(c.model_billing), excel_bps: excelBPSDefaultsPayload(c.excel_bps) }); if (validGeneration(v)) { draft.value = { ...result, cost_multiplier: result.cost_multiplier ?? 0.07, model_mappings: result.model_mappings ?? defaultOAuthModelMappings(result.platform), model_billing: result.model_billing ?? defaultModelBillingConfig(), excel_bps: result.excel_bps ?? defaultExcelBPSDefaults() }; selectedQualityRule.value = result.quality_rule ? 'saved' : ''; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.saveFailed') }
  finally { if (validGeneration(v)) saving.value = false }
 }
-watch(() => auth.user ? auth.user.id + ':' + auth.user.role : '', () => { generation++; draft.value = null; groups.value = []; error.value = notice.value = ''; loading.value = saving.value = false }, { flush: 'sync' })
-onMounted(() => { void load() })
+watch(() => auth.user ? auth.user.id + ':' + auth.user.role : '', () => { generation++; draft.value = null; groups.value = []; qualityPlans.value = []; selectedQualityRule.value = ''; qualityLoadFailed.value = false; error.value = notice.value = ''; loading.value = saving.value = false }, { flush: 'sync' })
+onMounted(() => { void load(); void loadQualityPlans() })
 onBeforeUnmount(() => { alive = false; generation++ })
 </script>
 <style scoped>
