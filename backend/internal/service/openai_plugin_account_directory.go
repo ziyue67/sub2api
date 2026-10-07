@@ -113,6 +113,8 @@ func accountReadableSnapshotJSON(account *Account) []byte {
 		return nil
 	}
 	clone := *account
+	// Creation-only quality policy is not part of the plugin account directory.
+	clone.InitialQualityPlan = nil
 	clone.Credentials = nil
 	clone.Groups = nil
 	clone.AccountGroups = nil

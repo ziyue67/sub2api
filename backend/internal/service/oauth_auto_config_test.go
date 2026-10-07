@@ -175,6 +175,7 @@ func (r *autoConfigAccountRepo) BindGroups(_ context.Context, _ int64, ids []int
 func TestAutoConfigCRSNewAccountsOnly(t *testing.T) {
 	cfg := DefaultOAuthAutoConfig()
 	cfg.Enabled = true
+	cfg.QualityRule = initialQualityRuleFixture()
 	cfg.Priority = 7
 	cfg.Concurrency = 9
 	cfg.GroupIDs = []int64{5}
@@ -185,6 +186,8 @@ func TestAutoConfigCRSNewAccountsOnly(t *testing.T) {
 	syncer := &CRSSyncService{accountRepo: repo, autoConfigure: policy.ApplyOAuthAutoConfig}
 	a := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Priority: 50, Concurrency: 3, Status: StatusError, Schedulable: false}
 	require.NoError(t, syncer.createSyncedAccount(context.Background(), a))
+	require.NotNil(t, repo.created.InitialQualityPlan)
+	require.Equal(t, "gpt-5.4", repo.created.InitialQualityPlan.ModelID)
 	require.Equal(t, 9, repo.created.Concurrency)
 	require.Equal(t, 7, repo.created.Priority)
 	require.Equal(t, []int64{5}, repo.groups)

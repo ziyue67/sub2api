@@ -1,4 +1,9 @@
 export default {
+  oauthQuotaPriority: 'Consume OAuth quota first; move trailing API keys to standby',
+  oauthQuotaHint: 'When healthy OAuth accounts below the 7d usage threshold have spare capacity, move API keys from the end of the routing order to standby. The count follows OAuth capacity. Full, exhausted or unavailable OAuth accounts automatically release standby keys. Manual account status is unchanged. Requires valid quality evidence and quota data less than 5 minutes old.',
+  oauthQuotaThreshold: 'OAuth preference cutoff (7d used %)',
+  oauthQuotaRoles: { preferred: 'At selection: OAuth quota preference candidate', standby: 'At selection: API key on automatic standby, available for overflow' },
+
   evaluatedAt: 'Scores evaluated', historyObservedAt: 'History read',
   historyRetry: 'History refresh failed; recent cached evidence remains in use until expiry. Retry shortly.',
   historyStates: { ready: 'History ready', stale: 'Using recent cached history while awaiting an update.', partial: 'Some candidates are still loading; known history remains in use.', loading: 'Loading history; missing evidence remains unknown.', error: 'History could not be read. Refresh to retry shortly.', unavailable: 'History is unavailable on this instance.', limited: 'Candidate or cache limit reached; using live capacity.' },

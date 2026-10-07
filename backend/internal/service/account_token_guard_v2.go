@@ -96,6 +96,7 @@ type AccountTokenGuardV2ProbeCompletion struct {
 type AccountTokenGuardV2Repository interface {
 	UpsertAccount(ctx context.Context, accountID int64, enabled, autoRelogin bool) error
 	DeleteAccount(ctx context.Context, accountID int64) error
+	PruneDeletedAccounts(ctx context.Context) (int64, error)
 	GetAccount(ctx context.Context, accountID int64) (*AccountTokenGuardV2Record, error)
 	ListAccounts(ctx context.Context) ([]AccountTokenGuardV2Record, error)
 	ClaimDue(ctx context.Context, owner string, leaseDuration time.Duration, limit int) ([]AccountTokenGuardV2Record, error)
@@ -366,6 +367,15 @@ func (s *AccountTokenGuardV2Service) recordView(ctx context.Context, record Acco
 }
 
 func (s *AccountTokenGuardV2Service) RunDue(ctx context.Context) (int, error) {
+	// Clean all orphaned records, including paused accounts and future probes.
+	// Only the database's account deletion state is authoritative, not read errors.
+	removed, err := s.repo.PruneDeletedAccounts(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("prune deleted credential operations accounts: %w", err)
+	}
+	if removed > 0 {
+		slog.Info("account_token_guard_v2_deleted_accounts_pruned", "count", removed)
+	}
 	records, err := s.repo.ClaimDue(ctx, s.leaseOwner, accountTokenGuardV2LeaseDuration, 10)
 	if err != nil {
 		return 0, err

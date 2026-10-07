@@ -107,6 +107,7 @@ func (s *defaultOpenAIAccountScheduler) shouldRebalancePrioritySticky(ctx contex
 		return false
 	}
 	balanceProtocols := cfg.BalanceProtocols
+	quotaSticky := cfg.OAuthQuotaPriority && sticky.IsOpenAIApiKey()
 	// Optional balancing must not hold a healthy sticky turn behind slow dependencies.
 	ctx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 	defer cancel()
@@ -119,7 +120,7 @@ func (s *defaultOpenAIAccountScheduler) shouldRebalancePrioritySticky(ctx contex
 	eligible := make([]*Account, 0, len(accounts))
 	for i := range accounts {
 		account := &accounts[i]
-		if account.ID == sticky.ID || !account.IsSchedulable() || account.Priority > sticky.Priority ||
+		if account.ID == sticky.ID || !account.IsSchedulable() || (!quotaSticky && account.Priority > sticky.Priority) ||
 			!s.service.openAIAccountMatchesSchedulingGroup(account, req.GroupID) ||
 			!s.isAccountRequestCompatible(ctx, account, req) || !s.isAccountTransportCompatible(account, req.RequiredTransport, req.RequestedModel) ||
 			s.service.isExcelBPSCoolingDown(account, req.RequestedModel) {
@@ -157,6 +158,28 @@ func (s *defaultOpenAIAccountScheduler) shouldRebalancePrioritySticky(ctx contex
 	historyPool := make([]openAIAccountCandidateScore, 0, len(eligible))
 	for _, account := range eligible {
 		historyPool = append(historyPool, openAIAccountCandidateScore{account: account})
+	}
+	if quotaSticky {
+		historyPool = append(historyPool, openAIAccountCandidateScore{account: sticky})
+		history := s.service.priorityHistory(req, cfg, historyPool)
+		now := time.Now()
+		for i := range historyPool {
+			item := &historyPool[i]
+			item.loadInfo = loadMap[item.account.ID]
+			item.loadKnown = item.loadInfo != nil
+			if s.stats != nil {
+				item.errorRate, _, _ = s.stats.snapshot(item.account.ID)
+			}
+			if rpm, ok := accountRPMStateFromContext(ctx, item.account); ok {
+				item.rpmEnabled, item.rpmLimit, item.rpmCurrent = rpm.Enabled, rpm.Limit, rpm.Current
+			}
+			applyPriorityCandidate(cfg, item, history.signals[item.account.ID], now)
+		}
+		for _, item := range buildPrioritySelectionOrder(historyPool, req) {
+			if item.account.ID == sticky.ID && item.priorityAPIStandby {
+				return true
+			}
+		}
 	}
 	history := s.service.cachedPriorityHistory(req, cfg, historyPool)
 	current := loadMap[sticky.ID]
@@ -246,5 +269,5 @@ func buildPrioritySelectionOrder(pool []openAIAccountCandidateScore, req OpenAIA
 	for i := range choices {
 		order[i] = choices[i].candidate
 	}
-	return order
+	return applyPriorityOAuthStandby(order)
 }

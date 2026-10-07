@@ -54,6 +54,20 @@ func (r *accountTokenGuardV2Repository) DeleteAccount(ctx context.Context, accou
 	return err
 }
 
+// PruneDeletedAccounts handles soft deletion as well as legacy orphaned rows.
+// A failed probe or missing login configuration is not evidence of deletion.
+func (r *accountTokenGuardV2Repository) PruneDeletedAccounts(ctx context.Context) (int64, error) {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM account_token_guard_v2_accounts AS guard
+		WHERE NOT EXISTS (
+			SELECT 1 FROM accounts AS account
+			WHERE account.id = guard.account_id AND account.deleted_at IS NULL
+		)`)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (r *accountTokenGuardV2Repository) GetAccount(ctx context.Context, accountID int64) (*service.AccountTokenGuardV2Record, error) {
 	record, err := scanAccountTokenGuardV2(r.db.QueryRowContext(ctx, accountTokenGuardV2Select+` WHERE account_id = $1`, accountID))
 	if errors.Is(err, sql.ErrNoRows) {

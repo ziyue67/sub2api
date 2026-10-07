@@ -112,7 +112,7 @@ PRISM_ADAPTER_BOOTSTRAP_CONCURRENCY=1
 
 待决文件改为 `pending/<account_id>/<scope_hash>.json`。每个请求有自己的 request ID 和 turn_state；不确定结果只阻塞相同会话。匿名管理员测试每份结果使用独立作用域，不自动重试。原版本留下的 `pending/<account_id>` 文件仍会阻塞该账号，不能绕过。回滚到旧执行器时，旧程序看到该目录也会拒绝账号，必须先核实并发版本的未完成记录；不能直接删除目录解锁。
 
-systemd 的 `MemoryMax=900M`、禁 swap 和单核限制保持不变。新执行器在 Linux cgroup 使用量达到 750 MiB 时拒绝新的项目准备，并回收已空闲上下文；已提交请求继续尝试取得终态。这个阈值是保护措施，不是达到生产容量的证明。推荐使用与固定 Playwright 版本匹配、预构建的 Chromium headless shell，仍启用浏览器 sandbox。
+systemd 的 `MemoryMax=900M`、禁 swap 和单核限制保持不变。新执行器在 Linux cgroup 使用量达到 `PRISM_ADAPTER_MEMORY_LIMIT_MIB`（默认 750 MiB，必须为正整数）时拒绝新的项目准备，并回收已空闲上下文；已提交请求继续尝试取得终态。这个阈值是保护措施，不是达到生产容量的证明。推荐使用与固定 Playwright 版本匹配、预构建的 Chromium headless shell，仍启用浏览器 sandbox。
 
 本地完整路径验证（真实 Chromium，模拟上游，无 OAuth/真实推理）：
 
@@ -152,7 +152,7 @@ python3 prism-adapter/smoke_browser.py --chrome /absolute/path/to/chromium
 
 ## Multiplex 内存与项目启动压力
 
-`PRISM_ADAPTER_ACCOUNT_MAX_INFLIGHT` 和 `PRISM_ADAPTER_MAX_INFLIGHT` 是准入上限，不保证部署内存或上游项目运行环境可以承载相同并发。准备页面关闭后会请求 Chromium 回收已分离的编辑器上下文；下一次准备若仍超过 750 MiB，则最多等待 30 秒恢复，仍不足时返回 `resource_pressure`，不会绕过保护提交。systemd 的硬内存上限仍由部署方保留。
+`PRISM_ADAPTER_ACCOUNT_MAX_INFLIGHT` 和 `PRISM_ADAPTER_MAX_INFLIGHT` 是准入上限，不保证部署内存或上游项目运行环境可以承载相同并发。准备页面关闭后会请求 Chromium 回收已分离的编辑器上下文；下一次准备若仍达到配置的内存准入门槛，则最多等待 30 秒恢复，仍不足时返回 `resource_pressure`，不会绕过保护提交。systemd 的硬内存上限仍由部署方保留。
 
 multiplex 日志记录 `prism_prepare_start/end`、`prism_poll_start/end`、完成和失败事件，包含本地请求标识、模型/强度、阶段、在途/排队/轮询数量和 cgroup 内存；不包含提示词、账号凭据、Cookie 或 turn-state。只有上游任务的执行区间确实重叠，才算实际并发。
 
@@ -166,6 +166,8 @@ multiplex 日志记录 `prism_prepare_start/end`、`prism_poll_start/end`、完�
 python prism-adapter/smoke_multiplex.py --chrome /path/to/chrome \
   --concurrency 5 --model gpt-6.1-sol --effort xhigh --rounds 3
 ```
+
+内存准入门槛与 systemd `MemoryMax` 分别配置；提高硬上限不会自动提高准入门槛。准入门槛应低于硬上限，给页面启动及在途请求留出余量。例如 1.5 GiB 硬上限配合 `PRISM_ADAPTER_MEMORY_LIMIT_MIB=1280`，4 GiB 硬上限配合 `PRISM_ADAPTER_MEMORY_LIMIT_MIB=3584`。该设置只影响 multiplex 执行器，同时用于新页面准入与空闲上下文回收，不中断已提交请求。
 
 systemd 部署还需注意环境变量优先级：`EnvironmentFile` 中的值会覆盖 `Environment=`。若已有环境文件配置了并发，应更新对应文件，或在 drop-in 中追加最后读取的专用 `EnvironmentFile`；重启后必须核对进程实际环境，不能只看 drop-in 文本。Docker Compose 则在适配器服务的 `environment:` 下设置变量。
 

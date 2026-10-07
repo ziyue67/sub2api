@@ -15,28 +15,33 @@ const prioritySchedulingSettingKey = "priority_scheduling_v1"
 // PrioritySchedulingConfig only controls freely selectable OpenAI text requests.
 // Account eligibility, continuity, profit gates and concurrency acquisition stay authoritative.
 type PrioritySchedulingConfig struct {
-	BalanceProtocols   bool     `json:"balance_protocols"`
-	Enabled            bool     `json:"enabled"`
-	Mode               string   `json:"mode"`
-	GroupIDs           []int64  `json:"group_ids"`
-	Models             []string `json:"models"`
-	WindowMinutes      int      `json:"window_minutes"`
-	MinSamples         int      `json:"min_samples"`
-	TargetTTFTMs       int      `json:"target_ttft_ms"`
-	MaxLoadPercent     int      `json:"max_load_percent"`
-	MinQualityPercent  int      `json:"min_quality_percent"`
-	QualityMaxAgeHours int      `json:"quality_max_age_hours"`
-	QualityWeight      float64  `json:"quality_weight"`
-	LatencyWeight      float64  `json:"latency_weight"`
-	LoadWeight         float64  `json:"load_weight"`
-	CostWeight         float64  `json:"cost_weight"`
+	OAuthQuotaPriority  bool     `json:"oauth_quota_priority"`
+	OAuthQuotaThreshold int      `json:"oauth_quota_threshold"`
+	BalanceProtocols    bool     `json:"balance_protocols"`
+	Enabled             bool     `json:"enabled"`
+	Mode                string   `json:"mode"`
+	GroupIDs            []int64  `json:"group_ids"`
+	Models              []string `json:"models"`
+	WindowMinutes       int      `json:"window_minutes"`
+	MinSamples          int      `json:"min_samples"`
+	TargetTTFTMs        int      `json:"target_ttft_ms"`
+	MaxLoadPercent      int      `json:"max_load_percent"`
+	MinQualityPercent   int      `json:"min_quality_percent"`
+	QualityMaxAgeHours  int      `json:"quality_max_age_hours"`
+	QualityWeight       float64  `json:"quality_weight"`
+	LatencyWeight       float64  `json:"latency_weight"`
+	LoadWeight          float64  `json:"load_weight"`
+	CostWeight          float64  `json:"cost_weight"`
 }
 
 func DefaultPrioritySchedulingConfig() PrioritySchedulingConfig {
-	return PrioritySchedulingConfig{BalanceProtocols: true, Mode: "balanced", GroupIDs: []int64{}, Models: []string{}, WindowMinutes: 60, MinSamples: 5, TargetTTFTMs: 3000, MaxLoadPercent: 80, MinQualityPercent: 90, QualityMaxAgeHours: 24, QualityWeight: 30, LatencyWeight: 25, LoadWeight: 25, CostWeight: 20}
+	return PrioritySchedulingConfig{OAuthQuotaThreshold: 90, BalanceProtocols: true, Mode: "balanced", GroupIDs: []int64{}, Models: []string{}, WindowMinutes: 60, MinSamples: 5, TargetTTFTMs: 3000, MaxLoadPercent: 80, MinQualityPercent: 90, QualityMaxAgeHours: 24, QualityWeight: 30, LatencyWeight: 25, LoadWeight: 25, CostWeight: 20}
 }
 
 func ValidatePrioritySchedulingConfig(c PrioritySchedulingConfig) error {
+	if c.OAuthQuotaThreshold < 1 || c.OAuthQuotaThreshold > 100 {
+		return errors.New("OAuth quota threshold must be between 1 and 100")
+	}
 	if !slices.Contains([]string{"experience", "balanced", "profit", "custom"}, c.Mode) {
 		return errors.New("invalid scheduling mode")
 	}
@@ -175,13 +180,14 @@ func (s *OpenAIGatewayService) prioritySchedulingRuntimeConfig() PrioritySchedul
 }
 
 type PrioritySchedulingSignal struct {
-	Revenue        float64 `json:"revenue"`
-	BaseCost       float64 `json:"-"`
-	ProfitSamples  int     `json:"profit_samples"`
-	Samples        int     `json:"samples"`
-	P90TTFTMs      float64 `json:"p90_ttft_ms"`
-	QualityPassed  int     `json:"quality_passed"`
-	QualitySamples int     `json:"quality_samples"`
+	LatestQualityPassed *bool   `json:"latest_quality_passed,omitempty"`
+	Revenue             float64 `json:"revenue"`
+	BaseCost            float64 `json:"-"`
+	ProfitSamples       int     `json:"profit_samples"`
+	Samples             int     `json:"samples"`
+	P90TTFTMs           float64 `json:"p90_ttft_ms"`
+	QualityPassed       int     `json:"quality_passed"`
+	QualitySamples      int     `json:"quality_samples"`
 }
 
 type PrioritySchedulingQuery struct {
@@ -196,6 +202,7 @@ type PrioritySchedulingSignalReader interface {
 }
 
 type PrioritySchedulingScore struct {
+	OAuthQuotaRole      string   `json:"oauth_quota_role,omitempty"`
 	HistoryStatus       string   `json:"history_status"`
 	CapacityBand        int      `json:"capacity_band"`
 	BoundGroups         int      `json:"bound_groups"`
@@ -338,7 +345,13 @@ func (s *defaultOpenAIAccountScheduler) applyPriorityScheduling(req OpenAIAccoun
 	plan.priorityScheduling = true
 	plan.topK = len(plan.candidates)
 	plan.includeOverflowFallback = true
-	input := newPrioritySnapshotInput(req, c, plan.candidates, now)
+	plan.selectionOrder = s.buildOpenAISelectionOrder(req, *plan)
+	s.recordPrioritySnapshot(req, c, plan.selectionOrder, now)
+	return true
+}
+
+func (s *defaultOpenAIAccountScheduler) recordPrioritySnapshot(req OpenAIAccountScheduleRequest, c PrioritySchedulingConfig, pool []openAIAccountCandidateScore, now time.Time) {
+	input := newPrioritySnapshotInput(req, c, pool, now)
 	state := &s.service.priorityScheduling
 	state.mu.Lock()
 	// A slower earlier selection must not replace a newer observation.
@@ -346,7 +359,6 @@ func (s *defaultOpenAIAccountScheduler) applyPriorityScheduling(req OpenAIAccoun
 		state.latestInput = input
 	}
 	state.mu.Unlock()
-	return true
 }
 
 func applyPriorityCandidate(c PrioritySchedulingConfig, item *openAIAccountCandidateScore, signal PrioritySchedulingSignal, now time.Time) PrioritySchedulingScore {
@@ -370,8 +382,10 @@ func applyPriorityCandidate(c PrioritySchedulingConfig, item *openAIAccountCandi
 		offset = 200
 	}
 	item.score = offset + score.Score
-	item.priorityExploration = score.Tier == "insufficient" &&
+	item.priorityExploration = item.account.IsOpenAIOAuth() && score.Tier == "insufficient" &&
 		(score.ProfitSamples < c.MinSamples || score.Samples < c.MinSamples) &&
 		item.loadKnown && score.LoadPercent != nil && *score.LoadPercent < c.MaxLoadPercent
+	item.priorityOAuthSpare = priorityOAuthQuotaSpare(c, *item, score, now)
+	item.priorityAPIStandby = false
 	return score
 }

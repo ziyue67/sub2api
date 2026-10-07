@@ -68,8 +68,20 @@ func (s *OpenAIGatewayService) PrioritySchedulingSnapshot() *PrioritySchedulingS
 		group = &id
 	}
 	snapshot := &PrioritySchedulingSnapshot{At: input.at, EvaluatedAt: now, Model: input.request.RequestedModel, GroupID: group, Mode: input.config.Mode, SelectionPolicy: "capacity_first", HistoryReady: h.ready(), HistoryStatus: h.status, HistoryObservedAt: h.observed, HistoryError: h.failure, HistoryRefreshing: h.refreshing, Candidates: make([]PrioritySchedulingScore, 0, len(input.candidates))}
+	if input.config.OAuthQuotaPriority {
+		snapshot.SelectionPolicy = "oauth_quota_priority"
+	}
 	for _, item := range input.candidates {
+		// Roles describe the observed selection, not a new decision using stale load.
+		role := ""
+		if item.priorityOAuthSpare > 0 {
+			role = "preferred"
+		}
+		if item.priorityAPIStandby {
+			role = "standby"
+		}
 		score := applyPriorityCandidate(input.config, &item, h.signals[item.account.ID], now)
+		score.OAuthQuotaRole = role
 		score.ExplorationEligible = item.priorityExploration
 		score.BoundGroups = priorityAccountGroupCount(item.account)
 		score.CapacityBand = priorityCapacityBand(item)

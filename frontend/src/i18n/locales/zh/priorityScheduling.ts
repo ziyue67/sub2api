@@ -1,4 +1,9 @@
 export default {
+  oauthQuotaPriority: '优先消耗 OAuth 额度，末位 API Key 自动后备',
+  oauthQuotaHint: '质量正常且 7d 已用低于阈值的 OAuth 有可用容量时，从调度队尾让 API Key 转为后备，数量随 OAuth 容量变化。OAuth 满载、额度不足或不可用时自动恢复；不更改手动启停状态。需要有效质量检测和 5 分钟内的额度数据。',
+  oauthQuotaThreshold: 'OAuth 优先消耗截止值（7d 已用 %）',
+  oauthQuotaRoles: { preferred: '本次选号：OAuth 额度优先候选', standby: '本次选号：API Key 自动后备，可承接溢出' },
+
   evaluatedAt: '评分重算时间', historyObservedAt: '历史统计读取时间',
   historyRetry: '历史查询失败，暂用有效期内的已有统计，稍后重试。',
   historyStates: { ready: '历史已就绪', stale: '暂用近期缓存统计，正在等待更新。', partial: '部分候选历史正在加载；已有统计继续使用。', loading: '正在读取历史统计，缺失部分暂按未知处理。', error: '历史统计读取失败，请稍后刷新重试。', unavailable: '当前实例无法读取历史统计。', limited: '候选或缓存达到处理上限，暂按实时容量调度。' },

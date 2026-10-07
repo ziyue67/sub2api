@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -18,6 +19,20 @@ type accountTokenGuardV2TestRepo struct {
 	claimBusy   bool
 	completion  *AccountTokenGuardV2ProbeCompletion
 	rescheduled bool
+	pruneErr    error
+	pruneOrphan bool
+	claimed     bool
+}
+
+func (r *accountTokenGuardV2TestRepo) PruneDeletedAccounts(context.Context) (int64, error) {
+	if r.pruneErr != nil {
+		return 0, r.pruneErr
+	}
+	if r.pruneOrphan && r.record != nil {
+		r.record = nil
+		return 1, nil
+	}
+	return 0, nil
 }
 
 func (r *accountTokenGuardV2TestRepo) UpsertAccount(_ context.Context, accountID int64, enabled, autoRelogin bool) error {
@@ -46,6 +61,7 @@ func (r *accountTokenGuardV2TestRepo) ListAccounts(context.Context) ([]AccountTo
 	return []AccountTokenGuardV2Record{*r.record}, nil
 }
 func (r *accountTokenGuardV2TestRepo) ClaimDue(context.Context, string, time.Duration, int) ([]AccountTokenGuardV2Record, error) {
+	r.claimed = true
 	if r.record == nil || r.claimBusy {
 		return nil, nil
 	}
@@ -268,4 +284,40 @@ func TestAccountTokenGuardV2CustomRulesDriveProbe(t *testing.T) {
 	require.WithinDuration(t, guardRepo.completion.LastProbeAt.Add(45*time.Second), guardRepo.completion.NextProbeAt, time.Second)
 	require.NotNil(t, guardRepo.completion.CooldownUntil)
 	require.WithinDuration(t, guardRepo.completion.LastProbeAt.Add(2*time.Hour), *guardRepo.completion.CooldownUntil, time.Second)
+}
+
+func TestAccountTokenGuardV2RunDuePrunesBeforeClaim(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("enabled=%t", enabled), func(t *testing.T) {
+			repo := &accountTokenGuardV2TestRepo{
+				record:      &AccountTokenGuardV2Record{AccountID: 42, Enabled: enabled, NextProbeAt: time.Now().Add(time.Hour)},
+				pruneOrphan: true,
+			}
+			// No account reader/prober: orphaned records must never reach probing.
+			svc := NewAccountTokenGuardV2Service(repo, nil, nil, nil, nil)
+			defer svc.cancel()
+			n, err := svc.RunDue(context.Background())
+			require.NoError(t, err)
+			require.Zero(t, n)
+			require.Nil(t, repo.record)
+			require.True(t, repo.claimed)
+			n, err = svc.RunDue(context.Background())
+			require.NoError(t, err)
+			require.Zero(t, n, "cleanup must be idempotent")
+		})
+	}
+}
+
+func TestAccountTokenGuardV2RunDuePruneFailurePreservesRecords(t *testing.T) {
+	repo := &accountTokenGuardV2TestRepo{
+		record:   &AccountTokenGuardV2Record{AccountID: 42},
+		pruneErr: errors.New("database unavailable"),
+	}
+	svc := NewAccountTokenGuardV2Service(repo, nil, nil, nil, nil)
+	defer svc.cancel()
+	n, err := svc.RunDue(context.Background())
+	require.ErrorIs(t, err, repo.pruneErr)
+	require.Zero(t, n)
+	require.NotNil(t, repo.record)
+	require.False(t, repo.claimed)
 }
