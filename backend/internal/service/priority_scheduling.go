@@ -382,7 +382,10 @@ func applyPriorityCandidate(c PrioritySchedulingConfig, item *openAIAccountCandi
 		offset = 200
 	}
 	item.score = offset + score.Score
-	item.priorityExploration = item.account.IsOpenAIOAuth() && score.Tier == "insufficient" &&
+	qualityReady := score.QualitySamples > 0 &&
+		float64(score.QualityPassed)/float64(score.QualitySamples)*100 >= float64(c.MinQualityPercent)
+	item.priorityExploration = (item.account.IsOpenAIOAuth() || item.account.IsOpenAIApiKey()) &&
+		score.Tier == "insufficient" && qualityReady &&
 		(score.ProfitSamples < c.MinSamples || score.Samples < c.MinSamples) &&
 		item.loadKnown && score.LoadPercent != nil && *score.LoadPercent < c.MaxLoadPercent
 	item.priorityOAuthSpare = priorityOAuthQuotaSpare(c, *item, score, now)

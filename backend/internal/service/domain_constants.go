@@ -530,6 +530,9 @@ const (
 	// see the actual deducted cost on the token leaderboard. It defaults to true
 	// to preserve the existing public response; administrators always see it.
 	SettingKeyLeaderboardShowActualCost = "leaderboard_show_actual_cost"
+
+	// Protocol-wide switches default on for BPS compatibility and off for Prism.
+	SettingKeyExcelBPSEnabled = "excel_bps_enabled"
 	// Prism browser bridge is administrator-managed and disabled by default.
 	SettingKeyPrismBrowserEnabled = "prism_browser_enabled"
 	SettingKeyPrismBrowserBaseURL = "prism_browser_base_url"
@@ -585,6 +588,12 @@ const (
 	// SettingKeyPluginManagementEnabled controls sidebar visibility only; it does
 	// not stop or otherwise change already loaded plugin runtimes.
 	SettingKeyPluginManagementEnabled = "plugin_management_enabled"
+
+	// SettingKeySupportTicketEnabled is a DB-backed soft switch for support tickets
+	// ("网站工单"). When false both user and admin endpoints answer
+	// SUPPORT_TICKET_DISABLED and the sidebar entries are hidden; stored tickets
+	// are kept. Defaults to false (opt-in feature).
+	SettingKeySupportTicketEnabled = "support_ticket_enabled"
 
 	// SettingKeyUpstreamBillingProbeSettings stores the global enable switch and interval
 	// for probing remote Sub2API API-key billing metadata.

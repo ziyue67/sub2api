@@ -59,6 +59,7 @@ func RegisterAdminRoutes(
 
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
+		registerSupportTicketRoutes(admin, h)
 
 		// 公告邮件批量发送
 		registerEmailBroadcastRoutes(admin, h)
@@ -138,6 +139,7 @@ func RegisterAdminRoutes(
 
 		// 定时测试计划
 		registerScheduledTestRoutes(admin, h)
+		registerControlledExperimentRoutes(admin, h)
 
 		// 鹈鹕测智用户展示
 		registerPelicanShowcaseRoutes(admin, h)
@@ -435,6 +437,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.PUT("/:id/proxy-lanes/:lane_id", h.Admin.Account.UpdateProxyLane)
 		accounts.GET("/:id/grok-media-eligibility", h.Admin.Account.GetGrokMediaEligibility)
 		accounts.PUT("/:id/grok-media-eligibility", h.Admin.Account.UpdateGrokMediaEligibility)
+		accounts.GET("/:id/upstream-billing-probe/config", h.Admin.Account.GetNewAPIConfig)
+		accounts.POST("/:id/upstream-billing-probe/config/preview", h.Admin.Account.PreviewNewAPIConfig)
+		accounts.PUT("/:id/upstream-billing-probe/config", h.Admin.Account.SaveNewAPIConfig)
+		accounts.DELETE("/:id/upstream-billing-probe/config", h.Admin.Account.DeleteNewAPIConfig)
 		accounts.PUT("/:id/upstream-billing-probe", h.Admin.Account.SetUpstreamBillingProbeEnabled)
 		accounts.POST("/:id/upstream-billing-probe", h.Admin.Account.ProbeUpstreamBilling)
 		accounts.POST("/:id/upstream-usage-probe", h.Admin.Account.ProbeUpstreamUsage)
@@ -471,6 +477,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/schedulable", h.Admin.Account.SetSchedulable)
 		accounts.POST("/models/sync-upstream-preview", h.Admin.Account.SyncUpstreamModelsPreview)
 		accounts.GET("/:id/models", h.Admin.Account.GetAvailableModels)
+		accounts.GET("/:id/models/reasoning", h.Admin.Account.GetModelReasoning)
 		accounts.POST("/:id/models/sync-upstream", h.Admin.Account.SyncUpstreamModels)
 		accounts.POST("/batch", h.Admin.Account.BatchCreate)
 		// 账号导出泄露上游凭证原文——要求 step-up 2FA
@@ -534,6 +541,20 @@ func registerEmailBroadcastRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		broadcasts.GET("/:id", h.Admin.EmailBroadcast.Get)
 		broadcasts.DELETE("/:id", h.Admin.EmailBroadcast.Delete)
 		broadcasts.GET("/recipients/search", h.Admin.EmailBroadcast.SearchRecipients)
+	}
+}
+
+// registerSupportTicketRoutes serves the admin side of support tickets. The
+// service answers SUPPORT_TICKET_DISABLED while the feature switch is off.
+func registerSupportTicketRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	tickets := admin.Group("/support-tickets")
+	{
+		tickets.GET("", h.SupportTicket.AdminList)
+		tickets.GET("/summary", h.SupportTicket.AdminSummary)
+		tickets.GET("/:id", h.SupportTicket.AdminGet)
+		tickets.POST("/:id/messages", h.SupportTicket.AdminReply)
+		tickets.POST("/:id/status", h.SupportTicket.AdminSetStatus)
+		tickets.DELETE("/:id", h.SupportTicket.AdminDelete)
 	}
 }
 
@@ -829,7 +850,16 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/account-ops/auto-config/events", h.Admin.AccountOps.ListAutoConfigEvents)
 	admin.GET("/account-ops/config", h.Admin.AccountOps.GetConfig)
 	admin.PUT("/account-ops/config", h.Admin.AccountOps.SaveConfig)
+	admin.PUT("/account-ops/notification-settings", h.Admin.AccountOps.SaveNotificationSettings)
+	admin.PUT("/account-ops/webhooks/:id", h.Admin.AccountOps.SaveWebhook)
+	admin.DELETE("/account-ops/webhooks/:id", h.Admin.AccountOps.DeleteWebhook)
+	admin.PUT("/account-ops/rules/batch", h.Admin.AccountOps.SaveRulesBatch)
+	admin.PUT("/account-ops/rules/:id", h.Admin.AccountOps.SaveRule)
+	admin.DELETE("/account-ops/rules/:id", h.Admin.AccountOps.DeleteRule)
 	admin.GET("/account-ops/alerts", h.Admin.AccountOps.List)
+	admin.GET("/account-ops/balance-accounts", h.Admin.AccountOps.BalanceAccounts)
+	admin.GET("/account-ops/threshold-accounts", h.Admin.AccountOps.ThresholdAccounts)
+	admin.POST("/account-ops/webhooks/:id/test", h.Admin.AccountOps.TestWebhook)
 	// 智能运维 → 凭证守护：账号令牌巡检 / 自动重登 / 错误态自愈
 	admin.GET("/account-ops/token-guard/status", h.Admin.AccountTokenGuard.Status)
 	admin.PUT("/account-ops/token-guard/config", h.Admin.AccountTokenGuard.SaveConfig)
@@ -876,6 +906,17 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 
 // Admins browse the gallery through the user page. The Smart Ops page edits the gallery
 // settings and the group tests that feed it.
+func registerControlledExperimentRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	experiments := admin.Group("/controlled-experiments")
+	experiments.Use(h.Admin.ControlledExperiment.FullAdmin)
+	experiments.GET("/catalog", h.Admin.ControlledExperiment.Catalog)
+	experiments.GET("", h.Admin.ControlledExperiment.List)
+	experiments.POST("", h.Admin.ControlledExperiment.Create)
+	experiments.GET("/:id", h.Admin.ControlledExperiment.Report)
+	experiments.POST("/:id/start", h.Admin.ControlledExperiment.Start)
+	experiments.POST("/:id/stop", h.Admin.ControlledExperiment.Stop)
+}
+
 func registerPelicanShowcaseRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/pelican-showcase/settings", h.PelicanShowcase.GetSettings)
 	admin.PUT("/pelican-showcase/settings", h.PelicanShowcase.UpdateSettings)

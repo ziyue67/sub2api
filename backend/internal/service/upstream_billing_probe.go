@@ -244,6 +244,9 @@ func normalizeUpstreamBillingProbeSettings(settings *UpstreamBillingProbeSetting
 
 // UpstreamBillingProbeService discovers a remote Sub2API billing snapshot.
 type UpstreamBillingProbeService struct {
+	newAPIRepo         NewAPIAuthorizationRepository
+	newAPIEncryptor    SecretEncryptor
+	newAPIFixedKey     bool
 	accountRepo        AccountRepository
 	accountTestService *AccountTestService
 	settingService     *SettingService
@@ -305,9 +308,12 @@ func ProvideUpstreamBillingProbeService(
 	lockCache LeaderLockCache,
 	db *sql.DB,
 	cfg *config.Config,
+	newAPIRepo NewAPIAuthorizationRepository,
+	encryptor SecretEncryptor,
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetLeaderLock(lockCache, db)
+	svc.SetNewAPIAuthorization(newAPIRepo, encryptor, cfg != nil && cfg.Totp.EncryptionKeyConfigured)
 	startBackgroundService(cfg, svc)
 	return svc
 }
@@ -623,6 +629,15 @@ func (s *UpstreamBillingProbeService) SetAccountEnabled(ctx context.Context, acc
 
 func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, account *Account, intervalMinutes int) (*UpstreamBillingProbeSnapshot, error) {
 	now := s.currentTime().UTC()
+	if s.newAPIRepo != nil {
+		binding, err := s.newAPIRepo.GetBinding(ctx, account.ID)
+		if err != nil {
+			return nil, newAPIError("storage_unavailable")
+		}
+		if binding != nil && binding.Fingerprint == NewAPIAccountFingerprint(account) {
+			return s.probeNewAPIAccount(ctx, account, binding, intervalMinutes)
+		}
+	}
 	if s.accountTestService == nil || s.accountTestService.httpUpstream == nil {
 		return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "transport_unavailable", 0)
 	}

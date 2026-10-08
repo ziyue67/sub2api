@@ -77,7 +77,7 @@ func ValidateAccountCostMultiplierExtra(extra map[string]any) error {
 // CostMultiplierToSync returns the successful probe's effective token cost.
 // A failed probe may carry old data; it must never rewrite the saved cost.
 func (s *UpstreamBillingProbeSnapshot) CostMultiplierToSync() (float64, bool) {
-	if s == nil || s.Status != UpstreamBillingProbeStatusOK || s.LastAttemptAt.IsZero() {
+	if s == nil || s.Status != UpstreamBillingProbeStatusOK || s.LastAttemptAt.IsZero() || s.Data["provider"] == "new_api" {
 		return 0, false
 	}
 	value, ok := upstreamBillingRateAt(s.Data, s.LastAttemptAt)

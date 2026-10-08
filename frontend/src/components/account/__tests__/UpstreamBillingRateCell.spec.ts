@@ -68,6 +68,79 @@ describe('UpstreamBillingRateCell', () => {
     vi.useRealTimers()
   })
 
+  it('offers keyboard accessible configuration only for unsupported or configured accounts', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, { props: {
+      account: makeAccount({ extra: { upstream_billing_probe: {
+        status: 'unsupported', last_attempt_at: '', next_probe_at: ''
+      } } }), now: Date.now()
+    } })
+    const configure = wrapper.find('[data-testid="upstream-billing-configure"]')
+    expect(configure.exists()).toBe(true)
+    expect(configure.element.tagName).toBe('BUTTON')
+    await configure.trigger('click')
+    expect(wrapper.emitted('configure')).toHaveLength(1)
+    await wrapper.get('[data-testid="upstream-billing-probe"]').trigger('click')
+    expect(wrapper.emitted('probe')).toHaveLength(1)
+    expect(wrapper.emitted('configure')).toHaveLength(1)
+    await wrapper.setProps({ account: makeAccount({ extra: { upstream_billing_probe: {
+      status: 'failed', last_error: 'timeout', last_attempt_at: '', next_probe_at: ''
+    } } }) })
+    expect(wrapper.find('[data-testid="upstream-billing-configure"]').exists()).toBe(false)
+    await wrapper.setProps({ account: makeAccount({ extra: { upstream_billing_provider: 'new_api' } }) })
+    expect(wrapper.find('[data-testid="upstream-billing-configure"]').exists()).toBe(true)
+  })
+
+  it('leaves refresh available to observers while hiding configuration', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, { props: {
+      account: makeAccount({ extra: { upstream_billing_provider: 'new_api', upstream_billing_probe: { status: 'unsupported', last_attempt_at: '', next_probe_at: '' } } }),
+      now: Date.now(), canConfigure: false
+    } })
+    expect(wrapper.find('[data-testid="upstream-billing-configure"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.unsupported')
+    await wrapper.get('[data-testid="upstream-billing-probe"]').trigger('click')
+    expect(wrapper.emitted('probe')).toHaveLength(1)
+  })
+
+  it('shows New API rates and wallets like other accounts while retaining configuration and tooltip context', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, { props: {
+      account: makeAccount({ extra: { upstream_billing_provider: 'new_api', upstream_billing_probe: {
+        status: 'ok', data: { ...billingData, provider: 'new_api', object: 'new_api.group_billing', billing_scope: 'group', peak_rate_enabled: false },
+        received_at: '2026-07-13T00:00:00Z', fresh_until: '2026-07-14T00:00:00Z',
+        last_attempt_at: '', next_probe_at: '', balance: {
+          status: 'ok', received_at: '2026-07-13T00:00:00Z', fresh_until: '2026-07-14T00:00:00Z', last_attempt_at: '',
+          data: { is_valid: true, mode: 'unrestricted', wallet_balance: 12.34, remaining: 12.34, unit: 'USD', source: 'new_api' }
+        }
+      } } }), now: Date.now()
+    } })
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toContain('0.60x')
+    expect(wrapper.get('[data-testid="upstream-balance-value"]').text()).toBe('$12.34')
+    const regularAccount = JSON.parse(JSON.stringify(wrapper.props('account')))
+    delete regularAccount.extra.upstream_billing_provider
+    delete regularAccount.extra.upstream_billing_probe.data.provider
+    regularAccount.extra.upstream_billing_probe.data.object = 'sub2api.key_billing'
+    regularAccount.extra.upstream_billing_probe.data.billing_scope = 'token'
+    const regular = mount(UpstreamBillingRateCell, { props: { account: regularAccount, now: Date.now() } })
+    expect(wrapper.text()).toBe(regular.text())
+    expect(wrapper.get('[data-testid="upstream-billing-configure"]').text()).toBe('0.60x')
+    await wrapper.get('[data-testid="upstream-billing-configure"]').trigger('click')
+    expect(wrapper.emitted('configure')).toHaveLength(1)
+    await wrapper.get('[data-testid="upstream-billing-details"]').trigger('mouseenter')
+    await flushPromises()
+    const tooltip = Array.from(document.body.querySelectorAll<HTMLElement>('[role="tooltip"]'))
+      .find(element => element.style.display !== 'none' && element.textContent?.includes('admin.accounts.upstreamBilling.newAPI.groupRatioHint'))
+    expect(tooltip).toBeDefined()
+    expect(tooltip?.textContent).toContain('admin.accounts.upstreamBilling.groupRate:0.8')
+    await wrapper.get('[data-testid="upstream-billing-details"]').trigger('mouseleave')
+    const account = JSON.parse(JSON.stringify(wrapper.props('account')))
+    account.extra.upstream_billing_probe.status = 'unsupported'
+    delete account.extra.upstream_billing_probe.data
+    await wrapper.setProps({ account })
+    expect(wrapper.get('[data-testid="upstream-billing-configure"]').text()).toBe('admin.accounts.upstreamBilling.unsupported')
+    expect(wrapper.get('[data-testid="upstream-balance-value"]').text()).toBe('$12.34')
+    regular.unmount()
+    wrapper.unmount()
+  })
+
   it('recomputes the current effective rate and keeps the icon-only probe action', async () => {
     const wrapper = mount(UpstreamBillingRateCell, {
       props: {
@@ -352,7 +425,7 @@ describe('UpstreamBillingRateCell', () => {
       }
     })
 
-    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe(
+    expect(wrapper.get('[data-testid="upstream-billing-configure"]').text()).toBe(
       'admin.accounts.upstreamBilling.unsupported'
     )
     expect(wrapper.text()).not.toContain('-admin.accounts.upstreamBilling.unsupported')
@@ -512,7 +585,7 @@ describe('UpstreamBillingRateCell', () => {
     const wrapper = mount(UpstreamBillingRateCell, {
       props: { account: accountWithBalance(unsupported, unsupportedRate), now: Date.now() }
     })
-    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.unsupported')
+    expect(wrapper.get('[data-testid="upstream-billing-configure"]').text()).toBe('admin.accounts.upstreamBilling.unsupported')
     expect(wrapper.find('[data-testid="upstream-balance"]').exists()).toBe(false)
 
     await wrapper.setProps({ account: accountWithBalance(unsupported) })
@@ -520,7 +593,7 @@ describe('UpstreamBillingRateCell', () => {
 
     // An upstream that predates the billing endpoint can still report a balance.
     await wrapper.setProps({ account: accountWithBalance(balanceSnapshot(), unsupportedRate) })
-    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.unsupported')
+    expect(wrapper.get('[data-testid="upstream-billing-configure"]').text()).toBe('admin.accounts.upstreamBilling.unsupported')
     expect(wrapper.get('[data-testid="upstream-balance-value"]').text()).toContain('12.34')
 
     await wrapper.setProps({ account: accountWithBalance(undefined) })

@@ -1,0 +1,174 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import type { Account, NewAPIUpstreamConfig, NewAPIUpstreamPreview } from '@/types'
+import NewAPIUpstreamConfigDialog from '../NewAPIUpstreamConfigDialog.vue'
+
+const api = vi.hoisted(() => ({ get: vi.fn(), preview: vi.fn(), save: vi.fn(), remove: vi.fn() }))
+vi.mock('@/api/admin/accounts', () => ({
+  getNewAPIUpstreamConfig: api.get, previewNewAPIUpstreamConfig: api.preview,
+  saveNewAPIUpstreamConfig: api.save, deleteNewAPIUpstreamConfig: api.remove
+}))
+vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string, params?: Record<string, unknown>) => params ? `${key}:${Object.values(params).join(',')}` : key }) }))
+
+const account = { id: 7, name: 'current' } as Account
+const config: NewAPIUpstreamConfig = {
+  account_id: 7, site_url: 'https://upstream.example/tenant', configured: true, user_id: 42,
+  encryption_key_configured: true, accounts: [
+    { account_id: 7, name: 'current', configured_user_id: 42 },
+    { account_id: 8, name: 'same user', configured_user_id: 42 },
+    { account_id: 9, name: 'other user', configured_user_id: 55 },
+    { account_id: 10, name: 'unconfigured' }
+  ]
+}
+const preview: NewAPIUpstreamPreview = {
+  site_url: config.site_url, user_id: 42, wallet: { amount: 12.34, unit: 'USD' },
+  accounts: [
+    { account_id: 7, name: 'current', matched: true, token_id: 101, group: 'auto', rate: 0.5, token_options: [] },
+    { account_id: 8, name: 'same user', matched: false, error: 'ambiguous_token', token_options: [
+      { token_id: 102, name: 'candidate one', group: 'default', masked_key: 'ab***yz' },
+      { token_id: 103, name: 'candidate two', group: 'premium', masked_key: 'ab***yz' }
+    ] }
+  ]
+}
+let wrappers: VueWrapper[] = []
+const open = async (props = {}) => {
+  const wrapper = mount(NewAPIUpstreamConfigDialog, { props: { show: true, account, ...props }, global: { stubs: { Teleport: true } } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  return wrapper
+}
+const checkbox = (wrapper: VueWrapper, id: number) => wrapper.get<HTMLInputElement>(`[data-testid="new-api-account-${id}"]`)
+
+beforeEach(() => {
+  vi.resetAllMocks()
+  api.get.mockResolvedValue(config)
+  api.preview.mockResolvedValue(preview)
+  api.save.mockResolvedValue({ ...preview, accounts: preview.accounts.map(row => ({ ...row, matched: true })) })
+  api.remove.mockResolvedValue({ account_id: 7, configured: false })
+})
+afterEach(() => { wrappers.forEach(wrapper => wrapper.unmount()); wrappers = [] })
+
+describe('New API shared authorization dialog', () => {
+  it('loads full same-site candidates without reading a secret or selecting another user', async () => {
+    const wrapper = await open()
+    expect(wrapper.text()).toContain(config.site_url)
+    expect(wrapper.get<HTMLInputElement>('[data-testid="new-api-user-id"]').element.value).toBe('42')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="new-api-access-token"]').element.type).toBe('password')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="new-api-access-token"]').element.value).toBe('')
+    expect(checkbox(wrapper, 7).element.checked).toBe(true)
+    expect(checkbox(wrapper, 8).element.checked).toBe(true)
+    expect(checkbox(wrapper, 9).element.checked).toBe(false)
+    expect(checkbox(wrapper, 10).element.checked).toBe(false)
+    await checkbox(wrapper, 10).setValue(true)
+    await wrapper.get('[data-testid="new-api-preview"]').trigger('click')
+    expect(api.preview).toHaveBeenCalledWith(7, { user_id: 42, account_ids: [7, 8, 10] })
+  })
+
+  it('requires a non-whitespace access token for a new upstream user', async () => {
+    const wrapper = await open()
+    await wrapper.get('[data-testid="new-api-user-id"]').setValue('99')
+    await wrapper.get('[data-testid="new-api-access-token"]').setValue('   ')
+    await wrapper.get('[data-testid="new-api-save"]').trigger('click')
+    expect(wrapper.get('[role="alert"]').text()).toContain('admin.accounts.upstreamBilling.newAPI.tokenRequired')
+    expect(api.save).not.toHaveBeenCalled()
+    expect(checkbox(wrapper, 8).element.checked).toBe(false)
+    expect(checkbox(wrapper, 9).element.checked).toBe(false)
+  })
+
+  it('shows wallet-only automatic groups and sends manually selected candidates for revalidation', async () => {
+    const wrapper = await open()
+    await wrapper.get('[data-testid="new-api-preview"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="new-api-wallet"]').text()).toContain('$12.34 USD')
+    expect(wrapper.get('[data-testid="new-api-result-7"]').text()).toContain('auto')
+    expect(wrapper.get('[data-testid="new-api-result-7"]').text()).toContain('admin.accounts.upstreamBilling.newAPI.noFixedRatio')
+    const select = wrapper.get('[data-testid="new-api-token-8"]')
+    expect(select.findAll('option')).toHaveLength(3)
+    await select.setValue('103')
+    await wrapper.get('[data-testid="new-api-save"]').trigger('click')
+    await flushPromises()
+    expect(api.save).toHaveBeenCalledWith(7, { user_id: 42, account_ids: [7, 8], token_selections: { '8': 103 } })
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('shows verification failure and keeps the dialog open without success', async () => {
+    api.preview.mockRejectedValueOnce({ message: 'User cannot read token inventory' })
+    api.save.mockRejectedValueOnce({ message: 'Selected key does not belong to this user' })
+    const wrapper = await open()
+    await wrapper.get('[data-testid="new-api-preview"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('User cannot read token inventory')
+    await wrapper.get('[data-testid="new-api-save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Selected key does not belong to this user')
+    expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  it('clears entered secrets on close and after save', async () => {
+    const wrapper = await open()
+    await wrapper.get('[data-testid="new-api-access-token"]').setValue(' replacement ')
+    await wrapper.get('[data-testid="new-api-save"]').trigger('click')
+    await flushPromises()
+    expect(api.save).toHaveBeenCalledWith(7, { user_id: 42, access_token: 'replacement', account_ids: [7, 8] })
+    expect(wrapper.get<HTMLInputElement>('[data-testid="new-api-access-token"]').element.value).toBe('')
+    await wrapper.get('[data-testid="new-api-access-token"]').setValue('temporary')
+    await wrapper.get('[data-testid="new-api-close"]').trigger('click')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="new-api-access-token"]').element.value).toBe('')
+  })
+
+  it('ignores an old config response after switching accounts', async () => {
+    let resolveOld!: (value: NewAPIUpstreamConfig) => void
+    api.get.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+    api.get.mockResolvedValueOnce({ ...config, account_id: 9, user_id: 55 })
+    const wrapper = await open()
+    await wrapper.setProps({ account: { id: 9, name: 'other user' } as Account })
+    await flushPromises()
+    resolveOld(config)
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('[data-testid="new-api-user-id"]').element.value).toBe('55')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="new-api-access-token"]').element.value).toBe('')
+    expect(checkbox(wrapper, 7).element.checked).toBe(false)
+    expect(checkbox(wrapper, 9).element.checked).toBe(true)
+  })
+
+  it('hides a selector for an already matched unique token and explains failed ownership with candidates', async () => {
+    api.preview.mockResolvedValue({ ...preview, accounts: [
+      { ...preview.accounts[0], token_options: [{ token_id: 101, name: 'unique', group: 'auto', masked_key: 'ab***yz' }] },
+      { ...preview.accounts[1], error: 'selected_key_verification_failed' }
+    ] })
+    const wrapper = await open()
+    await wrapper.get('[data-testid="new-api-preview"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="new-api-token-7"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="new-api-result-8"]').text()).toContain('admin.accounts.upstreamBilling.newAPI.selectedKeyVerificationFailed')
+    expect(wrapper.get('[data-testid="new-api-result-8"]').text()).not.toContain('selected_key_verification_failed')
+  })
+
+  it('turns safe backend error codes into actionable localized guidance', async () => {
+    api.save.mockRejectedValue({ code: 'NEW_API_VERIFICATION_FAILED', message: 'New API verification failed: invalid_inventory_pagination' })
+    const wrapper = await open()
+    await wrapper.get('[data-testid="new-api-save"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('admin.accounts.upstreamBilling.newAPI.upstreamVerificationFailed')
+    expect(wrapper.get('[role="alert"]').text()).not.toContain('invalid_inventory_pagination')
+  })
+
+  it('requires confirmation before removing only the current binding', async () => {
+    const wrapper = await open()
+    await wrapper.get('[data-testid="new-api-remove"]').trigger('click')
+    expect(api.remove).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="new-api-confirm-remove"]').trigger('click')
+    await flushPromises()
+    expect(api.remove).toHaveBeenCalledWith(7)
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+  })
+
+  it('blocks saving when encryption is unavailable', async () => {
+    api.get.mockResolvedValue({ ...config, encryption_key_configured: false })
+    const wrapper = await open()
+    expect(wrapper.get('[role="alert"]').text()).toContain('admin.accounts.upstreamBilling.newAPI.encryptionRequired')
+    expect(wrapper.get<HTMLButtonElement>('[data-testid="new-api-save"]').element.disabled).toBe(true)
+  })
+})

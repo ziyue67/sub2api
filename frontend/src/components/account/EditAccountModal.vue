@@ -32,7 +32,7 @@
       </div>
 
       <div
-        v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow"
+        v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow && globalPrismEnabled"
         class="rounded-lg border border-gray-200 p-3 dark:border-dark-600"
         data-testid="openai-prism-browser-oauth-settings"
       >
@@ -1798,8 +1798,9 @@
               )
             }}
           </p>
+          <p v-if="isNewAPIUpstream" class="input-hint mt-3">{{ t('admin.accounts.upstreamBilling.newAPI.groupRatioHint') }}</p>
           <div
-            v-if="account?.type === 'apikey'"
+            v-if="account?.type === 'apikey' && !isNewAPIUpstream"
             class="mt-3 flex items-center justify-between gap-3"
           >
             <div class="min-w-0">
@@ -1821,7 +1822,7 @@
         <div>
           <div class="mb-2 flex items-center justify-between gap-1">
             <label class="input-label mb-0" for="account-cost-multiplier">{{ t('admin.accounts.costMultiplier') }}</label>
-            <div v-if="account?.type === 'apikey'" class="flex shrink-0 items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+            <div v-if="account?.type === 'apikey' && !isNewAPIUpstream" class="flex shrink-0 items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
               <span>{{ t('admin.accounts.costMultiplierAutoSync') }}</span>
               <Toggle
                 v-model="costMultiplierAutoSync"
@@ -1893,7 +1894,7 @@
         <p class="input-hint">{{ t('admin.accounts.openai.copilotSDKDesc') }}</p>
       </div>
 
-      <div v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+      <div v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow && globalBpsEnabled"
         class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="flex items-center justify-between gap-4">
           <div>
@@ -2013,7 +2014,7 @@
         </div>
       </div>
 
-      <AccountAutoBPSSection v-if="autoBPSSupported" v-model:draft="autoBPS.draft.value" :groups="groups"
+      <AccountAutoBPSSection v-if="autoBPSSupported && globalBpsEnabled" v-model:draft="autoBPS.draft.value" :groups="groups"
         :loading="autoBPS.loading.value" :load-error="autoBPS.loadError.value" :has-rule="!!autoBPS.rule.value"
         :conflicting-rule-id="autoBPS.conflictingRule.value?.id" />
 
@@ -3512,6 +3513,8 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const globalBpsEnabled = computed(() => appStore.cachedPublicSettings?.excel_bps_enabled !== false)
+const globalPrismEnabled = computed(() => appStore.cachedPublicSettings?.prism_browser_enabled === true)
 const browserTimeZone = getBrowserTimeZone()
 
 const selectableGroups = computed(() => {
@@ -4000,6 +4003,7 @@ const autoResetCredit5hThreshold = ref(100)
 const autoResetCredit7dThreshold = ref(100)
 const upstreamBillingAutoProbeEnabled = ref(false)
 const upstreamBillingRateSyncEnabled = ref(false)
+const isNewAPIUpstream = computed(() => props.account?.extra?.upstream_billing_provider === 'new_api')
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
 const upstreamRequestIdHeader = ref('')
@@ -4558,7 +4562,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
   costMultiplier.value = readAccountCostMultiplier(newAccount.extra)
-  costMultiplierAutoSync.value = newAccount.extra?.cost_multiplier_auto_sync !== false
+  costMultiplierAutoSync.value = newAccount.extra?.upstream_billing_provider !== 'new_api' && newAccount.extra?.cost_multiplier_auto_sync !== false
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
   form.group_rate_multiplier = newAccount.group_rate_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
@@ -4601,7 +4605,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 		typeof extra?.auto_reset_credit_7d_threshold === 'number' ? extra.auto_reset_credit_7d_threshold * 100 : 100
 	upstreamBillingAutoProbeEnabled.value = extra?.upstream_billing_probe_enabled === true
   upstreamBillingRateSyncEnabled.value =
-    upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
+    extra?.upstream_billing_provider !== 'new_api' && upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
   excelBPSEnabled.value = false

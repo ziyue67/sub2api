@@ -222,6 +222,7 @@ export default {
     channelMonitor: 'Channel Monitor',
     channelStatus: 'Channel Status',
     pelicanShowcase: 'Pelican Showcase',
+    supportTickets: 'Support Tickets',
     riskControl: 'Risk Control',
     securityAudit: 'Security Audit',
     contentModeration: 'Content Moderation',

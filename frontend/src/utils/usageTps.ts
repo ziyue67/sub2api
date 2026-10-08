@@ -19,7 +19,7 @@ type UsageTpsRow = Partial<
 export const usageOutputTps = (row: UsageTpsRow | null | undefined): number | null => {
   const outputTokens = row?.output_tokens ?? 0
   const durationMs = row?.duration_ms ?? 0
-  if (!Number.isFinite(outputTokens) || !Number.isFinite(durationMs) || outputTokens <= 0 || durationMs <= 0) {
+  if (!Number.isFinite(outputTokens) || !Number.isFinite(durationMs) || outputTokens < 2 || durationMs <= 0) {
     return null
   }
   if ((row?.image_count ?? 0) > 0 || (row?.image_output_tokens ?? 0) > 0 || row?.billing_mode === BILLING_MODE_VIDEO) {

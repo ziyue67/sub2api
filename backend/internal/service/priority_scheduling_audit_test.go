@@ -70,7 +70,7 @@ func TestPrioritySnapshotRefreshesWithoutAnotherSelection(t *testing.T) {
 func TestPriorityExplorationCanFinishPartialEvidence(t *testing.T) {
 	c := DefaultPrioritySchedulingConfig()
 	c.Enabled = true
-	r := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{1: {Samples: 6, P90TTFTMs: 100, ProfitSamples: 2}}}
+	r := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{1: {Samples: 6, P90TTFTMs: 100, ProfitSamples: 2, QualitySamples: 6, QualityPassed: 6}}}
 	g := priorityGateway(c, r)
 	scheduler := &defaultOpenAIAccountScheduler{service: g}
 	req := OpenAIAccountScheduleRequest{Platform: PlatformOpenAI, RequestedModel: "test", UseUpstreamTokenCost: true}

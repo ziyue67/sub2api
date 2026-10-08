@@ -42,7 +42,7 @@ func TestGatewayRoleStillPersistsRequestObservations(t *testing.T) {
 	require.NoError(t, err)
 	repo := &gatewayAccountOpsRepo{recorded: make(chan AccountOpsEvent, 1)}
 	cfg := &config.Config{Runtime: config.RuntimeConfig{Role: config.RuntimeRoleGateway}}
-	svc := ProvideAccountOpsService(&accountOpsSettingsStub{raw: string(raw)}, repo, nil, nil, nil, cfg)
+	svc := ProvideAccountOpsService(&accountOpsSettingsStub{raw: string(raw)}, repo, nil, nil, nil, cfg, nil, nil, nil, nil)
 	defer svc.Stop()
 	_, err = svc.GetConfig(context.Background())
 	require.NoError(t, err)

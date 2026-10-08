@@ -40,6 +40,12 @@ describe('usageTps', () => {
     expect(formatUsageOutputTps({ output_tokens: 0, duration_ms: 5_000 })).toBeNull()
   })
 
+  it('does not treat a single placeholder token from an interrupted stream as throughput', () => {
+    const interrupted = { output_tokens: 1, duration_ms: 21_135, first_token_ms: 973 }
+    expect(usageOutputTps(interrupted)).toBeNull()
+    expect(formatUsageOutputTps(interrupted)).toBeNull()
+  })
+
   it.each([-1, NaN, Infinity, -Infinity])('rejects invalid output or duration %s', (invalid) => {
     expect(usageOutputTps({ output_tokens: invalid, duration_ms: 10_000 })).toBeNull()
     expect(formatUsageOutputTps({ output_tokens: 500, duration_ms: invalid })).toBeNull()

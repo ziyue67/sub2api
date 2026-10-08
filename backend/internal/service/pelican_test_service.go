@@ -35,6 +35,9 @@ func pelicanTestOptionsFromContext(ctx context.Context) (pelicanTestOptions, boo
 }
 
 func isQualityObservation(ctx context.Context) bool {
+	if isControlledExperiment(ctx) {
+		return true
+	}
 	options, _ := pelicanTestOptionsFromContext(ctx)
 	return options.observeOnly
 }
@@ -53,7 +56,7 @@ func (s *AccountTestService) TestPelicanAccountConnection(c *gin.Context, accoun
 
 func normalizePelicanReasoningEffort(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "minimal", "low", "medium", "high", "xhigh":
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""

@@ -222,6 +222,7 @@ export default {
     channelMonitor: '渠道监控',
     channelStatus: '渠道状态',
     pelicanShowcase: '鹈鹕测智',
+    supportTickets: '网站工单',
     riskControl: '风控中心',
     securityAudit: '安全审计',
     contentModeration: '内容审计',

@@ -20,6 +20,37 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// normalizeOpenAIResponsesNamespaces keeps initial routing and a late WS-to-HTTP
+// fallback on the same namespace policy, including validation and response names.
+func normalizeOpenAIResponsesNamespaces(c *gin.Context, account *Account, body []byte, transport OpenAIUpstreamTransport, passthroughEnabled, compactPath bool) ([]byte, error) {
+	var err error
+	if shouldFlattenOpenAIResponsesNamespaces(account, transport, passthroughEnabled, compactPath) {
+		body, err = flattenOpenAIResponsesNamespaces(c, body)
+		if err != nil {
+			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": err.Error(), "param": "tools",
+			}})
+			return nil, err
+		}
+	}
+	if shouldStripOpenAIResponsesInputNamespaces(account, transport, passthroughEnabled) {
+		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
+			account, transport, passthroughEnabled, compactPath, body,
+		)
+		body, err = stripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
+		if err != nil {
+			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
+			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+				"type": "invalid_request_error", "message": err.Error(), "param": "input",
+			}})
+			return nil, err
+		}
+	}
+
+	return body, nil
+}
+
 func accountUsesPrismBrowser(account *Account, cfg *config.Config) bool {
 	return accountHasPrismBrowser(account) && cfg != nil && cfg.Gateway.PrismBrowser.Enabled
 }
@@ -30,6 +61,21 @@ func accountHasPrismBrowser(account *Account) bool {
 	}
 	enabled, _ := account.Extra["openai_prism_browser"].(bool)
 	return enabled
+}
+
+func (s *OpenAIGatewayService) prismBrowserGloballyEnabled(ctx context.Context) bool {
+	if s == nil || s.settingService == nil {
+		return s != nil && s.cfg != nil && s.cfg.Gateway.PrismBrowser.Enabled
+	}
+	return s.settingService.GetPrismBrowserRuntime(ctx).Enabled
+}
+
+func (s *OpenAIGatewayService) excelBPSGloballyEnabled(ctx context.Context) bool {
+	if s == nil || s.settingService == nil {
+		return true
+	}
+	enabled, err := s.settingService.GetProtocolFeatureEnabled(ctx, SettingKeyExcelBPSEnabled)
+	return err == nil && enabled
 }
 
 func prismBrowserResponsesURL(baseURL string) string {
@@ -111,14 +157,17 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	modelForBPS := gjson.GetBytes(body, "model").String()
-	if account.IsPrismBrowserEnabledForModel(modelForBPS) {
+	if err := s.checkControlledRoute(ctx, c, account, modelForBPS); err != nil {
+		return nil, err
+	}
+	if account.IsPrismBrowserEnabledForModel(modelForBPS) && s.prismBrowserGloballyEnabled(ctx) {
 		return s.forwardPrismBrowser(ctx, c, account, body, startTime)
 	}
 	if c.GetBool(bpsAccountProbeRequiredContextKey) &&
 		(!account.IsExcelBPSEnabledForModel(modelForBPS) || account.excelBPSNativeFallbackReason(body) != "") {
 		return nil, errors.New("bps probe path is unavailable")
 	}
-	if account.IsExcelBPSEnabledForModel(modelForBPS) {
+	if account.IsExcelBPSEnabledForModel(modelForBPS) && s.excelBPSGloballyEnabled(ctx) {
 		return s.forwardExcelBPS(ctx, c, account, body, startTime)
 	}
 
@@ -204,31 +253,25 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		defer func() { anchorFinish(result, resultErr) }()
 		wsDecision = OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2, Reason: "private_astra_ws_anchor"}
 	}
+	if mode := controlledMode(ctx); mode != nil {
+		switch mode.channel {
+		case "native_http":
+			if anchorFinish != nil {
+				return nil, errors.New("controlled HTTP experiment cannot use a WS anchor")
+			}
+			wsDecision = openAIWSHTTPDecision("controlled_experiment_http")
+		case "native_ws":
+			if wsDecision.Transport != OpenAIUpstreamTransportResponsesWebsocketV2 {
+				return nil, errors.New("controlled WS experiment cannot fall back to HTTP")
+			}
+		}
+	}
 
 	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
 	compactPath := isOpenAIResponsesCompactPath(c)
-	if shouldFlattenOpenAIResponsesNamespaces(account, wsDecision.Transport, passthroughEnabled, compactPath) {
-		body, err = flattenOpenAIResponsesNamespaces(c, body)
-		if err != nil {
-			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
-			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
-				"type": "invalid_request_error", "message": err.Error(), "param": "tools",
-			}})
-			return nil, err
-		}
-	}
-	if shouldStripOpenAIResponsesInputNamespaces(account, wsDecision.Transport, passthroughEnabled) {
-		keepToolCallNamespaces := shouldKeepOpenAIResponsesToolCallNamespaces(
-			account, wsDecision.Transport, passthroughEnabled, compactPath, body,
-		)
-		body, err = stripOpenAIResponsesInputNamespaces(body, keepToolCallNamespaces)
-		if err != nil {
-			setOpsUpstreamError(c, http.StatusBadRequest, err.Error(), "")
-			c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
-				"type": "invalid_request_error", "message": err.Error(), "param": "input",
-			}})
-			return nil, err
-		}
+	body, err = normalizeOpenAIResponsesNamespaces(c, account, body, wsDecision.Transport, passthroughEnabled, compactPath)
+	if err != nil {
+		return nil, err
 	}
 
 	nativeCNResponses := account.UsesNativeCNResponses()
@@ -899,7 +942,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	SetOpsUpstreamModel(c, upstreamModel)
 
 	// Native WS keeps its retry policy. HTTP SSE acceleration may fall back
-	// only when the handshake failed before response.create was sent.
+	// only after a local pre-send rejection or an eligible handshake failure.
 	if wsDecision.Transport == OpenAIUpstreamTransportResponsesWebsocketV2 {
 		// WS 分支需要结构化 payload 与重连恢复，命中后再触发 full-map decode。
 		wsReqBody, err := ensureReqBody()
@@ -916,6 +959,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			hasPreviousResponseID,
 		)
 		maxAttempts := openAIWSReconnectRetryLimit + 1
+		if isControlledExperiment(ctx) {
+			maxAttempts = 1
+		}
 		wsAttempts := 0
 		var wsResult *OpenAIForwardResult
 		var wsErr error
@@ -1159,12 +1205,33 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			return wsResult, wsErr
 		}
-		if !accelerateHTTPSSE || !canFallbackOpenAIWSSSEHandshake(ctx, c, wsErr) {
+		fallbackReason := ""
+		if accelerateHTTPSSE && !isControlledExperiment(ctx) {
+			fallbackReason = openAIWSSSEFallbackReason(ctx, c, wsErr)
+		}
+		if fallbackReason == "" {
 			s.writeOpenAIWSFallbackErrorResponse(c, account, wsErr)
 			return nil, wsErr
 		}
+		// Discard the unused WS handshake header before HTTP commits its own.
+		c.Writer.Header().Del(openAIWSTurnStateHeader)
+		// WS skipped the HTTP namespace policy above. A local pre-send or
+		// handshake fallback must honor the same request/response mapping as
+		// ordinary HTTP, not just change the transport metadata.
+		body, err = normalizeOpenAIResponsesNamespaces(c, account, body, OpenAIUpstreamTransportHTTPSSE, passthroughEnabled, compactPath)
+		if err != nil {
+			return nil, err
+		}
+		if !account.IsOpenAIApiKey() {
+			body, _, err = dropPreviousResponseIDFromRawPayload(body)
+			if err != nil {
+				return nil, err
+			}
+		}
+		requestView = newOpenAIRequestView(body)
+		reqBody = nil
 		c.Set("openai_ws_transport_decision", string(OpenAIUpstreamTransportHTTPSSE))
-		c.Set("openai_ws_transport_reason", "oauth_ws_sse_handshake_fallback")
+		c.Set("openai_ws_transport_reason", fallbackReason)
 	}
 
 	reasoningEffort := extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel)
@@ -1268,7 +1335,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 			upstreamCode := extractUpstreamErrorCode(respBody)
-			if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
+			if !isControlledExperiment(ctx) && !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 				agentTaskRecoveryTried = true
 				expectedTaskID := account.GetCredential("task_id")
 				if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
@@ -1283,7 +1350,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					strings.Contains(upstreamMsg, "The encrypted content") &&
 					strings.Contains(upstreamMsg, "could not be verified") &&
 					strings.Contains(upstreamMsg, "could not be decrypted or parsed"))
-			if !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
+			if !isControlledExperiment(ctx) && !httpInvalidEncryptedContentRetryTried && resp.StatusCode == http.StatusBadRequest && invalidEncryptedContentError {
 				decoded, decodeErr := ensureReqBody()
 				if decodeErr != nil {
 					return nil, decodeErr
@@ -1309,7 +1376,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
 				return nil, fmt.Errorf("normalize rejected Responses field retry body: %w", retryErr)
-			} else if changed && rejectedFieldRetryState.Allow(retryBody) {
+			} else if !isControlledExperiment(ctx) && changed && rejectedFieldRetryState.Allow(retryBody) {
 				body = retryBody
 				requestView = newOpenAIRequestView(body)
 				reqBody = nil
@@ -1318,7 +1385,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			if retryBody, fallbackModel, retry := s.prepareOpenAICompactFallbackRetry(
 				c, account, requestedModel, body, resp.StatusCode, upstreamMsg, respBody, compactModelFallbackRetried,
-			); retry {
+			); retry && !isControlledExperiment(ctx) {
 				s.appendOpenAICompactFallbackRetryOps(c, account, resp, respBody, upstreamMsg, false)
 				fromModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 				body = retryBody

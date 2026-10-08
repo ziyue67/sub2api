@@ -94,6 +94,8 @@ function defineFlag<K extends keyof PublicSettings>(
  * public-settings-driven switch; see the "Adding a new flag" checklist above.
  */
 export const FeatureFlags = {
+  excelBps: defineFlag({ key: 'excel_bps_enabled', mode: 'opt-out', label: 'Excel / BPS' }),
+  prismBrowser: defineFlag({ key: 'prism_browser_enabled', mode: 'opt-in', label: 'Prism browser bridge' }),
   channelMonitor: defineFlag({
     key: 'channel_monitor_enabled',
     mode: 'opt-out',
@@ -143,6 +145,11 @@ export const FeatureFlags = {
     key: 'leaderboard_show_actual_cost',
     mode: 'opt-out',
     label: 'Leaderboard actual cost',
+  }),
+  supportTickets: defineFlag({
+    key: 'support_ticket_enabled',
+    mode: 'opt-in',
+    label: 'Support Tickets',
   }),
 } as const
 

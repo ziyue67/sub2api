@@ -10,15 +10,17 @@ import (
 const priorityExplorationShare = 0.10
 
 // Ten-percentage-point cohorts prefer genuinely idle capacity while preserving
-// weighted diversity among similarly loaded accounts. Use the next slot and
-// RPM headroom, and rank real queues after every non-queued cohort.
+// weighted diversity among similarly loaded accounts. The atomic slot race
+// below still rejects full accounts; the band describes the observed load and
+// must not promote every empty low-concurrency account just because it may take
+// the next request.
 func priorityCapacityBand(item openAIAccountCandidateScore) int {
 	if !item.loadKnown || item.loadInfo == nil || item.account.Concurrency <= 0 {
 		return 10
 	}
-	load := float64(max(0, item.loadInfo.CurrentConcurrency)+1) / float64(item.account.Concurrency)
+	load := float64(max(0, item.loadInfo.CurrentConcurrency)) / float64(item.account.Concurrency)
 	if item.rpmEnabled && item.rpmLimit > 0 {
-		load = math.Max(load, float64(item.rpmCurrent+1)/float64(item.rpmLimit))
+		load = math.Max(load, float64(max(0, item.rpmCurrent))/float64(item.rpmLimit))
 	}
 	band := int(math.Floor(load * 10))
 	if item.loadInfo.WaitingCount > 0 {

@@ -101,10 +101,52 @@ func TestPriorityColdStartExplorationIsBounded(t *testing.T) {
 	}
 }
 
+func TestPriorityCapacityBandUsesObservedLoad(t *testing.T) {
+	low := priorityCandidate(1, 0.1, 0)
+	low.account.Concurrency = 10
+	low.loadKnown = true
+	low.loadInfo.CurrentConcurrency = 0
+	high := low
+	high.loadInfo = &AccountLoadInfo{AccountID: 1, CurrentConcurrency: 1}
+	require.Equal(t, 0, priorityCapacityBand(low))
+	require.Equal(t, 1, priorityCapacityBand(high))
+	low.rpmEnabled, low.rpmLimit, low.rpmCurrent = true, 10, 0
+	high.rpmEnabled, high.rpmLimit, high.rpmCurrent = true, 10, 1
+	require.Equal(t, 0, priorityCapacityBand(low))
+	require.Equal(t, 1, priorityCapacityBand(high))
+}
+
+func TestPriorityExplorationIncludesQualityReadyAPIKey(t *testing.T) {
+	cfg := DefaultPrioritySchedulingConfig()
+	cfg.Enabled = true
+	item := priorityCandidate(1, 0.1, 0)
+	item.account.Type = AccountTypeAPIKey
+	item.loadKnown = true
+	item.loadInfo.CurrentConcurrency = 0
+	score := applyPriorityCandidate(cfg, &item, PrioritySchedulingSignal{
+		QualityPassed: 9, QualitySamples: 10,
+	}, time.Now())
+	require.Equal(t, "insufficient", score.Tier)
+	require.True(t, item.priorityExploration)
+}
+
+func TestPriorityExplorationRejectsUnknownQuality(t *testing.T) {
+	cfg := DefaultPrioritySchedulingConfig()
+	cfg.Enabled = true
+	item := priorityCandidate(1, 0.1, 0)
+	item.account.Type = AccountTypeAPIKey
+	item.loadKnown = true
+	item.loadInfo.CurrentConcurrency = 0
+	applyPriorityCandidate(cfg, &item, PrioritySchedulingSignal{}, time.Now())
+	require.False(t, item.priorityExploration)
+}
+
 func TestPriorityExplorationRequiresSafeUnknownAccount(t *testing.T) {
 	cfg := DefaultPrioritySchedulingConfig()
 	cfg.Enabled = true
-	reader := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{}}
+	reader := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{
+		1: {QualityPassed: 10, QualitySamples: 10},
+	}}
 	gateway := priorityGateway(cfg, reader)
 	scheduler := &defaultOpenAIAccountScheduler{service: gateway}
 	pool := []openAIAccountCandidateScore{priorityCandidate(1, 0.1, 0), priorityCandidate(2, 0.1, 90), priorityCandidate(3, 0.1, 0), priorityCandidate(4, 0.1, 0)}

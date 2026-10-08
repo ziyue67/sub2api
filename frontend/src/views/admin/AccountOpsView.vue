@@ -1,39 +1,165 @@
 <template>
   <AppLayout>
-    <div class="account-ops">
+    <div class="account-ops space-y-5">
       <SmartOpsNav />
-      <header class="ops-heading"><div><p class="eyebrow">{{ t('accountOps.smartTitle') }}</p><h2>{{ t('accountOps.workspaceTitle') }}</h2><p class="subtitle">{{ t('accountOps.description') }}</p></div><button class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="load"><Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />{{ t('qualityOps.refresh') }}</button></header>
-      <p v-if="error" role="alert" class="error-banner">{{ error }}</p><p v-if="notice" role="status" class="success-banner">{{ notice }}</p>
-      <div class="ops-columns">
-        <section class="settings-card">
-          <div class="section-title"><span class="icon-tile"><Icon name="bell" size="md" /></span><div><h3>{{ t('accountOps.mailAlerts') }}</h3><p>{{ t('accountOps.oneRecipient') }}</p></div></div>
-          <div v-if="!draft" class="space-y-4 p-5" role="status"><span v-for="n in 5" :key="n" class="block h-8 animate-pulse rounded-lg bg-gray-100 dark:bg-dark-800" /></div>
-          <form v-else class="settings-form" @submit.prevent="save">
-            <fieldset :disabled="saving">
-              <label class="enable-row"><span><strong>{{ t('accountOps.enabled') }}</strong><small>{{ t('accountOps.enabledHint') }}</small></span><input v-model="draft.enabled" type="checkbox" role="switch" :aria-label="t('accountOps.enabled')" /></label>
-              <label class="field-label" for="account-ops-email">{{ t('accountOps.recipient') }}</label><input id="account-ops-email" v-model.trim="draft.recipient" type="email" :required="draft.enabled" maxlength="254" autocomplete="email" class="input w-full" placeholder="ops@example.com" />
-              <p class="field-hint">{{ t('accountOps.recipientHint') }}</p>
-              <div class="field-label">{{ t('accountOps.alertTypes') }}</div>
-              <label class="kind-option"><input v-model="draft.balance_low" type="checkbox" /><span><strong>{{ t('accountOps.balance_low') }}</strong><small>{{ t('accountOps.balanceHint') }}</small></span></label>
-              <label class="kind-option"><input v-model="draft.weekly_quota" type="checkbox" /><span><strong>{{ t('accountOps.weekly_quota') }}</strong><small>{{ t('accountOps.weeklyHint') }}</small></span></label>
-              <label class="field-label" for="account-ops-cooldown">{{ t('accountOps.cooldown') }}</label><div class="flex items-center gap-3"><input id="account-ops-cooldown" v-model.number="draft.cooldown_minutes" type="number" min="5" max="1440" required class="input w-28" /><span class="text-sm text-gray-500">{{ t('accountOps.minutes') }}</span></div>
-              <p class="field-hint">{{ t('accountOps.cooldownHint') }}</p>
-              <div class="smtp-state" :class="remote?.smtp_configured ? 'smtp-ready' : 'smtp-missing'"><Icon :name="remote?.smtp_configured ? 'checkCircle' : 'exclamationCircle'" size="sm" /><span>{{ t(remote?.smtp_configured ? 'accountOps.smtpReady' : 'accountOps.smtpMissing') }}</span><a href="/admin/settings">{{ t('accountOps.mailSettings') }}<Icon name="externalLink" size="xs" /></a></div>
-              <div class="settings-actions"><span>{{ dirty ? t('accountOps.unsaved') : t('accountOps.savedState') }}</span><button class="btn btn-primary" :disabled="saving || !dirty">{{ t(saving ? 'qualityOps.saving' : 'qualityOps.save') }}</button></div>
-            </fieldset>
-          </form>
-        </section>
-        <section class="events-card">
-          <header class="events-heading"><div><h3>{{ t('accountOps.events') }}<span>{{ events.length }}</span></h3><p>{{ t('accountOps.eventsHint') }}</p></div><span class="observe-status" :class="remote?.config.enabled ? 'observing' : ''"><span />{{ t(remote?.config.enabled ? 'accountOps.observing' : 'accountOps.disabled') }}</span></header>
-          <div class="event-toolbar"><div class="flex items-center gap-2"><Icon name="search" size="sm" class="text-gray-400" /><input v-model="query" class="min-w-0 bg-transparent text-sm outline-none" :aria-label="t('accountOps.search')" :placeholder="t('accountOps.search')" /></div><select v-model="kind" :aria-label="t('accountOps.alertTypes')"><option value="all">{{ t('accountOps.allTypes') }}</option><option value="balance_low">{{ t('accountOps.balance_low') }}</option><option value="weekly_quota">{{ t('accountOps.weekly_quota') }}</option></select></div>
-          <div v-if="remote?.dropped_signals || remote?.storage_failures" role="alert" class="error-banner mx-4">{{ t('accountOps.captureIssue') }}</div>
-          <div class="events-scroll" data-testid="account-events-scroll" :aria-busy="loading"><table><thead><tr><th>{{ t('qualityOps.accounts') }}</th><th>{{ t('accountOps.failureType') }}</th><th>{{ t('accountOps.lastSeen') }}</th><th>{{ t('accountOps.mailStatus') }}</th></tr></thead><tbody>
-            <tr v-for="event in filteredEvents" :key="`${event.account_id}:${event.kind}`"><td><strong :title="event.account_name">{{ event.account_name }}</strong><small>#{{ event.account_id }} · {{ t('accountOps.occurrences', { n: event.occurrences }) }}</small></td><td><span class="failure-badge">{{ t(`accountOps.${event.kind}`) }}</span><small>HTTP {{ event.http_status }} · {{ t(`accountOps.signals.${event.signal}`) }}</small></td><td class="whitespace-nowrap">{{ date(event.last_seen) }}<small>{{ t('accountOps.firstSeen') }} {{ date(event.first_seen) }}</small></td><td><span class="delivery-status" :class="`delivery-${event.state}`">{{ t(`accountOps.states.${event.state}`) }}</span><small>{{ event.last_sent_at ? date(event.last_sent_at) : t('accountOps.notSent') }}</small><small v-if="event.state === 'failed'">{{ t(event.attempts < 3 ? 'accountOps.retryAt' : 'accountOps.retryStopped', { time: date(event.next_send_at) }) }}</small></td></tr>
-          </tbody></table><div v-if="!events.length" class="empty-state"><Icon name="bell" size="xl" /><h4>{{ t(loading ? 'qualityOps.loading' : 'accountOps.empty') }}</h4><p>{{ t('accountOps.emptyHint') }}</p></div></div>
-          <footer class="events-footer"><p>{{ t('accountOps.noRawErrors') }}</p><button v-if="hasMore" :disabled="loadingMore" @click="more">{{ t(loadingMore ? 'qualityOps.loading' : 'qualityOps.loadMore') }}</button></footer>
-        </section>
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 dark:border-dark-700">
+        <div role="tablist" :aria-label="t('accountOps.pageSections')" class="flex gap-6">
+          <button v-for="tab in tabs" :id="`ops-tab-${tab}`" :key="tab" type="button" role="tab" :aria-selected="activeTab === tab"
+            :aria-controls="`ops-panel-${tab}`" :tabindex="activeTab === tab ? 0 : -1" class="border-b-2 px-1 py-3 text-sm font-medium"
+            :class="activeTab === tab ? 'border-primary-600 text-primary-700 dark:text-primary-400' : 'border-transparent text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'"
+            :data-testid="`account-ops-tab-${tab}`" @click="selectTab(tab)"
+            @keydown="tabKey($event, tab)">{{ t(tab === 'records' ? 'accountOps.recordsTab' : 'accountOps.settingsTab') }}</button>
+        </div>
+        <div class="flex items-center gap-3 pb-2">
+          <div class="flex items-center gap-3 text-sm font-medium"><span id="account-ops-enabled-label">{{ t('accountOps.enabled') }}</span>
+            <Toggle :model-value="enabledDraft" aria-labelledby="account-ops-enabled-label"
+              :disabled="!remote || loading || mutating || globalSaving" class="disabled:cursor-wait disabled:opacity-50"
+              data-testid="notifications-enabled" @update:model-value="toggleNotifications" />
+          </div><button class="btn btn-secondary inline-flex items-center gap-2 py-1.5" :disabled="loading || thresholdLoading || mutating || globalSaving" @click="refresh">
+            <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />{{ t('qualityOps.refresh') }}
+          </button>
+        </div>
       </div>
-      <aside class="scope-note"><Icon name="infoCircle" size="sm" /><p>{{ t('accountOps.scopeNote') }}</p></aside>
+      <section v-if="activeTab === 'records'" id="ops-panel-records" role="tabpanel" aria-labelledby="ops-tab-records"
+        class="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-5 dark:border-dark-700">
+          <div>
+            <h2 class="text-base font-semibold">{{ t('accountOps.recordsTab') }}</h2>
+            <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.recordsOnceHint') }}</p>
+          </div>
+          <div class="flex flex-wrap gap-2"><input v-model="query" class="input w-48 text-sm" :placeholder="t('accountOps.search')"
+              :aria-label="t('accountOps.search')" /><select v-model="kind" class="input w-auto text-sm"
+              :aria-label="t('accountOps.alertTypes')">
+              <option value="all">{{ t('accountOps.allTypes') }}</option>
+              <option v-for="value in alertKinds" :key="value" :value="value">{{ t(`accountOps.${value}`) }}</option>
+            </select><select v-model="phase" class="input w-auto text-sm" :aria-label="t('accountOps.eventPhase')">
+              <option value="all">{{ t('accountOps.allPhases') }}</option>
+              <option value="alert">{{ t('accountOps.phases.alert') }}</option>
+              <option value="recovery">{{ t('accountOps.phases.recovery') }}</option>
+            </select></div>
+        </div>
+        <p v-if="remote?.dropped_signals || remote?.storage_failures" role="alert" class="p-4 text-sm text-amber-700">
+          {{ t('accountOps.captureIssue') }}</p>
+        <div class="overflow-x-auto" data-testid="account-events-scroll" :aria-busy="loading">
+          <table v-if="filteredEvents.length" class="w-full min-w-[760px] text-left text-sm">
+            <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800">
+              <tr>
+                <th class="px-5 py-3">{{ t('qualityOps.accounts') }}</th>
+                <th class="px-4 py-3">{{ t('accountOps.eventPhase') }}</th>
+                <th class="px-4 py-3">{{ t('accountOps.eventValue') }}</th>
+                <th class="px-4 py-3">{{ t('accountOps.occurredAt') }}</th>
+                <th class="px-5 py-3">{{ t('accountOps.mailStatus') }}</th>
+                <th class="px-5 py-3">{{ t('accountOps.deliveryDetails') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="event in filteredEvents" :key="eventKey(event)" class="border-t border-gray-100 align-top dark:border-dark-700"
+                data-testid="notification-record">
+                <td class="px-5 py-4">
+                  <p class="font-medium">{{ event.account_name }}</p>
+                  <p class="mt-1 text-xs text-gray-500">#{{ event.account_id }} · {{ t(`accountOps.${event.kind}`) }}</p>
+                </td>
+                <td class="px-4 py-4"><span class="rounded px-2 py-1 text-xs"
+                    :class="event.phase === 'recovery' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400' : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'">{{ t(event.phase ? `accountOps.phases.${event.phase}` : 'accountOps.failureSignal') }}</span>
+                </td>
+                <td class="px-4 py-4 text-xs"><template v-if="event.kind === 'balance_threshold'">{{ event.details?.balance }}
+                    {{ event.details?.unit }}<span class="mt-1 block text-gray-500">{{ t('accountOps.thresholdValue') }}
+                      {{ event.details?.threshold }} {{ event.details?.unit }}</span></template><template
+                    v-else-if="event.kind === 'quota_threshold'">{{ event.details?.used_percent }}% · {{ event.details?.window }}<span
+                      class="mt-1 block text-gray-500">{{ t('accountOps.thresholdValue') }}
+                      {{ event.details?.threshold_percent }}%</span></template><template v-else>HTTP {{ event.http_status }}<span
+                      class="mt-1 block text-gray-500">{{ t(`accountOps.signals.${event.signal}`) }}</span></template></td>
+                <td class="whitespace-nowrap px-4 py-4 text-xs text-gray-600 dark:text-gray-400">{{ date(event.first_seen) }}</td>
+                <td class="px-5 py-4">
+                  <p class="whitespace-nowrap text-xs"
+                    :class="event.state === 'failed' ? 'text-red-600' : event.state === 'sent' ? 'text-emerald-600' : 'text-gray-500'">
+                    {{ t(event.notification_enabled === false ? 'accountOps.policyRecord' : `accountOps.states.${event.state}`) }}</p>
+                  <p v-if="event.state === 'failed'" class="mt-2 text-[11px] text-gray-500">
+                    {{ t(event.attempts < 3 ? 'accountOps.retryAt' : 'accountOps.retryStopped', { time: date(event.next_send_at) }) }}</p>
+                </td>
+                <td class="px-5 py-4"><AccountOpsDeliveryDetails :deliveries="event.deliveries" /></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="!filteredEvents.length" class="flex min-h-72 flex-col items-center justify-center gap-3 p-8 text-center text-gray-500">
+          <Icon name="bell" size="xl" />
+          <p class="text-sm">{{ t(loading ? 'common.loading' : events.length ? 'accountOps.noMatchingRecords' : 'accountOps.empty') }}</p>
+          <p class="max-w-lg text-xs leading-5">{{ t('accountOps.recordsEmptyHint') }}</p><button type="button"
+            class="btn btn-secondary mt-1" @click="selectTab('settings')">{{ t('accountOps.settingsTab') }}</button>
+        </div>
+        <div class="flex items-center justify-between gap-3 border-t border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-dark-700">
+          <span>{{ t('accountOps.noRawErrors') }}</span><button v-if="hasMore" :disabled="loadingMore" class="text-primary-600"
+            @click="more">{{ t(loadingMore ? 'common.loading' : 'qualityOps.loadMore') }}</button></div>
+      </section>
+      <section v-if="activeTab === 'settings' && remote" id="ops-panel-settings" role="tabpanel" aria-labelledby="ops-tab-settings"
+        class="space-y-5">
+        <section class="rounded-xl border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-900"
+          data-testid="account-ops-channels">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
+            <div>
+              <h2 class="text-sm font-semibold">{{ t('accountOps.notificationChannels') }}</h2>
+              <p class="mt-1 text-xs text-gray-500">{{ t('accountOps.channelSummaryHint') }}</p>
+            </div>
+          </div>
+          <div class="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-3">
+            <div v-if="remote.config.recipient" class="rounded-lg border border-gray-200 p-4 dark:border-dark-700"
+              data-testid="account-ops-email-channel">
+              <div class="flex items-center justify-between"><span
+                  class="min-w-0 truncate text-sm font-medium" :title="remote.config.email_name || t('accountOps.providers.email')">{{ remote.config.email_name || t('accountOps.providers.email') }}</span><span
+                  class="text-xs text-gray-500">{{ t(remote.config.recipient ? 'accountOps.channelConfigured' : 'accountOps.channelUnconfigured') }}</span>
+              </div>
+              <p class="mt-2 truncate text-xs text-gray-500">{{ remote.config.email_name ? `${t('accountOps.providers.email')} · ` : '' }}{{ remote.config.recipient }}</p>
+              <div class="mt-3 flex gap-4 text-xs"><button type="button" class="text-primary-600" data-testid="edit-email-channel"
+                  @click="showEmail = true">{{ t('common.edit') }}</button><button type="button" :disabled="mutating"
+                  class="text-gray-500 hover:text-red-600 disabled:opacity-40" data-testid="delete-email-channel"
+                  @click="removeEmail">{{ t('common.delete') }}</button></div>
+            </div>
+            <div v-for="(hook, index) in remote.config.webhooks" :key="hook.id"
+              class="rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+              <div class="flex items-center justify-between gap-2"><span
+                  class="min-w-0 truncate text-sm font-medium" :title="hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}`">{{ hook.name || `${t(`accountOps.providers.${hook.provider}`)} ${index + 1}` }}</span><span class="text-xs"
+                  :class="hook.enabled ? 'text-emerald-600' : 'text-gray-500'">{{ t(hook.enabled ? 'accountOps.channelEnabled' : 'accountOps.channelDisabled') }}</span>
+              </div>
+              <p class="mt-2 text-xs text-gray-500">
+                {{ hook.name ? `${t(`accountOps.providers.${hook.provider}`)} · ` : '' }}{{ t(hook.url_configured ? 'accountOps.credentialSaved' : 'accountOps.channelUnconfigured') }}</p>
+              <div class="mt-3 flex gap-4 text-xs"><button type="button" class="text-primary-600" :data-testid="`edit-webhook-${hook.id}`"
+                  @click="editWebhook(hook)">{{ t('common.edit') }}</button><button type="button"
+                  class="text-primary-600 disabled:opacity-40" :disabled="!hook.url_configured || !!testingId"
+                  :data-testid="`account-ops-webhook-test-${hook.id}`"
+                  @click="testWebhook(hook.id)">{{ t(testingId === hook.id ? 'common.loading' : 'accountOps.testRobot') }}</button><button
+                  type="button" class="text-gray-500 hover:text-red-600" @click="removeWebhook(hook.id)">{{ t('common.delete') }}</button>
+              </div>
+            </div><button type="button"
+              class="min-h-28 rounded-lg border border-dashed border-gray-300 p-4 text-sm text-primary-600 disabled:opacity-40 dark:border-dark-600"
+              :disabled="!canAddChannel" data-testid="account-ops-add-channel"
+              @click="showAddChannel = true">{{ t('accountOps.addChannel') }}</button>
+          </div>
+        </section>
+        <AccountOpsRuleList ref="ruleList" :accounts="thresholdAccounts" :config="remote.config" :loading="thresholdLoading"
+          :ready="thresholdReady" :error="thresholdError" :busy="mutating" @edit="editingAccount = $event"
+          @batch-edit="batchAccounts = $event" @toggle="toggleRule" @remove="removeRule">
+          <template #global-settings>
+            <AccountOpsGlobalSettings :config="remote.config" :disabled="mutating" @saving="globalSaving = $event" @saved="acceptConfig"
+              @error="app.showError" />
+          </template>
+        </AccountOpsRuleList>
+      </section>
+      <template v-if="remote && auth.user">
+        <AccountOpsBatchRuleDialog :show="batchAccounts.length > 0" :accounts="batchAccounts" @close="batchAccounts = []"
+          @saved="acceptBatchConfig" @error="app.showError" />
+        <AccountOpsAddChannelDialog :show="showAddChannel" :email-configured="!!remote.config.recipient"
+          :webhook-count="remote.config.webhooks?.length ?? 0" :encryption-configured="remote.encryption_key_configured === true"
+          @close="showAddChannel = false" @select="addChannel" />
+        <AccountOpsRuleDialog :show="editingAccount !== null" :account="editingAccount"
+          :balance-rule="remote.config.balance_thresholds?.find(r => r.account_id === editingAccount?.account_id) ?? null"
+          :quota-rule="remote.config.quota_thresholds?.find(r => r.account_id === editingAccount?.account_id) ?? null"
+          @close="editingAccount = null" @saved="acceptConfig" @error="app.showError" />
+        <AccountOpsWebhookDialog :show="showWebhook" :hook="editingHook" :encryption-configured="remote.encryption_key_configured === true"
+          :testing-id="testingId" @close="showWebhook = false" @saved="acceptConfig" @error="app.showError" @test="testWebhook" />
+        <AccountOpsEmailDialog :show="showEmail" :config="remote.config" :smtp-configured="remote.smtp_configured"
+          @close="showEmail = false" @saved="acceptConfig" @error="app.showError" />
+      </template>
     </div>
   </AppLayout>
 </template>
@@ -43,116 +169,94 @@ import { useI18n } from 'vue-i18n'
 import { storeToRefs } from 'pinia'
 import { useAccountOpsStore } from '@/stores/accountOps'
 import { useAuthStore } from '@/stores/auth'
+import { useAppStore } from '@/stores/app'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { getAccountOpsSettings, saveAccountOpsSettings, getAccountOpsEvents } from '@/api/admin/accountOps'
-const { t } = useI18n(), auth = useAuthStore()
-const { remote, draft, events, hasMore } = storeToRefs(useAccountOpsStore())
-const loading = ref(false), loadingMore = ref(false), saving = ref(false)
-const query = ref(''), kind = ref('all'), error = ref(''), notice = ref('')
-const dirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== JSON.stringify(remote.value?.config))
-const filteredEvents = computed(() => events.value.filter(e => (kind.value === 'all' || e.kind === kind.value) && `${e.account_name} ${e.account_id}`.toLowerCase().includes(query.value.toLowerCase().trim())))
-let version = 0, alive = true, timer: ReturnType<typeof setInterval> | undefined
-const date = (value: string) => new Date(value).toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-const message = (e: unknown) => (e as { message?: string })?.message || t('qualityOps.error')
+import Toggle from '@/components/common/Toggle.vue'
+import AccountOpsRuleList from '@/components/admin/operations/AccountOpsRuleList.vue'
+import AccountOpsBatchRuleDialog from '@/components/admin/operations/AccountOpsBatchRuleDialog.vue'
+import AccountOpsDeliveryDetails from '@/components/admin/operations/AccountOpsDeliveryDetails.vue'
+import AccountOpsRuleDialog from '@/components/admin/operations/AccountOpsRuleDialog.vue'
+import AccountOpsWebhookDialog from '@/components/admin/operations/AccountOpsWebhookDialog.vue'
+import AccountOpsEmailDialog from '@/components/admin/operations/AccountOpsEmailDialog.vue'
+import AccountOpsAddChannelDialog from '@/components/admin/operations/AccountOpsAddChannelDialog.vue'
+import AccountOpsGlobalSettings from '@/components/admin/operations/AccountOpsGlobalSettings.vue'
+import { getAccountOpsSettings, saveAccountOpsNotificationSettings, getAccountOpsEvents, getAccountOpsThresholdAccounts, testAccountOpsWebhook, saveAccountOpsRule, deleteAccountOpsRule, deleteAccountOpsWebhook } from '@/api/admin/accountOps'
+import type { AccountOpsConfig, AccountOpsEvent, AccountOpsThresholdAccount, AccountOpsWebhook, AccountOpsRuleInput } from '@/api/admin/accountOps'
+import { extractApiErrorMessage } from '@/utils/apiError'
+const { t } = useI18n(), auth = useAuthStore(), app = useAppStore()
+const { remote, events, hasMore } = storeToRefs(useAccountOpsStore())
+const tabs = ['settings','records'] as const, activeTab = ref<'records'|'settings'>('settings')
+const loading = ref(false), loadingMore = ref(false), mutating = ref(false)
+const thresholdAccounts = ref<AccountOpsThresholdAccount[]>([]), thresholdLoading = ref(false), thresholdReady = ref(false), thresholdError = ref('')
+const enabledDraft = ref(false), globalSaving = ref(false), showAddChannel = ref(false)
+const canAddChannel = computed(() => !!remote.value && (!remote.value.config.recipient || ((remote.value.config.webhooks?.length ?? 0) < 5 && remote.value.encryption_key_configured === true)))
+watch(() => remote.value?.config.enabled, enabled => { enabledDraft.value = enabled ?? false }, { immediate: true })
+const ruleList = ref<InstanceType<typeof AccountOpsRuleList> | null>(null)
+const batchAccounts = ref<AccountOpsThresholdAccount[]>([])
+watch(thresholdAccounts, accounts => {
+  if (!batchAccounts.value.length) return
+  const selected = new Set(batchAccounts.value.map(account => account.account_id))
+  batchAccounts.value = accounts.filter(account => selected.has(account.account_id))
+})
+const query = ref(''), kind = ref('all'), phase = ref('all'), alertKinds = ['balance_threshold','quota_threshold','balance_low','weekly_quota']
+const editingAccount = ref<AccountOpsThresholdAccount|null>(null), editingHook = ref<AccountOpsWebhook|null>(null), showWebhook = ref(false), showEmail = ref(false), testingId = ref<string|null>(null)
+let version = 0, accountsVersion = 0, testSequence = 0, mutationSequence = 0, paginationSequence = 0, alive = true, timer: ReturnType<typeof setInterval>|null = null
+const normalize = (c: AccountOpsConfig): AccountOpsConfig => ({ enabled:c.enabled, recipient:c.recipient,email_name:c.email_name ?? '', balance_low:c.balance_low, weekly_quota:c.weekly_quota, cooldown_minutes:c.cooldown_minutes, webhooks:(c.webhooks??[]).map(h=>({id:h.id,name:h.name,provider:h.provider,enabled:h.enabled,url_configured:h.url_configured===true,secret_configured:h.secret_configured===true,message_template:h.message_template})), balance_thresholds:(c.balance_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})), quota_thresholds:(c.quota_thresholds??[]).map(r=>({...r,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true})) })
+const eventKey = (e: AccountOpsEvent) => e.id ?? `${e.account_id}:${e.kind}:${e.phase??'legacy'}:${e.first_seen}`
+const filteredEvents = computed(()=>events.value.filter(e=>(kind.value==='all'||kind.value===e.kind)&&(phase.value==='all'||phase.value===(e.phase??'alert'))&&`${e.account_name} ${e.account_id}`.toLowerCase().includes(query.value.toLowerCase().trim())))
+const date = (value: string) => { const d=new Date(value);return Number.isFinite(d.getTime())?d.toLocaleString():'-' }
+const message = (e: unknown) => extractApiErrorMessage(e,t('accountOps.saveFailed'))
 async function load() {
-  if (loading.value || saving.value) return
-  const request = ++version; loading.value = true; error.value = ''
-  try {
-    await Promise.all([
-      getAccountOpsSettings().then(settings => {
-        if (!alive || request !== version) return
-        const preserveDraft = dirty.value
-        remote.value = settings; if (!preserveDraft) draft.value = { ...settings.config }
-      }).catch(e => { if (alive && request === version) error.value = message(e) }),
-      getAccountOpsEvents().then(page => {
-        if (!alive || request !== version) return
-        events.value = page.items; hasMore.value = page.has_more
-      }).catch(e => { if (alive && request === version) error.value = message(e) })
-    ])
-  } catch (e) { if (alive && request === version) error.value = message(e) }
-  finally { if (request === version) loading.value = false }
+  if (!auth.user || mutating.value || globalSaving.value) return
+  const current=++version;loading.value=true
+  await Promise.allSettled([
+    getAccountOpsSettings().then(s=>{if(alive&&current===version)remote.value={...s,config:normalize(s.config)}}).catch(e=>{if(alive&&current===version)app.showError(message(e))}),
+    getAccountOpsEvents().then(p=>{if(alive&&current===version){events.value=p.items;hasMore.value=p.has_more}}).catch(e=>{if(alive&&current===version)app.showError(message(e))})
+  ])
+  if(alive&&current===version)loading.value=false
 }
-async function save() {
-  if (!draft.value || saving.value) return
-  const request = ++version; loading.value = false; saving.value = true; error.value = ''; notice.value = ''
-  try {
-    const config = await saveAccountOpsSettings({ ...draft.value })
-    if (!alive || request !== version) return
-    remote.value = { ...remote.value!, config }; draft.value = { ...config }; notice.value = t('qualityOps.saved')
-  } catch (e) { if (alive && request === version) error.value = message(e) }
-  finally { if (request === version) saving.value = false }
+async function refresh() {
+  if (mutating.value || globalSaving.value) return
+  await Promise.all([load(), ...(activeTab.value === 'settings' ? [loadAccounts()] : [])])
 }
-async function more() {
-  if (loadingMore.value || loading.value) return
-  const request = version; loadingMore.value = true
-  try { const page = await getAccountOpsEvents(events.value.length); if (!alive || request !== version) return; const merged = new Map([...events.value, ...page.items].map(e => [`${e.account_id}:${e.kind}`, e])); events.value = [...merged.values()]; hasMore.value = page.has_more }
-  catch (e) { if (alive) error.value = message(e) }
-  finally { loadingMore.value = false }
+async function loadAccounts() {
+  if(!auth.user)return
+  const current=++accountsVersion;thresholdLoading.value=true
+  try{const a=await getAccountOpsThresholdAccounts();if(alive&&current===accountsVersion){thresholdAccounts.value=a;thresholdReady.value=true;thresholdError.value=''}}
+  catch(e){if(alive&&current===accountsVersion){thresholdError.value=message(e);app.showError(thresholdError.value)}}
+  finally{if(alive&&current===accountsVersion)thresholdLoading.value=false}
 }
-watch(() => auth.user ? `${auth.user.id}:${auth.user.role}` : '', () => { version++; loading.value = loadingMore.value = saving.value = false; error.value = notice.value = '' }, { flush: 'sync' })
-onMounted(() => { void load(); timer = setInterval(() => { if (document.visibilityState === 'visible' && !loadingMore.value) void load() }, 30_000) })
-onBeforeUnmount(() => { alive = false; version++; if (timer) clearInterval(timer) })
+function selectTab(tab:'records'|'settings'){activeTab.value=tab;if(tab==='settings'&&!thresholdReady.value&&!thresholdLoading.value)void loadAccounts()}
+function tabKey(event:KeyboardEvent,tab:'records'|'settings'){if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?'settings':event.key==='End'?'records':tab==='records'?'settings':'records';selectTab(next);document.getElementById(`ops-tab-${next}`)?.focus()}
+function acceptConfig(config: AccountOpsConfig){if(!alive||!auth.user||!remote.value)return;version++;loading.value=false;remote.value={...remote.value,config:normalize(config)};app.showSuccess(t('accountOps.settingsSaved'))}
+function acceptBatchConfig(config: AccountOpsConfig){acceptConfig(config);ruleList.value?.clearSelection()}
+function editWebhook(hook:AccountOpsWebhook|null){editingHook.value=hook;showWebhook.value=true}
+function addChannel(provider: 'email'|'webhook') {
+  if (!remote.value) return
+  if (provider === 'email') {
+    if (remote.value.config.recipient) return
+    showEmail.value = true
+  } else {
+    if (remote.value.encryption_key_configured !== true || (remote.value.config.webhooks?.length ?? 0) >= 5) return
+    editWebhook(null)
+  }
+  showAddChannel.value = false
+}
+async function removeEmail(){await mutate(()=>saveAccountOpsNotificationSettings({recipient:'',email_name:''}))}
+async function mutate(action:()=>Promise<AccountOpsConfig>){if(mutating.value)return;const current=++mutationSequence;mutating.value=true;try{const c=await action();if(alive&&current===mutationSequence)acceptConfig(c)}catch(e){if(alive&&current===mutationSequence)app.showError(message(e))}finally{if(alive&&current===mutationSequence)mutating.value=false}}
+async function toggleNotifications(enabled: boolean) {
+  enabledDraft.value = enabled
+  await mutate(() => saveAccountOpsNotificationSettings({ enabled: enabledDraft.value }))
+  enabledDraft.value = remote.value?.config.enabled ?? false
+}
+async function toggleRule(a:AccountOpsThresholdAccount,enabled:boolean){const r=a.type==='apikey'?remote.value?.config.balance_thresholds?.find(x=>x.account_id===a.account_id):remote.value?.config.quota_thresholds?.find(x=>x.account_id===a.account_id);if(!r)return;const input:AccountOpsRuleInput={metric:a.type==='apikey'?'balance':'quota',enabled,notify_alert:r.notify_alert??true,notify_recovery:r.notify_recovery??true,...('threshold'in r?{threshold:r.threshold,unit:r.unit}:{threshold_percent:r.threshold_percent,window:r.window})};await mutate(()=>saveAccountOpsRule(a.account_id,input))}
+async function removeRule(id:number,metric:'balance'|'quota'){await mutate(()=>deleteAccountOpsRule(id,metric))}
+async function removeWebhook(id:string){await mutate(()=>deleteAccountOpsWebhook(id))}
+async function testWebhook(id:string){if(testingId.value)return;const current=++testSequence;testingId.value=id;try{await testAccountOpsWebhook(id);if(alive&&current===testSequence)app.showSuccess(t('accountOps.testSuccess'))}catch(e){if(alive&&current===testSequence)app.showError(message(e))}finally{if(alive&&current===testSequence)testingId.value=null}}
+async function more(){if(loadingMore.value||loading.value)return;const current=version, sequence=++paginationSequence;loadingMore.value=true;try{const p=await getAccountOpsEvents(events.value.length);if(alive&&current===version){const merged=new Map([...events.value,...p.items].map(e=>[eventKey(e),e]));events.value=[...merged.values()];hasMore.value=p.has_more}}catch(e){if(alive&&current===version)app.showError(message(e))}finally{if(alive&&sequence===paginationSequence)loadingMore.value=false}}
+watch(()=>auth.user?`${auth.user.id}:${auth.user.role}`:'',()=>{version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;loading.value=loadingMore.value=mutating.value=thresholdLoading.value=false;thresholdAccounts.value=[];thresholdReady.value=false;editingAccount.value=null;showWebhook.value=showEmail.value=showAddChannel.value=false;testingId.value=null;enabledDraft.value=globalSaving.value=false;activeTab.value='settings';batchAccounts.value=[]},{flush:'sync'})
+onMounted(()=>{void load();void loadAccounts();timer=setInterval(()=>{if(document.visibilityState==='visible'&&!loadingMore.value&&!mutating.value&&!globalSaving.value){void load();if(activeTab.value==='settings')void loadAccounts()}},30000)})
+onBeforeUnmount(()=>{alive=false;version++;accountsVersion++;testSequence++;mutationSequence++;paginationSequence++;if(timer)clearInterval(timer)})
 </script>
-<style scoped>
-.account-ops { @apply w-full min-w-0 text-gray-900 dark:text-gray-100; }
-.ops-heading { @apply mb-6 flex flex-wrap items-center justify-between gap-4; }
-.eyebrow { @apply mb-1 text-[11px] font-semibold tracking-widest text-primary-600; }
-.ops-heading h2 { @apply text-2xl font-semibold tracking-tight; }
-.subtitle { @apply mt-2 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400; }
-.ops-columns { display:grid; grid-template-columns: minmax(300px,.3fr) minmax(0,.7fr); gap:20px; }
-.settings-card,.events-card { @apply min-w-0 overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-900; }
-.section-title { @apply flex items-center gap-3 border-b border-gray-100 p-5 dark:border-dark-700; }
-.icon-tile { @apply flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-600 dark:bg-primary-950/30; }
-.section-title h3,.events-heading h3 { @apply text-base font-semibold; }
-.section-title p,.events-heading p { @apply mt-1 text-xs text-gray-400; }
-.settings-form { @apply p-5; }
-.enable-row { @apply mb-6 flex items-center justify-between gap-4; }
-.enable-row strong,.kind-option strong { @apply block text-sm font-medium; }
-.enable-row small,.kind-option small { @apply mt-1 block text-xs leading-relaxed text-gray-400; }
-.enable-row input { appearance:none; position:relative; width:40px; height:24px; border-radius:999px; cursor:pointer; flex-shrink:0; @apply bg-gray-200 transition-colors dark:bg-dark-600; }
-.enable-row input::before { content:''; position:absolute; width:18px; height:18px; border-radius:50%; top:3px; left:3px; background:white; transition:transform .15s; box-shadow:0 1px 3px #0002; }
-.enable-row input:checked { @apply bg-primary-600; }
-.enable-row input:checked::before { transform:translateX(16px); }
-.kind-option input { accent-color:#0d9488; }
-.kind-option:has(input:checked) { @apply border-primary-200 bg-primary-50/30 dark:border-primary-800 dark:bg-primary-950/20; }
-.field-label { @apply mb-2 mt-5 block text-xs font-medium text-gray-600 dark:text-gray-300; }
-.field-hint { @apply mt-2 text-xs leading-relaxed text-gray-400; }
-.kind-option { @apply mb-2 flex items-start gap-3 rounded-xl border border-gray-100 p-3 dark:border-dark-700; }
-.kind-option input { @apply mt-1 rounded text-primary-600; }
-.smtp-state { @apply mt-5 flex flex-wrap items-center gap-2 rounded-lg p-3 text-xs; }
-.smtp-ready { @apply bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300; }
-.smtp-missing { @apply bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300; }
-.smtp-state a { @apply ml-auto inline-flex items-center gap-1 underline; }
-.settings-actions { @apply mt-5 flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700; }
-.settings-actions span { @apply text-xs text-gray-400; }
-.events-card { height:clamp(34rem,calc(100dvh - 19rem),58rem); @apply flex flex-col; }
-.events-heading { @apply flex flex-wrap items-start justify-between gap-3 p-5; }
-.events-heading h3 span { @apply ml-2 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-normal tabular-nums text-gray-500 dark:bg-dark-800; }
-.observe-status { @apply inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2 py-1 text-[11px] text-gray-500 dark:bg-dark-800; }
-.observe-status span { @apply h-1.5 w-1.5 rounded-full bg-current; }
-.observing { @apply bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300; }
-.event-toolbar { @apply flex flex-wrap items-center justify-between gap-3 border-y border-gray-100 bg-gray-50/60 px-5 py-3 dark:border-dark-700 dark:bg-dark-800/50; }
-.event-toolbar select { @apply rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs dark:border-dark-600 dark:bg-dark-900; }
-.events-scroll { @apply min-h-0 flex-1 overflow-auto overscroll-contain; scrollbar-gutter:stable; }
-table { @apply w-full text-left text-xs; min-width:650px; }
-thead { @apply sticky top-0 z-10 bg-white text-gray-400 dark:bg-dark-900; }
-th { @apply whitespace-nowrap px-4 py-3 font-medium; }
-td { @apply border-b border-gray-100 px-4 py-4 dark:border-dark-800; }
-td strong { @apply block truncate text-[13px] font-medium; max-width:190px; }
-td small { @apply mt-1.5 block text-[10px] text-gray-400; }
-tbody tr:hover { @apply bg-gray-50/70 dark:bg-dark-800/50; }
-.failure-badge { @apply whitespace-nowrap rounded-md bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 dark:bg-amber-950/30 dark:text-amber-300; }
-.delivery-status { @apply whitespace-nowrap text-xs text-gray-500; }
-.delivery-sent { @apply text-emerald-600; }.delivery-failed { @apply text-red-500; }.delivery-sending,.delivery-pending { @apply text-primary-600; }
-.events-footer { @apply flex shrink-0 items-center justify-between gap-3 border-t border-gray-100 px-5 py-4 text-[11px] text-gray-400 dark:border-dark-700; }
-.events-footer button { @apply shrink-0 text-primary-600; }
-.empty-state { @apply flex min-h-72 flex-col items-center justify-center gap-3 p-6 text-center text-gray-400; }
-.empty-state h4 { @apply text-sm font-medium; }.empty-state p { @apply max-w-sm text-xs leading-relaxed; }
-.scope-note { @apply mt-5 flex items-start gap-2 text-xs leading-6 text-gray-400; }.scope-note svg { @apply mt-1 shrink-0; }
-.error-banner { @apply mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300; }
-.success-banner { @apply mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300; }
-button:disabled { @apply cursor-not-allowed opacity-40; }
-@media(max-width:1100px) { .ops-columns {grid-template-columns:1fr;} .events-card {height:36rem;} }
-</style>
