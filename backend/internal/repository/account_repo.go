@@ -768,6 +768,8 @@ func lockAndMergeAccountProbeExtra(
 		return nil, err
 	}
 
+	_ = rows.Close()
+
 	// extra 理论上恒为 JSON 对象，但历史数据若存成非对象（数组/标量），在此硬失败
 	// 会让该账号的任何编辑都保存不了——而这条路径覆盖所有平台的账号更新。
 	// 门票是 1 小时 TTL 的临时凭据，下个打票周期会自动补回，因此解析失败时降级为
@@ -779,6 +781,33 @@ func lockAndMergeAccountProbeExtra(
 				"[Account] current extra unmarshal failed, codex ticket preservation skipped: id=%d err=%v",
 				account.ID, err)
 			currentExtra = nil
+		}
+	}
+	validNewAPIBinding := false
+	if currentExtra[service.UpstreamBillingProviderExtraKey] == "new_api" {
+		var fingerprint string
+		bindingRows, err := client.QueryContext(ctx, `SELECT account_fingerprint FROM new_api_account_bindings WHERE account_id=$1`, account.ID)
+		if err != nil {
+			return nil, err
+		}
+		if bindingRows.Next() {
+			err = bindingRows.Scan(&fingerprint)
+		}
+		if err == nil {
+			err = bindingRows.Err()
+		}
+		closeErr := bindingRows.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return nil, err
+		}
+		validNewAPIBinding = fingerprint != "" && fingerprint == service.NewAPIAccountFingerprint(account)
+		if !validNewAPIBinding {
+			if _, err = client.ExecContext(ctx, `DELETE FROM new_api_account_bindings WHERE account_id=$1`, account.ID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	extra := service.MergeOpenAICodexTicketExtra(copyJSONMap(normalizeJSONMap(account.Extra)), currentExtra)
@@ -856,6 +885,12 @@ func lockAndMergeAccountProbeExtra(
 		}
 		if rateSyncEnabledPresent {
 			extra[service.UpstreamBillingRateSyncEnabledExtraKey] = rateSyncEnabled
+		}
+	}
+	delete(extra, service.UpstreamBillingProviderExtraKey)
+	if validNewAPIBinding {
+		if provider, ok := currentExtra[service.UpstreamBillingProviderExtraKey]; ok {
+			extra[service.UpstreamBillingProviderExtraKey] = provider
 		}
 	}
 	probeExplicitlyDisabled := probeEnabledPresent && !probeEnabled
@@ -1446,6 +1481,7 @@ func upstreamBillingRateSortExpression(extra string) string {
 	peakMultiplier := extra + " #>> '{upstream_billing_probe,data,peak_rate_multiplier}'"
 	peakMultiplierValue := "(CASE WHEN jsonb_typeof(" + peakMultiplierJSON + ") = 'number' THEN (" + peakMultiplier + ")::numeric END)"
 	billingScope := extra + " #>> '{upstream_billing_probe,data,billing_scope}'"
+	newAPIGroup := "(" + billingScope + " = 'group' AND " + extra + " #>> '{upstream_billing_probe,data,provider}' = 'new_api' AND " + extra + " #>> '{upstream_billing_probe,data,object}' = 'new_api.group_billing')"
 	timezone := extra + " #>> '{upstream_billing_probe,data,timezone}'"
 	validClock := "'^([01][0-9]|2[0-3]):[0-5][0-9]$'"
 	startMinute := "(CASE WHEN " + peakStart + " ~ " + validClock + " THEN split_part(" + peakStart + ", ':', 1)::numeric * 60 + split_part(" + peakStart + ", ':', 2)::numeric END)"
@@ -1462,7 +1498,7 @@ func upstreamBillingRateSortExpression(extra string) string {
 	legacySnapshot := "jsonb_typeof(" + resolvedJSON + ") IS NULL AND jsonb_typeof(" + peakEnabledJSON + ") IS NULL"
 
 	return "CASE WHEN " + status + " IN ('ok', 'failed') AND (jsonb_typeof(" + resolvedJSON + ") = 'number' OR jsonb_typeof(" + effectiveJSON + ") = 'number') THEN CASE WHEN jsonb_typeof(" +
-		resolvedJSON + ") = 'number' AND jsonb_typeof(" + peakEnabledJSON + ") = 'boolean' THEN CASE WHEN " + billingScope + " = 'token' THEN " + dynamicRate + " ELSE NULL END WHEN " + legacySnapshot +
+		resolvedJSON + ") = 'number' AND jsonb_typeof(" + peakEnabledJSON + ") = 'boolean' THEN CASE WHEN " + billingScope + " = 'token' OR " + newAPIGroup + " THEN " + dynamicRate + " ELSE NULL END WHEN " + legacySnapshot +
 		" AND jsonb_typeof(" + effectiveJSON + ") = 'number' THEN (" + effective + ")::numeric END END"
 }
 
@@ -3311,6 +3347,7 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 			AND COALESCE(extra -> 'upstream_billing_probe', 'null'::jsonb) = $7::jsonb
 			AND COALESCE(extra -> 'upstream_billing_probe_enabled', 'null'::jsonb) = $8::jsonb
 			AND COALESCE(extra -> 'upstream_billing_rate_sync_enabled', 'null'::jsonb) = $9::jsonb
+ AND NOT (COALESCE(extra,'{}'::jsonb) @> '{"upstream_billing_provider":"new_api"}'::jsonb)
 			AND deleted_at IS NULL
 	`, string(payload), account.ID, account.Platform, account.Type, string(credentials), proxyID, string(expectedSnapshotJSON), string(expectedEnabledJSON), string(expectedRateSyncEnabledJSON), rateMultiplier)
 	if err != nil {

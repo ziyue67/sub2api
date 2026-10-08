@@ -2,10 +2,7 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"html"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -17,17 +14,26 @@ import (
 const accountOpsSettingsKey = "account_ops_notifications_v1"
 
 type AccountOpsConfig struct {
-	Enabled         bool   `json:"enabled"`
-	Recipient       string `json:"recipient"`
-	BalanceLow      bool   `json:"balance_low"`
-	WeeklyQuota     bool   `json:"weekly_quota"`
-	CooldownMinutes int    `json:"cooldown_minutes"`
+	Enabled           bool                    `json:"enabled"`
+	Recipient         string                  `json:"recipient"`
+	EmailName         string                  `json:"email_name,omitempty"`
+	BalanceLow        bool                    `json:"balance_low"`
+	WeeklyQuota       bool                    `json:"weekly_quota"`
+	CooldownMinutes   int                     `json:"cooldown_minutes"`
+	Webhooks          []AccountOpsWebhook     `json:"webhooks"`
+	BalanceThresholds []AccountOpsBalanceRule `json:"balance_thresholds"`
+	QuotaThresholds   []AccountOpsQuotaRule   `json:"quota_thresholds"`
 }
 
 func defaultAccountOpsConfig() AccountOpsConfig {
 	return AccountOpsConfig{BalanceLow: true, WeeklyQuota: true, CooldownMinutes: 60}
 }
-func ValidateAccountOpsConfig(c AccountOpsConfig) error {
+func ValidateAccountOpsConfig(c AccountOpsConfig) (err error) {
+	defer func() {
+		if err != nil && !errors.Is(err, ErrAccountOpsConfigValidation) {
+			err = accountOpsConfigValidation(err.Error())
+		}
+	}()
 	if c.CooldownMinutes < 5 || c.CooldownMinutes > 1440 {
 		return errors.New("cooldown_minutes must be between 5 and 1440")
 	}
@@ -37,29 +43,40 @@ func ValidateAccountOpsConfig(c AccountOpsConfig) error {
 			return errors.New("recipient must be one email address")
 		}
 	}
-	if c.Enabled && (c.Recipient == "" || (!c.BalanceLow && !c.WeeklyQuota)) {
+	if err := validateAccountOpsExtras(c); err != nil {
+		return err
+	}
+	if c.Enabled && (!c.hasDestination() || (!c.BalanceLow && !c.WeeklyQuota && !c.hasThreshold() && !c.hasQuotaThreshold())) {
 		return errors.New("select an alert type and configure a recipient before enabling")
 	}
 	return nil
 }
 func (c AccountOpsConfig) Allows(kind string) bool {
-	return c.Enabled && c.Recipient != "" && ((kind == "balance_low" && c.BalanceLow) || (kind == "weekly_quota" && c.WeeklyQuota))
+	return c.Enabled && c.hasDestination() && ((kind == "balance_low" && c.BalanceLow) || (kind == "weekly_quota" && c.WeeklyQuota) || (kind == "balance_threshold" && c.hasThreshold()) || (kind == "quota_threshold" && c.hasQuotaThreshold()))
 }
 
 type AccountOpsEvent struct {
-	AccountID   int64      `json:"account_id"`
-	AccountName string     `json:"account_name"`
-	Kind        string     `json:"kind"`
-	Signal      string     `json:"signal"`
-	HTTPStatus  int        `json:"http_status"`
-	FirstSeen   time.Time  `json:"first_seen"`
-	LastSeen    time.Time  `json:"last_seen"`
-	Occurrences int64      `json:"occurrences"`
-	State       string     `json:"state"`
-	LastSentAt  *time.Time `json:"last_sent_at"`
-	NextSendAt  time.Time  `json:"next_send_at"`
-	Attempts    int        `json:"attempts"`
-	Lease       string     `json:"-"`
+	ID                  string                        `json:"id,omitempty"`
+	EpisodeID           string                        `json:"episode_id,omitempty"`
+	Phase               string                        `json:"phase,omitempty"`
+	NotificationEnabled *bool                         `json:"notification_enabled,omitempty"`
+	Criteria            string                        `json:"-"`
+	AccountID           int64                         `json:"account_id"`
+	AccountName         string                        `json:"account_name"`
+	Kind                string                        `json:"kind"`
+	Signal              string                        `json:"signal"`
+	HTTPStatus          int                           `json:"http_status"`
+	FirstSeen           time.Time                     `json:"first_seen"`
+	LastSeen            time.Time                     `json:"last_seen"`
+	Occurrences         int64                         `json:"occurrences"`
+	State               string                        `json:"state"`
+	LastSentAt          *time.Time                    `json:"last_sent_at"`
+	NextSendAt          time.Time                     `json:"next_send_at"`
+	Attempts            int                           `json:"attempts"`
+	Lease               string                        `json:"-"`
+	Details             *AccountOpsDetails            `json:"details,omitempty"`
+	Deliveries          map[string]AccountOpsDelivery `json:"deliveries,omitempty"`
+	Identity            string                        `json:"-"`
 }
 type AccountOpsRepository interface {
 	Record(context.Context, AccountOpsEvent) error
@@ -73,28 +90,39 @@ type accountOpsEmailSender interface {
 }
 
 type AccountOpsService struct {
-	autoSeen     map[int64]bool
-	autoConfigMu sync.Mutex
-	autoGroups   GroupRepository
-	autoAccounts AccountConcurrencyRepository
-	autoConfig   atomic.Value
-	autoBlocked  atomic.Bool
-	autoResults  chan AccountConcurrencyResult
-	settings     SettingRepository
-	repo         AccountOpsRepository
-	email        accountOpsEmailSender
-	config       atomic.Value
-	queue        chan AccountOpsEvent
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	lifecycle    sync.Mutex
-	settingsMu   sync.Mutex
-	dropped      atomic.Uint64
-	failures     atomic.Uint64
+	thresholdLookupTimeout time.Duration
+	usageLogs              UsageLogRepository
+	geminiQuota            *GeminiQuotaService
+	accounts               AccountRepository
+	usageCache             *UsageCache
+	encryptor              SecretEncryptor
+	fixedKey               bool
+	timezone               *time.Location
+	robotClient            *http.Client
+	robotMu                sync.Mutex
+	robotLast              map[string]time.Time
+	autoSeen               map[int64]bool
+	autoConfigMu           sync.Mutex
+	autoGroups             GroupRepository
+	autoAccounts           AccountConcurrencyRepository
+	autoConfig             atomic.Value
+	autoBlocked            atomic.Bool
+	autoResults            chan AccountConcurrencyResult
+	settings               SettingRepository
+	repo                   AccountOpsRepository
+	email                  accountOpsEmailSender
+	config                 atomic.Value
+	queue                  chan AccountOpsEvent
+	cancel                 context.CancelFunc
+	wg                     sync.WaitGroup
+	lifecycle              sync.Mutex
+	settingsMu             sync.Mutex
+	dropped                atomic.Uint64
+	failures               atomic.Uint64
 }
 
 func NewAccountOpsService(settings SettingRepository, repo AccountOpsRepository, email accountOpsEmailSender) *AccountOpsService {
-	s := &AccountOpsService{settings: settings, repo: repo, email: email, queue: make(chan AccountOpsEvent, 256)}
+	s := &AccountOpsService{settings: settings, repo: repo, email: email, queue: make(chan AccountOpsEvent, 256), timezone: time.FixedZone("Asia/Shanghai", 8*3600), robotLast: make(map[string]time.Time)}
 	s.config.Store(defaultAccountOpsConfig())
 	s.autoConfig.Store(DefaultOAuthAutoConfig())
 	s.autoResults = make(chan AccountConcurrencyResult, 1024)
@@ -104,42 +132,30 @@ func NewAccountOpsService(settings SettingRepository, repo AccountOpsRepository,
 func (s *AccountOpsService) GetConfig(ctx context.Context) (AccountOpsConfig, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	c := defaultAccountOpsConfig()
-	raw, err := s.settings.GetValue(ctx, accountOpsSettingsKey)
-	if errors.Is(err, ErrSettingNotFound) {
-		err = nil
+	c, err := s.loadConfig(ctx)
+	if err == nil {
+		s.config.Store(c)
 	}
-	if err != nil {
-		return c, err
-	}
-	if raw != "" {
-		if err = json.Unmarshal([]byte(raw), &c); err != nil {
-			return c, err
-		}
-	}
-	if err = ValidateAccountOpsConfig(c); err != nil {
-		return c, err
-	}
-	s.config.Store(c)
-	return c, nil
+	return c.public(), err
 }
 func (s *AccountOpsService) SaveConfig(ctx context.Context, c AccountOpsConfig) error {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	c.Recipient = strings.TrimSpace(c.Recipient)
-	if err := ValidateAccountOpsConfig(c); err != nil {
-		return err
+	result := &opsConfigResult{}
+	ctx = context.WithValue(ctx, opsConfigResultKey{}, result)
+	update := func(lockedCtx context.Context) error { return s.saveConfig(lockedCtx, c) }
+	var err error
+	if lock, ok := s.repo.(accountOpsConfigLocker); ok {
+		err = lock.WithAccountOpsConfigLock(ctx, update)
+	} else {
+		err = update(ctx)
 	}
-	raw, err := json.Marshal(c)
-	if err != nil {
-		return err
+	if err == nil && result.set {
+		s.config.Store(result.cfg)
 	}
-	if err = s.settings.Set(ctx, accountOpsSettingsKey, string(raw)); err != nil {
-		return err
-	}
-	s.config.Store(c)
-	return s.repo.SuppressDisabled(ctx, c)
+	return err
 }
+
 func (s *AccountOpsService) Observe(account *Account, status int, headers http.Header, body []byte) {
 	if s == nil || account == nil || account.ID <= 0 {
 		return
@@ -201,6 +217,7 @@ func (s *AccountOpsService) start(deliverNotifications bool) {
 				}
 			case <-ticker.C:
 				if s.refreshConfig(ctx) && deliverNotifications {
+					s.scanBalances(ctx)
 					s.deliver(ctx)
 				}
 			}
@@ -247,44 +264,9 @@ func (s *AccountOpsService) deliver(ctx context.Context) {
 	}
 }
 func (s *AccountOpsService) deliverEvent(ctx context.Context, event *AccountOpsEvent) {
-	query, cancel := context.WithTimeout(ctx, 5*time.Second)
-	c, err := s.GetConfig(query)
-	cancel()
-	state := "suppressed"
-	delay := time.Hour
-	if err == nil {
-		delay = time.Duration(c.CooldownMinutes) * time.Minute
-	}
-	if err != nil {
-		state = "failed"
-	} else if c.Allows(event.Kind) {
-		label := "上游余额不足"
-		if event.Kind == "weekly_quota" {
-			label = "上游周额度已用尽"
-		}
-		subject := "Sub2API 账号运维：" + label
-		body := fmt.Sprintf("<h2>%s</h2><p>账号：%s（#%d）</p><p>上游返回 HTTP %d，匹配信号：%s。</p><p>最近触发：%s；累计匹配 %d 次。</p><p>请在账号管理中检查该账号的上游账单或周额度。此提醒基于失败响应，不代表已查询到准确余额，也不会自动修改账号。</p>", label, html.EscapeString(event.AccountName), event.AccountID, event.HTTPStatus, html.EscapeString(accountOpsSignalLabel(event.Signal)), event.LastSeen.UTC().Format(time.RFC3339), event.Occurrences)
-		send, stop := context.WithTimeout(ctx, 30*time.Second)
-		if s.email == nil {
-			err = errors.New("email unavailable")
-		} else {
-			err = s.email.SendEmail(send, c.Recipient, subject, body)
-		}
-		stop()
-		state = "sent"
-		if err != nil {
-			state = "failed"
-		}
-	}
-	if state == "failed" && event.Attempts < 3 {
-		delay = 5 * time.Minute
-	}
-	finish, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer stop()
-	if err = s.repo.Complete(finish, event, state, delay); err != nil {
-		s.failures.Add(1)
-	}
+	s.deliverNotification(ctx, event)
 }
+
 func (s *AccountOpsService) List(ctx context.Context, offset, limit int) ([]AccountOpsEvent, error) {
 	return s.repo.List(ctx, offset, limit)
 }

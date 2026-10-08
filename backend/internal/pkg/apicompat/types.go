@@ -7,6 +7,7 @@ package apicompat
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -95,10 +96,14 @@ func (b AnthropicContentBlock) MarshalJSON() ([]byte, error) {
 			anthropicContentBlock
 		}{Text: b.Text, anthropicContentBlock: anthropicContentBlock(b)})
 	case "thinking":
+		// Anthropic always sends `signature` on thinking blocks (empty on
+		// content_block_start); strict clients such as Grok Build reject the
+		// block with "missing field `signature`" when the key is absent.
 		return json.Marshal(struct {
-			Thinking string `json:"thinking"`
+			Thinking  string `json:"thinking"`
+			Signature string `json:"signature"`
 			anthropicContentBlock
-		}{Thinking: b.Thinking, anthropicContentBlock: anthropicContentBlock(b)})
+		}{Thinking: b.Thinking, Signature: b.Signature, anthropicContentBlock: anthropicContentBlock(b)})
 	default:
 		return json.Marshal(base)
 	}
@@ -320,8 +325,9 @@ func (i *ResponsesInputItem) UnmarshalJSON(data []byte) error {
 // ResponsesContentPart is a typed content part in a Responses message.
 type ResponsesContentPart struct {
 	PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint,omitempty"`
-	Type                  string          `json:"type"` // "input_text" | "output_text" | "input_image" | "input_file"
+	Type                  string          `json:"type"` // "input_text" | "output_text" | "refusal" | "input_image" | "input_file"
 	Text                  string          `json:"text,omitempty"`
+	Refusal               string          `json:"refusal,omitempty"`   // type=refusal
 	ImageURL              string          `json:"image_url,omitempty"` // data URI for input_image
 
 	// input_file fields.
@@ -696,13 +702,37 @@ type ChatCompletionsRequest struct {
 	ParallelToolCalls   *bool              `json:"parallel_tool_calls,omitempty"`
 	ToolChoice          json.RawMessage    `json:"tool_choice,omitempty"`
 	ReasoningEffort     string             `json:"reasoning_effort,omitempty"` // "low" | "medium" | "high" | "xhigh"
-	ServiceTier         string             `json:"service_tier,omitempty"`
-	Stop                json.RawMessage    `json:"stop,omitempty"` // string or []string
-	ResponseFormat      json.RawMessage    `json:"response_format,omitempty"`
+	// Reasoning accepts the Responses-style nested form ({"reasoning":{"effort":...}})
+	// that some Chat clients send. EffectiveReasoningEffort gives the nested
+	// value precedence, matching inbound accounting, without mutating either field.
+	Reasoning      *ChatReasoning  `json:"reasoning,omitempty"`
+	ServiceTier    string          `json:"service_tier,omitempty"`
+	Stop           json.RawMessage `json:"stop,omitempty"` // string or []string
+	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
 
 	// Legacy function calling (deprecated but still supported)
 	Functions    []ChatFunction  `json:"functions,omitempty"`
 	FunctionCall json.RawMessage `json:"function_call,omitempty"`
+}
+
+// ChatReasoning is the nested reasoning object accepted on Chat Completions
+// requests for Responses compatibility.
+type ChatReasoning struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+// EffectiveReasoningEffort returns the requested effort using the same
+// precedence as inbound accounting: reasoning.effort, then reasoning_effort.
+func (r *ChatCompletionsRequest) EffectiveReasoningEffort() string {
+	if r == nil {
+		return ""
+	}
+	if r.Reasoning != nil {
+		if effort := strings.TrimSpace(r.Reasoning.Effort); effort != "" {
+			return effort
+		}
+	}
+	return strings.TrimSpace(r.ReasoningEffort)
 }
 
 // ChatStreamOptions configures streaming behavior.
@@ -714,6 +744,7 @@ type ChatStreamOptions struct {
 type ChatMessage struct {
 	Role             string          `json:"role"` // "system" | "user" | "assistant" | "tool" | "function"
 	Content          json.RawMessage `json:"content,omitempty"`
+	Refusal          string          `json:"refusal,omitempty"`
 	ReasoningContent string          `json:"reasoning_content,omitempty"`
 	Reasoning        string          `json:"reasoning,omitempty"`
 	Name             string          `json:"name,omitempty"`
@@ -854,6 +885,7 @@ type ChatChunkChoice struct {
 type ChatDelta struct {
 	Role             string         `json:"role,omitempty"`
 	Content          *string        `json:"content,omitempty"` // pointer: omit when not present, null vs "" matters
+	Refusal          *string        `json:"refusal,omitempty"`
 	ReasoningContent *string        `json:"reasoning_content,omitempty"`
 	Reasoning        *string        `json:"reasoning,omitempty"`
 	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`

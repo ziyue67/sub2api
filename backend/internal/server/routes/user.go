@@ -185,6 +185,18 @@ func RegisterUserRoutes(
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
 
+		// 网站工单（关闭时 service 返回 SUPPORT_TICKET_DISABLED）
+		tickets := authenticated.Group("/support-tickets")
+		{
+			tickets.GET("", h.SupportTicket.List)
+			tickets.POST("", h.SupportTicket.Create)
+			tickets.GET("/summary", h.SupportTicket.Summary)
+			tickets.GET("/:id", h.SupportTicket.Get)
+			tickets.POST("/:id/messages", h.SupportTicket.Reply)
+			tickets.POST("/:id/close", h.SupportTicket.Close)
+			tickets.POST("/:id/reopen", h.SupportTicket.Reopen)
+		}
+
 		// 卡密兑换
 		redeem := authenticated.Group("/redeem")
 		{

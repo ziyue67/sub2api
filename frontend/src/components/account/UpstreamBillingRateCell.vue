@@ -3,7 +3,19 @@
     <div class="flex h-6 items-center gap-1">
       <HelpTooltip class="-ml-1" width-class="w-max max-w-[calc(100vw-2rem)]" data-testid="upstream-billing-details">
         <template #trigger>
+          <button
+            v-if="canConfigure && (snapshot?.status === 'unsupported' || account.extra?.upstream_billing_provider === 'new_api')"
+            type="button"
+            class="cursor-help border-b border-dotted border-gray-300 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-dark-600"
+            :class="hasEffectiveRate ? 'font-mono text-gray-800 dark:text-gray-200' : statusClass || 'text-gray-400 dark:text-gray-500'"
+            data-testid="upstream-billing-configure"
+            :aria-label="`${primaryValue}, ${t('admin.accounts.upstreamBilling.newAPI.editConfig')}`"
+            @click="$emit('configure')"
+          >
+            <span data-testid="upstream-billing-rate">{{ primaryValue }}</span>
+          </button>
           <span
+            v-else
             class="cursor-help border-b border-dotted border-gray-300 text-sm font-medium dark:border-dark-600"
             :class="hasEffectiveRate ? 'font-mono text-gray-800 dark:text-gray-200' : statusClass || 'text-gray-400 dark:text-gray-500'"
             data-testid="upstream-billing-rate"
@@ -30,6 +42,7 @@
               }}
             </p>
             <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: currentEffectiveRate ?? '-' }) }}</p>
+            <p v-if="isNewAPIGroup">{{ t('admin.accounts.upstreamBilling.newAPI.groupRatioHint') }}</p>
             <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
           </template>
           <template v-else-if="stale && lastDetectedRate != null">
@@ -164,12 +177,15 @@ const props = withDefaults(defineProps<{
   now: number
   probing?: boolean
   globalProbeEnabled?: boolean
+  canConfigure?: boolean
 }>(), {
-  globalProbeEnabled: true
+  globalProbeEnabled: true,
+  canConfigure: true
 })
 
 defineEmits<{
   (event: 'probe'): void
+  (event: 'configure'): void
 }>()
 
 const { t } = useI18n()
@@ -178,6 +194,7 @@ const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000
 const eligible = computed(() => props.account.type === 'apikey')
 const snapshot = computed<UpstreamBillingProbeSnapshot | undefined>(() => props.account.extra?.upstream_billing_probe)
 const data = computed(() => snapshot.value?.data)
+const isNewAPIGroup = computed(() => data.value?.provider === 'new_api' && data.value.object === 'new_api.group_billing' && data.value.billing_scope === 'group')
 const probeEnabled = computed(() => props.account.extra?.upstream_billing_probe_enabled === true)
 const nextProbeAt = computed(() => {
   const value = snapshot.value?.next_probe_at
@@ -229,7 +246,7 @@ const minuteInTimeZone = (timestamp: number, timeZone?: string) => {
 const currentEffectiveRate = computed(() => {
   const billing = data.value
   if (!billing) return null
-  if (billing.billing_scope !== 'token') return null
+  if (billing.billing_scope !== 'token' && !isNewAPIGroup.value) return null
   const base = billing.resolved_rate_multiplier
   if (typeof base !== 'number' || !Number.isFinite(base) || base < 0) return null
   if (typeof billing.peak_rate_enabled !== 'boolean') return null

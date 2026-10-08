@@ -11,6 +11,7 @@ import type {
   NotifyEmailEntry,
 } from "@/types";
 import type { RechargeBonusTier } from "@/utils/rechargeBonus";
+import type { SupportTicketConfig } from "@/api/supportTickets";
 
 export interface DefaultSubscriptionSetting {
   group_id: number;
@@ -399,6 +400,7 @@ export function deriveWeChatConnectStoredMode(
  * System settings interface
  */
 export interface SystemSettings {
+	excel_bps_enabled: boolean;
 	prism_browser_enabled: boolean;
 	prism_browser_base_url: string;
 	prism_browser_api_key_configured: boolean;
@@ -764,6 +766,10 @@ export interface SystemSettings {
   model_plaza_description: string;
   plugin_management_enabled: boolean;
 
+  // Support tickets (网站工单) switch + form config
+  support_ticket_enabled: boolean;
+  support_ticket_config: SupportTicketConfig;
+
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: boolean;
 
@@ -795,6 +801,7 @@ export interface SystemSettings {
 }
 
 export interface UpdateSettingsRequest {
+	excel_bps_enabled?: boolean;
 	prism_browser_enabled?: boolean;
 	prism_browser_base_url?: string;
 	prism_browser_api_key?: string;
@@ -1109,6 +1116,10 @@ export interface UpdateSettingsRequest {
   model_plaza_require_auth?: boolean;
   model_plaza_description?: string;
   plugin_management_enabled?: boolean;
+
+  // Support tickets (网站工单) switch + form config
+  support_ticket_enabled?: boolean;
+  support_ticket_config?: SupportTicketConfig;
 
   // Affiliate (邀请返利) feature switch
   affiliate_enabled?: boolean;

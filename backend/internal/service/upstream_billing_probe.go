@@ -244,6 +244,9 @@ func normalizeUpstreamBillingProbeSettings(settings *UpstreamBillingProbeSetting
 
 // UpstreamBillingProbeService discovers a remote Sub2API billing snapshot.
 type UpstreamBillingProbeService struct {
+	newAPIRepo         NewAPIAuthorizationRepository
+	newAPIEncryptor    SecretEncryptor
+	newAPIFixedKey     bool
 	accountRepo        AccountRepository
 	accountTestService *AccountTestService
 	settingService     *SettingService
@@ -305,9 +308,12 @@ func ProvideUpstreamBillingProbeService(
 	lockCache LeaderLockCache,
 	db *sql.DB,
 	cfg *config.Config,
+	newAPIRepo NewAPIAuthorizationRepository,
+	encryptor SecretEncryptor,
 ) *UpstreamBillingProbeService {
 	svc := NewUpstreamBillingProbeService(accountRepo, accountTestService, settingService)
 	svc.SetLeaderLock(lockCache, db)
+	svc.SetNewAPIAuthorization(newAPIRepo, encryptor, cfg != nil && cfg.Totp.EncryptionKeyConfigured)
 	startBackgroundService(cfg, svc)
 	return svc
 }
@@ -623,6 +629,15 @@ func (s *UpstreamBillingProbeService) SetAccountEnabled(ctx context.Context, acc
 
 func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, account *Account, intervalMinutes int) (*UpstreamBillingProbeSnapshot, error) {
 	now := s.currentTime().UTC()
+	if s.newAPIRepo != nil {
+		binding, err := s.newAPIRepo.GetBinding(ctx, account.ID)
+		if err != nil {
+			return nil, newAPIError("storage_unavailable")
+		}
+		if binding != nil && binding.Fingerprint == NewAPIAccountFingerprint(account) {
+			return s.probeNewAPIAccount(ctx, account, binding, intervalMinutes)
+		}
+	}
 	if s.accountTestService == nil || s.accountTestService.httpUpstream == nil {
 		return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "transport_unavailable", 0)
 	}
@@ -1204,6 +1219,12 @@ func (s *UpstreamBillingProbeService) currentTime() time.Time {
 }
 
 func nextProbeDelay(intervalMinutes int, retryAfterDuration time.Duration) time.Duration {
+	if retryAfterDuration < 0 {
+		retryAfterDuration = 0
+	}
+	if retryAfterDuration > upstreamBillingProbeMaxDelay {
+		retryAfterDuration = upstreamBillingProbeMaxDelay
+	}
 	interval := time.Duration(intervalMinutes) * time.Minute
 	if interval < upstreamBillingProbeMinIntervalMinutes*time.Minute {
 		interval = upstreamBillingProbeMinIntervalMinutes * time.Minute
@@ -1219,8 +1240,8 @@ func nextProbeDelay(intervalMinutes int, retryAfterDuration time.Duration) time.
 		interval += time.Duration(rand.Int64N(int64(jitterRange)*2+1)) - jitterRange
 	}
 	if retryAfterDuration > interval {
-		// Retry-After is an explicit upstream instruction; do not shorten it
-		// with the local maximum delay.
+		// Retry-After is an explicit upstream instruction; honor it over the
+		// local backoff interval, clamped to the same 24h ceiling.
 		return retryAfterDuration
 	}
 	if interval > upstreamBillingProbeMaxDelay {
@@ -1232,8 +1253,7 @@ func nextProbeDelay(intervalMinutes int, retryAfterDuration time.Duration) time.
 // unsupportedProbeDelay 拉长 unsupported 账号的重探间隔，让无效候选自然退出
 // 热队列，不再和真正接入 sub2api 的中转账号抢每周期的探测名额。
 // 仍按 upstreamBillingProbeMaxDelay 封顶，保证上游后来接入 sub2api 时最迟一天
-// 内会被重新发现；base 本身已达上限（例如 Retry-After 明确要求更久）时原样返回，
-// 不缩短上游指令。
+// 内会被重新发现；base 本身亦受 24h 封顶保护。
 func unsupportedProbeDelay(intervalMinutes int, retryAfterDuration time.Duration) time.Duration {
 	base := nextProbeDelay(intervalMinutes, retryAfterDuration)
 	if base >= upstreamBillingProbeMaxDelay {

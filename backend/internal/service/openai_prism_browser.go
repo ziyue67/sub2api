@@ -296,7 +296,14 @@ func (s *OpenAIGatewayService) forwardPrismBrowser(ctx context.Context, c *gin.C
 		fail(http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
 	}
+	if err := controlledSubmission(ctx, "prism"); err != nil {
+		return nil, err
+	}
+	SetActualOpenAIUpstreamEndpoint(c, "/v1/responses")
 	responseBody, upstreamHeaders, status, err := s.callPrismBrowserForCaller(ctx, account, body, sessionID, prismBrowserCallerID(c, account.ID))
+	if mode := controlledMode(ctx); mode != nil {
+		mode.httpStatus.Store(int32(status))
+	}
 	if err != nil {
 		fail(http.StatusBadGateway, "prism_unavailable", "Prism adapter unavailable; request was not replayed")
 		return nil, err
@@ -386,6 +393,9 @@ func (s *OpenAIGatewayService) callPrismBrowserForCaller(ctx context.Context, ac
 	if callerID != "" {
 		req.Header.Set("X-Prism-Caller-ID", callerID)
 	}
+	if mode := controlledMode(ctx); mode != nil {
+		req.Header.Set("X-Prism-Turn-ID", mode.prismTurnID)
+	}
 	// The token must never pass through an account proxy, environment proxy,
 	// plugin transport, or an HTTP redirect.
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
@@ -413,6 +423,11 @@ func (s *OpenAIGatewayService) callPrismBrowserForCaller(ctx context.Context, ac
 // Always derive the private tool identity from authenticated server context.
 // External callers cannot select another tenant's tool history by a header.
 func prismBrowserCallerID(c *gin.Context, accountID int64) string {
+	if c != nil && c.Request != nil {
+		if mode := controlledMode(c.Request.Context()); mode != nil {
+			return mode.prismIdentity
+		}
+	}
 	if c == nil || accountID <= 0 {
 		return ""
 	}
@@ -430,6 +445,9 @@ func prismBrowserCallerID(c *gin.Context, accountID int64) string {
 func prismBrowserSessionID(c *gin.Context, accountID int64, body []byte) (string, error) {
 	if c == nil || c.Request == nil {
 		return "", nil
+	}
+	if mode := controlledMode(c.Request.Context()); mode != nil {
+		return mode.prismIdentity, nil
 	}
 	for _, names := range [][]string{openAIThreadIdentityHeaders, openAISessionIdentityHeaders} {
 		for _, name := range names {

@@ -17,9 +17,24 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
+import en from '@/i18n/locales/en/admin/resources'
+import zh from '@/i18n/locales/zh/admin/resources'
 import UsageTable from '../UsageTable.vue'
 
+let locale: 'en' | 'zh' = 'en'
+const localizedMessages: Record<'en' | 'zh', Record<string, string>> = {
+  en: {
+    'admin.usage.longContext': en.usage.longContext,
+    'admin.usage.longContextPricingTooltip': en.usage.longContextPricingTooltip,
+  },
+  zh: {
+    'admin.usage.longContext': zh.usage.longContext,
+    'admin.usage.longContextPricingTooltip': zh.usage.longContextPricingTooltip,
+  },
+}
+
 const messages: Record<string, string> = {
+  'usage.outputTps': 'Output TPS',
   'admin.usage.userDeletedBadge': 'Deleted',
   'usage.costDetails': 'Cost Breakdown',
   'admin.usage.inputCost': 'Input Cost',
@@ -82,7 +97,7 @@ vi.mock('vue-i18n', async () => {
     ...actual,
     useI18n: () => ({
       t: (key: string, params?: Record<string, string | number>) => {
-        let value = messages[key] ?? key
+        let value = localizedMessages[locale][key] ?? messages[key] ?? key
         for (const [name, replacement] of Object.entries(params ?? {})) {
           value = value.replaceAll(`{${name}}`, String(replacement))
         }
@@ -96,11 +111,12 @@ const DataTableStub = {
   props: ['data'],
   template: `
     <div>
-      <div v-for="row in data" :key="row.request_id">
+      <div v-for="row in data" :key="row.request_id" :data-request-id="row.request_id">
         <slot name="cell-model" :row="row" :value="row.model" />
         <slot name="cell-reasoning_effort" :row="row" :value="row.reasoning_effort" />
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
+        <slot name="cell-latency" :row="row" />
         <slot name="cell-cost" :row="row" />
         <slot name="cell-request_id" :row="row" />
         <slot name="cell-upstream_request_id" :row="row" />
@@ -138,8 +154,25 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable tooltip', () => {
+  it('shows output TPS in the latency cell using total duration', () => {
+    const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 1000, duration_ms: 20_000, first_token_ms: 10_000 }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [row, { ...row, request_id: 'no-duration', duration_ms: null }, { ...row, request_id: 'image', image_count: 1 }],
+        loading: false,
+        columns: [{ key: 'latency', label: 'Latency' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    // The Fork keeps its own TPS cell (severity coloring + "t/s" units), so the
+    // retained marker is data-testid="latency-tps" and the label is latencyTps.
+    expect(wrapper.findAll('[data-testid="latency-tps"]').map(cell => cell.text())).toEqual(['50.0 t/s', '-', '-'])
+    expect(wrapper.text()).toContain('usage.latencyTps')
+  })
+
   beforeEach(() => {
     appStoreMocks.cachedPublicSettings = undefined
+    locale = 'en'
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       x: 0,
       y: 0,
@@ -153,7 +186,11 @@ describe('admin UsageTable tooltip', () => {
     } as DOMRect)
   })
 
-  it('marks only usage rows that actually applied long-context billing', () => {
+  it.each([
+    ['en', 'Long context', 'Long-context pricing was applied. Input and output rates depend on the pricing tier, not a uniform multiplier.'],
+    ['zh', '长上下文', '已应用长上下文计费。输入和输出费率取决于定价档位，并非统一倍率。'],
+  ] as const)('marks only applied long-context billing with localized text in %s', (language, label, tooltip) => {
+    locale = language
     const wrapper = mount(UsageTable, {
       props: {
         data: [
@@ -166,6 +203,10 @@ describe('admin UsageTable tooltip', () => {
             ...baseImageRow,
             request_id: 'req-long-context-disabled',
             long_context_billing_applied: false,
+          },
+          {
+            ...baseImageRow,
+            request_id: 'req-long-context-absent',
           },
         ],
         loading: false,
@@ -182,7 +223,12 @@ describe('admin UsageTable tooltip', () => {
     })
 
     expect(wrapper.findAll('[data-testid="long-context-billing-marker"]')).toHaveLength(1)
-    expect(wrapper.get('[data-testid="long-context-billing-marker"]').text()).toBe('x2')
+    const marker = wrapper.get('[data-request-id="req-long-context-enabled"] [data-testid="long-context-billing-marker"]')
+    expect(marker.text()).toBe(label)
+    expect(marker.attributes('title')).toBe(tooltip)
+    expect(wrapper.find('[data-request-id="req-long-context-disabled"] [data-testid="long-context-billing-marker"]').exists()).toBe(false)
+    expect(wrapper.find('[data-request-id="req-long-context-absent"] [data-testid="long-context-billing-marker"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('x2')
   })
 
   it('hides the long-context billing marker when the public setting is disabled', () => {
@@ -260,6 +306,22 @@ describe('admin UsageTable tooltip', () => {
     expect(requestBadges[1].text()).toBe('Sync')
     expect(wrapper.findAll('[data-testid="native-compaction-badge"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="native-compaction-badge"]').text()).toBe('Compaction')
+  })
+
+  it.each([
+    [0, '0.0x'],
+    [0.5, '0.50x'],
+    [undefined, '1.00x'],
+  ])('shows the stored user rate %s in cost details', async (rate, expected) => {
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, rate_multiplier: rate }], loading: false, columns: [] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    const triggers = wrapper.findAll('.group.relative')
+    await triggers[triggers.length - 1].trigger('mouseenter')
+    const rateLabel = wrapper.get('.fixed').findAll('span').find(span => span.text() === 'Rate')!
+    expect(rateLabel.element.parentElement?.textContent).toContain(expected)
+    wrapper.unmount()
   })
 
   it('shows service tier and billing breakdown in cost tooltip', async () => {
@@ -1066,11 +1128,17 @@ describe('admin UsageTable latency TPS', () => {
   it('renders a placeholder when TPS cannot be computed', () => {
     const wrapper = mountLatency([
       { request_id: 'req-tps-empty', output_tokens: 0, duration_ms: 1_200, first_token_ms: 300 },
+      { request_id: 'req-tps-interrupted', output_tokens: 1, duration_ms: 21_135, first_token_ms: 973 },
       { ...baseImageRow, request_id: 'req-tps-image', duration_ms: 40_000, first_token_ms: null },
     ])
 
     expect(tpsCell(wrapper, 'req-tps-empty').text()).toBe('-')
     expect(tpsCell(wrapper, 'req-tps-empty').attributes('title')).toBeUndefined()
+    expect(tpsCell(wrapper, 'req-tps-interrupted').text()).toBe('-')
+    expect(tpsCell(wrapper, 'req-tps-interrupted').classes()).not.toContain('text-red-600')
+    expect(barClasses(wrapper, 'req-tps-interrupted')).toEqual(
+      expect.arrayContaining(['from-emerald-500', 'via-emerald-500', 'to-emerald-500']),
+    )
     expect(tpsCell(wrapper, 'req-tps-image').text()).toBe('-')
   })
 })

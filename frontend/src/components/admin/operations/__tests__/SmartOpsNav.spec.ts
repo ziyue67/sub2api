@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import SmartOpsNav from '../SmartOpsNav.vue'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
 
-const smartOpsPaths = ['/admin/auto-config', '/admin/priority-scheduling', '/admin/account-quality', '/admin/account-ops', '/admin/token-guard', '/admin/token-guard-v2', '/admin/pelican-tests']
+const smartOpsPaths = ['/admin/auto-config', '/admin/priority-scheduling', '/admin/account-quality', '/admin/controlled-experiments', '/admin/account-ops', '/admin/token-guard', '/admin/token-guard-v2', '/admin/pelican-tests']
 
 async function mountAt(path: string) {
   const router = createRouter({

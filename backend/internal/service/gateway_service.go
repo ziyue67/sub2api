@@ -445,7 +445,12 @@ var allowedHeaders = map[string]bool{
 	"content-type":                              true,
 	"accept-encoding":                           true,
 	"x-claude-code-session-id":                  true,
-	"x-client-request-id":                       true,
+	// Claude Code 2.1.139+ 在子 agent 请求上带这两个头（主线程不带）。按会话串行的
+	// 上游（如另一个 Claude Code 中转）靠它们把子 agent 拆成独立会话并行执行；
+	// 丢掉后所有子 agent 都会排在主会话后面。
+	"x-claude-code-agent-id":        true,
+	"x-claude-code-parent-agent-id": true,
+	"x-client-request-id":           true,
 }
 
 // ErrStickySessionNotFound is returned by GatewayCache.GetSessionAccountID
@@ -1656,6 +1661,21 @@ func explicitModelMappingClaims(account Account, model string) bool {
 	}
 	mapped, ok := stringMappingFromRaw(account.Credentials["model_mapping"])[model]
 	return ok && strings.TrimSpace(mapped) != ""
+}
+
+// GetCompositeRouteModels returns public IDs from enabled exact composite routes.
+func (s *GatewayService) GetCompositeRouteModels(ctx context.Context, groupID *int64, endpoint string, includeSystemOne bool) ([]string, error) {
+	if s == nil || s.compositeResolver == nil || groupID == nil {
+		return nil, nil
+	}
+	return s.compositeResolver.ListExactPublicModels(ctx, *groupID, endpoint, includeSystemOne)
+}
+
+func (s *GatewayService) FilterCompositeCodexModels(ctx context.Context, groupID int64, models []string) ([]string, error) {
+	if s == nil || s.compositeResolver == nil {
+		return models, nil
+	}
+	return s.compositeResolver.FilterCodexModels(ctx, groupID, models)
 }
 
 // GetSchedulablePlatforms returns the concrete platforms that currently have

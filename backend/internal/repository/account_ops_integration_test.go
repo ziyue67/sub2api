@@ -4,8 +4,11 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -81,3 +84,116 @@ func TestAccountOpsDurableCoalescingAndClaims(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, none)
 }
+
+func TestAccountOpsRobotReservationsAreDurableAndRejectRecoveredLease(t *testing.T) {
+	ctx := context.Background()
+	var id int64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `INSERT INTO accounts(name,platform,type,status,schedulable) VALUES('robot-slot','openai','apikey','active',true) RETURNING id`).Scan(&id))
+	defer func() { _, _ = integrationDB.ExecContext(ctx, `DELETE FROM accounts WHERE id=$1`, id) }()
+	repo := NewAccountOpsRepository(integrationDB)
+	require.NoError(t, repo.Record(ctx, service.AccountOpsEvent{AccountID: id, Kind: "balance_low", AccountName: "robot-slot", Signal: "balance_error_code"}))
+	event, err := repo.Claim(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, event)
+	reserver := repo.(interface {
+		ReserveRobotDelivery(context.Context, *service.AccountOpsEvent, string, string, string) (bool, error)
+	})
+	ok, err := reserver.ReserveRobotDelivery(ctx, event, "robot:one:revision", "feishu", "synthetic-hash")
+	require.NoError(t, err)
+	require.True(t, ok)
+	start := time.Now()
+	ok, err = reserver.ReserveRobotDelivery(ctx, event, "robot:two:revision", "feishu", "synthetic-hash")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.GreaterOrEqual(t, time.Since(start), 3*time.Second)
+	require.NoError(t, repo.SuppressDisabled(ctx, service.AccountOpsConfig{}))
+	ok, err = reserver.ReserveRobotDelivery(ctx, event, "robot:three:revision", "feishu", "synthetic-hash")
+	require.NoError(t, err)
+	require.False(t, ok)
+	items, err := repo.List(ctx, 0, 100)
+	require.NoError(t, err)
+	for _, item := range items {
+		if item.AccountID == id {
+			raw, err := json.Marshal(item)
+			require.NoError(t, err)
+			require.NotContains(t, string(raw), "synthetic-hash")
+			require.NotContains(t, string(raw), "_attempted_at")
+		}
+	}
+}
+
+func TestAccountOpsRobotTestSharesDurableRateGuardWithoutAlertRecord(t *testing.T) {
+	repo := NewAccountOpsRepository(integrationDB)
+	rate := repo.(interface {
+		ReserveRobotTest(context.Context, string) error
+	})
+	ctx := context.Background()
+	var before int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_ops_alerts`).Scan(&before))
+	require.NoError(t, rate.ReserveRobotTest(ctx, "synthetic-test-hash"))
+	start := time.Now()
+	require.NoError(t, rate.ReserveRobotTest(ctx, "synthetic-test-hash"))
+	require.GreaterOrEqual(t, time.Since(start), 3*time.Second)
+	var after int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_ops_alerts`).Scan(&after))
+	require.Equal(t, before, after)
+}
+
+func TestAccountOpsConfigUsesRealAESAndRedactsStoredSecrets(t *testing.T) {
+	ctx := context.Background()
+	settings := NewSettingRepository(integrationEntClient)
+	key := "account_ops_notifications_v1"
+	previous, previousErr := settings.GetValue(ctx, key)
+	defer func() {
+		if previousErr == nil {
+			_ = settings.Set(ctx, key, previous)
+		} else {
+			_ = settings.Delete(ctx, key)
+		}
+	}()
+	enc, encErr := NewAESEncryptor(&config.Config{Totp: config.TotpConfig{EncryptionKey: strings.Repeat("42", 32)}})
+	require.NoError(t, encErr)
+	svc := service.NewAccountOpsService(settings, NewAccountOpsRepository(integrationDB), nil)
+	svc.SetNotificationDependencies(nil, enc, true, "Asia/Shanghai")
+	cfg := service.AccountOpsConfig{Enabled: true, BalanceLow: true, CooldownMinutes: 60, Webhooks: []service.AccountOpsWebhook{{ID: "robot", Provider: "dingtalk", Enabled: true, URL: "https://oapi.dingtalk.com/robot/send?access_token=synthetic-only-token", Secret: "synthetic-only-secret"}}}
+	require.NoError(t, svc.SaveConfig(ctx, cfg))
+	raw, err := settings.GetValue(ctx, key)
+	require.NoError(t, err)
+	require.NotContains(t, raw, "synthetic-only-token")
+	require.NotContains(t, raw, "synthetic-only-secret")
+	var stored struct {
+		Webhooks []struct {
+			URLCipher    string `json:"url_cipher"`
+			SecretCipher string `json:"secret_cipher"`
+			Revision     string `json:"revision"`
+		} `json:"encrypted_webhooks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	require.Len(t, stored.Webhooks, 1)
+	url, err := enc.Decrypt(stored.Webhooks[0].URLCipher)
+	require.NoError(t, err)
+	require.Equal(t, cfg.Webhooks[0].URL, url)
+	secret, err := enc.Decrypt(stored.Webhooks[0].SecretCipher)
+	require.NoError(t, err)
+	require.Equal(t, cfg.Webhooks[0].Secret, secret)
+	revision := stored.Webhooks[0].Revision
+	public, err := svc.GetConfig(ctx)
+	require.NoError(t, err)
+	out, err := json.Marshal(public)
+	require.NoError(t, err)
+	require.NotContains(t, string(out), "cipher")
+	require.NotContains(t, string(out), "synthetic-only")
+	require.NoError(t, svc.SaveConfig(ctx, public))
+	raw, err = settings.GetValue(ctx, key)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	require.Equal(t, revision, stored.Webhooks[0].Revision)
+	public.Webhooks[0].Secret = "new-synthetic-secret"
+	require.NoError(t, svc.SaveConfig(ctx, public))
+	raw, err = settings.GetValue(ctx, key)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	require.NotEqual(t, revision, stored.Webhooks[0].Revision)
+}
+
+// Threshold periodic rearming coverage replaced by account_ops_once_integration_test.go.

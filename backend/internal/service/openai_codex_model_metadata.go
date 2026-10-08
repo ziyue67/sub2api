@@ -24,6 +24,7 @@ func applyCodexToolCapabilities(dst, src map[string]json.RawMessage, overwrite b
 		}
 		// Unlike the scalar capability fields, Codex service_tiers is a
 		// non-nullable array. An explicit null declares no available tiers.
+		// These Codex fields are nullable booleans or strings, never arbitrary objects.
 		if field == "service_tiers" && bytes.Equal(value, []byte("null")) {
 			value = json.RawMessage("[]")
 		}

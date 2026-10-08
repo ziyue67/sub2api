@@ -883,6 +883,7 @@ func TestAPIContracts(t *testing.T) {
 					"default_user_rpm_limit": 0,
 					"default_subscriptions": [],
 					"enable_model_fallback": false,
+					"excel_bps_enabled": true,
 					"excel_bps_image_mode": "native",
 					"excel_bps_image_base_url": "",
  "excel_bps_image_max_image_mib": 20,
@@ -1040,6 +1041,12 @@ func TestAPIContracts(t *testing.T) {
 					"model_plaza_require_auth": false,
 					"model_plaza_description": "",
 					"plugin_management_enabled": false,
+					"support_ticket_enabled": false,
+					"support_ticket_config": {
+						"categories": ["账户与充值", "API 使用问题", "模型与渠道", "建议与反馈", "其他"],
+						"max_open_per_user": 5,
+						"notice": ""
+					},
 					"prism_browser_enabled": false,
 					"prism_browser_base_url": "http://127.0.0.1:8319/v1",
 					"prism_browser_api_key_configured": false,
@@ -1249,6 +1256,7 @@ func TestAPIContracts(t *testing.T) {
 					"default_user_rpm_limit": 0,
 					"default_subscriptions": [],
 					"enable_model_fallback": false,
+					"excel_bps_enabled": true,
 					"excel_bps_image_mode": "native",
 					"excel_bps_image_base_url": "",
  "excel_bps_image_max_image_mib": 20,
@@ -1398,6 +1406,12 @@ func TestAPIContracts(t *testing.T) {
 					"model_plaza_require_auth": false,
 					"model_plaza_description": "",
 					"plugin_management_enabled": false,
+					"support_ticket_enabled": false,
+					"support_ticket_config": {
+						"categories": ["账户与充值", "API 使用问题", "模型与渠道", "建议与反馈", "其他"],
+						"max_open_per_user": 5,
+						"notice": ""
+					},
 					"prism_browser_enabled": false,
 					"prism_browser_base_url": "http://127.0.0.1:8319/v1",
 					"prism_browser_api_key_configured": false,

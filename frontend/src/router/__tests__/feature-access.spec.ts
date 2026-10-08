@@ -28,6 +28,7 @@ const appStore = vi.hoisted(() => ({
     payment_enabled?: boolean
     risk_control_enabled?: boolean
     subscription_enabled?: boolean
+    support_ticket_enabled?: boolean
     custom_menu_items?: []
   },
   fetchPublicSettings: vi.fn(),
@@ -235,5 +236,46 @@ describe('subscription route guard (opt-out flag)', () => {
     await navigation
 
     expect(next).toHaveBeenCalledWith('/admin/dashboard')
+  })
+})
+
+describe('support ticket route guard (opt-in flag)', () => {
+  beforeEach(() => {
+    authStore.isAdmin = false
+    authStore.isSimpleMode = false
+    appStore.publicSettingsLoaded = true
+    appStore.fetchPublicSettings.mockReset()
+  })
+
+  it.each([
+    ['missing', {}, false, '/dashboard'],
+    ['off', { support_ticket_enabled: false }, false, '/dashboard'],
+    ['off for an admin', { support_ticket_enabled: false }, true, '/admin/settings'],
+  ])('redirects when the switch is %s', async (_name, settings, admin, target) => {
+    authStore.isAdmin = admin
+    appStore.cachedPublicSettings = settings
+    const { navigation, next } = runGuard({ requiresSupportTickets: true, requiresAdmin: admin }, '/support-tickets')
+    await navigation
+    expect(next).toHaveBeenCalledWith(target)
+  })
+
+  it('opens the pages when the switch is on', async () => {
+    appStore.cachedPublicSettings = { support_ticket_enabled: true }
+    const { navigation, next } = runGuard({ requiresSupportTickets: true }, '/support-tickets/7')
+    await navigation
+    expect(next).toHaveBeenCalledWith()
+  })
+
+  it('loads public settings before deciding', async () => {
+    appStore.publicSettingsLoaded = false
+    appStore.cachedPublicSettings = null
+    appStore.fetchPublicSettings.mockImplementation(async () => {
+      appStore.cachedPublicSettings = { support_ticket_enabled: true }
+      appStore.publicSettingsLoaded = true
+    })
+    const { navigation, next } = runGuard({ requiresSupportTickets: true }, '/support-tickets')
+    await navigation
+    expect(appStore.fetchPublicSettings).toHaveBeenCalledTimes(1)
+    expect(next).toHaveBeenCalledWith()
   })
 })

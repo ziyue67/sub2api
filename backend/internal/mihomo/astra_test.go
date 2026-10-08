@@ -99,13 +99,13 @@ func TestAstraListenersArePrivateAndInitiallyReject(t *testing.T) {
 		} `json:"proxy-groups"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &cfg))
-	require.Len(t, cfg.Listeners, MaxCollectLanes+len(m.bpsPorts)+AstraLanes)
+	require.Len(t, cfg.Listeners, defaultCollectLanes+len(m.bpsPorts)+AstraLanes)
 	for i := 0; i < AstraLanes; i++ {
-		l := cfg.Listeners[MaxCollectLanes+len(m.bpsPorts)+i]
+		l := cfg.Listeners[defaultCollectLanes+len(m.bpsPorts)+i]
 		require.Equal(t, "127.0.0.1", l.Listen)
 		require.Equal(t, astraPort+i, l.Port)
 		require.Equal(t, astraGroup(i), l.Proxy)
-		g := cfg.Groups[1+MaxCollectLanes+i]
+		g := cfg.Groups[1+defaultCollectLanes+i]
 		require.Equal(t, []string{"REJECT", "fixed", "DYNAMIC-one"}, g.Proxies)
 	}
 }

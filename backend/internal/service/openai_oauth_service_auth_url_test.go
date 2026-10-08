@@ -43,3 +43,41 @@ func TestOpenAIOAuthService_GenerateAuthURL_OpenAIKeepsCodexFlow(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, openai.ClientID, session.ClientID)
 }
+
+func TestOpenAIOAuthService_GenerateAuthURL_ExcelBindsClientAndCallback(t *testing.T) {
+	svc := NewOpenAIOAuthService(nil, &openaiOAuthClientAuthURLStub{})
+	defer svc.Stop()
+	result, err := svc.GenerateAuthURL(context.Background(), nil, "", PlatformOpenAI, "excel")
+	require.NoError(t, err)
+	parsed, err := url.Parse(result.AuthURL)
+	require.NoError(t, err)
+	require.Equal(t, "auth.openai.com", parsed.Host)
+	require.Equal(t, "/api/accounts/authorize", parsed.Path)
+	q := parsed.Query()
+	require.Equal(t, openai.ExcelClientID, q.Get("client_id"))
+	require.Equal(t, openai.ExcelRedirectURI, q.Get("redirect_uri"))
+	require.Equal(t, "https://api.openai.com/v1", q.Get("audience"))
+	require.Equal(t, "PC", q.Get("platform"))
+	require.Equal(t, "openid offline_access email profile organization.read", q.Get("scope"))
+	require.Empty(t, q.Get("codex_cli_simplified_flow"))
+	require.Empty(t, q.Get("id_token_add_organizations"))
+	session, ok := svc.sessionStore.Get(result.SessionID)
+	require.True(t, ok)
+	require.Equal(t, openai.ExcelClientID, session.ClientID)
+	require.Equal(t, openai.ExcelRedirectURI, session.RedirectURI)
+	require.Equal(t, session.State, q.Get("state"))
+	require.Equal(t, openai.GenerateCodeChallenge(session.CodeVerifier), q.Get("code_challenge"))
+	_, err = svc.ExchangeCode(context.Background(), &OpenAIExchangeCodeInput{
+		SessionID: result.SessionID, Code: "test-code", State: session.State, RedirectURI: "http://localhost:1455/auth/callback",
+	})
+	require.ErrorContains(t, err, "callback URI does not match")
+}
+
+func TestOpenAIOAuthService_GenerateAuthURL_RejectsUnknownClientAndExcelRedirect(t *testing.T) {
+	svc := NewOpenAIOAuthService(nil, &openaiOAuthClientAuthURLStub{})
+	defer svc.Stop()
+	_, err := svc.GenerateAuthURL(context.Background(), nil, "", PlatformOpenAI, "unknown")
+	require.ErrorContains(t, err, "unsupported OAuth client")
+	_, err = svc.GenerateAuthURL(context.Background(), nil, "https://untrusted.invalid/callback", PlatformOpenAI, "excel")
+	require.ErrorContains(t, err, "official callback")
+}

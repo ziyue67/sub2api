@@ -188,6 +188,9 @@ issues/
 **/credential-operations.key
 **/.credential-key-*
 !docs/credential-encryption.md
+!docs/new-api-upstream-probe.md
+!docs/account-ops-notifications.md
+!docs/screenshots/account-ops-monitoring/
 !docs/screenshots/credential-encryption/
 !docs/screenshots/pelican-showcase-api-ui/
 !docs/screenshots/smart-ops-capture-harvest/
@@ -200,3 +203,5 @@ issues/
 !docs/harvest-gateway-borrow.md
 !docs/screenshots/harvest-gateway-borrow/
 !docs/screenshots/channel-monitor-v3/
+!docs/screenshots/usage-tps-single-token/
+!docs/screenshots/support-tickets/

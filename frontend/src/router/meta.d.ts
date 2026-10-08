@@ -58,6 +58,12 @@ declare module 'vue-router' {
     requiresRiskControl?: boolean
 
     /**
+     * Whether the support ticket (网站工单) switch must be on
+     * @default false
+     */
+    requiresSupportTickets?: boolean
+
+    /**
      * 是否要求订阅功能开关（subscription_enabled，opt-out）未被显式关闭
      * @default false
      */

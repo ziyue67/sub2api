@@ -91,6 +91,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // grokOAuth
 		nil, // openAIGateway
 		nil, // scheduledTestRunner
+		nil, // controlledExperiment
 		nil, // accountOps
 		nil, // accountTokenGuard
 		nil, // accountTokenGuardV2
