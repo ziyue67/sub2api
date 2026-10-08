@@ -40,6 +40,15 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 			return err
 		}
 	}
+	normalizedImages, imageErr := normalizeAnthropicToolImages(account, parsed.Body.Bytes())
+	if imageErr != nil {
+		return imageErr
+	}
+	if !bytes.Equal(normalizedImages, parsed.Body.Bytes()) {
+		if err := parsed.ReplaceBody(normalizedImages); err != nil {
+			return err
+		}
+	}
 	if account != nil && account.IsAnthropicAPIKeyForceCacheTTL1hEnabled() {
 		if err := parsed.ReplaceBody(forceAnthropicAPIKeyCacheTTL1h(account, parsed.Body.Bytes())); err != nil {
 			return fmt.Errorf("force Anthropic API Key count_tokens cache TTL: %w", err)

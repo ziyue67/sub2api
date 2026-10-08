@@ -3277,6 +3277,37 @@
         </div>
       </div>
 
+      <!-- Anthropic API Key 工具结果图片兼容 -->
+      <div
+        v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.toolResultImages') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.toolResultImagesDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="create-anthropic-tool-result-images"
+            @click="anthropicToolResultImagesEnabled = !anthropicToolResultImagesEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              anthropicToolResultImagesEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                anthropicToolResultImagesEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
@@ -4647,6 +4678,7 @@ const codexFingerprintModeOptions = computed(() => [
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 const forceAnthropicCacheTTL1hEnabled = ref(false)
+const anthropicToolResultImagesEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -5119,6 +5151,7 @@ watch(
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
       forceAnthropicCacheTTL1hEnabled.value = false
+      anthropicToolResultImagesEnabled.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
@@ -5150,6 +5183,7 @@ watch(
     if (platform !== 'anthropic' || category !== 'apikey') {
       anthropicPassthroughEnabled.value = false
       forceAnthropicCacheTTL1hEnabled.value = false
+      anthropicToolResultImagesEnabled.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
@@ -5587,6 +5621,7 @@ const resetForm = () => {
   codexFingerprintMode.value = 'off'
   anthropicPassthroughEnabled.value = false
   forceAnthropicCacheTTL1hEnabled.value = false
+  anthropicToolResultImagesEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   // Reset quota control state
@@ -5762,6 +5797,11 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
     extra.force_anthropic_cache_ttl_1h = true
   } else {
     delete extra.force_anthropic_cache_ttl_1h
+  }
+  if (anthropicToolResultImagesEnabled.value) {
+    extra.anthropic_tool_result_images = true
+  } else {
+    delete extra.anthropic_tool_result_images
   }
   if (anthropicAPIKeyAuthScheme.value === 'authorization_bearer') {
     extra.anthropic_apikey_auth_scheme = 'authorization_bearer'

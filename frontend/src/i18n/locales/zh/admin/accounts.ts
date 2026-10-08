@@ -1110,6 +1110,8 @@ export default {
         apiKeyPassthrough: '自动透传（仅替换认证）',
         apiKeyPassthroughDesc:
           '仅对 Anthropic API Key 生效。开启后，messages/count_tokens 请求将透传上游并仅替换认证，保留计费/并发/审计及必要安全过滤；关闭即可回滚到现有兼容链路。',
+        toolResultImages: '工具结果图片兼容',
+        toolResultImagesDesc: '仅对此 Anthropic API Key 账号生效。将工具结果中的结构化图片移到同一用户消息的顶层，保留工具关联与缓存标记，兼容会把嵌套图片当文本处理的上游。不压缩图片，不改写 Usage 或计费。',
         forceCacheTTL1h: '强制真实 1h 缓存',
         forceCacheTTL1hDesc:
           '仅对该 Anthropic API Key 账号生效。将请求中已有的 ephemeral 缓存断点改为 1h，并补齐上游所需 beta；不会新增缓存断点，也不会改写 Usage 计费分类。',
