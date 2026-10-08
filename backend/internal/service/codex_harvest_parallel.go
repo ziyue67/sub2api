@@ -33,10 +33,11 @@ func (s *OpenAIGatewayService) executeParallelHarvest(ctx context.Context, req M
 	if s.openAICodexTicketHarvestIPPoolEnabled(ctx) {
 		return errors.New("parallel collection requires the managed Mihomo proxy; the IP pool harvests on a single lane")
 	}
-	collection, err := mihomo.BeginCollection(ctx, s.openAICodexTicketHarvestProxyURLContext(ctx))
+	collection, err := mihomo.BeginCollection(ctx, s.openAICodexTicketHarvestProxyURLContext(ctx), min(req.CollectLanes, req.MaxAttempts))
 	if err != nil {
 		return err
 	}
+	req.CollectLanes = collection.LaneCount()
 	return s.runParallelHarvest(ctx, req, account, emit, collection)
 }
 

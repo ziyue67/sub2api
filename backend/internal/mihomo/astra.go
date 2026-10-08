@@ -12,7 +12,7 @@ import (
 
 // These listeners never participate in ticket collection or CODEX-ROTATE.
 const AstraLanes = 8
-const astraPort = collectPort + MaxCollectLanes
+const astraPort = collectPort + defaultCollectLanes
 
 func astraGroup(lane int) string { return fmt.Sprintf("ASTRA-PIN-%d", lane) }
 

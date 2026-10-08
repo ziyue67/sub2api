@@ -127,7 +127,7 @@ func TestParallelProbeBudgetIsAtomic(t *testing.T) {
 }
 
 func TestParallelRequestValidationAndMutualExclusion(t *testing.T) {
-	_, err := NormalizeManualHarvestRequest(ManualHarvestRequest{CollectLanes: 33})
+	_, err := NormalizeManualHarvestRequest(ManualHarvestRequest{CollectLanes: -1})
 	require.Error(t, err)
 	svc := &OpenAIGatewayService{accountRepo: &manualHarvestAccountRepo{}}
 	svc.codexHarvestRunMu.Lock()
@@ -164,4 +164,26 @@ func TestParallelHarvestKeepsSafeRouteDiagnostics(t *testing.T) {
 			require.Contains(t, event.Detail, "route_pair_missing")
 		}
 	}
+}
+
+func TestParallelHarvestLargeSharedBudget(t *testing.T) {
+	account := ticketTestAccount(41)
+	var requests atomic.Int64
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, TTLSeconds: 3600}, &codexTicketFuncUpstream{do: func(*http.Request) (*http.Response, error) {
+		requests.Add(1)
+		resp := codexTicketResponse()
+		resp.Header.Set(openAICodexTurnStateHeader, fakeCodexTicketState(312))
+		return resp, nil
+	}})
+	svc.accountRepo = &manualHarvestAccountRepo{account: account}
+	collection := &fakeHarvestCollection{}
+	var final ManualHarvestProgress
+	// Zero wait is an offline test seam; public requests retain the 1s minimum.
+	err := svc.runParallelHarvest(context.Background(), ManualHarvestRequest{CollectLanes: 128, MaxAttempts: 1100, Models: []string{"gpt-6-astra", "gpt-6-sol"}}, account, func(p ManualHarvestProgress) { final = p }, collection)
+	require.NoError(t, err)
+	require.EqualValues(t, 1100, requests.Load())
+	require.EqualValues(t, 1100, collection.next.Load())
+	require.Equal(t, 1100, final.Attempt)
+	require.True(t, final.Done)
+	require.True(t, collection.closed.Load())
 }

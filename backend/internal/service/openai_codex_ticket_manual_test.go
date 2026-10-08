@@ -153,8 +153,7 @@ func TestExecuteManualHarvestRejectsUnsupportedAccounts(t *testing.T) {
 	}
 }
 
-// The admin API is reachable without the UI form, so out-of-range values must be
-// clamped server-side instead of letting one request hammer upstream for hours.
+// Timing bounds still apply, but administrators choose their own attempt budget.
 func TestNormalizeManualHarvestRequestClampsBounds(t *testing.T) {
 	req := ManualHarvestRequest{
 		Models:                   []string{" gpt-6-astra ", "", "gpt-6-astra", "gpt-5.6-sol"},
@@ -165,7 +164,7 @@ func TestNormalizeManualHarvestRequestClampsBounds(t *testing.T) {
 	normalizeManualHarvestRequest(&req)
 	require.Equal(t, manualHarvestProbeIntervalMax, req.ProbeIntervalSeconds)
 	require.Equal(t, manualHarvestRateLimitCooldownMax, req.RateLimitCooldownSeconds)
-	require.Equal(t, manualHarvestMaxAttemptsMax, req.MaxAttempts)
+	require.Equal(t, 100_000, req.MaxAttempts)
 	require.Equal(t, []string{"gpt-6-astra", "gpt-5.6-sol"}, req.Models)
 
 	// Zero values mean unset and fall back to the documented defaults rather
@@ -193,4 +192,14 @@ func TestNormalizeManualHarvestRequestCapsModelList(t *testing.T) {
 	req := ManualHarvestRequest{Models: models}
 	normalizeManualHarvestRequest(&req)
 	require.Len(t, req.Models, manualHarvestMaxModels)
+}
+
+func TestManualHarvestAcceptsLargeBudgetsAndLaneCounts(t *testing.T) {
+	for _, attempts := range []int{101, 1100, 100_000} {
+		req, err := NormalizeManualHarvestRequest(ManualHarvestRequest{MaxAttempts: attempts, CollectLanes: 128})
+		require.NoError(t, err)
+		normalizeManualHarvestRequest(&req)
+		require.Equal(t, attempts, req.MaxAttempts)
+		require.Equal(t, 128, req.CollectLanes)
+	}
 }

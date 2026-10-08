@@ -118,4 +118,35 @@ describe('HarvestManualConsole', () => {
     expect(wrapper.text()).toContain('admin.harvestFlow.console.stopLog')
     expect(wrapper.emitted('finished')).toBeUndefined()
   })
+  it.each([false, true])('submits an attempt budget above 100 (parallel=%s)', async (parallel) => {
+    stream.mockResolvedValue(undefined)
+    wrapper = mount(HarvestManualConsole, {
+      props: { accounts: [account()], models: ['gpt-6-astra'] }
+    })
+    await wrapper.get('[data-testid="manual-account-input"]').trigger('focus')
+    await wrapper.get('[data-testid="manual-account-2"]').trigger('click')
+    const attempts = wrapper.get('[data-testid="manual-max-attempts"]')
+    const lanes = wrapper.get('[data-testid="manual-collect-lanes"]')
+    expect(attempts.attributes('max')).toBeUndefined()
+    expect(lanes.attributes('max')).toBeUndefined()
+    await attempts.setValue(3000)
+    await lanes.setValue(128)
+    await wrapper.get(`[data-testid="${parallel ? 'manual-parallel-start' : 'manual-start'}"]`).trigger('click')
+    await flushPromises()
+    expect(stream).toHaveBeenCalledWith(2, expect.objectContaining({ max_attempts: 3000, collect_lanes: parallel ? 128 : 1 }), expect.any(Function), expect.any(AbortSignal))
+  })
+
+  it.each([[0, 128], [1.5, 128], [3000, 0], [3000, 1.5]])('rejects invalid attempts/lanes %s/%s', async (attempts, lanes) => {
+    wrapper = mount(HarvestManualConsole, {
+      props: { accounts: [account()], models: ['gpt-6-astra'] }
+    })
+    await wrapper.get('[data-testid="manual-account-input"]').trigger('focus')
+    await wrapper.get('[data-testid="manual-account-2"]').trigger('click')
+    await wrapper.get('[data-testid="manual-max-attempts"]').setValue(attempts)
+    await wrapper.get('[data-testid="manual-collect-lanes"]').setValue(lanes)
+    await wrapper.get('[data-testid="manual-parallel-start"]').trigger('click')
+    expect(stream).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('admin.harvestFlow.console.invalidBudget')
+  })
+
 })

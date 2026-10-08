@@ -82,7 +82,8 @@
           </label>
           <label class="text-xs text-gray-600 dark:text-gray-300">
             {{ t(`${prefix}.maxAttempts`) }}
-            <input v-model.number="form.max_attempts" type="number" min="1" max="100" :disabled="harvesting" class="input mt-1 w-full font-mono text-xs" />
+            <input v-model.number="form.max_attempts" data-testid="manual-max-attempts" type="number" min="1" step="1" :disabled="harvesting" class="input mt-1 w-full font-mono text-xs" />
+            <span class="mt-1 block text-[10px] text-gray-400">{{ t(`${prefix}.maxAttemptsHint`) }}</span>
           </label>
           <label class="text-xs text-gray-600 dark:text-gray-300">
             {{ t(`${prefix}.nodeSwitch`) }}
@@ -94,7 +95,7 @@
 
         <label class="block text-xs text-gray-600 dark:text-gray-300">
           {{ t(`${prefix}.collectLanes`) }}
-          <input v-model.number="collectLanes" data-testid="manual-collect-lanes" type="number" min="2" max="32" :disabled="harvesting" class="input mt-1 w-full font-mono text-xs" />
+          <input v-model.number="collectLanes" data-testid="manual-collect-lanes" type="number" min="2" step="1" :disabled="harvesting" class="input mt-1 w-full font-mono text-xs" />
           <span class="mt-1 block text-[10px] text-gray-400">{{ t(`${prefix}.parallelHint`) }}</span>
         </label>
 
@@ -284,6 +285,11 @@ function finish(kind: 'success' | 'finished' | 'stopped' | 'auth') {
 
 async function start(parallel = false) {
   if (!selected.value || harvesting.value || !selectedModels.value.length) return
+  if (!Number.isSafeInteger(form.value.max_attempts) || form.value.max_attempts < 1
+    || (parallel && (!Number.isSafeInteger(collectLanes.value) || collectLanes.value < 2))) {
+    addLog('ERROR', t(`${prefix}.invalidBudget`))
+    return
+  }
   abort?.abort()
   abort = new AbortController()
   setRunning(true)

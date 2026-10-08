@@ -2,7 +2,9 @@ package mihomo
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -95,6 +97,7 @@ func TestCollectionWithOfficialKernel(t *testing.T) {
 	require.NoError(t, c.Close())
 	// The simulated upstream only serves local HTTP, not public TLS.
 	m.bpsProbe = func(context.Context, string) error { return nil }
+	m.warmBPSPool(ctx, 2)
 	// BPS binds sessions to immutable node listeners, independent of harvest use-once.
 	bps1, done1, err := AcquireBPSSession(ctx, "account:1/thread:first")
 	require.NoError(t, err)
@@ -136,6 +139,37 @@ func TestCollectionWithOfficialKernel(t *testing.T) {
 		}
 	}
 	// Config reloads and harvest selector changes must preserve the BPS exits.
+	require.Equal(t, firstExit, fetch(bps1))
+	require.Equal(t, secondExit, fetch(bps2))
+
+	// Exercise more than the old 32 lanes with the official kernel. Every
+	// simulated proxy returns its own identity; no external probes are sent.
+	expanded := saved{Secret: m.saved.Secret, Nodes: []map[string]any{node("first", first.URL), node("second", second.URL)}}
+	for i := 2; i < 128; i++ {
+		name := fmt.Sprintf("exit-%03d", i)
+		exit := fake(name)
+		defer exit.Close()
+		expanded.Nodes = append(expanded.Nodes, node(name, exit.URL))
+	}
+	require.NoError(t, m.run(ctx, "start", expanded))
+	large, err := BeginCollection(ctx, Endpoint, 128)
+	require.NoError(t, err)
+	defer func() { _ = large.Close() }()
+	require.Equal(t, 128, large.LaneCount())
+	for lane := 0; lane < large.LaneCount(); lane++ {
+		selected, proxy, err := large.Next(ctx, lane)
+		require.NoError(t, err)
+		require.Equal(t, selected, fetch(proxy), "lane %d", lane)
+	}
+	require.NoError(t, large.Close())
+	for _, port := range large.ports[defaultCollectLanes:] {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		require.Error(t, err, "temporary listener must be removed: %d", port)
+	}
+	// Existing BPS ports and bindings survive both collection reloads.
 	require.Equal(t, firstExit, fetch(bps1))
 	require.Equal(t, secondExit, fetch(bps2))
 

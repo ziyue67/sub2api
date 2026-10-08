@@ -32,6 +32,22 @@ vi.mock('@/api/admin', () => ({
 import { useOpenAIOAuth } from '@/composables/useOpenAIOAuth'
 import { adminAPI } from '@/api/admin'
 
+describe('useOpenAIOAuth.generateAuthUrl', () => {
+  it('uses the existing endpoint for the default Excel login', async () => {
+    const generate = vi.mocked(adminAPI.accounts.generateAuthUrl)
+    generate.mockResolvedValue({ auth_url: 'https://auth.openai.com/api/accounts/authorize?state=bps.test.PC', session_id: 'test-session' })
+    const oauth = useOpenAIOAuth()
+    await oauth.generateAuthUrl(5, undefined, 'excel')
+    expect(generate).toHaveBeenLastCalledWith('/admin/openai/generate-auth-url', { proxy_id: 5, oauth_client: 'excel' })
+    expect(oauth.oauthState.value).toBe('bps.test.PC')
+  })
+  it('uses the Excel client for manual RT validation', async () => {
+    vi.mocked(adminAPI.accounts.refreshOpenAIToken).mockResolvedValue({ access_token: 'at', expires_in: 3600, expires_at: 1700000000 })
+    await useOpenAIOAuth().validateRefreshToken('excel-rt', 5, 'app_fnr0pYvVwwFDocDumLG3H2Bp')
+    expect(adminAPI.accounts.refreshOpenAIToken).toHaveBeenLastCalledWith('excel-rt', 5, '/admin/openai/refresh-token', 'app_fnr0pYvVwwFDocDumLG3H2Bp')
+  })
+})
+
 describe('useOpenAIOAuth.buildCredentials', () => {
   it('should keep client_id when token response contains it', () => {
     const oauth = useOpenAIOAuth()
