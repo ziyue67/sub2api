@@ -1002,6 +1002,8 @@ export default {
         apiKeyPassthrough: 'Auto passthrough (auth only)',
         apiKeyPassthroughDesc:
           'Only applies to Anthropic API Key accounts. When enabled, messages/count_tokens are forwarded in passthrough mode with auth replacement only, while billing/concurrency/audit and safety filtering are preserved. Disable to roll back immediately.',
+        toolResultImages: 'Tool result image compatibility',
+        toolResultImagesDesc: 'Only for this Anthropic API Key account. Lift structured tool-result images into the same user message, preserving tool references and cache markers. For upstreams that treat nested images as text. Does not compress images or rewrite usage or billing.',
         forceCacheTTL1h: 'Force real 1h cache TTL',
         forceCacheTTL1hDesc:
           'Only applies to this Anthropic API Key account. Existing ephemeral cache breakpoints are upgraded to 1h and the required upstream beta is added. No new cache breakpoint is created and usage billing classifications are not rewritten.',

@@ -363,6 +363,37 @@ describe('EditAccountModal', () => {
     restored.unmount()
   })
 
+  it('round-trips the Anthropic API Key tool image compatibility switch', async () => {
+    const account = {
+      ...buildAccount(),
+      name: 'Anthropic API Key',
+      platform: 'anthropic',
+      extra: { unrelated: 'preserve' }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="edit-anthropic-tool-result-images"]')
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra.anthropic_tool_result_images).toBe(true)
+    expect(extra.unrelated).toBe('preserve')
+    wrapper.unmount()
+
+    const restored = mountModal({ ...account, extra })
+    await restored.get('[data-testid="edit-anthropic-tool-result-images"]').trigger('click')
+    await restored.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra).not.toHaveProperty('anthropic_tool_result_images')
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.unrelated).toBe('preserve')
+    restored.unmount()
+  })
+
   it('round-trips OAuth alias scope and lets an operator restore a whitelist', async () => {
     const account = { ...buildAccount(), type: 'oauth', credentials: { model_mapping_mode: 'aliases', model_mapping: { 'gpt-5.4': 'gpt-5.6-sol' } } }
     const wrapper = mountModal(account); await flushPromises()
