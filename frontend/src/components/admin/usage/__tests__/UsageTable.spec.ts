@@ -164,8 +164,10 @@ describe('admin UsageTable tooltip', () => {
       },
       global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
     })
-    expect(wrapper.findAll('[data-testid="output-tps"]').map(cell => cell.text())).toEqual(['50.0 tok/s', '—', '—'])
-    expect(wrapper.text()).toContain('Output TPS')
+    // The Fork keeps its own TPS cell (severity coloring + "t/s" units), so the
+    // retained marker is data-testid="latency-tps" and the label is latencyTps.
+    expect(wrapper.findAll('[data-testid="latency-tps"]').map(cell => cell.text())).toEqual(['50.0 t/s', '-', '-'])
+    expect(wrapper.text()).toContain('usage.latencyTps')
   })
 
   beforeEach(() => {
