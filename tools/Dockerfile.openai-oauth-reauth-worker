@@ -17,6 +17,8 @@ COPY --from=node /opt/tosub2-runtime/node_modules /opt/tosub2/node_modules
 
 WORKDIR /app
 COPY tools/openai_oauth_reauth_worker.py /app/openai_oauth_reauth_worker.py
+COPY tools/openai_excel_oauth_adapter.py tools/openai_excel_2fa_login.py /app/
+COPY tools/openai_excel_password_flow.mjs /app/
 
 # Build with: docker build --build-context turb=/path/to/turb --build-context tosub2=/path/to/toSub2 ...
 COPY --from=turb config /opt/turb/config

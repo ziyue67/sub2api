@@ -140,13 +140,15 @@ func TestEnsureOpenAIOAuthWebSearchToolForHistoryDoesNotShareToolMap(t *testing.
 	require.True(t, ensureOpenAIOAuthWebSearchToolForHistory(second, false))
 	firstTools, ok := first["tools"].([]any)
 	require.True(t, ok)
+	require.Len(t, firstTools, 1)
 	firstTool, ok := firstTools[0].(map[string]any)
 	require.True(t, ok)
-	firstTool["external_web_access"] = true
 	secondTools, ok := second["tools"].([]any)
 	require.True(t, ok)
+	require.Len(t, secondTools, 1)
 	secondTool, ok := secondTools[0].(map[string]any)
 	require.True(t, ok)
+	firstTool["external_web_access"] = true
 	require.Equal(t, false, secondTool["external_web_access"])
 	require.Equal(t, false, openAIWebSearchHistoryTool["external_web_access"])
 }

@@ -16,8 +16,11 @@ COPY tools/reauth-runtime/requirements.txt /build/requirements.txt
 RUN python -m pip install --no-cache-dir --only-binary=:all: -r /build/requirements.txt
 COPY tools/openai_oauth_reauth_worker.py /build/worker.py
 COPY tools/test_openai_oauth_reauth_worker.py tools/test_openai_oauth_reauth_engines.py tools/test_openai_oauth_reauth_runtime_controls.py /build/tools/
+COPY tools/openai_excel_oauth_adapter.py tools/openai_excel_2fa_login.py tools/test_openai_excel_oauth_adapter.py /build/tools/
+COPY tools/openai_excel_password_flow.mjs tools/test_openai_excel_password_flow.mjs /build/tools/
 RUN cp /build/worker.py /build/tools/openai_oauth_reauth_worker.py \
-    && cd /build && python -m unittest tools.test_openai_oauth_reauth_worker tools.test_openai_oauth_reauth_engines tools.test_openai_oauth_reauth_runtime_controls -q \
+    && cd /build && EXCEL_TEST_TOSUB2_ROOT=/build/tosub2 python -m unittest tools.test_openai_oauth_reauth_worker tools.test_openai_oauth_reauth_engines tools.test_openai_oauth_reauth_runtime_controls tools.test_openai_excel_oauth_adapter -q \
+    && node /build/tools/test_openai_excel_password_flow.mjs \
     && cd /build/tosub2 && node test/password-mfa-workspace-smoke.mjs
 COPY tools/reauth-runtime/package.py /build/package.py
 RUN python /build/package.py /out
