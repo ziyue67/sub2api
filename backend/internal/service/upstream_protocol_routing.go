@@ -37,6 +37,31 @@ func resolveUpstreamProtocol(account *Account, inbound, model string, catalog []
 		if account.providerSupportsProtocol(inbound) {
 			return inbound
 		}
+		// OpenAI API Key 的协议覆盖是 Fork 自有能力（adaptive + api_base_urls）。
+		// 该平台没有 provider profile，不能一律回落 Chat Completions：显式
+		// chat_completions 要回落，但显式 adaptive 且未配 / 未探针否定 Responses
+		// 端点时必须保持 Responses（与 shouldForwardOpenAIResponsesViaChatCompletions
+		// 同口径，否则既有账号会被静默改道）。
+		if account.IsOpenAIAPIProtocolConfigured() {
+			if account.GetAPIProtocol() == APIProtocolChatCompletions {
+				return APIProtocolChatCompletions
+			}
+			// Chat Completions 入站按同协议直通，不做协议转换。
+			if inbound == APIProtocolChatCompletions {
+				return APIProtocolChatCompletions
+			}
+			// /v1/messages 入站：配了原生 Anthropic 端点则直通，否则转 CC。
+			if inbound == APIProtocolAnthropic {
+				if account.HasOpenAIProtocolEndpoint(APIProtocolAnthropic) {
+					return APIProtocolAnthropic
+				}
+				return APIProtocolChatCompletions
+			}
+			if !account.HasOpenAIProtocolEndpoint(APIProtocolResponses) {
+				return APIProtocolChatCompletions
+			}
+			return APIProtocolResponses
+		}
 		return APIProtocolChatCompletions
 	}
 	if account.IsAnthropicProtocol() {
