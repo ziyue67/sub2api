@@ -70,6 +70,17 @@ describe('Astra gateway configuration', () => {
     expect(toggle.attributes('aria-checked')).toBe('true')
     w.unmount()
   })
+  it('shows joined and removed memberships for group scheduling records', async () => {
+    const w = render(); await flushPromises()
+    w.findComponent(AstraGatewayRuntime).vm.$emit('scheduling', [true, false].map(ready => ({ account_id: 300, mode: 'groups', schedulable: ready, checked_at: '2026-10-09T08:00:00Z', reason: ready ? 'target_probe_passed' : 'route_expired' })))
+    await flushPromises()
+    const log = w.get('[data-testid="scheduling-records"]')
+    expect(log.text()).toContain('admin.astraGateway.groupsJoined')
+    expect(log.text()).toContain('admin.astraGateway.groupsRemoved')
+    expect(log.text()).not.toContain('admin.astraGateway.enabled')
+    expect(log.text()).not.toContain('admin.astraGateway.disabled')
+    w.unmount()
+  })
   it('loads disabled defaults and saves independent switches', async () => {
     const w = render(); await flushPromises()
     expect(w.get('[data-testid="cookie-toggle"]').attributes('aria-checked')).toBe('false')

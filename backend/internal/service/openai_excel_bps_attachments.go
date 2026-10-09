@@ -74,7 +74,7 @@ func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, acc
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		s.handleExcelBPSUnauthorized(ctx, account, resp.StatusCode, resp.Header, raw)
+		s.handleExcelBPSUnauthorized(ctx, account, resp.StatusCode, resp.Header, raw, token)
 		status := resp.StatusCode
 		if status < 400 || status > 599 {
 			status = http.StatusBadGateway

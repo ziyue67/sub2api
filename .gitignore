@@ -137,6 +137,7 @@ vite.config.js
 docs/*
 !docs/openai-ws-sse-acceleration.md
 !docs/openai-outbound-identity.md
+!docs/openai-2fa-dual-oauth.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
@@ -154,10 +155,12 @@ docs/*
 !docs/request-capture.md
 !docs/account-token-guard.md
 !docs/priority-scheduling.md
+!docs/astra-account-scheduling.md
 !docs/legal/
 !docs/legal/*.md
 !docs/screenshots/
 docs/screenshots/*
+!docs/screenshots/astra-auto-groups/
 !docs/screenshots/ws-sse-acceleration/
 !docs/screenshots/mobile-account-actions-menu.png
 !docs/screenshots/codex-referral-dialog.png
@@ -203,5 +206,12 @@ issues/
 !docs/harvest-gateway-borrow.md
 !docs/screenshots/harvest-gateway-borrow/
 !docs/screenshots/channel-monitor-v3/
+!docs/screenshots/monitor-client-rejections/
 !docs/screenshots/usage-tps-single-token/
 !docs/screenshots/support-tickets/
+!docs/screenshots/pelican-showcase-notice/
+
+!docs/openai-2fa-rotation.md
+!docs/screenshots/2fa-rotation/
+**/totp-recovery/
+**/*.sealed

@@ -1,0 +1,38 @@
+{
+  "before_source_commit": "d3e43f2de33af9e987cffa511d76dfabbcd749da",
+  "after_source_commit": "30dc573f3cc4d1ec5760b06ea9ccdb5dd271c5ee",
+  "mode": "local Vue component preview; mocked API and fictional statistics; no production or full-page navigation verification",
+  "components": [
+    "frontend/src/components/account/CreateAccountModal.vue",
+    "frontend/src/components/admin/account/AccountTableFilters.vue",
+    "frontend/src/views/admin/ops/components/OpsDashboardHeader.vue"
+  ],
+  "browser": "Chrome/154.0.8037.98 via loopback CDP",
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 1150
+    },
+    {
+      "width": 390,
+      "height": 844
+    }
+  ],
+  "screenshots": [
+    "after-filters-mobile.png",
+    "after-overview.png",
+    "before-overview.png",
+    "cline-light.png",
+    "cline-mobile.png",
+    "command-code-dark.png",
+    "command-code-light.png"
+  ],
+  "interactions": [
+    "open create-account dialog",
+    "select Cline",
+    "select Command Code",
+    "toggle dark CSS class",
+    "expand secondary account filters"
+  ],
+  "submitted_accounts": 0
+}

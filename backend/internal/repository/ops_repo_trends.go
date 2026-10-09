@@ -51,9 +51,8 @@ WITH usage_buckets AS (
 error_buckets AS (
   SELECT ` + errorBucketExpr + ` AS bucket,
          COUNT(*) AS error_count
-  FROM ops_error_logs
-  ` + errorWhere + `
-    AND COALESCE(status_code, 0) >= 400
+  FROM ` + opsMetricErrorRowsSQL(errorWhere) + `
+  WHERE COALESCE(status_code, 0) >= 400
   GROUP BY 1
 ),
 switch_buckets AS (
@@ -452,13 +451,12 @@ func (r *opsRepository) GetErrorTrend(ctx context.Context, filter *service.OpsDa
 SELECT
   ` + bucketExpr + ` AS bucket,
   COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400) AS error_total,
-  COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND is_business_limited) AS business_limited,
-  COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND NOT is_business_limited AND error_type <> 'client_canceled') AS error_sla,
-  COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) NOT IN (429, 529)) AS upstream_excl,
-  COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 429) AS upstream_429,
-  COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 529) AS upstream_529
-FROM ops_error_logs
-` + where + `
+  COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND effective_business_limited) AS business_limited,
+  COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND NOT effective_business_limited AND error_type <> 'client_canceled') AS error_sla,
+  COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT effective_business_limited AND COALESCE(upstream_status_code, status_code, 0) NOT IN (429, 529)) AS upstream_excl,
+  COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT effective_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 429) AS upstream_429,
+  COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT effective_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 529) AS upstream_529
+FROM ` + opsMetricErrorRowsSQL(where) + `
 GROUP BY 1
 ORDER BY 1 ASC`
 
@@ -564,11 +562,10 @@ func (r *opsRepository) GetErrorDistribution(ctx context.Context, filter *servic
 SELECT
   COALESCE(upstream_status_code, status_code, 0) AS status_code,
   COUNT(*) AS total,
-  COUNT(*) FILTER (WHERE NOT is_business_limited AND error_type <> 'client_canceled') AS sla,
-  COUNT(*) FILTER (WHERE is_business_limited) AS business_limited
-FROM ops_error_logs
-` + where + `
-  AND COALESCE(status_code, 0) >= 400
+  COUNT(*) FILTER (WHERE NOT effective_business_limited AND error_type <> 'client_canceled') AS sla,
+  COUNT(*) FILTER (WHERE effective_business_limited) AS business_limited
+FROM ` + opsMetricErrorRowsSQL(where) + `
+WHERE COALESCE(status_code, 0) >= 400
 GROUP BY 1
 ORDER BY total DESC
 LIMIT 20`

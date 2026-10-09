@@ -76,15 +76,12 @@ error_base AS (
     -- value so platform-level GROUPING SETS don't collide with the overall (platform=NULL) row.
     COALESCE(platform, 'unknown') AS platform,
     group_id AS group_id,
-    is_business_limited AS is_business_limited,
+    effective_business_limited AS is_business_limited,
     error_owner AS error_owner,
     error_type AS error_type,
     status_code AS client_status_code,
     COALESCE(upstream_status_code, status_code, 0) AS effective_status_code
-  FROM ops_error_logs
-  -- Exclude count_tokens requests from error metrics as they are informational probes
-  WHERE created_at >= $1 AND created_at < $2
-    AND is_count_tokens = FALSE
+  FROM ` + opsMetricErrorRowsSQL("WHERE created_at >= $1 AND created_at < $2 AND is_count_tokens = FALSE") + `
 ),
 error_agg AS (
   SELECT

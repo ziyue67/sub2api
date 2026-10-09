@@ -254,6 +254,32 @@ func TestChannelMonitorV3ModelFilter(t *testing.T) {
 	require.Equal(t, int64(10), one.Requests)
 }
 
+func TestChannelMonitorV3QuietComponentDoesNotKeepOldFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		back int
+		want string
+	}{
+		{"current", 0, ChannelMonitorV3StatusDown},
+		{"brief lull", 2, ChannelMonitorV3StatusDown},
+		{"old failure", 6, ChannelMonitorV3StatusUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := monitorV3StatusFixture()
+			repo.slotFacts = ChannelMonitorV3Facts{Metrics: []ChannelMonitorV3Fact{
+				{GroupID: 4, Model: "gpt", Slot: monitorV3Slot(tc.back), Errors: 10},
+			}}
+			page, err := monitorV3Service(repo).Status(context.Background(), ChannelMonitorV3Viewer{AllowedGroups: map[int64]bool{4: true}}, nil)
+			require.NoError(t, err)
+			item := page.Categories[0].Components[0]
+			require.Equal(t, tc.want, item.Status)
+			require.Equal(t, ChannelMonitorV3StatusDown, item.Cells[29-tc.back].Status, "history is retained")
+			require.Equal(t, monitorV3Slot(tc.back), *item.LastDataAt)
+			require.NotNil(t, item.Availability, "historical request availability remains available")
+		})
+	}
+}
+
 func monitorV3StatusFixture() *monitorV3RepoFake {
 	repo := &monitorV3RepoFake{config: monitorV3Config()}
 	through := monitorV3Now.Add(-time.Minute)

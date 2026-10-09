@@ -190,7 +190,7 @@ type ChannelMonitorV3ComponentStatus struct {
 	Description string   `json:"description,omitempty"`
 	Model       string   `json:"model,omitempty"`
 	Multiplier  *float64 `json:"multiplier,omitempty"`
-	// Status is the latest slot that had enough traffic to judge.
+	// Status is the latest sufficiently sampled slot, while it is still fresh.
 	Status string `json:"status"`
 	// Availability is the 0–100 share of answered requests over the
 	// configured range; nil without traffic.
@@ -686,7 +686,19 @@ func (s *ChannelMonitorV3Service) componentStatus(cfg ChannelMonitorV3Config, co
 			item.LastDataAt = &at
 		}
 		if cell.Status != ChannelMonitorV3StatusInsufficient {
-			item.Status = cell.Status
+			// Quiet traffic is unknown, not evidence that an old outage persists.
+			// Use the viewed window so historical pages have the same semantics.
+			windowEnd := first.Add(time.Duration(cfg.Cells) * interval)
+			if now := s.now().UTC(); now.Before(windowEnd) {
+				windowEnd = now
+			}
+			freshness := 15 * time.Minute
+			if interval > freshness {
+				freshness = interval
+			}
+			if !cell.Start.Add(interval).Before(windowEnd.Add(-freshness)) {
+				item.Status = cell.Status
+			}
 			break
 		}
 	}

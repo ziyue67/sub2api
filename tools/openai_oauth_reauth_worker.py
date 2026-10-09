@@ -346,6 +346,30 @@ class WorkerAPI:
             raise WorkerError("invalid worker concurrency from server")
         return value
 
+    def totp_phase(self, task_id, phase, secret=""):
+        return self._post(f"/api/v1/internal/openai-reauth/{task_id}/totp-phase",
+                          {"worker_id": self.config.worker_id, "phase": phase, "secret": secret})
+
+    def totp_finish(self, task_id, success, error_code=""):
+        return self._post(f"/api/v1/internal/openai-reauth/{task_id}/totp-finish",
+                          {"worker_id": self.config.worker_id, "success": success, "error_code": error_code})
+
+    def totp_recover(self, task_id, secret):
+        return self._post(f"/api/v1/internal/openai-reauth/{task_id}/totp-recover", {"secret": secret})
+
+    def claim_totp(self):
+        if self.config.tosub2_root is None or not os.getenv("OPENAI_TOTP_JOURNAL_DIR"):
+            return None
+        try:
+            from .openai_totp_rotation import Journal
+        except ImportError:
+            from openai_totp_rotation import Journal
+        journal = Journal()
+        if time.monotonic() >= getattr(self, "_next_totp_recovery", 0):
+            journal.recover(self)
+            self._next_totp_recovery = time.monotonic() + 60
+        return self._post("/api/v1/internal/openai-reauth/totp-claim", {"worker_id": self.config.worker_id})
+
     def claim(self) -> dict[str, Any] | None:
         data = self._post(
             "/api/v1/internal/openai-reauth/claim",
@@ -1166,6 +1190,18 @@ def process_password_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
 
 
 def run_once(api: WorkerAPI, protocol: SimpleNamespace | None) -> bool:
+    if callable(getattr(api, "claim_totp", None)):
+        try:
+            rotation = api.claim_totp()
+        except Exception:
+            rotation = None  # Older APIs and unavailable recovery storage do not disrupt re-login.
+        if rotation:
+            try:
+                from .openai_totp_rotation import rotate
+            except ImportError:
+                from openai_totp_rotation import rotate
+            rotate(api, rotation)
+            return True
     try:
         claim = api.claim()
     except WorkerError as exc:

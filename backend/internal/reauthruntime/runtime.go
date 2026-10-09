@@ -180,6 +180,7 @@ func (m *Manager) run() {
 	cmd := exec.CommandContext(m.ctx, filepath.Join(dir, "python"), filepath.Join(dir, "worker.py"))
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "PYTHONDONTWRITEBYTECODE=1", "PYTHONUNBUFFERED=1",
 		"SUB2API_BASE_URL=" + m.baseURL, "OPENAI_REAUTH_WORKER_TOKEN=" + m.token,
+		"OPENAI_TOTP_JOURNAL_DIR=" + filepath.Join(m.root, "totp-recovery"),
 		"OPENAI_REAUTH_WORKER_ID=managed-" + randomID(), "TOSUB2_ROOT=" + filepath.Join(dir, "tosub2"),
 		"TOSUB2_PYTHON=" + filepath.Join(dir, "python"), "NODE_EXECUTABLE=" + filepath.Join(dir, "node")}
 	// The managed child has a minimal environment. Explicitly pass the bounded

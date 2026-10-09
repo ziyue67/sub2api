@@ -227,7 +227,7 @@ func (s *OpenAIGatewayService) probeExcelBPS403Recovery(ctx context.Context, acc
 	if model == "" || s.httpUpstream == nil {
 		return errors.New("BPS recovery probe unavailable")
 	}
-	token, _, err := s.GetAccessToken(ctx, account)
+	token, err := s.getExcelBPSAccessToken(ctx, account)
 	if err != nil {
 		return err
 	}

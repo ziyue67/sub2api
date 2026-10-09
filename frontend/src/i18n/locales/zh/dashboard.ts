@@ -650,6 +650,7 @@ export default {
   pelicanShowcase: {
     title: '鹈鹕测智',
     description: '各分组的模型定时完成同一道绘图题，直接看生成的作品，直观比较模型水平',
+    notice: '由于鹈鹕测智页面限制了模型的最大token所以展示的图可能有些鹈鹕没有腿或者轮子不转，这是正常的。只要风格对的话就是没有降智。',
     allGroups: '全部分组',
     keepRule: '每组保留最近 {count} 张',
     retentionRule: '超过 {days} 天自动清理',

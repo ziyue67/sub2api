@@ -317,8 +317,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		originalModel = reqModel
 	}
 
-	// Fork：DeepSeek 原生 compaction 的 Responses 压缩请求直走 raw CC 端点。
-	if isOpenAINativeCompactionV2(c) && shouldForwardDeepSeekResponsesCompactViaChatCompletions(account, body) {
+	// Fork：DeepSeek 原生 compaction 的 Responses 压缩请求直走 raw CC 端点；
+	// ranxi 追加 Responses Lite 的同类判定。
+	if (isOpenAINativeCompactionV2(c) && shouldForwardDeepSeekResponsesCompactViaChatCompletions(account, body)) ||
+		shouldForwardDeepSeekResponsesLiteViaChatCompletions(account, body) {
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body)
 	}
 	// 上游协议统一由 resolveUpstreamProtocol 判定（按模型分流时带上游模型目录）。OpenAI API Key 账号只会落到

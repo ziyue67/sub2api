@@ -5,21 +5,23 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/service"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type astraActionState struct {
-	Mode         string          `json:"mode"`
-	GroupIDs     []int64         `json:"group_ids,omitempty"`
-	Removed      []qualityGroup  `json:"removed,omitempty"`
-	Mapping      json.RawMessage `json:"mapping,omitempty"`
-	AfterMapping json.RawMessage `json:"after_mapping,omitempty"`
-	Version      time.Time       `json:"version"`
+	Mode         string                 `json:"mode"`
+	GroupIDs     []int64                `json:"group_ids,omitempty"`
+	Removed      []qualityGroup         `json:"removed,omitempty"`
+	Memberships  []astraGroupMembership `json:"memberships,omitempty"`
+	Mapping      json.RawMessage        `json:"mapping,omitempty"`
+	AfterMapping json.RawMessage        `json:"after_mapping,omitempty"`
+	Version      time.Time              `json:"version"`
 }
 
 // Settings fence, mutation, ownership and cache invalidation commit together.
@@ -72,12 +74,8 @@ func (r *accountRepository) ApplyAstraScheduling(ctx context.Context, id int64, 
 			return result, err
 		}
 	}
-	groupsRaw, err := qualityGroups(ctx, tx, id)
+	groups, err := astraSchedulingGroups(ctx, tx, id)
 	if err != nil {
-		return result, err
-	}
-	var groups []qualityGroup
-	if err = json.Unmarshal(groupsRaw, &groups); err != nil {
 		return result, err
 	}
 	groupIDs := []int64{}
@@ -85,7 +83,23 @@ func (r *accountRepository) ApplyAstraScheduling(ctx context.Context, id int64, 
 		groupIDs = append(groupIDs, g.GroupID)
 	}
 	switchMode := state.Mode != "" && (state.Mode != result.Action || (state.Mode == "groups" && !reflect.DeepEqual(state.GroupIDs, s.SchedulingGroupIDs)))
-	if state.Mode != "" && (ready || switchMode) {
+	stateDirty := false
+	if state.Mode == "groups" && switchMode {
+		var changed bool
+		changed, _, err = reconcileAstraGroups(ctx, tx, id, &state, groups, false, true)
+		if err != nil {
+			return result, err
+		}
+		result.Changed = changed
+		groupIDs = mergeGroupIDs(groupIDs, state.GroupIDs)
+		state = astraActionState{}
+		stateDirty = true
+		groups, err = astraSchedulingGroups(ctx, tx, id)
+		if err != nil {
+			return result, err
+		}
+	}
+	if state.Mode != "" && state.Mode != "groups" && (ready || switchMode) {
 		switch state.Mode {
 		case "account":
 			if !eligible || sched || !version.Equal(state.Version) {
@@ -109,35 +123,26 @@ func (r *accountRepository) ApplyAstraScheduling(ctx context.Context, id int64, 
 			}
 			mapping = state.Mapping
 			delete(extra, "astra_model_disabled")
-		case "groups":
-			for _, g := range state.Removed {
-				for _, existing := range groups {
-					if existing.GroupID == g.GroupID {
-						return result, errors.New("astra_restore_conflict")
-					}
-				}
-				if err = lockLiveGroups(ctx, tx, []int64{g.GroupID}); err != nil {
-					return result, errors.New("astra_restore_conflict")
-				}
-				var allowed any
-				if len(g.AllowedModels) > 0 {
-					allowed = string(g.AllowedModels)
-				}
-				_, err = tx.ExecContext(ctx, `INSERT INTO account_groups(account_id,group_id,priority,created_at,allowed_models) VALUES($1,$2,$3,$4,$5)`, id, g.GroupID, g.Priority, g.CreatedAt, allowed)
-				if err != nil {
-					return result, err
-				}
-				groups = append(groups, g)
-				groupIDs = append(groupIDs, g.GroupID)
-			}
-		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM astra_scheduling_states WHERE account_id=$1`, id); err != nil {
-			return result, err
 		}
 		state = astraActionState{}
+		stateDirty = true
 		result.Changed = true
 	}
-	if !ready && state.Mode == "" {
+	if result.Action == "groups" {
+		if state.Mode == "" {
+			state = astraActionState{Mode: "groups", GroupIDs: slices.Clone(s.SchedulingGroupIDs)}
+			stateDirty = true
+		}
+		var changed, dirty bool
+		changed, dirty, err = reconcileAstraGroups(ctx, tx, id, &state, groups, ready, false)
+		if err != nil {
+			return result, err
+		}
+		result.Changed = result.Changed || changed
+		stateDirty = stateDirty || dirty
+		groupIDs = mergeGroupIDs(groupIDs, state.GroupIDs)
+	}
+	if !ready && state.Mode == "" && result.Action != "groups" {
 		next := astraActionState{Mode: result.Action, GroupIDs: s.SchedulingGroupIDs}
 		change := false
 		switch result.Action {
@@ -179,18 +184,6 @@ func (r *accountRepository) ApplyAstraScheduling(ctx context.Context, id int64, 
 				_, err = tx.ExecContext(ctx, `UPDATE accounts SET credentials=CASE WHEN $2::jsonb IS NULL THEN credentials ELSE jsonb_set(credentials,'{model_mapping}',$2::jsonb) END,extra=COALESCE(extra,'{}'::jsonb)||$3::jsonb WHERE id=$1`, id, newMapping, string(flags))
 				change = true
 			}
-		case "groups":
-			for _, g := range groups {
-				if slices.Contains(s.SchedulingGroupIDs, g.GroupID) {
-					next.Removed = append(next.Removed, g)
-				}
-			}
-			for _, g := range next.Removed {
-				if _, err = tx.ExecContext(ctx, `DELETE FROM account_groups WHERE account_id=$1 AND group_id=$2`, id, g.GroupID); err != nil {
-					return result, err
-				}
-			}
-			change = len(next.Removed) > 0
 		}
 		if err != nil {
 			return result, err
@@ -204,6 +197,11 @@ func (r *accountRepository) ApplyAstraScheduling(ctx context.Context, id int64, 
 		if err = tx.QueryRowContext(ctx, `UPDATE accounts SET updated_at=clock_timestamp() WHERE id=$1 RETURNING updated_at`, id).Scan(&state.Version); err != nil {
 			return result, err
 		}
+		if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &id, nil, buildSchedulerGroupPayload(groupIDs)); err != nil {
+			return result, err
+		}
+	}
+	if result.Changed || stateDirty {
 		if state.Mode != "" {
 			raw, err = json.Marshal(state)
 			if err != nil {
@@ -212,8 +210,7 @@ func (r *accountRepository) ApplyAstraScheduling(ctx context.Context, id int64, 
 			if _, err = tx.ExecContext(ctx, `INSERT INTO astra_scheduling_states(account_id,state) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET state=EXCLUDED.state`, id, string(raw)); err != nil {
 				return result, err
 			}
-		}
-		if err = enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &id, nil, map[string]any{"group_ids": groupIDs}); err != nil {
+		} else if _, err = tx.ExecContext(ctx, `DELETE FROM astra_scheduling_states WHERE account_id=$1`, id); err != nil {
 			return result, err
 		}
 	}

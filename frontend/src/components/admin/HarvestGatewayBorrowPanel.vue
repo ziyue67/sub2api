@@ -95,7 +95,7 @@
                 <li v-for="(row, index) in schedulingRecords.slice(0, 3)" :key="index" class="flex flex-wrap gap-x-3 gap-y-1">
                   <time>{{ new Date(row.checked_at).toLocaleString() }}</time><span>#{{ row.account_id }}</span>
                   <span>{{ t(`${p}.${row.mode === 'model' ? 'modeModel' : row.mode === 'groups' ? 'modeGroups' : 'modeAccount'}`) }}</span>
-                  <span :class="row.schedulable ? 'text-emerald-600' : 'text-amber-600'">{{ t(row.schedulable ? `${p}.enabled` : `${p}.disabled`) }}</span>
+                  <span :class="row.schedulable ? 'text-emerald-600' : 'text-amber-600'">{{ t(`${p}.${row.mode === 'groups' ? (row.schedulable ? 'groupsJoined' : 'groupsRemoved') : (row.schedulable ? 'enabled' : 'disabled')}`) }}</span>
                   <span class="text-gray-500">{{ te(`${p}.reasons.${row.reason}`) ? t(`${p}.reasons.${row.reason}`) : row.reason }}</span>
                 </li>
               </ul>

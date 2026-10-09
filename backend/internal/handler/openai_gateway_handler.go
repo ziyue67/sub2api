@@ -3568,13 +3568,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// turn 级定价：首轮回退到 TurnStarted 的所属 turn 时刻；后续 turn 由
 		// BeforeTurn 重新冻结 pricingAt 并按最新门复核当前账号。
 		var turnPricing openAIWSTurnPricing
+		var turnBillingAPIKeys openAIWSTurnBillingAPIKeys
 		// turnQueuePermissions 由 BeforeRequest 按当前 turn 覆写，BeforeTurn 在
 		// 同一连接循环内读取并复制为不可变 ctx 值，等待 worker 不再读取它。
 		var turnQueuePermissions service.APIKeyQueueRequestPermissions
 		var permissionsPreflightTurn int
-		// 后续 turn 的计费分组同样在 BeforeTurn 经认证缓存重取，使分组调价对
-		// 已打开的连接生效。
-		var turnBillingAPIKeys openAIWSTurnBillingAPIKeys
 		// Passthrough ingress does not invoke BeforeTurn for the first frame.
 		// Recheck after account selection/credential lookup as the key may have
 		// been revoked since the first admission (also on a failover attempt).
@@ -3780,7 +3778,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if turn == 1 {
 					// 首轮准入（Key/用户/账号）已由握手路径完成，这里按当前时刻
 					// 复核门并冻结首轮定价。
-					turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(ctx, apiKey.GroupID)
+					turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(turnBillingCtx, apiKey.GroupID)
 					if _, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account); vetoed {
 						reqLog.Info("openai.websocket_turn_profit_vetoed",
 							zap.Int("turn", turn),
@@ -3798,7 +3796,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 由连接唯一 reader 消费：首轮模式未定时识别 pending 取消；已建立
 				// 的 passthrough 还会拒绝重叠 response.create。等待 worker 只看到
 				// 本轮 BeforeRequest 生成的不可变权限。
-				turnQueueCtx := service.WithAPIKeyQueueRequestPermissions(ctx, turnQueuePermissions)
+				turnQueueCtx := service.WithAPIKeyQueueRequestPermissions(turnBillingCtx, turnQueuePermissions)
 				userReleaseFunc, accountReleaseFunc, err := h.admitOpenAIWSTurnForPricing(turnQueueCtx, c, subject.UserID, subject.Concurrency, apiKey, account, accountMaxConcurrency, turn, reqLog, &turnPricing, selection)
 				if err != nil {
 					return err

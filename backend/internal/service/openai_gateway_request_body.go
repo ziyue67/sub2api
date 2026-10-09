@@ -54,8 +54,14 @@ func buildOpenAIResponsesURL(base string) string {
 
 // buildOpenAIResponsesURLForPlatform 组装 Responses 端点（平台感知）。
 // 供应商 profile 声明了 ResponsesPath 时按其拼接（如 DeepSeek 为无 /v1 前缀的
-// /responses）；其余平台维持 /v1/responses。Fork 侧的自定义 base_url 若以 /v1
-// 结尾，buildOpenAIEndpointURL 的版本感知拼接同样生效（避免 /v1/v1/responses）。
+// /responses）；其余平台维持 /v1/responses。
+//
+// 第三方 DeepSeek 兼容上游（聚合站/自建 relay）不统一：有的与官方一样在根路径
+// 提供 /responses，有的只提供 /v1/responses。因此在 base_url 上显式带上版本号
+// 是唯一可靠的配置方式：base 以 /v1 结尾时 buildOpenAIEndpointURL 不再追加
+// /v1，直接得到 /v1/responses；base 写成 .../responses 时也不再追加路径。
+// 多协议账号用 credentials.api_base_urls.responses 指定该地址即可。Fork 侧的
+// 自定义 base_url 同样走这套版本感知拼接（避免 /v1/v1/responses）。
 func buildOpenAIResponsesURLForPlatform(platform string, base string) string {
 	if profile := LookupProviderProfile(platform); profile != nil && profile.ResponsesPath != "" {
 		return buildOpenAIEndpointURL(base, profile.ResponsesPath)
