@@ -498,6 +498,7 @@ type OpenAIGatewayService struct {
 	pluginManager          *PluginManager
 	deferredService        *DeferredService
 	openAITokenProvider    *OpenAITokenProvider
+	excelOAuthReauth       *OpenAIOAuthReauthService
 	grokTokenProvider      *GrokTokenProvider
 	toolCorrector          *CodexToolCorrector
 	openaiWSResolver       OpenAIWSProtocolResolver

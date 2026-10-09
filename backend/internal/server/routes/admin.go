@@ -420,6 +420,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/:id/proxy-lanes", h.Admin.Account.ListProxyLanes)
 		if h.Admin.OpenAIOAuthReauth != nil {
 			accounts.GET("/:id/openai-reauth", h.Admin.OpenAIOAuthReauth.GetStatus)
+			accounts.GET("/:id/totp-rotation", h.Admin.OpenAIOAuthReauth.RotationStatus)
+			accounts.POST("/:id/totp-rotation", h.Admin.OpenAIOAuthReauth.RotateTOTP)
+			accounts.POST("/:id/totp-rotation/verify", h.Admin.OpenAIOAuthReauth.RetryTOTP)
+			accounts.POST("/:id/totp-export", h.Admin.OpenAIOAuthReauth.ExportTOTP)
 			accounts.PUT("/:id/openai-reauth/email", h.Admin.OpenAIOAuthReauth.SaveConfig)
 			accounts.POST("/:id/openai-reauth", h.Admin.OpenAIOAuthReauth.CreateTask)
 		}
@@ -510,6 +514,10 @@ func registerOpenAIOAuthReauthWorkerRoutes(v1 *gin.RouterGroup, h *handler.Handl
 	worker := v1.Group("/internal/openai-reauth")
 	{
 		worker.POST("/claim", h.Admin.OpenAIOAuthReauth.Claim)
+		worker.POST("/totp-claim", h.Admin.OpenAIOAuthReauth.ClaimTOTP)
+		worker.POST("/:task_id/totp-phase", h.Admin.OpenAIOAuthReauth.TOTPPhase)
+		worker.POST("/:task_id/totp-finish", h.Admin.OpenAIOAuthReauth.TOTPFinish)
+		worker.POST("/:task_id/totp-recover", h.Admin.OpenAIOAuthReauth.TOTPRecover)
 		worker.POST("/runtime-settings", h.Admin.OpenAIOAuthReauth.RuntimeSettings)
 		worker.POST("/:task_id/progress", h.Admin.OpenAIOAuthReauth.Progress)
 		worker.POST("/:task_id/callback", h.Admin.OpenAIOAuthReauth.Callback)

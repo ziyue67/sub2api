@@ -1,8 +1,19 @@
 <template>
   <AppLayout>
     <div class="space-y-6 pb-6">
+      <!-- Notice on how to read imperfect drawings; only while there are results to look at. -->
+      <p
+        v-if="groups.length"
+        role="note"
+        class="mt-3 flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-relaxed text-sky-900 dark:border-sky-800/60 dark:bg-sky-950/30 dark:text-sky-100 md:mt-4"
+        data-testid="showcase-notice"
+      >
+        <Icon name="infoCircle" size="sm" class="mt-0.5 flex-shrink-0 text-sky-500 dark:text-sky-400" />
+        <span>{{ t('pelicanShowcase.notice') }}</span>
+      </p>
+
       <!-- Toolbar: group filter + the gallery rules + refresh -->
-      <section class="flex flex-col gap-3 pt-3 md:flex-row md:items-center md:justify-between md:pt-4">
+      <section class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between" :class="groups.length ? '' : 'pt-3 md:pt-4'">
         <div
           v-if="groups.length > 1"
           role="tablist"

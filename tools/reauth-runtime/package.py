@@ -20,7 +20,7 @@ shutil.copytree("/build/tosub2/node_modules", out / "tosub2/node_modules", symli
 shutil.copy2("/build/tosub2/LICENSE", out / "tosub2/LICENSE")
 shutil.copy2("/build/tosub2/package-lock.json", out / "tosub2/package-lock.json")
 shutil.copy2("/build/worker.py", out / "worker.py")
-for name in ("openai_excel_oauth_adapter.py", "openai_excel_2fa_login.py", "openai_excel_password_flow.mjs"):
+for name in ("openai_totp_rotation.py", "openai_totp_journal.mjs", "openai_excel_oauth_adapter.py", "openai_excel_2fa_login.py", "openai_excel_password_flow.mjs"):
     shutil.copy2(Path("/build/tools") / name, out / name)
 shutil.copy2("/etc/ssl/certs/ca-certificates.crt", out / "ca-certificates.crt")
 shutil.copytree("/usr/share/doc", out / "licenses/debian", symlinks=False)
@@ -47,13 +47,14 @@ while queue:
             queue.append(dependency)
 loader = next(lib.glob("ld-linux*.so.*"))
 for name, binary in (("python", "python-root/bin/python3"), ("node", "node.bin")):
+    # The bundled loader scopes library lookup to this executable. Exporting it
+    # would also load the bundled libc into a host shell launched by Python.
     script = out / name
     script.write_text(
         '#!/bin/sh\nset -eu\nroot=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
         'export PYTHONHOME="$root/python-root"\n'
         'export SSL_CERT_FILE="$root/ca-certificates.crt"\n'
         'export CURL_CA_BUNDLE="$root/ca-certificates.crt"\n'
-        'export LD_LIBRARY_PATH="$root/lib"\n'
         f'exec "$root/lib/{loader.name}" --library-path "$root/lib" "$root/{binary}" "$@"\n'
     )
     script.chmod(0o755)

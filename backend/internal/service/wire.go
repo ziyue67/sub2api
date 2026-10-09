@@ -137,6 +137,9 @@ func ProvideOpenAIOAuthReauthService(
 	svc := NewOpenAIOAuthReauthService(repo, adminService, credentialUpdater, openaiOAuthService, secretEncryptor, cfg != nil && cfg.Totp.EncryptionKeyConfigured, tokenCacheInvalidator, runtimeBlocker)
 	svc.settings = settings
 	svc.configureWorker(cfg, buildInfo)
+	if gateway, ok := runtimeBlocker.(*OpenAIGatewayService); ok {
+		gateway.excelOAuthReauth = svc
+	}
 	return svc
 }
 

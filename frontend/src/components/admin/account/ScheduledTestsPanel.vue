@@ -773,10 +773,11 @@ const refreshTimer = setInterval(async () => {
   if (!props.show || !props.pelicanConfig || loading.value || creating.value || updating.value) return
   await loadPlans()
   const id = expandedPlanId.value
+  const requestId = resultsRequestId
   if (!id) return
   try {
     const data = await adminAPI.scheduledTests.listResults(id, 20, false)
-    if (alive && props.show && expandedPlanId.value === id) results.value = data
+    if (requestId === resultsRequestId && alive && props.show && expandedPlanId.value === id) results.value = data
   } catch { /* Manual expansion still surfaces errors. */ }
 }, 15000)
 onBeforeUnmount(() => { alive = false; clearInterval(refreshTimer) })

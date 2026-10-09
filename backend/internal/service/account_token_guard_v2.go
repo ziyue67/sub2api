@@ -235,6 +235,9 @@ func (s *AccountTokenGuardV2Service) Start() {
 				if rows, err := s.repo.ListAccounts(ctx); err == nil && len(rows) > 0 {
 					s.reauth.EnsureWorker()
 				}
+				if err := s.reauth.QueueMissingExcelAuthorizations(ctx); err != nil {
+					slog.Warn("openai_excel_authorization_cycle_failed", "error", err)
+				}
 				if _, err := s.RunDue(ctx); err != nil {
 					slog.Warn("account_token_guard_v2_cycle_failed", "error", err)
 				}

@@ -14,7 +14,7 @@ func TestOpenAIOAuthReauthEnginePersistsInCorrectSQLColumn(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 	repo := NewOpenAIOAuthReauthRepository(db)
-	mock.ExpectExec("INSERT INTO openai_oauth_reauth_configs").WithArgs(int64(42), "user@example.com", "password_totp", "session_studio", "account", nil, "enc-password", "enc-totp", "").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO openai_oauth_reauth_configs").WithArgs(int64(42), "user@example.com", "password_totp", "session_studio", "account", nil, "enc-password", "enc-totp", "", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	require.NoError(t, repo.UpsertConfig(context.Background(), &service.OpenAIOAuthReauthStoredConfig{AccountID: 42, LoginEmail: "user@example.com", CredentialMode: "password_totp", Engine: "session_studio", ProxySource: "account", PasswordCiphertext: "enc-password", TOTPSecretCiphertext: "enc-totp"}))
 	mock.ExpectQuery("SELECT account_id, login_email, credential_mode, engine, proxy_source, proxy_id").WithArgs(int64(42)).WillReturnRows(sqlmock.NewRows([]string{"account_id", "email", "mode", "engine", "proxy_source", "proxy_id", "password", "totp", "otp", "updated_at"}).AddRow(42, "user@example.com", "password_totp", "session_studio", "account", nil, "enc-password", "enc-totp", nil, time.Now()))
 	cfg, err := repo.GetConfig(context.Background(), 42)

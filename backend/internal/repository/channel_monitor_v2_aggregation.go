@@ -242,19 +242,11 @@ ELSE 2147483647 END`
 // channel health. Preserve provider evidence and platform capacity failures.
 // The routing/model_not_found branch supports rows written before client
 // attribution was introduced, without rewriting production history.
-const channelMonitorClientRejectionSQL = `(COALESCE(current_error.is_business_limited, FALSE)
-  AND (COALESCE(current_error.error_owner, '') = 'client'
-    OR (COALESCE(current_error.error_owner, '') = 'platform' AND current_error.error_phase = 'routing'
-      AND current_error.error_type = 'model_not_found'
-      AND current_error.account_id IS NULL))
-  AND COALESCE(current_error.upstream_status_code, 0) = 0
-  AND COALESCE(current_error.error_source, '') <> 'upstream_http'
-  AND CASE WHEN jsonb_typeof(current_error.upstream_errors) = 'array'
-    THEN jsonb_array_length(current_error.upstream_errors) = 0 ELSE TRUE END)`
+var channelMonitorClientRejectionSQL = opsClientRejectionSQL("current_error")
 
 // Error dedup lookback: request_id branch is bounded by chunk start minus 90
 // minutes so candidate_ids never forces a full-history scan of ops_error_logs.
-const channelMonitorV2ErrorAggregationSQL = `
+var channelMonitorV2ErrorAggregationSQL = `
 WITH dedup AS (
   WITH candidate_ids AS MATERIALIZED (
     SELECT DISTINCT request_id

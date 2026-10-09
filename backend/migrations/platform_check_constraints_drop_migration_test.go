@@ -10,7 +10,7 @@ import (
 )
 
 func TestDropPlatformCheckConstraintsMigration(t *testing.T) {
-	content, err := FS.ReadFile("242_drop_platform_check_constraints.sql")
+	content, err := FS.ReadFile("270_drop_platform_check_constraints.sql")
 	require.NoError(t, err)
 
 	sql := strings.Join(strings.Fields(string(content)), " ")
@@ -23,10 +23,10 @@ func TestDropPlatformCheckConstraintsMigration(t *testing.T) {
 	require.NotContains(t, sql, "DROP CONSTRAINT IF EXISTS channel_monitor_request_templates_provider_check")
 }
 
-// Platform membership is validated against the application catalog after 242.
+// Platform membership is validated against the application catalog after 270.
 // A later migration must not restore a database whitelist that can drift from it.
 func TestLaterMigrationsDoNotRestorePlatformCheckConstraints(t *testing.T) {
-	const droppedAt = "242_drop_platform_check_constraints.sql"
+	const droppedAt = "270_drop_platform_check_constraints.sql"
 	entries, err := fs.ReadDir(FS, ".")
 	require.NoError(t, err)
 	comments := regexp.MustCompile(`(?ms)/\*.*?\*/|--[^\n]*`)
@@ -39,7 +39,7 @@ func TestLaterMigrationsDoNotRestorePlatformCheckConstraints(t *testing.T) {
 			content, err := FS.ReadFile(entry.Name())
 			require.NoError(t, err)
 			sql := comments.ReplaceAll(content, nil)
-			require.Nil(t, addConstraint.Find(sql), "platform CHECK constraints removed in 242 must remain managed by application validation")
+			require.Nil(t, addConstraint.Find(sql), "platform CHECK constraints removed in 270 must remain managed by application validation")
 		})
 	}
 }

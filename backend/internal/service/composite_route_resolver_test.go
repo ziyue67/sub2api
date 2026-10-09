@@ -453,3 +453,18 @@ func TestCompositeRouteResolverExplicitRoutesCoverBucketTwoProviders(t *testing.
 		})
 	}
 }
+
+func TestCompositeExactRouteCatalogKeepsTypeSafeOutOfLLMCatalogs(t *testing.T) {
+	resolver := NewCompositeRouteResolver(compositeRouteRepoStub{routes: []CompositeModelRoute{
+		{GroupID: 7, PublicModel: "jev-alias", MatchType: CompositeRouteMatchExact, TargetPlatform: PlatformTypeSafe, Endpoint: CompositeRouteEndpointAny, Enabled: true},
+		{GroupID: 7, PublicModel: "chat-alias", MatchType: CompositeRouteMatchExact, TargetPlatform: PlatformOpenAI, Endpoint: CompositeRouteEndpointAny, Enabled: true},
+	}})
+	all, err := resolver.ListExactPublicModels(context.Background(), 7, "", true)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"jev-alias", "chat-alias"}, all)
+	for _, endpoint := range []string{CompositeRouteEndpointResponses, CompositeRouteEndpointMessages, CompositeRouteEndpointChatCompletions, CompositeRouteEndpointGemini} {
+		models, err := resolver.ListExactPublicModels(context.Background(), 7, endpoint, false)
+		require.NoError(t, err)
+		require.Equal(t, []string{"chat-alias"}, models, endpoint)
+	}
+}

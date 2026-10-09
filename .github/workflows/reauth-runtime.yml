@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'tools/openai_oauth_reauth_worker.py'
+      - 'tools/openai_totp_*'
+      - 'tools/test_openai_totp_*'
       - 'tools/openai_excel_oauth_adapter.py'
       - 'tools/openai_excel_2fa_login.py'
       - 'tools/openai_excel_password_flow.mjs'
@@ -40,4 +42,86 @@ jobs:
         with:
           name: reauth-runtime-test-${{ matrix.arch }}
           path: reauth-output/*.tar.gz
+          retention-days: 3
+
+  deployment:
+    needs: package
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sub2api
+          POSTGRES_PASSWORD: local-staging-only
+          POSTGRES_DB: sub2api
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sub2api"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          name: reauth-runtime-test-amd64
+          path: reauth-input
+      - name: Build local API
+        working-directory: backend
+        run: CGO_ENABLED=0 go build -o "$RUNNER_TEMP/sub2api-staging" ./cmd/server
+      - name: Deploy API and packaged Worker with mock MFA
+        env:
+          AUTO_SETUP: 'true'
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: '5432'
+          DATABASE_USER: sub2api
+          DATABASE_PASSWORD: local-staging-only
+          DATABASE_DBNAME: sub2api
+          DATABASE_SSLMODE: disable
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: '6379'
+          SERVER_HOST: 127.0.0.1
+          SERVER_PORT: '18083'
+          ADMIN_EMAIL: admin@example.test
+          ADMIN_PASSWORD: Staging-local-Only-938!
+          JWT_SECRET: local-staging-jwt-secret-000000000000000000000000000
+          OPENAI_REAUTH_WORKER_TOKEN: local-staging-worker-token-00000000000000000000000
+          STAGING_API_URL: http://127.0.0.1:18083
+          STAGING_ADMIN_EMAIL: admin@example.test
+          STAGING_ADMIN_PASSWORD: Staging-local-Only-938!
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          export STAGING_ROOT="$RUNNER_TEMP/totp-staging"
+          export DATA_DIR="$STAGING_ROOT/data"
+          mkdir -p "$DATA_DIR" "$STAGING_ROOT/releases/test"
+          tar -xzf reauth-input/sub2api-reauth_0.0.0-test_linux_amd64.tar.gz -C "$STAGING_ROOT/releases/test"
+          ln -s releases/test "$STAGING_ROOT/current"
+          "$RUNNER_TEMP/sub2api-staging" > "$STAGING_ROOT/api.log" 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true; wait "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$STAGING_API_URL/health" > /dev/null; then break; fi
+            if ! kill -0 "$api_pid"; then tail -n 30 "$STAGING_ROOT/api.log"; exit 1; fi
+            sleep 2
+          done
+          curl -fsS "$STAGING_API_URL/health"
+          python tools/reauth-runtime/test_deployment.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: totp-deployment-verification
+          path: ${{ runner.temp }}/totp-staging/verification.json
+          if-no-files-found: error
           retention-days: 3

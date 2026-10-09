@@ -645,6 +645,7 @@ export default {
   pelicanShowcase: {
     title: 'Pelican Showcase',
     description: 'Each group answers the same drawing prompt on a schedule. Compare model quality by looking at the results.',
+    notice: "The Pelican test limits the model's maximum tokens, so some pelicans shown here may have no legs or wheels that don't turn. This is normal. If the style is right, the model is not degraded.",
     allGroups: 'All groups',
     keepRule: 'Latest {count} per group',
     retentionRule: 'Auto-removed after {days} days',

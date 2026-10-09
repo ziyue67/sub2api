@@ -26,8 +26,8 @@ func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 		"e.api_key_id = $",
 		"COALESCE(e.requested_model, e.model, '') = $",
 		"COALESCE(e.is_count_tokens, false) = false",
-		"e.error_phase = ANY($",
-		"e.error_type = ANY($",
+		opsEffectivePhaseSQL("e") + " = ANY($",
+		opsEffectiveTypeSQL("e") + " = ANY($",
 	} {
 		if !strings.Contains(where, want) {
 			t.Fatalf("where missing %q\nfull: %s", want, where)
@@ -91,24 +91,24 @@ func TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption(t *testing.T) {
 	if !strings.Contains(whereUpstream, "COALESCE(e.status_code, 0) >= 400") {
 		t.Fatalf("upstream phase without IncludeRecoveredUpstream must keep the status guard\nfull: %s", whereUpstream)
 	}
-	if !strings.Contains(whereUpstream, "e.error_phase = $") {
+	if !strings.Contains(whereUpstream, opsEffectivePhaseSQL("e")+" = $") {
 		t.Fatalf("upstream phase filter must emit the error_phase condition\nfull: %s", whereUpstream)
 	}
 
 	// phase=upstream WITH IncludeRecoveredUpstream (ops 上游列表) skips the guard,
 	// exposing recovered (<400) upstream rows.
 	whereRecovered, _ := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{Phase: "upstream", IncludeRecoveredUpstream: true})
-	if strings.Contains(whereRecovered, "status_code") {
+	if strings.Contains(whereRecovered, "COALESCE(e.status_code, 0) >= 400 OR e.error_type = 'cyber_policy'") {
 		t.Fatalf("upstream phase with IncludeRecoveredUpstream must not add any status_code clause\nfull: %s", whereRecovered)
 	}
 
 	// account_auth uses the same explicit provider-health opt-in but remains a
 	// distinct phase from inference upstream errors.
 	whereAccountAuth, _ := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{Phase: "account_auth", IncludeRecoveredUpstream: true})
-	if strings.Contains(whereAccountAuth, "status_code") {
+	if strings.Contains(whereAccountAuth, "COALESCE(e.status_code, 0) >= 400 OR e.error_type = 'cyber_policy'") {
 		t.Fatalf("account_auth phase with IncludeRecoveredUpstream must expose recovered rows\nfull: %s", whereAccountAuth)
 	}
-	if !strings.Contains(whereAccountAuth, "e.error_phase = $") {
+	if !strings.Contains(whereAccountAuth, opsEffectivePhaseSQL("e")+" = $") {
 		t.Fatalf("account_auth recovered filter must retain its explicit phase\nfull: %s", whereAccountAuth)
 	}
 
@@ -116,10 +116,10 @@ func TestBuildOpsErrorLogsWhere_CyberPolicyStatusExemption(t *testing.T) {
 		ErrorPhasesAny:           []string{"upstream", "account_auth"},
 		IncludeRecoveredUpstream: true,
 	})
-	if strings.Contains(whereProviderHealth, "status_code") {
+	if strings.Contains(whereProviderHealth, "COALESCE(e.status_code, 0) >= 400 OR e.error_type = 'cyber_policy'") {
 		t.Fatalf("provider-health ANY filter must expose recovered inference and credential rows\nfull: %s", whereProviderHealth)
 	}
-	if !strings.Contains(whereProviderHealth, "e.error_phase = ANY($") {
+	if !strings.Contains(whereProviderHealth, opsEffectivePhaseSQL("e")+" = ANY($") {
 		t.Fatalf("provider-health filter must preserve distinct phase values\nfull: %s", whereProviderHealth)
 	}
 

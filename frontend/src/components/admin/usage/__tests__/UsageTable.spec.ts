@@ -35,6 +35,7 @@ const localizedMessages: Record<'en' | 'zh', Record<string, string>> = {
 
 const messages: Record<string, string> = {
   'usage.outputTps': 'Output TPS',
+  'usage.latencyTps': 'Avg TPS',
   'admin.usage.userDeletedBadge': 'Deleted',
   'usage.costDetails': 'Cost Breakdown',
   'admin.usage.inputCost': 'Input Cost',
@@ -165,9 +166,10 @@ describe('admin UsageTable tooltip', () => {
       global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
     })
     // The Fork keeps its own TPS cell (severity coloring + "t/s" units), so the
-    // retained marker is data-testid="latency-tps" and the label is latencyTps.
+    // retained marker is data-testid="latency-tps" and the label is latencyTps
+    // (rendered as "Avg TPS"). severity coloring is asserted above.
     expect(wrapper.findAll('[data-testid="latency-tps"]').map(cell => cell.text())).toEqual(['50.0 t/s', '-', '-'])
-    expect(wrapper.text()).toContain('usage.latencyTps')
+    expect(wrapper.text()).toContain('Avg TPS')
   })
 
   beforeEach(() => {
@@ -1055,7 +1057,7 @@ describe('admin UsageTable latency TPS', () => {
       { request_id: 'req-tps-stream', output_tokens: 872, duration_ms: 31_260, first_token_ms: 2_910 },
     ])
 
-    expect(wrapper.text()).toContain('usage.latencyTps')
+    expect(wrapper.text()).toContain('Avg TPS')
     const cell = tpsCell(wrapper, 'req-tps-stream')
     expect(cell.text()).toBe('27.9 t/s')
     expect(cell.attributes('title')).toBe('usage.latencyTpsHint')

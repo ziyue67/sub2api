@@ -34,6 +34,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/usage/__tests__/UsageFilters.spec.ts \
 	src/components/admin/usage/__tests__/UsageTimingDialog.spec.ts \
 	src/components/admin/usage/__tests__/UsageTable.spec.ts \
+	src/views/user/__tests__/PelicanShowcaseView.spec.ts \
 	src/utils/__tests__/usageTps.spec.ts \
 	src/views/admin/ops/components/__tests__/OpsErrorDetailModal.spec.ts \
 	src/router/__tests__/feature-access.spec.ts \
@@ -49,11 +50,11 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/account/__tests__/OpenAIReferralCell.transport.spec.ts \
 	src/components/account/__tests__/OpenAIQuotaResetCell.spark_shadow.spec.ts \
 	src/components/account/__tests__/ExcelBPS403Badge.spec.ts \
-	src/components/account/__tests__/EditAccountModal.spec.ts \
 	src/components/account/__tests__/BulkEditAccountModal.spec.ts \
 	src/constants/__tests__/platforms.spec.ts \
 	src/components/account/__tests__/credentialsBuilder.platformCatalog.spec.ts \
 	src/components/account/__tests__/CreateAccountModal.spec.ts \
+	src/components/account/__tests__/EditAccountModal.spec.ts \
 	src/components/account/__tests__/credentialsBuilder.spec.ts \
 	src/components/account/__tests__/OpenCodeGoProtocolRulesEditor.spec.ts \
 	src/components/keys/__tests__/BulkEditKeysModal.spec.ts \

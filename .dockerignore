@@ -85,3 +85,8 @@ deploy/redis_data/
 .claude/
 issues/
 CLAUDE.md
+
+# Persistent encrypted 2FA recovery archives and their keys are never build inputs.
+**/totp-recovery/
+**/*.sealed
+**/credential-operations.key

@@ -17,6 +17,7 @@ COPY --from=node /opt/tosub2-runtime/node_modules /opt/tosub2/node_modules
 
 WORKDIR /app
 COPY tools/openai_oauth_reauth_worker.py /app/openai_oauth_reauth_worker.py
+COPY tools/openai_totp_rotation.py tools/openai_totp_journal.mjs /app/
 COPY tools/openai_excel_oauth_adapter.py tools/openai_excel_2fa_login.py /app/
 COPY tools/openai_excel_password_flow.mjs /app/
 
@@ -41,7 +42,8 @@ RUN useradd --create-home --uid 10001 worker \
     && chown -R worker:worker /app /opt/turb /opt/tosub2
 
 USER worker
-ENV CODEX_PROTOCOL_ROOT=/opt/turb \
+ENV OPENAI_TOTP_JOURNAL_DIR=/home/worker/totp-recovery \
+    CODEX_PROTOCOL_ROOT=/opt/turb \
     TOSUB2_ROOT=/opt/tosub2 \
     NODE_EXECUTABLE=node \
     PYTHONUNBUFFERED=1

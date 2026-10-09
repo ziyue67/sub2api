@@ -512,6 +512,10 @@ func (s *OpsService) prepareErrorLogInput(ctx context.Context, entry *OpsInsertE
 		break
 	}
 
+	// Normalize responsibility after final upstream/credential attribution is
+	// known, for both middleware and direct/batched producers.
+	NormalizeOpsClientRejection(entry)
+
 	// Sanitize + truncate error_body to avoid storing sensitive data.
 	if strings.TrimSpace(entry.ErrorBody) != "" {
 		sanitized, _ := sanitizeErrorBodyForStorage(entry.ErrorBody, opsMaxStoredErrorBodyBytes)

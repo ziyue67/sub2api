@@ -106,15 +106,16 @@ type OpenAIOAuthReauthRuntimeSettings struct {
 
 // OpenAIOAuthReauthTask is the safe task status exposed to administrators.
 type OpenAIOAuthReauthTask struct {
-	ID         int64      `json:"id"`
-	AccountID  int64      `json:"account_id"`
-	Status     string     `json:"status"`
-	Stage      string     `json:"stage"`
-	Error      string     `json:"error,omitempty"`
-	Attempt    int        `json:"attempt"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	OAuthProfile string     `json:"oauth_profile"`
+	ID           int64      `json:"id"`
+	AccountID    int64      `json:"account_id"`
+	Status       string     `json:"status"`
+	Stage        string     `json:"stage"`
+	Error        string     `json:"error,omitempty"`
+	Attempt      int        `json:"attempt"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
 }
 
 // OpenAIOAuthReauthStatus combines saved configuration and the latest task.
@@ -157,6 +158,7 @@ type OpenAIOAuthReauthStoredConfig struct {
 // OpenAIOAuthReauthTaskRecord contains fields needed by the worker protocol.
 // It is never serialized directly to an administrator response.
 type OpenAIOAuthReauthTaskRecord struct {
+	OAuthProfile            string
 	ID                      int64
 	AccountID               int64
 	Status                  string
@@ -188,6 +190,7 @@ type OpenAIOAuthReauthService struct {
 	worker                  *reauthruntime.Manager
 	workerToken             string
 	workerLastSeen          atomic.Int64
+	totpWorkerLastSeen      atomic.Int64
 	repo                    OpenAIOAuthReauthRepository
 	accounts                OpenAIOAuthReauthAccountReader
 	credentialUpdater       OpenAIOAuthReauthCredentialUpdater
@@ -445,6 +448,9 @@ func (s *OpenAIOAuthReauthService) SaveCredentialConfig(ctx context.Context, acc
 		}
 	}
 	stored := &OpenAIOAuthReauthStoredConfig{AccountID: accountID, LoginEmail: email, CredentialMode: mode, Engine: engine, ProxySource: proxySource, ProxyID: proxyID, UpdatedAt: time.Now()}
+	if existing != nil {
+		stored.UpdatedAt = existing.UpdatedAt
+	}
 	if existing != nil && existing.CredentialMode == mode {
 		stored.PasswordCiphertext = existing.PasswordCiphertext
 		stored.TOTPSecretCiphertext = existing.TOTPSecretCiphertext
@@ -493,6 +499,9 @@ func (s *OpenAIOAuthReauthService) SaveCredentialConfig(ctx context.Context, acc
 		}
 	}
 	if err := s.repo.UpsertConfig(ctx, stored); err != nil {
+		if infraerrors.Code(err) == 409 {
+			return nil, err
+		}
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_REAUTH_CONFIG_SAVE_FAILED", "failed to save re-login configuration")
 	}
 	return s.configView(ctx, stored)
@@ -591,6 +600,13 @@ func (s *OpenAIOAuthReauthService) GetStatus(ctx context.Context, accountID int6
 }
 
 func (s *OpenAIOAuthReauthService) CreateTask(ctx context.Context, accountID int64) (*OpenAIOAuthReauthTask, error) {
+	return s.CreateTaskForProfile(ctx, accountID, "codex")
+}
+
+func (s *OpenAIOAuthReauthService) CreateTaskForProfile(ctx context.Context, accountID int64, profile string) (*OpenAIOAuthReauthTask, error) {
+	if profile != "codex" && profile != "excel" {
+		return nil, infraerrors.BadRequest("OPENAI_REAUTH_PROFILE_INVALID", "Invalid OAuth profile")
+	}
 	if err := s.ensureReady(); err != nil {
 		return nil, err
 	}
@@ -615,6 +631,9 @@ func (s *OpenAIOAuthReauthService) CreateTask(ctx context.Context, accountID int
 	if view == nil || !view.Configured {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_REAUTH_CONFIG_REQUIRED", "save a complete re-login configuration first")
 	}
+	if profile == "excel" && (stored.CredentialMode != OpenAIOAuthReauthModePasswordTOTP || !QualityBPSEligible(account)) {
+		return nil, infraerrors.BadRequest("OPENAI_REAUTH_EXCEL_CONFIG_REQUIRED", "Excel authorization requires a paid OAuth parent account with saved password/TOTP login")
+	}
 	if err := s.checkWorkerMode(stored.CredentialMode); err != nil {
 		return nil, err
 	}
@@ -622,7 +641,16 @@ func (s *OpenAIOAuthReauthService) CreateTask(ctx context.Context, accountID int
 	if err != nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_REAUTH_CREDENTIAL_SNAPSHOT_FAILED", "failed to snapshot account credentials")
 	}
-	record, err := s.repo.CreateTask(ctx, accountID, expectedCredentialsHash)
+	var record *OpenAIOAuthReauthTaskRecord
+	if profile == "excel" {
+		excelRepo, ok := s.repo.(OpenAIExcelOAuthRepository)
+		if !ok {
+			return nil, infraerrors.ServiceUnavailable("OPENAI_REAUTH_EXCEL_UNAVAILABLE", "Excel authorization queue is unavailable")
+		}
+		record, err = excelRepo.CreateExcelTask(ctx, accountID, expectedCredentialsHash)
+	} else {
+		record, err = s.repo.CreateTask(ctx, accountID, expectedCredentialsHash)
+	}
 	if err != nil {
 		if infraerrors.Code(err) == http.StatusConflict {
 			return nil, err
@@ -635,18 +663,20 @@ func (s *OpenAIOAuthReauthService) CreateTask(ctx context.Context, accountID int
 // OpenAIOAuthReauthClaim is returned only to an authenticated worker. Secret
 // fields are plaintext in this in-memory response and must never be logged.
 type OpenAIOAuthReauthClaim struct {
-	TaskID          int64             `json:"task_id"`
-	AccountID       int64             `json:"account_id"`
-	LoginEmail      string            `json:"login_email"`
-	CredentialMode  string            `json:"credential_mode"`
-	Engine          string            `json:"engine"`
-	ReloginEndpoint string            `json:"relogin_endpoint,omitempty"`
-	ReloginHeaders  map[string]string `json:"relogin_headers,omitempty"`
-	Password        string            `json:"password,omitempty"`
-	TOTPSecret      string            `json:"totp_secret,omitempty"`
-	OTPURL          string            `json:"otp_url,omitempty"`
-	AuthURL         string            `json:"auth_url,omitempty"`
-	ProxyURL        string            `json:"proxy_url,omitempty"`
+	OAuthProfile      string            `json:"oauth_profile"`
+	ExpectedWorkspace string            `json:"expected_workspace,omitempty"`
+	TaskID            int64             `json:"task_id"`
+	AccountID         int64             `json:"account_id"`
+	LoginEmail        string            `json:"login_email"`
+	CredentialMode    string            `json:"credential_mode"`
+	Engine            string            `json:"engine"`
+	ReloginEndpoint   string            `json:"relogin_endpoint,omitempty"`
+	ReloginHeaders    map[string]string `json:"relogin_headers,omitempty"`
+	Password          string            `json:"password,omitempty"`
+	TOTPSecret        string            `json:"totp_secret,omitempty"`
+	OTPURL            string            `json:"otp_url,omitempty"`
+	AuthURL           string            `json:"auth_url,omitempty"`
+	ProxyURL          string            `json:"proxy_url,omitempty"`
 }
 
 func (s *OpenAIOAuthReauthService) ClaimTask(ctx context.Context, workerID string) (*OpenAIOAuthReauthClaim, error) {
@@ -734,6 +764,13 @@ func (s *OpenAIOAuthReauthService) ClaimTaskWithEngines(ctx context.Context, wor
 		mode = OpenAIOAuthReauthModeEmailOTPURL
 	}
 	engine := effectiveReauthEngine(mode, stored.Engine, runtimeSettings.Engine)
+	if record.OAuthProfile == "excel" {
+		engine = OpenAIOAuthReauthEngineLocal
+		if mode != OpenAIOAuthReauthModePasswordTOTP {
+			_ = s.repo.MarkFailed(ctx, record.ID, workerID, "Excel authorization requires password/TOTP mode")
+			return nil, nil
+		}
+	}
 	supported := false
 	for _, offered := range engines {
 		if offered == engine {
@@ -784,7 +821,7 @@ func (s *OpenAIOAuthReauthService) ClaimTaskWithEngines(ctx context.Context, wor
 	}
 	claim := &OpenAIOAuthReauthClaim{
 		TaskID: record.ID, AccountID: record.AccountID, LoginEmail: stored.LoginEmail,
-		CredentialMode: mode, Engine: engine, ProxyURL: proxyURL,
+		CredentialMode: mode, Engine: engine, ProxyURL: proxyURL, OAuthProfile: reauthTaskProfile(record), ExpectedWorkspace: account.GetCredential("chatgpt_account_id"),
 	}
 	if claim.Engine == OpenAIOAuthReauthEngineSessionStudio {
 		claim.ReloginEndpoint, claim.ReloginHeaders, err = s.sessionStudioConfig(ctx)
@@ -937,6 +974,12 @@ func (s *OpenAIOAuthReauthService) SubmitCredentials(ctx context.Context, taskID
 	currentCredentialsHash, err := hashReauthCredentials(account.Credentials)
 	if err != nil || subtle.ConstantTimeCompare([]byte(currentCredentialsHash), []byte(record.ExpectedCredentialsHash)) != 1 {
 		return s.failCallback(ctx, taskID, "account credentials changed while re-login was running", errors.New("credential snapshot mismatch"))
+	}
+	if record.OAuthProfile == "excel" {
+		return s.applyExcelReauthCredentials(ctx, record, account, credentials)
+	}
+	if reauthMapString(credentials, "client_id") == openai.ExcelClientID {
+		return s.failCallback(ctx, taskID, "worker returned credentials for the wrong OAuth profile", errors.New("expected Codex credentials"))
 	}
 	tokenInfo, extra, err := directReauthTokenInfo(credentials, workerExtra)
 	if err != nil {
@@ -1172,7 +1215,7 @@ func safeReauthTask(record *OpenAIOAuthReauthTaskRecord) *OpenAIOAuthReauthTask 
 		return nil
 	}
 	return &OpenAIOAuthReauthTask{
-		ID: record.ID, AccountID: record.AccountID, Status: record.Status,
+		ID: record.ID, AccountID: record.AccountID, Status: record.Status, OAuthProfile: reauthTaskProfile(record),
 		Stage: record.Stage, Error: sanitizeReauthError(record.Error), Attempt: record.Attempt,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt, FinishedAt: record.FinishedAt,
 	}

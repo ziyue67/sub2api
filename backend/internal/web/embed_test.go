@@ -546,6 +546,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			"/realtime",
 			"/web_search",
 			"/x_search",
+			"/models/gpt-5.5",
 		}
 
 		for _, path := range apiPaths {
