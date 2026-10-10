@@ -324,6 +324,115 @@ func TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "malicious.invalid")
 }
 
+type grokVideoSourceURLSettingRepoStub struct {
+	grokBaseURLSettingRepoStub
+	lookups int
+}
+
+func (r *grokVideoSourceURLSettingRepoStub) GetValue(ctx context.Context, key string) (string, error) {
+	r.lookups++
+	return r.grokBaseURLSettingRepoStub.GetValue(ctx, key)
+}
+
+func forwardGrokVideoStatusForSourceURLTest(t *testing.T, settings map[string]string, statusBody string) (string, *grokVideoSourceURLSettingRepoStub) {
+	t.Helper()
+	upstream := &grokMediaContentUpstreamStub{response: grokMediaContentStatusResponse(statusBody)}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	var repo *grokVideoSourceURLSettingRepoStub
+	if settings != nil {
+		repo = &grokVideoSourceURLSettingRepoStub{grokBaseURLSettingRepoStub: grokBaseURLSettingRepoStub{values: settings}}
+		svc.settingService = NewSettingService(repo, nil)
+	}
+	c, recorder := grokMediaContentTestContext(http.MethodGet, "https://api.example/v1/videos/request-1", nil)
+
+	_, err := svc.ForwardGrokMedia(
+		context.Background(), c, grokMediaContentTestAccount(),
+		GrokMediaEndpointVideoStatus, "request-1", nil, "",
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	return recorder.Body.String(), repo
+}
+
+func TestForwardGrokVideoStatusAddsSourceURLWhenEnabled(t *testing.T) {
+	body, _ := forwardGrokVideoStatusForSourceURLTest(t,
+		map[string]string{SettingKeyGrokVideoSourceURLEnabled: "true"},
+		`{"status":"done","video":{"url":"https://vidgen.x.ai/xai-vidgen-bucket/xai-video-request-1.mp4","duration":5}}`,
+	)
+
+	require.Equal(t, "/v1/videos/request-1/content", gjson.Get(body, "video.url").String())
+	require.Equal(t, "https://vidgen.x.ai/xai-vidgen-bucket/xai-video-request-1.mp4", gjson.Get(body, "video.source_url").String())
+	require.Equal(t, "5", gjson.Get(body, "video.duration").String())
+}
+
+func TestForwardGrokVideoStatusOmitsSourceURLWhenDisabledOrUnset(t *testing.T) {
+	statusBody := `{"status":"done","video":{"url":"https://vidgen.x.ai/xai-vidgen-bucket/xai-video-request-1.mp4","duration":5}}`
+	for name, settings := range map[string]map[string]string{
+		"disabled":         {SettingKeyGrokVideoSourceURLEnabled: "false"},
+		"missing":          {},
+		"no setting store": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, _ := forwardGrokVideoStatusForSourceURLTest(t, settings, statusBody)
+
+			require.Equal(t, "/v1/videos/request-1/content", gjson.Get(body, "video.url").String())
+			require.False(t, gjson.Get(body, "video.source_url").Exists())
+			require.NotContains(t, body, "vidgen.x.ai")
+		})
+	}
+}
+
+func TestForwardGrokVideoStatusStripsRelayedSourceURLWhenDisabled(t *testing.T) {
+	body, _ := forwardGrokVideoStatusForSourceURLTest(t,
+		map[string]string{SettingKeyGrokVideoSourceURLEnabled: "false"},
+		`{"status":"done","video":{"url":"/v1/videos/request-1/content","source_url":"https://vidgen.x.ai/xai-vidgen-bucket/xai-video-request-1.mp4"}}`,
+	)
+
+	require.Equal(t, "/v1/videos/request-1/content", gjson.Get(body, "video.url").String())
+	require.False(t, gjson.Get(body, "video.source_url").Exists())
+}
+
+func TestForwardGrokVideoStatusForwardsValidatedRelaySourceURL(t *testing.T) {
+	body, _ := forwardGrokVideoStatusForSourceURLTest(t,
+		map[string]string{SettingKeyGrokVideoSourceURLEnabled: "true"},
+		`{"status":"done","video":{"url":"https://relay.example/v1/videos/request-1/content","source_url":"https://vidgen.x.ai/xai-vidgen-bucket/xai-video-request-1.mp4"}}`,
+	)
+
+	require.Equal(t, "/v1/videos/request-1/content", gjson.Get(body, "video.url").String())
+	require.Equal(t, "https://vidgen.x.ai/xai-vidgen-bucket/xai-video-request-1.mp4", gjson.Get(body, "video.source_url").String())
+}
+
+func TestForwardGrokVideoStatusDropsUntrustedSourceURL(t *testing.T) {
+	for _, sourceURL := range []string{
+		"https://vidgen.x.ai.attacker.invalid/video.mp4",
+		"https://vidgen.x.ai" + "@attacker.invalid/video.mp4",
+		"http://vidgen.x.ai/video.mp4",
+		"https://relay.example/v1/videos/request-1/content",
+	} {
+		t.Run(sourceURL, func(t *testing.T) {
+			body, _ := forwardGrokVideoStatusForSourceURLTest(t,
+				map[string]string{SettingKeyGrokVideoSourceURLEnabled: "true"},
+				`{"status":"done","video":{"url":"/v1/videos/request-1/content","source_url":"`+sourceURL+`"}}`,
+			)
+
+			require.Equal(t, "/v1/videos/request-1/content", gjson.Get(body, "video.url").String())
+			require.False(t, gjson.Get(body, "video.source_url").Exists())
+		})
+	}
+}
+
+func TestForwardGrokVideoStatusSkipsSettingLookupWithoutMediaURL(t *testing.T) {
+	statusBody := `{"status":"pending","progress":40}`
+	body, repo := forwardGrokVideoStatusForSourceURLTest(t,
+		map[string]string{SettingKeyGrokVideoSourceURLEnabled: "true"},
+		statusBody,
+	)
+
+	require.JSONEq(t, statusBody, body)
+	require.Zero(t, repo.lookups)
+}
+
 func TestRewriteGrokMediaVideoContentURLsPreservesOtherIDsAndHandlesNestedEscapedID(t *testing.T) {
 	body := []byte(`{"nested":[{"url":"https://relay.example/v1/videos/task%2Fone/content"},{"url":"https://relay.example/v1/videos/task-two/content"}]}`)
 

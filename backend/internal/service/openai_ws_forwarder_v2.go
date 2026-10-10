@@ -69,9 +69,6 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	payload := s.buildOpenAIWSCreatePayload(reqBody, account)
 	accelerateHTTPSSE := decision.Reason == openAIOAuthWSSSEAccelerationReason
-	if accelerateHTTPSSE && hasOpenAIWSSSEUnsupportedTool(payload) {
-		return nil, errOpenAIWSSSEUnsupportedTool
-	}
 	payloadStrategy, removedKeys := applyOpenAIWSRetryPayloadStrategy(payload, attempt)
 	turnState := ""
 	turnMetadata := ""

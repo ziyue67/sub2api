@@ -51,29 +51,43 @@ func TestOpenAIWSSSEPayloadEncodedLimit(t *testing.T) {
 	require.NotErrorIs(t, err, errOpenAIWSSSEPayloadTooLarge)
 }
 
-func TestOpenAIWSSSEUnsupportedTools(t *testing.T) {
-	for _, tc := range []struct {
-		name, body string
-		want       bool
-	}{
-		{"none", `{}`, false},
-		{"empty", `{"tools":[]}`, false},
-		{"null", `{"tools":null}`, false},
-		{"hosted", `{"tools":[{"type":"web_search"}]}`, true},
-		{"preview", `{"tools":[{"type":"web_search_preview"}]}`, true},
-		{"dated_preview", `{"tools":[{"type":"web_search_preview_2025_03_11"}]}`, true},
-		{"mixed", `{"tools":[{"type":"function","name":"f"},{"type":"web_search"}]}`, true},
-		{"function_name_is_not_type", `{"tools":[{"type":"function","name":"web_search"}]}`, false},
-		{"custom", `{"tools":[{"type":"custom","name":"web_search"}]}`, false},
-		{"other_hosted", `{"tools":[{"type":"image_generation"}]}`, false},
-		{"nested_data", `{"tools":[{"type":"function","name":"f","parameters":{"type":"web_search"}}]}`, false},
-		{"malformed_not_reclassified", `{"tools":[null,1,{"type":123}]}`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var payload map[string]any
-			require.NoError(t, json.Unmarshal([]byte(tc.body), &payload))
-			require.Equal(t, tc.want, hasOpenAIWSSSEUnsupportedTool(payload))
-		})
+func TestOpenAIWSSSEAccelerationPreservesSearchTools(t *testing.T) {
+	for _, toolType := range []string{"web_search", "web_search_preview", "web_search_preview_2025_03_11"} {
+		for _, toolChoice := range []string{"auto", "required", "none"} {
+			for _, prewarm := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/prewarm=%v", toolType, toolChoice, prewarm), func(t *testing.T) {
+					body := strings.TrimSuffix(wsSSETestRequest, "}") + fmt.Sprintf(`,"tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{}}},{"type":%q,"search_context_size":"high"}],"tool_choice":%q}`, toolType, toolChoice)
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+					SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
+					conn := &openAIWSCaptureConn{events: [][]byte{
+						[]byte(`{"type":"response.completed","response":{"id":"resp_search","usage":{"input_tokens":7,"output_tokens":2}}}`),
+					}}
+					d := &wsSSETestDialer{conn: conn}
+					h := wsSSEGuardHTTPUpstream()
+					s := wsSSETestService(t, d, h)
+					s.cfg.Gateway.OpenAIWS.PrewarmGenerateEnabled = prewarm
+					result, err := s.Forward(context.Background(), c, wsSSETestAccount(), []byte(body))
+					require.NoError(t, err)
+					require.NotNil(t, result)
+					require.True(t, result.OpenAIWSMode, "declaring search tools must not force HTTP")
+					require.Empty(t, h.requests)
+					require.Equal(t, int32(1), d.calls.Load())
+					require.Equal(t, openAIOAuthWSSSEAccelerationReason, c.GetString("openai_ws_transport_reason"))
+					require.Contains(t, rec.Body.String(), "resp_search")
+					conn.mu.Lock()
+					defer conn.mu.Unlock()
+					require.Len(t, conn.writes, 1, "tool declarations retain the existing no-prewarm policy")
+					for _, sent := range conn.writes {
+						payload := payloadAsJSONBytes(sent)
+						require.JSONEq(t, gjson.Get(body, "tools").Raw, gjson.GetBytes(payload, "tools").Raw)
+						require.Equal(t, toolChoice, gjson.GetBytes(payload, "tool_choice").String())
+						require.JSONEq(t, gjson.Get(body, "input").Raw, gjson.GetBytes(payload, "input").Raw)
+					}
+				})
+			}
+		}
 	}
 }
 
@@ -96,8 +110,8 @@ func TestOpenAIWSSSEAccelerationPreSendFallback(t *testing.T) {
 		{"size", wsSSETestRequest, "oauth_ws_sse_payload_too_large", 64, false, 1},
 		{"size_before_prewarm", wsSSETestRequest, "oauth_ws_sse_payload_too_large", 64, true, 1},
 		{"encoded_growth", escaped, "oauth_ws_sse_payload_too_large", int64(len(escaped) + 500), false, 1},
-		{"hosted_tool", tools, "oauth_ws_sse_unsupported_tool", 1 << 20, false, 0},
-		{"hosted_tool_before_prewarm", tools, "oauth_ws_sse_unsupported_tool", 1 << 20, true, 0},
+		{"hosted_tool_size", tools, "oauth_ws_sse_payload_too_large", 64, false, 1},
+		{"hosted_tool_size_before_prewarm", tools, "oauth_ws_sse_payload_too_large", 64, true, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -169,16 +183,14 @@ func TestOpenAIWSSSEAccelerationPreservesSmallRequests(t *testing.T) {
 }
 
 func TestOpenAIWSSSEPreSendFallbackSafety(t *testing.T) {
-	for _, localErr := range []error{errOpenAIWSSSEPayloadTooLarge, errOpenAIWSSSEUnsupportedTool} {
-		c, _ := gin.CreateTestContext(httptest.NewRecorder())
-		require.NotEmpty(t, openAIWSSSEFallbackReason(context.Background(), c, localErr))
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		require.Empty(t, openAIWSSSEFallbackReason(ctx, c, localErr))
-		c.Writer.WriteHeaderNow()
-		require.Empty(t, openAIWSSSEFallbackReason(context.Background(), c, localErr))
-	}
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.NotEmpty(t, openAIWSSSEFallbackReason(context.Background(), c, errOpenAIWSSSEPayloadTooLarge))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.Empty(t, openAIWSSSEFallbackReason(ctx, c, errOpenAIWSSSEPayloadTooLarge))
+	c.Writer.WriteHeaderNow()
+	require.Empty(t, openAIWSSSEFallbackReason(context.Background(), c, errOpenAIWSSSEPayloadTooLarge))
+	c, _ = gin.CreateTestContext(httptest.NewRecorder())
 	for _, err := range []error{io.EOF, io.ErrClosedPipe, errors.New(errOpenAIWSSSEPayloadTooLarge.Error()),
 		wrapOpenAIWSFallback("message_too_big", coderws.CloseError{Code: coderws.StatusMessageTooBig})} {
 		require.Empty(t, openAIWSSSEFallbackReason(context.Background(), c, err), "peer errors never prove a request was unsent")
@@ -232,24 +244,6 @@ func BenchmarkOpenAIWSSSEPayload(b *testing.B) {
 			})
 		}
 	}
-}
-
-func BenchmarkOpenAIWSSSEToolGuard(b *testing.B) {
-	tools := make([]any, 128)
-	for i := range tools {
-		tools[i] = map[string]any{"type": "function", "name": fmt.Sprint("tool", i), "parameters": map[string]any{"description": strings.Repeat("schema", 1024)}}
-	}
-	payload := map[string]any{"tools": tools}
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			if hasOpenAIWSSSEUnsupportedTool(payload) {
-				b.Error("unexpected rejection")
-				return
-			}
-		}
-	})
 }
 
 func TestOpenAIWSSSEGuardsDoNotChangeNativeWS(t *testing.T) {
@@ -440,10 +434,10 @@ func TestOpenAIWSSSEPrewarmMustRespectEncodedLimit(t *testing.T) {
 
 func TestOpenAIWSSSEFallbackKeepsHTTPNamespaceContract(t *testing.T) {
 	for _, flatten := range []bool{false, true} {
-		for _, bypass := range []string{"size", "hosted_tool", "handshake"} {
+		for _, bypass := range []string{"size", "hosted_tool_size", "handshake"} {
 			t.Run(fmt.Sprintf("flatten=%v/%s", flatten, bypass), func(t *testing.T) {
 				body := `{"model":"gpt-5.1","stream":true,"instructions":"test","input":[{"role":"user","content":"hello","namespace":"remove_from_message"},{"type":"function_call","name":"lookup","namespace":"mcp","call_id":"call_1","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"ok","namespace":"remove_from_output"}],"tools":[{"type":"namespace","name":"mcp","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{}}}]}]}`
-				if bypass == "hosted_tool" {
+				if bypass == "hosted_tool_size" {
 					body = strings.TrimSuffix(body, "]}") + `,{"type":"web_search"}]}`
 				}
 				body = strings.TrimSuffix(body, "}") + `,"previous_response_id":""}`
@@ -464,7 +458,7 @@ func TestOpenAIWSSSEFallbackKeepsHTTPNamespaceContract(t *testing.T) {
 					}
 					h.resp.Body = io.NopCloser(strings.NewReader(`data: {"type":"response.output_item.added","item":` + item + "}\n\n" + `data: {"type":"response.completed","response":{"id":"resp_namespace","output":[` + item + `],"usage":{"input_tokens":7,"output_tokens":2}}}` + "\n\n"))
 					s := wsSSETestService(t, d, h)
-					if bypass == "size" {
+					if bypass != "handshake" {
 						s.cfg.Gateway.OpenAIWS.SSEAccelerationMaxPayloadBytes = 64
 					}
 					a := wsSSETestAccount()

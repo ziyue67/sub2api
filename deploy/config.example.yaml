@@ -552,6 +552,9 @@ gateway:
   # Stream data interval timeout (seconds), 0=disable
   # 流数据间隔超时（秒），0=禁用
   stream_data_interval_timeout: 180
+  # BPS 原始响应读取无进展超时；默认 120 秒，0 禁用，启用时允许 30–300 秒。
+  # 上游 SSE 注释和下游 keepalive 不续期；不重放已接受的生成。
+  excel_bps_stream_data_interval_timeout: 120
   # Stream keepalive interval (seconds), 0=disable
   # 流式 keepalive 间隔（秒），0=禁用
   stream_keepalive_interval: 10

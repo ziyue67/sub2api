@@ -260,6 +260,9 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 			return nil, err
 		}
 		b.tools[key] = tool{Name: name, Namespace: namespace, Kind: kind, Definition: definition, Parameters: parameters, Schema: schema, Catalog: item}
+		if kind == "function" {
+			entry["parameters"] = plaintextPromptParameters(name, namespace, parameters)
+		}
 		catalog = append(catalog, entry)
 	}
 	return catalog, nil
@@ -267,8 +270,9 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 
 // Tool descriptions and discovery state can change as Codex replays or lazily
 // loads its catalog. They do not change how a call is decoded. Keep the first
-// declaration (the explicit/inherited catalog precedes historical additions),
-// but compare its call contract rather than rejecting annotation-only changes.
+// declaration within the selected current catalog, but compare its call
+// contract rather than rejecting annotation-only changes. Replay precedence is
+// resolved separately by collectClientCatalog before this validation.
 // Unknown fields remain part of the signature so new execution constraints
 // cannot silently disappear.
 func toolDefinitionFingerprint(item object) string {
@@ -415,7 +419,7 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 		}
 		delete(item, "internal_chat_message_metadata_passthrough")
 		switch text(item["type"]) {
-		case "additional_tools":
+		case "additional_tools", "tool_search_output":
 			continue
 		case "item_reference":
 			return nil, fmt.Errorf("basispoints requires full history; item_reference is unsupported")

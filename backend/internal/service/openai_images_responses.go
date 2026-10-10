@@ -1828,6 +1828,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		}
 	}
 
+	credentialAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
+	if err != nil {
+		return nil, err
+	}
+	if credentialAccount.IsExcelOAuth() {
+		return nil, writeExcelOAuthRouteError(c)
+	}
 	token, _, err := s.GetAccessToken(upstreamCtx, account)
 	if err != nil {
 		return nil, err

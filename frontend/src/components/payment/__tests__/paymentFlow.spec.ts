@@ -317,6 +317,7 @@ describe('buildCreateOrderPayload', () => {
       paymentType: 'wxpay',
       orderType: 'subscription',
       planId: 7,
+      renewalMode: 'extend',
       origin: 'https://app.example.com',
       isMobile: false,
       isWechatBrowser: true,
@@ -325,9 +326,27 @@ describe('buildCreateOrderPayload', () => {
       payment_type: 'wxpay',
       order_type: 'subscription',
       plan_id: 7,
+      renewal_mode: 'extend',
       return_url: 'https://app.example.com/payment/result',
       is_mobile: false,
       payment_source: 'wechat_in_app_resume',
+    })
+  })
+
+  it('includes the default restart choice for subscription orders', () => {
+    expect(buildCreateOrderPayload({
+      amount: 128,
+      paymentType: 'alipay',
+      orderType: 'subscription',
+      planId: 7,
+      renewalMode: 'restart',
+      origin: 'https://app.example.com',
+      isMobile: false,
+      isWechatBrowser: false,
+    })).toMatchObject({
+      order_type: 'subscription',
+      plan_id: 7,
+      renewal_mode: 'restart',
     })
   })
 

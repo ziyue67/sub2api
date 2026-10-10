@@ -204,7 +204,9 @@ type AccountBulkUpdate struct {
 	Schedulable         *bool
 	Credentials         map[string]any
 	Extra               map[string]any
-	ProbeEnabled        *bool
+	// Per-account preparation state is applied in the same bulk SQL update.
+	ExcelBPSAuthorizationPending map[int64]bool
+	ProbeEnabled                 *bool
 	// EnsureCodexFingerprintSeed asks the repository to atomically preserve an
 	// existing valid Codex fingerprint seed or create one for eligible rows.
 	EnsureCodexFingerprintSeed bool

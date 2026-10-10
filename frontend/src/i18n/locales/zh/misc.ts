@@ -496,6 +496,14 @@ export default {
     subscribeNow: '立即开通',
     renewNow: '续费',
     selectPlan: '选择套餐',
+    renewalMode: {
+      title: '续费方式',
+      currentExpiry: '当前订阅到期时间：{date}',
+      restart: '重开周期',
+      extend: '延长周期',
+      restartHint: '立即补满日、周、月额度，并从支付成功时间重新计算套餐周期；当前剩余时长不保留。',
+      extendHint: '保留当前额度使用情况，在原到期时间上增加本套餐时长。',
+    },
     planFeatures: '功能特性',
     planCard: {
       rate: '倍率',

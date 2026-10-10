@@ -71,6 +71,13 @@ func validateExcelBPS403GroupExtra(extra map[string]any) error {
 }
 
 func (s *adminServiceImpl) validateExcelBPS403GroupSettings(ctx context.Context, account *Account) error {
+	if err := s.validateExcelBPSGroupPolicy(ctx, account); err != nil {
+		return err
+	}
+	return s.validateExcelBPSActivation(ctx, account)
+}
+
+func (s *adminServiceImpl) validateExcelBPSGroupPolicy(ctx context.Context, account *Account) error {
 	if account.Extra["openai_excel_bps"] == true && strings.EqualFold(strings.TrimSpace(account.GetCredential("plan_type")), "free") {
 		return infraerrors.BadRequest("OPENAI_EXCEL_BPS_INVALID", "Excel BPS is unavailable for free accounts")
 	}

@@ -14,6 +14,10 @@ func TestOpsModelCapabilityRejection(t *testing.T) {
 		message          string
 		want             bool
 	}{
+		{"explicit missing code", 502, 404, "model_not_found", true},
+		{"explicit unsupported code", 400, 400, "model_not_supported", true},
+		{"missing model", 404, 404, "Model not found", true},
+		{"capacity with misleading code", 503, 503, "model_not_found", false},
 		{"codex model", 400, 400, "The 'example-model' model is not supported when using Codex with a ChatGPT account.", true},
 		{"wrapped model", 502, 404, `Model "example-model" is not available for this group`, true},
 		{"admission wrapper", 503, 404, `Model "example-model" is not supported by any configured account in this group`, true},

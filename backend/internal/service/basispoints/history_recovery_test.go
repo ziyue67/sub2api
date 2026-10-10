@@ -154,8 +154,8 @@ func TestNestedNamespaceAndConflictingCatalogDefinitions(t *testing.T) {
 	}
 	source["input"] = []any{message("user", "continue"), object{"type": "additional_tools", "tools": []any{object{"type": "namespace", "name": "outer.inner", "tools": []any{object{"type": "function", "name": "run", "parameters": object{"type": "array"}}}}}}}
 	raw, _ := json.Marshal(source)
-	if _, _, err := Prepare(raw, "scope", nil); err == nil || !strings.Contains(err.Error(), "conflicting duplicate") {
-		t.Fatalf("conflicting same-name tool must fail: %v", err)
+	if _, _, err := Prepare(raw, "scope", nil); err != nil {
+		t.Fatalf("current declaration must take precedence over stale history: %v", err)
 	}
 }
 

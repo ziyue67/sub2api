@@ -225,6 +225,20 @@ func (_c *PaymentOrderCreate) SetNillableSubscriptionDays(v *int) *PaymentOrderC
 	return _c
 }
 
+// SetSubscriptionRenewalMode sets the "subscription_renewal_mode" field.
+func (_c *PaymentOrderCreate) SetSubscriptionRenewalMode(v string) *PaymentOrderCreate {
+	_c.mutation.SetSubscriptionRenewalMode(v)
+	return _c
+}
+
+// SetNillableSubscriptionRenewalMode sets the "subscription_renewal_mode" field if the given value is not nil.
+func (_c *PaymentOrderCreate) SetNillableSubscriptionRenewalMode(v *string) *PaymentOrderCreate {
+	if v != nil {
+		_c.SetSubscriptionRenewalMode(*v)
+	}
+	return _c
+}
+
 // SetProviderInstanceID sets the "provider_instance_id" field.
 func (_c *PaymentOrderCreate) SetProviderInstanceID(v string) *PaymentOrderCreate {
 	_c.mutation.SetProviderInstanceID(v)
@@ -543,6 +557,10 @@ func (_c *PaymentOrderCreate) defaults() {
 		v := paymentorder.DefaultOrderType
 		_c.mutation.SetOrderType(v)
 	}
+	if _, ok := _c.mutation.SubscriptionRenewalMode(); !ok {
+		v := paymentorder.DefaultSubscriptionRenewalMode
+		_c.mutation.SetSubscriptionRenewalMode(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := paymentorder.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -636,6 +654,14 @@ func (_c *PaymentOrderCreate) check() error {
 	if v, ok := _c.mutation.OrderType(); ok {
 		if err := paymentorder.OrderTypeValidator(v); err != nil {
 			return &ValidationError{Name: "order_type", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.order_type": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.SubscriptionRenewalMode(); !ok {
+		return &ValidationError{Name: "subscription_renewal_mode", err: errors.New(`ent: missing required field "PaymentOrder.subscription_renewal_mode"`)}
+	}
+	if v, ok := _c.mutation.SubscriptionRenewalMode(); ok {
+		if err := paymentorder.SubscriptionRenewalModeValidator(v); err != nil {
+			return &ValidationError{Name: "subscription_renewal_mode", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.subscription_renewal_mode": %w`, err)}
 		}
 	}
 	if v, ok := _c.mutation.ProviderInstanceID(); ok {
@@ -793,6 +819,10 @@ func (_c *PaymentOrderCreate) createSpec() (*PaymentOrder, *sqlgraph.CreateSpec)
 	if value, ok := _c.mutation.SubscriptionDays(); ok {
 		_spec.SetField(paymentorder.FieldSubscriptionDays, field.TypeInt, value)
 		_node.SubscriptionDays = &value
+	}
+	if value, ok := _c.mutation.SubscriptionRenewalMode(); ok {
+		_spec.SetField(paymentorder.FieldSubscriptionRenewalMode, field.TypeString, value)
+		_node.SubscriptionRenewalMode = value
 	}
 	if value, ok := _c.mutation.ProviderInstanceID(); ok {
 		_spec.SetField(paymentorder.FieldProviderInstanceID, field.TypeString, value)
@@ -1256,6 +1286,18 @@ func (u *PaymentOrderUpsert) AddSubscriptionDays(v int) *PaymentOrderUpsert {
 // ClearSubscriptionDays clears the value of the "subscription_days" field.
 func (u *PaymentOrderUpsert) ClearSubscriptionDays() *PaymentOrderUpsert {
 	u.SetNull(paymentorder.FieldSubscriptionDays)
+	return u
+}
+
+// SetSubscriptionRenewalMode sets the "subscription_renewal_mode" field.
+func (u *PaymentOrderUpsert) SetSubscriptionRenewalMode(v string) *PaymentOrderUpsert {
+	u.Set(paymentorder.FieldSubscriptionRenewalMode, v)
+	return u
+}
+
+// UpdateSubscriptionRenewalMode sets the "subscription_renewal_mode" field to the value that was provided on create.
+func (u *PaymentOrderUpsert) UpdateSubscriptionRenewalMode() *PaymentOrderUpsert {
+	u.SetExcluded(paymentorder.FieldSubscriptionRenewalMode)
 	return u
 }
 
@@ -1989,6 +2031,20 @@ func (u *PaymentOrderUpsertOne) UpdateSubscriptionDays() *PaymentOrderUpsertOne 
 func (u *PaymentOrderUpsertOne) ClearSubscriptionDays() *PaymentOrderUpsertOne {
 	return u.Update(func(s *PaymentOrderUpsert) {
 		s.ClearSubscriptionDays()
+	})
+}
+
+// SetSubscriptionRenewalMode sets the "subscription_renewal_mode" field.
+func (u *PaymentOrderUpsertOne) SetSubscriptionRenewalMode(v string) *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetSubscriptionRenewalMode(v)
+	})
+}
+
+// UpdateSubscriptionRenewalMode sets the "subscription_renewal_mode" field to the value that was provided on create.
+func (u *PaymentOrderUpsertOne) UpdateSubscriptionRenewalMode() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateSubscriptionRenewalMode()
 	})
 }
 
@@ -2942,6 +2998,20 @@ func (u *PaymentOrderUpsertBulk) UpdateSubscriptionDays() *PaymentOrderUpsertBul
 func (u *PaymentOrderUpsertBulk) ClearSubscriptionDays() *PaymentOrderUpsertBulk {
 	return u.Update(func(s *PaymentOrderUpsert) {
 		s.ClearSubscriptionDays()
+	})
+}
+
+// SetSubscriptionRenewalMode sets the "subscription_renewal_mode" field.
+func (u *PaymentOrderUpsertBulk) SetSubscriptionRenewalMode(v string) *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetSubscriptionRenewalMode(v)
+	})
+}
+
+// UpdateSubscriptionRenewalMode sets the "subscription_renewal_mode" field to the value that was provided on create.
+func (u *PaymentOrderUpsertBulk) UpdateSubscriptionRenewalMode() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateSubscriptionRenewalMode()
 	})
 }
 

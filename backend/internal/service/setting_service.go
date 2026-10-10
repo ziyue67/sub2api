@@ -71,6 +71,18 @@ func (s *SettingService) GetGrokDefaultBaseURLMode(ctx context.Context) string {
 	return normalizeGrokDefaultBaseURLMode(raw)
 }
 
+// IsGrokVideoSourceURLEnabled fails closed: lookup errors keep the xAI media
+// URL hidden behind the authenticated content proxy.
+func (s *SettingService) IsGrokVideoSourceURLEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gatewayForwardingDBTimeout)
+	defer cancel()
+	raw, err := s.settingRepo.GetValue(dbCtx, SettingKeyGrokVideoSourceURLEnabled)
+	return err == nil && strings.TrimSpace(raw) == "true"
+}
+
 func (s *SettingService) GetGrokDefaultBaseURL(ctx context.Context) string {
 	return GrokBaseURLForMode(s.GetGrokDefaultBaseURLMode(ctx))
 }

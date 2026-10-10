@@ -99,8 +99,9 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 // Its dedicated database query considers only persistent eligibility
 // (active status + schedulable setting) and model_mapping, bypassing scheduler
 // snapshots and transient filters. That guarantees a 404 is only returned
-// when persistent account/group/model configuration must change before the
-// request can succeed.
+// when no configured candidate supports the model, including candidates with
+// a still-valid explicit upstream model capability rejection. Ordinary capacity
+// cooldowns never remove model support.
 //
 // routingModel is the model name that account selection actually compared
 // against (i.e. after group-level dispatch mapping). displayModel is the

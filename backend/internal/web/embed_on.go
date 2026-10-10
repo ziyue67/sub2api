@@ -150,8 +150,8 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	// Check cache first
 	cached := s.cache.Get()
 	if cached != nil {
-		// Check If-None-Match for 304 response
-		if match := c.GetHeader("If-None-Match"); match == cached.ETag {
+		// A fresh CSP nonce requires a matching HTML body, not a cached body from a 304.
+		if match := c.GetHeader("If-None-Match"); nonce == "" && match == cached.ETag {
 			c.Status(http.StatusNotModified)
 			c.Abort()
 			return

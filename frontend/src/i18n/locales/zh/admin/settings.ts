@@ -566,6 +566,8 @@ export default {
         grokCrossClientMapHint: '为兼容客户端，默认开启。GPT、Codex、o 系列和 Claude 模型 ID 会路由到左侧默认 Grok 文本模型；关闭后必须使用 Grok 模型 ID。',
         grokDefaultBaseURLMode: '默认 Grok 上游',
         grokDefaultBaseURLModeHint: '仅用于 Grok 账号未配置显式 base URL 的文本请求；媒体和语音仍使用官方 API 主机。',
+        grokVideoSourceURL: '返回 Grok 视频原始地址',
+        grokVideoSourceURLHint: '开启后，已完成的视频状态会额外返回 video.source_url（经校验的 xAI 临时媒体地址，可匿名下载），供可信下游直接转存；video.url 仍是需要鉴权的本站代理地址。xAI 地址通常在一天内失效。关闭时不返回该字段，并移除上游带来的同名字段。',
         grokBaseURLModeCLI: 'CLI 聊天代理',
         grokBaseURLModeAPI: '公共 API',
         grokBaseURLModeUSEast1: '区域 API（us-east-1）',

@@ -29,6 +29,8 @@ type openAICompactSSEKeepalive struct {
 	writer  gin.ResponseWriter
 	started bool
 	stopped bool
+	// paused 仅供持续测试流使用：Header 返回可变 map，写回/Flush 前必须暂停心跳。
+	paused bool
 	// bytes 是心跳已写出的注释字节数。心跳不构成语义响应，handler 的
 	// "Forward 期间是否已写响应"判定（failover 放弃换号的依据）必须扣除
 	// 这部分字节，见 OpenAICompactKeepaliveAdjustedWrittenSize。
@@ -106,6 +108,9 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 	defer k.mu.Unlock()
 	if k.stopped {
 		return false
+	}
+	if k.paused {
+		return true
 	}
 	if !k.started {
 		header := k.writer.Header()

@@ -1,6 +1,25 @@
 // Scripts may animate inside the sandboxed iframe; the page cannot reach the network.
 const PELICAN_CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">`
 
+export function readPelicanPreviewNonce(doc: Document = document): string {
+  const nonce = doc.head.querySelector<HTMLScriptElement>('script[nonce]')?.nonce ?? ''
+  return /^[A-Za-z0-9+/_=-]+$/.test(nonce) ? nonce : ''
+}
+
+export function authorizePelicanInlineScripts(html: string, nonce: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const validNonce = /^[A-Za-z0-9+/_=-]+$/.test(nonce)
+  for (const script of doc.querySelectorAll('script')) {
+    script.removeAttribute('nonce')
+    // Both parent CSP and the iframe's inline-only CSP must permit execution.
+    // Never grant a nonce to HTML or SVG external scripts.
+    if (validNonce && !script.hasAttribute('src') && !script.hasAttribute('href') && !script.hasAttribute('xlink:href')) {
+      script.setAttribute('nonce', nonce)
+    }
+  }
+  return `<!doctype html>${doc.documentElement.outerHTML}`
+}
+
 export function extractPelicanHtml(raw: string): string {
   let html = raw.trim()
   const fenced = html.match(/```(?:html|xml)?\s*([\s\S]*?)```/i)

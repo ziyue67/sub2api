@@ -46,7 +46,11 @@ func TestDuplicateToolDescriptionsKeepCurrentContract(t *testing.T) {
 			if string(raw) != before || len(bridge.tools) != 1 {
 				t.Fatal("duplicate handling changed the request or retained duplicate tools")
 			}
-			if got := bridge.tools["functions.exec"]; got.Kind != "custom" || text(got.Catalog["description"]) != "Current execution instructions" {
+			expectedDescription := "Current execution instructions"
+			if cached {
+				expectedDescription = "Older client execution instructions"
+			}
+			if got := bridge.tools["functions.exec"]; got.Kind != "custom" || text(got.Catalog["description"]) != expectedDescription {
 				t.Fatal("historical annotations replaced the current tool contract")
 			}
 			var prepared object
@@ -55,12 +59,12 @@ func TestDuplicateToolDescriptionsKeepCurrentContract(t *testing.T) {
 			}
 			input := mustTestValue[[]any](t, prepared["input"])
 			protocol := text(mustTestValue[object](t, mustTestValue[[]any](t, mustTestValue[object](t, input[1])["content"])[0])["text"])
-			if strings.Count(protocol, `Client tool "functions.exec"`) != 1 || strings.Contains(protocol, "Older client execution instructions") {
+			if strings.Count(protocol, `Client tool "functions.exec"`) != 1 || !strings.Contains(protocol, expectedDescription) {
 				t.Fatal("upstream catalog did not retain one current declaration")
 			}
 			source["input"] = "Continue"
 			delete(source, "tools")
-			if got := prepareCatalogTest(t, cache, source, "account/key/thread").tools["functions.exec"]; text(got.Catalog["description"]) != "Current execution instructions" {
+			if got := prepareCatalogTest(t, cache, source, "account/key/thread").tools["functions.exec"]; text(got.Catalog["description"]) != expectedDescription {
 				t.Fatal("compatible duplicate corrupted the cached catalog")
 			}
 		})
@@ -106,8 +110,8 @@ func TestDuplicateToolContractConflictsStillFailAtomically(t *testing.T) {
 			default:
 				conflicting[field] = true
 			}
-			delete(source, "tools")
-			source["input"] = []any{object{"type": "additional_tools", "tools": []any{execToolNamespace(conflicting)}}, message("user", "Continue")}
+			source["tools"] = append(mustTestValue[[]any](t, source["tools"]), execToolNamespace(conflicting))
+			source["input"] = []any{message("user", "Continue")}
 			raw, _ := json.Marshal(source)
 			_, _, err := PrepareWithCatalog(raw, "scope", nil, cache)
 			if err == nil || !strings.Contains(err.Error(), "conflicting duplicate") {

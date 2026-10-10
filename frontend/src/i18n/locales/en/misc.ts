@@ -472,6 +472,14 @@ export default {
     subscribeNow: 'Subscribe Now',
     renewNow: 'Renew',
     selectPlan: 'Select Plan',
+    renewalMode: {
+      title: 'Renewal method',
+      currentExpiry: 'Current subscription expires: {date}',
+      restart: 'Restart cycle',
+      extend: 'Extend cycle',
+      restartHint: 'Refill daily, weekly, and monthly quota immediately and start a new plan term when payment completes. Remaining time is replaced.',
+      extendHint: 'Keep current quota usage and add this plan term after the existing expiration time.',
+    },
     planFeatures: 'Features',
     planCard: {
       rate: 'Rate',

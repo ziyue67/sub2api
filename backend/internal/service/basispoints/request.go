@@ -88,9 +88,16 @@ func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, er
 }
 
 func prepare(raw []byte, scope string, replay *ReplayCache, nativeToolImages map[string]bool) ([]byte, *Bridge, error) {
+	return prepareWithInheritedCatalog(raw, scope, replay, nativeToolImages, false)
+}
+
+func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, nativeToolImages map[string]bool, inherited bool) ([]byte, *Bridge, error) {
 	var source object
 	if err := decode(raw, &source); err != nil || source == nil {
 		return nil, nil, fmt.Errorf("invalid Basispoints request JSON")
+	}
+	if err := validateNewAgentMessage(source["input"]); err != nil {
+		return nil, nil, err
 	}
 	model := strings.TrimSpace(text(source["model"]))
 	if model == "" {
@@ -137,21 +144,9 @@ func prepare(raw []byte, scope string, replay *ReplayCache, nativeToolImages map
 	}
 	var catalog []any
 	if text(choice) != "none" {
-		catalog, err = b.collectTools(source["tools"], "")
+		catalog, err = b.collectClientCatalog(source, inherited)
 		if err != nil {
 			return nil, nil, err
-		}
-		if input, ok := source["input"].([]any); ok {
-			for _, raw := range input {
-				item, _ := raw.(object)
-				if text(item["type"]) == "additional_tools" {
-					additional, err := b.collectTools(item["tools"], "")
-					if err != nil {
-						return nil, nil, err
-					}
-					catalog = append(catalog, additional...)
-				}
-			}
 		}
 	}
 	var input []any
@@ -187,7 +182,7 @@ func prepare(raw []byte, scope string, replay *ReplayCache, nativeToolImages map
 			"Call one client tool at a time, including update_plan through this transport. After receiving its result continue the task; do not repeat completed calls. " +
 			"Tool results replayed under run_officejs are the named client tool's results. When a tool is needed, emit its call in this response instead of only announcing it. " +
 			"Do not call other native tools or claim that shell, filesystem or workspace access is unavailable when a suitable catalog tool exists. " +
-			"If no tool is needed, answer as assistant text. Client tool catalog:\n" + describeCatalog(catalog) +
+			"If no tool is needed, answer as assistant text. " + schemaNotation + "\nClient tool catalog:\n" + describeCatalog(catalog) +
 			"\nEnd of catalog. Invoke native run_officejs once. Follow each tool's specified transport: FUNCTION uses a JSON envelope; FUNCTION_CODE uses raw code plus metadata JSON in extended_summary; FUNCTION_CMD uses raw cmd plus metadata JSON; CUSTOM uses its exact marker and raw input. No Office code is executed by the proxy."
 		protocol += b.toolExamples()
 	}

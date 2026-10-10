@@ -126,7 +126,7 @@ func prepareWithCatalog(raw []byte, scope string, replay *ReplayCache, cache *Ca
 		if err != nil {
 			return nil, nil, err
 		}
-		body, b, err := prepare(encoded, scope, replay, nativeToolImages)
+		body, b, err := prepareWithInheritedCatalog(encoded, scope, replay, nativeToolImages, !explicit && previous != nil)
 		if err != nil {
 			return nil, nil, err
 		}

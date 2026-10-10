@@ -165,7 +165,11 @@ func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Con
 	build := func(ctx context.Context) (*http.Request, error) {
 		return newExcelBPSRequest(ctx, body, token, accountID)
 	}
-	return s.doExcelBPSRequestTo(ctx, c, account, scope, basispoints.ResponsesURL, build, acquire)
+	response, lease, proxy, err := s.doExcelBPSRequestTo(ctx, c, account, scope, basispoints.ResponsesURL, build, acquire)
+	if err == nil {
+		s.guardExcelBPSProgress(ctx, response)
+	}
+	return response, lease, proxy, err
 }
 
 // doExcelBPSRequestTo applies the same exit and no-replay rules to another BPS

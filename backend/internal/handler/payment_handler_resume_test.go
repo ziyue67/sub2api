@@ -39,6 +39,7 @@ func TestApplyWeChatPaymentResumeClaims(t *testing.T) {
 		Amount:      "12.50",
 		OrderType:   payment.OrderTypeSubscription,
 		PlanID:      7,
+		RenewalMode: string(service.SubscriptionRenewalModeExtend),
 	})
 	if err != nil {
 		t.Fatalf("applyWeChatPaymentResumeClaims returned error: %v", err)
@@ -55,6 +56,21 @@ func TestApplyWeChatPaymentResumeClaims(t *testing.T) {
 	if req.PlanID != 7 {
 		t.Fatalf("plan_id = %d, want 7", req.PlanID)
 	}
+	if req.RenewalMode != string(service.SubscriptionRenewalModeExtend) {
+		t.Fatalf("renewal_mode = %q, want extend", req.RenewalMode)
+	}
+}
+
+func TestApplyWeChatPaymentResumeClaimsRejectsRenewalModeMismatch(t *testing.T) {
+	t.Parallel()
+
+	req := CreateOrderRequest{PaymentType: payment.TypeWxpay, RenewalMode: string(service.SubscriptionRenewalModeRestart)}
+	err := applyWeChatPaymentResumeClaims(&req, &service.WeChatPaymentResumeClaims{
+		OpenID:      "openid-123",
+		PaymentType: payment.TypeWxpay,
+		RenewalMode: string(service.SubscriptionRenewalModeExtend),
+	})
+	require.Error(t, err)
 }
 
 func TestApplyWeChatPaymentResumeClaimsRejectsPaymentTypeMismatch(t *testing.T) {

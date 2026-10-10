@@ -73,7 +73,7 @@
               <button
                 v-if="subscription.status === 'active'"
                 :class="['rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-colors', platformButtonClass(subscription.group?.platform || '')]"
-                @click="router.push({ path: '/purchase', query: { tab: 'subscription', group: String(subscription.group_id) } })"
+                @click="renewSubscription(subscription.group_id)"
               >
                 {{ t('payment.renewNow') }}
               </button>
@@ -282,6 +282,15 @@ const appStore = useAppStore()
 
 const subscriptions = ref<UserSubscription[]>([])
 const loading = ref(true)
+
+async function renewSubscription(groupId: number) {
+  await appStore.fetchPublicSettings(true)
+  if (appStore.cachedPublicSettings?.payment_enabled === false) {
+    appStore.showInfo(t('purchase.notEnabledDesc'))
+    return
+  }
+  await router.push({ path: '/purchase', query: { tab: 'subscription', group: String(groupId) } })
+}
 
 function subscriptionHasPeakRate(subscription: UserSubscription): boolean {
   return hasPeakRate(subscription.group)

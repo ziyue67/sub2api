@@ -397,10 +397,10 @@ func TestCatalogExpiryAndInvalidIncrementAreAtomic(t *testing.T) {
 	source["tools"] = []any{object{"type": "function", "name": "shell"}}
 	prepareCatalogTest(t, cache, source, "scope")
 	delete(source, "tools")
-	source["input"] = []any{object{"type": "additional_tools", "tools": []any{object{"type": "custom", "name": "shell"}}}, message("user", "continue")}
+	source["input"] = []any{object{"type": "additional_tools", "tools": []any{object{"type": "function", "name": "shell", "parameters": "invalid"}}}, message("user", "continue")}
 	raw, _ := json.Marshal(source)
 	if _, _, err := PrepareWithCatalog(raw, "scope", nil, cache); err == nil {
-		t.Fatal("conflicting increment accepted")
+		t.Fatal("invalid selected schema accepted")
 	}
 	b := prepareCatalogTest(t, cache, testSource(), "scope")
 	if len(b.tools) != 1 || b.tools["shell"].Kind != "function" {

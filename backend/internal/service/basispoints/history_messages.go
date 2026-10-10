@@ -15,6 +15,11 @@ import (
 func normalizeHistoryMessage(item object, index int) (object, error) {
 	kind := text(item["type"])
 	agent := kind == "agent_message"
+	if agent {
+		if path := encryptedAgentPath(item, index); path != "" {
+			return nil, &ContentValidationError{Path: path, ContentType: "encrypted_content", message: "basispoints cannot forward encrypted agent content; enable historical omission or resend the original plaintext"}
+		}
+	}
 	if !agent && kind != "message" && (kind != "" || text(item["role"]) == "") {
 		return item, nil
 	}
