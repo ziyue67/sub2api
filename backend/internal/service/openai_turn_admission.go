@@ -166,6 +166,13 @@ func (s *OpenAIGatewayService) AdmitOpenAITurn(
 
 func denyOpenAITurn(reason string) error { return &OpenAITurnAdmissionError{Reason: reason} }
 
+// IsOpenAIModelCapabilityRejection distinguishes a known unsupported model
+// from other admission failures (credentials, capacity, tickets, or DB reads).
+func IsOpenAIModelCapabilityRejection(err error) bool {
+	var denied *OpenAITurnAdmissionError
+	return errors.As(err, &denied) && denied.Reason == "model_not_supported"
+}
+
 func denyOpenAITicket() error {
 	return &OpenAITurnAdmissionError{Reason: "model_ticket_unavailable", cause: ErrOpenAICodexTicketUnavailable}
 }
@@ -360,6 +367,9 @@ func (s *OpenAIGatewayService) admitOpenAITurnWithGroup(
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateExcelOAuthRoute(ctx, latest, outboundModel); err != nil {
+		return nil, &OpenAITurnAdmissionError{Reason: excelOAuthRouteErrorCode, cause: err}
+	}
 	// 会话中途被收窄了分组内的可用模型、或后续 turn 换成了不允许的模型时，要求客户端重连重新选号。
 	if enforceGroup && !latest.IsModelAllowedInGroup(&groupID, outboundModel) {
 		return nil, denyOpenAITurn("model_not_allowed_in_group")
@@ -369,6 +379,11 @@ func (s *OpenAIGatewayService) admitOpenAITurnWithGroup(
 	}
 	if openAITurnRouteFingerprint(latest) != openAITurnRouteFingerprint(selected) {
 		return nil, denyOpenAITurn("account_binding_changed")
+	}
+	// Preserve the cause of a model-not-found cooldown before the generic
+	// runtime/rate-limit checks erase it.
+	if latest.modelCapabilityRejected(outboundModel) {
+		return nil, denyOpenAITurn("model_not_supported")
 	}
 	if s.getOpenAIAccountModelTransientState().isBlocked(latest.ID, openAIAccountModelTransientModel(outboundModel), time.Now()) {
 		return nil, denyOpenAITurn("model_runtime_blocked")

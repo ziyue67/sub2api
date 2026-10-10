@@ -2,7 +2,6 @@ package basispoints
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -42,58 +41,104 @@ func quoted(value any) string {
 	return string(raw)
 }
 
-// Preserve constraints that are not expanded into prose, including schema references.
+const schemaNotation = "Parameter notation: {\"key\":type} requires key; {\"key\"?:type} makes it optional. [schema] is an array. ... allows extra object keys; ...:schema constrains them. Without ... extra keys are forbidden. JSON annotations after a type retain its constraints and descriptions. Complex schemas remain full JSON. Use the exact parameter names and obey every constraint."
+
+// Compact only ordinary schema scaffolding. Validation still uses the original
+// JSON Schema; references, unions and unfamiliar dialects are kept as full JSON.
 func describeSchema(value any, depth int) string {
 	schema, ok := value.(object)
 	if !ok || depth >= 8 {
-		if value == nil {
-			return "Use the arguments described by the tool."
-		}
 		return quoted(value)
 	}
-	var parts []string
-	if kind := schema["type"]; kind != nil {
-		parts = append(parts, "Value type: "+quoted(kind)+".")
-	}
-	if description := text(schema["description"]); description != "" {
-		parts = append(parts, description)
-	}
-	required := make(map[string]bool)
-	if names, ok := schema["required"].([]any); ok {
-		for _, name := range names {
-			required[text(name)] = true
+	for _, key := range []string{"$ref", "$dynamicRef", "$defs", "definitions", "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "patternProperties", "dependentSchemas", "prefixItems", "unevaluatedProperties", "unevaluatedItems"} {
+		if _, exists := schema[key]; exists {
+			return quoted(schema)
 		}
 	}
-	if properties, ok := schema["properties"].(object); ok {
+	remaining := make(object, len(schema))
+	for k, v := range schema {
+		if k != "type" {
+			remaining[k] = v
+		}
+	}
+	var rendered string
+	switch text(schema["type"]) {
+	case "object":
+		properties := object{}
+		if value, exists := schema["properties"]; exists {
+			var ok bool
+			properties, ok = value.(object)
+			if !ok {
+				return quoted(schema)
+			}
+		}
+		required := map[string]bool{}
+		if raw, exists := schema["required"]; exists {
+			names, ok := raw.([]any)
+			if !ok {
+				return quoted(schema)
+			}
+			for _, rawName := range names {
+				name, ok := rawName.(string)
+				if !ok {
+					return quoted(schema)
+				}
+				if _, exists := properties[name]; !exists {
+					return quoted(schema)
+				}
+				required[name] = true
+			}
+		}
 		names := make([]string, 0, len(properties))
 		for name := range properties {
 			names = append(names, name)
 		}
 		sort.Strings(names)
+		fields := make([]string, 0, len(names)+1)
 		for _, name := range names {
-			presence := "optional"
+			presence := "?"
 			if required[name] {
-				presence = "required"
+				presence = ""
 			}
-			parts = append(parts, fmt.Sprintf("Field %s (%s): %s", quoted(name), presence, describeSchema(properties[name], depth+1)))
+			fields = append(fields, quoted(name)+presence+":"+describeSchema(properties[name], depth+1))
 		}
-	}
-	if items := schema["items"]; items != nil {
-		parts = append(parts, "Each array item: "+describeSchema(items, depth+1))
-	}
-	constraints := make(object)
-	for key, value := range schema {
-		switch key {
-		case "type", "description", "properties", "items":
+		additional := any(true)
+		if v, exists := schema["additionalProperties"]; exists {
+			additional = v
+		}
+		switch extra := additional.(type) {
+		case bool:
+			if extra {
+				fields = append(fields, "...")
+			}
+		case object:
+			fields = append(fields, "...:"+describeSchema(extra, depth+1))
 		default:
-			constraints[key] = value
+			return quoted(schema)
 		}
+		delete(remaining, "properties")
+		delete(remaining, "required")
+		delete(remaining, "additionalProperties")
+		rendered = "{" + strings.Join(fields, ",") + "}"
+	case "array":
+		items, exists := schema["items"]
+		if !exists {
+			return quoted(schema)
+		}
+		switch items.(type) {
+		case object, bool:
+		default:
+			return quoted(schema)
+		}
+		rendered = "[" + describeSchema(items, depth+1) + "]"
+		delete(remaining, "items")
+	case "string", "integer", "number", "boolean", "null":
+		rendered = text(schema["type"])
+	default:
+		return quoted(schema)
 	}
-	if len(constraints) > 0 {
-		parts = append(parts, "Additional constraints: "+quoted(constraints)+".")
+	if len(remaining) > 0 {
+		rendered += " " + quoted(remaining)
 	}
-	if len(parts) == 0 {
-		return "Any JSON value."
-	}
-	return strings.Join(parts, " ")
+	return rendered
 }

@@ -352,7 +352,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		assert.True(t, strings.HasSuffix(etag, `"`))
 	})
 
-	t.Run("returns_304_for_matching_etag", func(t *testing.T) {
+	t.Run("returns_304_for_matching_etag_without_nonce", func(t *testing.T) {
 		provider := &mockSettingsProvider{
 			settings: map[string]string{"test": "value"},
 		}
@@ -362,10 +362,6 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 
 		// Use a real router for proper 304 handling
 		router := gin.New()
-		router.Use(func(c *gin.Context) {
-			c.Set(middleware.CSPNonceKey, "test-nonce")
-			c.Next()
-		})
 		router.Use(server.Middleware())
 
 		// First request to populate cache and get ETag
@@ -383,6 +379,35 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotModified, w2.Code)
 		assert.Empty(t, w2.Body.String())
+	})
+
+	t.Run("matching_etag_still_returns_html_with_current_nonce", func(t *testing.T) {
+		provider := &mockSettingsProvider{settings: map[string]string{"test": "value"}}
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+		router := gin.New()
+		nonce := "first-page-nonce"
+		router.Use(func(c *gin.Context) {
+			c.Set(middleware.CSPNonceKey, nonce)
+			c.Next()
+		})
+		router.Use(server.Middleware())
+		w1 := httptest.NewRecorder()
+		router.ServeHTTP(w1, httptest.NewRequest(http.MethodGet, "/", nil))
+		require.Equal(t, http.StatusOK, w1.Code)
+		require.Contains(t, w1.Body.String(), `nonce="first-page-nonce"`)
+		etag := w1.Header().Get("ETag")
+		require.NotEmpty(t, etag)
+
+		nonce = "current-page-nonce"
+		w2 := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("If-None-Match", etag)
+		router.ServeHTTP(w2, req)
+		assert.Equal(t, http.StatusOK, w2.Code)
+		assert.Contains(t, w2.Body.String(), `nonce="current-page-nonce"`)
+		assert.NotContains(t, w2.Body.String(), `nonce="first-page-nonce"`)
+		assert.Equal(t, 1, provider.called)
 	})
 
 	t.Run("sets_cache_control_header", func(t *testing.T) {

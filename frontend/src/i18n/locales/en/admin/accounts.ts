@@ -1,5 +1,17 @@
 export default {
     accounts: {
+      bpsAuthorizing: 'BPS authorization is automatic. Native routing remains active until authorization succeeds, then BPS activates automatically.',
+      "modelsLoadFailed": "Could not load models. Please retry.",
+      "retryModels": "Reload models",
+      "openCredentialOperations": "Open Credential Operations",
+      "excelAuthErrors": {
+        "OPENAI_EXCEL_AUTH_PENDING": "Excel authorization is in progress. Reload models after it completes.",
+        "OPENAI_EXCEL_AUTH_FAILED": "Automatic Excel authorization failed and will retry after cooldown. View progress in Credential Operations.",
+        "OPENAI_EXCEL_AUTH_VERIFICATION_REQUIRED": "Automatic Excel login is blocked by an upstream security check. View status in Credential Operations.",
+        "OPENAI_EXCEL_AUTH_CONFIG_REQUIRED": "Automatic Excel authorization needs login configuration. The worker resumes after configuration is saved.",
+        "OPENAI_EXCEL_AUTH_REQUIRED": "Excel authorization is waiting for the automatic worker. View progress in Credential Operations.",
+        "OPENAI_EXCEL_AUTH_UNAVAILABLE": "Excel authorization status is unavailable. Please retry later."
+      },
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',
@@ -1067,7 +1079,7 @@ export default {
         'Only applies in pool mode. Use 0 to disable in-place retry. Default {default}, maximum {max}.',
       poolModeRetryStatusCodes: 'Retry Status Codes',
       poolModeRetryStatusCodesHint:
-        'Comma-separated HTTP status codes (100-599) that trigger same-account retry in pool mode. Leave blank to use defaults ({default}).',
+        'Comma-separated HTTP status codes (100-599) that trigger same-account retry in pool mode. With 503 listed and no proxy on the account, connection failures (refused, unreachable, etc.) are also retried in place as 503 instead of temporarily unscheduling the account for 10 minutes. Leave blank to use defaults ({default}).',
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:

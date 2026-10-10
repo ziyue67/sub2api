@@ -25,6 +25,24 @@ var MaxExpiresAt = time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)
 // MaxValidityDays is the maximum allowed validity days for subscriptions (100 years)
 const MaxValidityDays = 36500
 
+type SubscriptionRenewalMode string
+
+const (
+	SubscriptionRenewalModeRestart SubscriptionRenewalMode = "restart"
+	SubscriptionRenewalModeExtend  SubscriptionRenewalMode = "extend"
+)
+
+func NormalizeSubscriptionRenewalMode(raw string) (SubscriptionRenewalMode, error) {
+	switch SubscriptionRenewalMode(strings.TrimSpace(raw)) {
+	case "", SubscriptionRenewalModeRestart:
+		return SubscriptionRenewalModeRestart, nil
+	case SubscriptionRenewalModeExtend:
+		return SubscriptionRenewalModeExtend, nil
+	default:
+		return "", infraerrors.BadRequest("INVALID_RENEWAL_MODE", "renewal_mode must be 'restart' or 'extend'")
+	}
+}
+
 var (
 	ErrSubscriptionNotFound        = infraerrors.NotFound("SUBSCRIPTION_NOT_FOUND", "subscription not found")
 	ErrSubscriptionExpired         = infraerrors.Forbidden("SUBSCRIPTION_EXPIRED", "subscription has expired")
@@ -269,6 +287,58 @@ func (s *SubscriptionService) assignOrExtendSubscription(ctx context.Context, in
 	return sub, false, nil // false 表示是新建
 }
 
+// assignOrRenewPaidSubscription applies the renewal mode captured on a paid order.
+// It is intentionally separate from AssignOrExtendSubscription so redeem codes,
+// registration grants, and admin assignment keep their existing accumulation rules.
+func (s *SubscriptionService) assignOrRenewPaidSubscription(
+	ctx context.Context,
+	input *AssignSubscriptionInput,
+	mode SubscriptionRenewalMode,
+	deferCacheInvalidation bool,
+) (*UserSubscription, bool, error) {
+	normalizedMode, err := NormalizeSubscriptionRenewalMode(string(mode))
+	if err != nil {
+		return nil, false, err
+	}
+	mode = normalizedMode
+
+	group, err := s.groupRepo.GetByID(ctx, input.GroupID)
+	if err != nil {
+		return nil, false, fmt.Errorf("group not found: %w", err)
+	}
+	if !group.IsSubscriptionType() {
+		return nil, false, ErrGroupNotSubscriptionType
+	}
+
+	existingSub, err := s.userSubRepo.GetByUserIDAndGroupID(ctx, input.UserID, input.GroupID)
+	if err != nil {
+		existingSub = nil
+	}
+
+	validityDays := normalizeAssignValidityDays(input.ValidityDays)
+	if existingSub != nil {
+		if mode == SubscriptionRenewalModeRestart {
+			err = s.restartExistingSubscriptionTerm(ctx, existingSub.ID, validityDays, input.Notes)
+		} else {
+			err = s.updateExistingSubscriptionTerm(ctx, existingSub.ID, validityDays, input.Notes, false)
+		}
+		if err != nil {
+			return nil, false, err
+		}
+
+		s.maybeInvalidateAssignmentCaches(input.UserID, input.GroupID, deferCacheInvalidation)
+		sub, getErr := s.userSubRepo.GetByID(ctx, existingSub.ID)
+		return sub, true, getErr
+	}
+
+	sub, err := s.createSubscription(ctx, input)
+	if err != nil {
+		return nil, false, err
+	}
+	s.maybeInvalidateAssignmentCaches(input.UserID, input.GroupID, deferCacheInvalidation)
+	return sub, false, nil
+}
+
 func (s *SubscriptionService) maybeInvalidateAssignmentCaches(userID, groupID int64, deferred bool) {
 	// Payment fulfillment owns an outer transaction and performs a synchronous
 	// invalidation after commit. Invalidating inside that transaction can reload
@@ -350,6 +420,30 @@ func (s *SubscriptionService) updateExistingSubscriptionTerm(
 			}
 		}
 
+		return nil
+	})
+}
+
+func (s *SubscriptionService) restartExistingSubscriptionTerm(ctx context.Context, subscriptionID int64, validityDays int, notes string) error {
+	return s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		existingSub, err := s.userSubRepo.GetByIDForUpdate(txCtx, subscriptionID)
+		if err != nil {
+			return fmt.Errorf("lock subscription for renewal restart: %w", err)
+		}
+
+		now := time.Now()
+		if s.now != nil {
+			now = s.now()
+		}
+		newExpiresAt := now.AddDate(0, 0, validityDays)
+		if newExpiresAt.After(MaxExpiresAt) {
+			newExpiresAt = MaxExpiresAt
+		}
+
+		renewed := renewedSubscriptionTerm(existingSub, notes, now, newExpiresAt)
+		if err := s.userSubRepo.Update(txCtx, renewed); err != nil {
+			return fmt.Errorf("restart subscription renewal: %w", err)
+		}
 		return nil
 	})
 }

@@ -70,6 +70,8 @@ func applyQualityBPSOutcome(ctx context.Context, tx *sql.Tx, plan *service.Sched
 				remove = append(remove, key)
 			}
 		}
+		// Cancelling the rule while login runs must cancel automatic activation.
+		remove = append(remove, service.ExcelBPSAuthorizationPendingKey)
 		if err := qualityBPSPatchExtra(ctx, tx, plan.AccountID, set, remove); err != nil {
 			return "", err
 		}
@@ -119,8 +121,21 @@ func applyQualityBPSOutcome(ctx context.Context, tx *sql.Tx, plan *service.Sched
 		return "no_change", nil
 	}
 
+	pending := false
+	if !account.IsExcelOAuth() {
+		var ready bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM openai_excel_oauth_credentials WHERE account_id=$1 AND credentials_ciphertext<>'')`, plan.AccountID).Scan(&ready); err != nil {
+			return "", err
+		}
+		pending = !ready
+	}
 	set := map[string]json.RawMessage{}
 	var remove []string
+	if pending {
+		set[service.ExcelBPSAuthorizationPendingKey] = json.RawMessage("true")
+	} else {
+		remove = append(remove, service.ExcelBPSAuthorizationPendingKey)
+	}
 	for key, value := range service.QualityBPSExtra(policy) {
 		if value == nil {
 			remove = append(remove, key)
@@ -155,6 +170,9 @@ func applyQualityBPSOutcome(ctx context.Context, tx *sql.Tx, plan *service.Sched
 	}
 	if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &plan.AccountID, nil, nil); err != nil {
 		return "", err
+	}
+	if pending {
+		return "bps_authorizing", nil
 	}
 	if trigger == "usage" {
 		return "bps_enabled_usage", nil

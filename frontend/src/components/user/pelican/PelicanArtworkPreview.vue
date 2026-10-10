@@ -27,6 +27,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { readPelicanPreviewNonce } from '@/utils/pelicanHtml'
 import { createPelicanPreviewChannel, createPelicanPreviewDocument, fitPelicanArtwork, getPelicanViewport, readPelicanSizeMessage, type PelicanPreviewMode } from '@/utils/pelicanPreview'
 
 const props = withDefaults(defineProps<{ html: string; title: string; mode?: PelicanPreviewMode; interactive?: boolean }>(), { mode: 'fit', interactive: true })
@@ -45,7 +46,7 @@ watch(() => props.html, (html) => {
   updates = 0
   viewport.value = getPelicanViewport(html)
   artwork.value = { ...viewport.value }
-  srcdoc.value = createPelicanPreviewDocument(html, channel)
+  srcdoc.value = createPelicanPreviewDocument(html, channel, readPelicanPreviewNonce())
 }, { immediate: true })
 
 const fitted = computed(() => fitPelicanArtwork(artwork.value, available.value, props.mode))

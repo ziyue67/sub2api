@@ -1953,6 +1953,12 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "gateway.stream_data_interval_timeout",
 		},
 		{
+			name: "gateway BPS progress interval range", mutate: func(c *Config) { c.Gateway.ExcelBPSStreamDataIntervalTimeout = 5 }, wantErr: "gateway.excel_bps_stream_data_interval_timeout",
+		},
+		{
+			name: "gateway BPS progress interval negative", mutate: func(c *Config) { c.Gateway.ExcelBPSStreamDataIntervalTimeout = -1 }, wantErr: "gateway.excel_bps_stream_data_interval_timeout",
+		},
+		{
 			name:    "gateway stream data interval negative",
 			mutate:  func(c *Config) { c.Gateway.StreamDataIntervalTimeout = -1 },
 			wantErr: "gateway.stream_data_interval_timeout must be non-negative",
@@ -2610,6 +2616,9 @@ func TestLoad_DefaultGatewayImageStreamConfig(t *testing.T) {
 	}
 	if cfg.Gateway.StreamDataIntervalTimeout != 180 {
 		t.Fatalf("stream_data_interval_timeout = %d, want 180", cfg.Gateway.StreamDataIntervalTimeout)
+	}
+	if cfg.Gateway.ExcelBPSStreamDataIntervalTimeout != 120 {
+		t.Fatalf("excel_bps_stream_data_interval_timeout = %d, want 120", cfg.Gateway.ExcelBPSStreamDataIntervalTimeout)
 	}
 	if cfg.Gateway.StreamKeepaliveInterval != 10 {
 		t.Fatalf("stream_keepalive_interval = %d, want 10", cfg.Gateway.StreamKeepaliveInterval)

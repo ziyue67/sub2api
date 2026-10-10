@@ -30,6 +30,9 @@ func (s *OpenAIGatewayService) buildOpenAIResponsesWSURL(account *Account) (stri
 	if account == nil {
 		return "", errors.New("account is nil")
 	}
+	if account.IsExcelOAuth() {
+		return "", errExcelOAuthRouteUnavailable
+	}
 	var targetURL string
 	switch account.Type {
 	case AccountTypeOAuth:
@@ -93,6 +96,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 	routingModel string,
 	routingServiceTier string,
 ) (http.Header, openAIWSSessionHeaderResolution, error) {
+	if codexAccountIdentitySource(c, account).IsExcelOAuth() {
+		return nil, openAIWSSessionHeaderResolution{}, errExcelOAuthRouteUnavailable
+	}
 	headers := make(http.Header)
 	if account == nil || !account.IsOpenAIAgentIdentity() {
 		headers.Set("authorization", "Bearer "+token)

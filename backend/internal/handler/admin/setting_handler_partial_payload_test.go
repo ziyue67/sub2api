@@ -78,6 +78,24 @@ func TestUpdateSettingsGrokDefaultBaseURLModeIsWritable(t *testing.T) {
 	require.Equal(t, service.GrokDefaultBaseURLModeEUWest1, repo.values[service.SettingKeyGrokDefaultBaseURLMode])
 }
 
+func TestUpdateSettingsGrokVideoSourceURLSwitchRoundTrips(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeyGrokVideoSourceURLEnabled: "false",
+	})
+
+	rec := doUpdateSettings(t, h, map[string]any{"grok_video_source_url_enabled": true}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", repo.values[service.SettingKeyGrokVideoSourceURLEnabled])
+
+	rec = doUpdateSettings(t, h, map[string]any{"smtp_from_email": "other@example.com"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", repo.values[service.SettingKeyGrokVideoSourceURLEnabled])
+
+	rec = doUpdateSettings(t, h, map[string]any{"grok_video_source_url_enabled": false}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "false", repo.values[service.SettingKeyGrokVideoSourceURLEnabled])
+}
+
 func TestUpdateSettingsRejectsTwoCaptchaProviders(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{
 		service.SettingKeyTurnstileEnabled:   "true",

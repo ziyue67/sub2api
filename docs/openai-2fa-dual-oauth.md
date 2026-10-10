@@ -24,6 +24,10 @@
 
 迁移 `271_openai_excel_dual_oauth.sql` 为已有重登任务增加 `oauth_profile`，旧任务默认 `codex`，并创建独立 Excel 凭据表。不批量迁移或改写现有 Codex 授权。历史手动导入的 Excel 单授权账号保留原来的主凭据与刷新路径；它们不会自动获得 Codex 授权。
 
+Excel Auth / Excel OAuth 创建的单授权账号（主凭据 `client_id` 为官方 Excel 客户端）只能使用 BPS。全局或账号 BPS 关闭、请求模型未选入 BPS 时，这类账号不参与对应请求的调度；直接转发或手工测试会返回本地通道不可用错误，不向 Codex 发送 Excel 凭据，也不因此停用账号。其模型目录只查询 BPS；原生 WebSocket、图片回落及其他 Codex 入口会被拒绝。普通 Codex 账号搭配独立 Excel grant 的混合路由保持原有行为。
+
+已经因错误通道的 401 被停用的账号不会自动恢复。管理员需要核实凭据、BPS 开关及模型范围后恢复状态。将模型加入 BPS 列表不会授予上游模型权限；BPS 返回的真实认证失败仍按现有策略处理。
+
 ## 手动授权 API
 
 原账号重登入口 `POST /api/v1/admin/accounts/:id/openai-reauth` 默认仍创建 Codex 任务。请求体可传 `{"oauth_profile":"excel"}` 单独授权或重登 Excel。任务响应新增 `oauth_profile`，仅包含授权类型，不包含密码或 token。后台自动排队不需要调用这个 API。

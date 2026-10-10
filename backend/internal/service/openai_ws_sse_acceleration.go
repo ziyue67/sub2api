@@ -67,12 +67,9 @@ func canFallbackOpenAIWSSSEHandshake(ctx context.Context, c *gin.Context, err er
 	}
 }
 
-// These errors are produced locally before any response.create/prewarm write.
+// This error is produced locally before any response.create/prewarm write.
 // Never infer replay safety from a peer close code or the absence of an event.
-var (
-	errOpenAIWSSSEPayloadTooLarge = errors.New("HTTP SSE acceleration payload exceeds WS limit")
-	errOpenAIWSSSEUnsupportedTool = errors.New("HTTP SSE acceleration does not support hosted web search")
-)
+var errOpenAIWSSSEPayloadTooLarge = errors.New("HTTP SSE acceleration payload exceeds WS limit")
 
 const openAIWSSSEMaxPayloadBytesDefault int64 = 15 * 1024 * 1024
 
@@ -81,21 +78,6 @@ func (s *OpenAIGatewayService) openAIWSSSEMaxPayloadBytes() int64 {
 		return openAIWSSSEMaxPayloadBytesDefault
 	}
 	return s.cfg.Gateway.OpenAIWS.SSEAccelerationMaxPayloadBytes
-}
-
-// Inspect the already decoded payload, not another copy of the request/tools
-// JSON. This is only called for opt-in ordinary OAuth HTTP SSE acceleration.
-func hasOpenAIWSSSEUnsupportedTool(payload map[string]any) bool {
-	tools, _ := payload["tools"].([]any)
-	for _, value := range tools {
-		tool, _ := value.(map[string]any)
-		typ, _ := tool["type"].(string)
-		switch typ {
-		case "web_search", "web_search_preview", "web_search_preview_2025_03_11":
-			return true
-		}
-	}
-	return false
 }
 
 // encodeOpenAIWSSSEPayload uses the same Encoder write-through pattern as
@@ -128,8 +110,6 @@ func openAIWSSSEFallbackReason(ctx context.Context, c *gin.Context, err error) s
 	switch {
 	case errors.Is(err, errOpenAIWSSSEPayloadTooLarge):
 		return "oauth_ws_sse_payload_too_large"
-	case errors.Is(err, errOpenAIWSSSEUnsupportedTool):
-		return "oauth_ws_sse_unsupported_tool"
 	case canFallbackOpenAIWSSSEHandshake(ctx, c, err):
 		return "oauth_ws_sse_handshake_fallback"
 	default:

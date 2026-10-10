@@ -7,9 +7,45 @@ import (
 	"strconv"
 	"testing"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCreateOrderInTxPersistsSubscriptionRenewalMode(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	user, err := client.User.Create().
+		SetEmail("renewal-mode@example.com").
+		SetPasswordHash("hash").
+		SetUsername("renewal-mode-user").
+		Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client}
+	order, err := svc.createOrderInTx(
+		ctx,
+		CreateOrderRequest{
+			UserID:      user.ID,
+			PaymentType: payment.TypeAlipay,
+			OrderType:   payment.OrderTypeSubscription,
+			RenewalMode: string(SubscriptionRenewalModeRestart),
+			ClientIP:    "127.0.0.1",
+			SrcHost:     "app.example.com",
+		},
+		&User{ID: user.ID, Email: user.Email, Username: user.Username},
+		&dbent.SubscriptionPlan{ID: 7, GroupID: 9, ValidityDays: 30, ValidityUnit: "day"},
+		&PaymentConfig{MaxPendingOrders: 3, OrderTimeoutMin: 30},
+		128,
+		128,
+		0,
+		128,
+		0,
+		nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, string(SubscriptionRenewalModeRestart), order.SubscriptionRenewalMode)
+}
 
 func TestBuildPaymentOrderProviderSnapshot_ExcludesSensitiveConfig(t *testing.T) {
 	t.Parallel()

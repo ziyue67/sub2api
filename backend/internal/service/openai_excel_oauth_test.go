@@ -266,7 +266,7 @@ func TestExcelOAuth401InvalidatesOnlyUsedGrant(t *testing.T) {
 	token, err := gateway.getExcelBPSAccessToken(context.Background(), reader.account)
 	require.Error(t, err)
 	require.Empty(t, token)
-	require.True(t, strings.Contains(err.Error(), "pending"))
+	require.True(t, IsExcelAuthorizationError(err))
 }
 
 type excelRefreshLockTestCache struct {
@@ -312,3 +312,12 @@ func TestExcelOAuthInvalidGrantRequeuesWithoutChangingCodex(t *testing.T) {
 	require.Empty(t, repo.ciphertext)
 	require.Equal(t, "old-refresh", reader.account.GetCredential("refresh_token"))
 }
+
+func (r *excelReauthTestRepo) GetLatestExcelTask(context.Context, int64) (*OpenAIOAuthReauthTaskRecord, error) {
+	if r.task != nil && r.task.OAuthProfile == "excel" {
+		return r.task, nil
+	}
+	return nil, nil
+}
+
+func (r *excelReauthTestRepo) PrepareMissingExcelRoutes(context.Context) error { return nil }

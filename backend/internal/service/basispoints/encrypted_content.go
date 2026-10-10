@@ -18,6 +18,9 @@ func StripEncryptedContent(raw []byte) ([]byte, error) {
 	if err := decode(raw, &source); err != nil || source == nil {
 		return nil, fmt.Errorf("invalid Basispoints request JSON")
 	}
+	if err := validateNewAgentMessage(source["input"]); err != nil {
+		return nil, err
+	}
 	input, _ := source["input"].([]any)
 	changed := false
 	for _, rawItem := range input {
@@ -29,6 +32,21 @@ func StripEncryptedContent(raw []byte) ([]byte, error) {
 			field = "output"
 		default:
 			continue
+		}
+		if text(item["type"]) == "agent_message" {
+			if value, exists := item["encrypted_content"]; exists && value != nil && value != "" {
+				marker := object{"type": "input_text", "text": encryptedContentOmitted}
+				switch content := item["content"].(type) {
+				case []any:
+					item["content"] = append(content, marker)
+				case string:
+					item["content"] = []any{object{"type": "input_text", "text": content}, marker}
+				default:
+					item["content"] = []any{marker}
+				}
+				delete(item, "encrypted_content")
+				changed = true
+			}
 		}
 		parts, ok := item[field].([]any)
 		if !ok {

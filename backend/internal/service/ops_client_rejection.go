@@ -5,6 +5,11 @@ import "strings"
 // These are explicit capability rejections, not generic provider 400/404s.
 // Keep the SQL compatibility filter on the same vocabulary as new log writes.
 var OpsModelCapabilityRejectionNeedles = []string{
+	"model_not_found",
+	"model_not_supported",
+	"model not found",
+	"model does not exist",
+	"is not supported by the selected account",
 	"does not support the requested model",
 	"not supported by any configured account",
 	"is not available for this group",

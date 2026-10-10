@@ -14,6 +14,21 @@ function mountPreview(mode: 'fit' | 'actual' = 'fit', ancestorScale = 1) {
 }
 
 describe('PelicanArtworkPreview', () => {
+  it('passes the current page nonce into the opaque preview', () => {
+    const script = document.createElement('script')
+    script.nonce = 'current-page-nonce'
+    document.head.append(script)
+    try {
+      const preview = mountPreview()
+      const frame = preview.get('iframe')
+      const doc = new DOMParser().parseFromString(frame.attributes('srcdoc'), 'text/html')
+      expect(doc.querySelector<HTMLScriptElement>('script[data-pelican-preview]')?.nonce).toBe('current-page-nonce')
+      expect(frame.attributes('sandbox')).toBe('allow-scripts')
+    } finally {
+      script.remove()
+    }
+  })
+
   it('fits the logical client area even when the dialog enters with an ancestor scale transform', async () => {
     const preview = mountPreview('fit', 0.95)
     await preview.vm.$nextTick()

@@ -573,6 +573,8 @@ export default {
         grokCrossClientMapHint: 'Enabled by default for client compatibility. GPT, Codex, o-series, and Claude model IDs are routed to the default Grok text model above. Disable this to require Grok model IDs.',
         grokDefaultBaseURLMode: 'Default Grok upstream',
         grokDefaultBaseURLModeHint: 'Used only when a Grok account has no explicit base URL. Media and voice endpoints continue to use their official API hosts.',
+        grokVideoSourceURL: 'Return Grok video source URL',
+        grokVideoSourceURLHint: 'When enabled, completed video status responses also include video.source_url, the validated xAI temporary media URL that downloads without credentials, so trusted downstream services can copy it directly. video.url stays the authenticated proxy on this site. xAI URLs usually expire within a day. When disabled, the field is omitted and any upstream value is removed.',
         grokBaseURLModeCLI: 'CLI chat proxy',
         grokBaseURLModeAPI: 'Public API',
         grokBaseURLModeUSEast1: 'Regional API (us-east-1)',

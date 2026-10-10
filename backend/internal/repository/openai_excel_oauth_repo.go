@@ -61,7 +61,23 @@ func (r *openAIOAuthReauthRepository) ApplyExcelCredentials(ctx context.Context,
 	if _, err = tx.ExecContext(ctx, `UPDATE openai_oauth_reauth_tasks SET status='succeeded',stage='succeeded',error_message=NULL,finished_at=NOW(),updated_at=NOW() WHERE id=$1`, record.ID); err != nil {
 		return false, err
 	}
-	// No primary credentials, account health, cooldown or admin routing edits.
+	// Activate only the still-requested route. Disabling BPS during login wins;
+	// grant persistence, routing and scheduler notification commit atomically.
+	result, err := tx.ExecContext(ctx, `UPDATE accounts SET extra=extra-'openai_excel_bps_authorization_pending',updated_at=NOW()
+ WHERE id=$1 AND extra->'openai_excel_bps'='true'::jsonb
+ AND extra->'openai_excel_bps_authorization_pending'='true'::jsonb`, id)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if changed > 0 {
+		if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+			return false, err
+		}
+	}
 	return true, tx.Commit()
 }
 
@@ -105,4 +121,81 @@ func (r *openAIOAuthReauthRepository) ListMissingExcelAuthorizations(ctx context
 func (r *openAIOAuthReauthRepository) DeleteExcelCredentials(ctx context.Context, id int64, expected string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM openai_excel_oauth_credentials WHERE account_id=$1 AND credentials_ciphertext=$2`, id, expected)
 	return err
+}
+
+func (r *openAIOAuthReauthRepository) GetLatestExcelTask(ctx context.Context, accountID int64) (*service.OpenAIOAuthReauthTaskRecord, error) {
+	row := r.db.QueryRowContext(ctx, `SELECT id,account_id,status,stage,COALESCE(worker_id,''),COALESCE(auth_session_id,''),
+ expected_credentials_hash,COALESCE(error_message,''),attempt,created_at,updated_at,finished_at,oauth_profile
+ FROM openai_oauth_reauth_tasks WHERE account_id=$1 AND oauth_profile='excel'
+ ORDER BY created_at DESC,id DESC LIMIT 1`, accountID)
+	record, err := scanOpenAIOAuthReauthTask(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return record, err
+}
+
+// Bring pre-existing switches into the same automatic preparation state. The
+// bounded transaction also invalidates scheduler snapshots before login runs.
+func (r *openAIOAuthReauthRepository) PrepareMissingExcelRoutes(ctx context.Context) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `WITH candidates AS (
+ SELECT a.id FROM accounts a WHERE a.deleted_at IS NULL AND a.platform='openai' AND a.type='oauth'
+ AND a.parent_account_id IS NULL AND a.extra->'openai_excel_bps'='true'::jsonb
+ AND COALESCE(a.extra->'openai_excel_bps_authorization_pending','false'::jsonb)<>'true'::jsonb
+ AND COALESCE(a.credentials->>'client_id','')<>'app_fnr0pYvVwwFDocDumLG3H2Bp'
+ AND NOT EXISTS(SELECT 1 FROM openai_excel_oauth_credentials e WHERE e.account_id=a.id AND e.credentials_ciphertext<>'')
+ ORDER BY a.id LIMIT 50 FOR UPDATE OF a SKIP LOCKED)
+ UPDATE accounts SET extra=extra||'{"openai_excel_bps_authorization_pending":true}'::jsonb,updated_at=NOW()
+ WHERE id IN (SELECT id FROM candidates) RETURNING id`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	// A save racing the successful callback may carry an older preparation
+	// marker. Reconcile it from the persisted grant without another login.
+	readyRows, err := tx.QueryContext(ctx, `UPDATE accounts a SET extra=extra-'openai_excel_bps_authorization_pending',updated_at=NOW()
+ WHERE a.id IN (SELECT b.id FROM accounts b WHERE b.deleted_at IS NULL
+ AND b.extra->'openai_excel_bps'='true'::jsonb AND b.extra->'openai_excel_bps_authorization_pending'='true'::jsonb
+ AND EXISTS(SELECT 1 FROM openai_excel_oauth_credentials e WHERE e.account_id=b.id AND e.credentials_ciphertext<>'')
+ ORDER BY b.id LIMIT 50 FOR UPDATE OF b SKIP LOCKED) RETURNING a.id`)
+	if err != nil {
+		return err
+	}
+	for readyRows.Next() {
+		var id int64
+		if err := readyRows.Scan(&id); err != nil {
+			_ = readyRows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = readyRows.Err()
+	_ = readyRows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

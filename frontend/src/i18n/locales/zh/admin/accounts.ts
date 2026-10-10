@@ -1,5 +1,17 @@
 export default {
     accounts: {
+      bpsAuthorizing: 'BPS 正在自动授权，当前使用原生通道；授权成功后自动切换，无需再次操作开关。',
+      "modelsLoadFailed": "模型列表加载失败，请重试。",
+      "retryModels": "重新加载模型",
+      "openCredentialOperations": "查看凭据运维",
+      "excelAuthErrors": {
+        "OPENAI_EXCEL_AUTH_PENDING": "Excel 授权正在进行中，完成后可重新加载模型。",
+        "OPENAI_EXCEL_AUTH_FAILED": "Excel 自动授权失败，系统将在冷却后重试；可在凭据运维查看进度。",
+        "OPENAI_EXCEL_AUTH_VERIFICATION_REQUIRED": "Excel 自动登录被上游安全验证阻塞，可在凭据运维查看状态。",
+        "OPENAI_EXCEL_AUTH_CONFIG_REQUIRED": "Excel 自动授权缺少登录配置，保存配置后后台会自动继续。",
+        "OPENAI_EXCEL_AUTH_REQUIRED": "Excel 授权等待后台自动处理，可在凭据运维查看进度。",
+        "OPENAI_EXCEL_AUTH_UNAVAILABLE": "暂时无法读取 Excel 授权状态，请稍后重试。"
+      },
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',
@@ -1170,7 +1182,7 @@ export default {
       poolModeRetryCount: '同账号重试次数',
       poolModeRetryCountHint: '仅在池模式下生效。0 表示不原地重试；默认 {default}，最大 {max}。',
       poolModeRetryStatusCodes: '同账号重试状态码',
-      poolModeRetryStatusCodesHint: '仅在池模式下生效。以英文逗号分隔的 HTTP 状态码（100-599），命中时触发同账号重试。留空使用默认值（{default}）。',
+      poolModeRetryStatusCodesHint: '仅在池模式下生效。以英文逗号分隔的 HTTP 状态码（100-599），命中时触发同账号重试。列入 503 且账号未配置代理时，连不上上游（拒绝连接、网络不可达等）也按 503 原地重试，不再临时停调度 10 分钟。留空使用默认值（{default}）。',
       customErrorCodes: '自定义错误码',
       customErrorCodesHint: '仅对选中的错误码停止调度',
       customErrorCodesWarning:

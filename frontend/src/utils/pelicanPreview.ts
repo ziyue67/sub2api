@@ -1,4 +1,4 @@
-import { extractPelicanHtml } from './pelicanHtml'
+import { authorizePelicanInlineScripts, extractPelicanHtml } from './pelicanHtml'
 
 export interface PelicanArtworkSize { width: number; height: number }
 export type PelicanPreviewMode = 'fit' | 'actual'
@@ -214,12 +214,14 @@ export function installPelicanMeasurement(target: Window & typeof globalThis, ch
   return stop
 }
 
-export function createPelicanPreviewDocument(html: string, channel: string): string {
-  const protectedHtml = extractPelicanHtml(html)
-  if (!protectedHtml) return ''
+export function createPelicanPreviewDocument(html: string, channel: string, nonce = ''): string {
+  const extractedHtml = extractPelicanHtml(html)
+  if (!extractedHtml) return ''
+  const protectedHtml = authorizePelicanInlineScripts(extractedHtml, nonce)
   const viewport = getPelicanViewport(protectedHtml)
   const safeChannel = channel.replace(/[^a-zA-Z0-9_-]/g, '')
-  const script = `<script data-pelican-preview="${safeChannel}">(${installPelicanMeasurement.toString()})(window,${JSON.stringify(safeChannel)},${JSON.stringify(viewport)},${MAX_DIMENSION});<\/script>`
+  const nonceAttribute = /^[A-Za-z0-9+/_=-]+$/.test(nonce) ? ` nonce="${nonce}"` : ''
+  const script = `<script data-pelican-preview="${safeChannel}"${nonceAttribute}>(${installPelicanMeasurement.toString()})(window,${JSON.stringify(safeChannel)},${JSON.stringify(viewport)},${MAX_DIMENSION});<\/script>`
   // The extraction helper always puts its restrictive CSP first. Keep instrumentation
   // after that CSP and before authored scripts, then wait for DOMContentLoaded.
   const endOfCsp = protectedHtml.indexOf('>', protectedHtml.indexOf('<meta')) + 1

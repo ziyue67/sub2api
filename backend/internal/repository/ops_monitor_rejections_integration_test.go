@@ -21,6 +21,8 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 	up404, up400, up401, up502 := 404, 400, 401, 502
 	capability := `Model "example" is not available for this group`
 	rows := []*service.OpsInsertErrorLogInput{
+		{RequestID: "monitor-reg-missing-code", StatusCode: 502, UpstreamStatusCode: &up404, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorMessage: "model_not_found"},
+		{RequestID: "monitor-reg-admission", StatusCode: 404, ErrorOwner: "client", ErrorPhase: "request", ErrorType: "model_not_found", IsBusinessLimited: true, ErrorMessage: "The requested model is not supported by the selected account"},
 		{RequestID: "monitor-reg-model", StatusCode: 502, UpstreamStatusCode: &up404, ErrorOwner: "provider", ErrorPhase: "upstream", UpstreamErrorMessage: &capability},
 		{RequestID: "monitor-reg-codex", StatusCode: 400, UpstreamStatusCode: &up400, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorType: "invalid_request_error", ErrorMessage: "The 'example' model is not supported when using Codex with a ChatGPT account."},
 		{RequestID: "monitor-reg-local", StatusCode: 400, ErrorOwner: "client", ErrorPhase: "request", ErrorType: "invalid_request_error"},
@@ -51,8 +53,8 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 	filter := &service.OpsDashboardFilter{StartTime: start, EndTime: end, Platform: "openai"}
 	total, excluded, sla, _, _, _, err := ops.queryErrorCounts(ctx, filter, start, end)
 	require.NoError(t, err)
-	require.EqualValues(t, 10, total, "the forwarded error has one request outcome")
-	require.EqualValues(t, 5, excluded)
+	require.EqualValues(t, 12, total, "the forwarded error has one request outcome")
+	require.EqualValues(t, 7, excluded)
 	require.EqualValues(t, 5, sla, "provider balance/auth/validation and Pod failures remain")
 	trend, err := ops.GetErrorTrend(ctx, filter, 60)
 	require.NoError(t, err)
@@ -83,7 +85,7 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 	require.EqualValues(t, 5, errors)
 	result, err := ops.ListErrorLogs(ctx, &service.OpsErrorLogFilter{StartTime: &start, EndTime: &end, Model: model, View: "excluded"})
 	require.NoError(t, err)
-	require.EqualValues(t, 5, result.Total, "legacy rows are visible under excluded without rewriting raw logs")
+	require.EqualValues(t, 7, result.Total, "legacy rows are visible under excluded without rewriting raw logs")
 	for _, item := range result.Errors {
 		require.Equal(t, "client", item.Owner)
 		require.Equal(t, "request", item.Phase)
@@ -94,7 +96,7 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 	}
 	var raw int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT count(*) FROM ops_error_logs WHERE model=$1", model).Scan(&raw))
-	require.Equal(t, 11, raw, "diagnostic records stay intact")
+	require.Equal(t, 13, raw, "diagnostic records stay intact")
 }
 
 func TestOpsMetricMissingIDsAndRecoveredAttempts(t *testing.T) {
