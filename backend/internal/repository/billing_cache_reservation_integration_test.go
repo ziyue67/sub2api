@@ -35,7 +35,7 @@ func (s *BillingReservationSuite) TestReserveAccumulatesAndReportsTotal() {
 	cache, rdb := s.reservationCache()
 	ctx := context.Background()
 	scope := "9001"
-	key := billingReservedKeyPrefix + scope
+	key := billingReservedKey(scope)
 
 	total, err := cache.ReserveUserBalance(ctx, scope, "req-a", 0.10, 10*time.Minute)
 	require.NoError(s.T(), err, "ReserveUserBalance")
@@ -183,31 +183,28 @@ func (s *BillingReservationSuite) TestTryReserveKeepsFullFloatPrecision() {
 //
 // 这里断言：后续预留不得把聚合键的剩余 TTL 顶回接近满值，必须继续自然衰减。
 func (s *BillingReservationSuite) TestReserveDoesNotRenewAggregateTTLOnLaterReserves() {
-	cache, rdb := s.reservationCache()
+	cache, _ := s.reservationCache()
 	ctx := context.Background()
 	scope := "9010"
-	key := billingReservedKeyPrefix + scope
 
-	const ttl = 10 * time.Second
-	_, err := cache.ReserveUserBalance(ctx, scope, "req-first", 0.10, ttl)
+	// 泄漏的一笔（从未归还）。
+	const leakTTL = 2 * time.Second
+	_, err := cache.ReserveUserBalance(ctx, scope, "req-leak", 0.10, leakTTL)
 	require.NoError(s.T(), err, "首笔预留")
 
-	// 让 TTL 明显衰减后再累加第二笔（模拟并发突发中被拒绝的那一批请求）。
-	time.Sleep(3 * time.Second)
-	_, err = cache.ReserveUserBalance(ctx, scope, "req-second", 0.10, ttl)
-	require.NoError(s.T(), err, "第二笔累加")
+	// 持续流量：后续的预留与回滚（被拒绝请求的真实路径）都会刷新索引键 TTL，
+	// 但泄漏成员按**自己的**到期时刻衰减，不得被续命。
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("req-%d", i)
+		_, err = cache.ReserveUserBalance(ctx, scope, id, 0.10, 10*time.Minute)
+		require.NoError(s.T(), err, "后续预留")
+		require.NoError(s.T(), cache.ReleaseUserBalanceReservation(ctx, scope, id, 0.10, 10*time.Minute), "回滚")
+		time.Sleep(time.Second)
+	}
 
-	remaining, err := rdb.TTL(ctx, key).Result()
-	require.NoError(s.T(), err, "TTL")
-	require.Less(s.T(), remaining, 8*time.Second,
-		"累加不得续期：剩余 TTL 应继续衰减；若被 PEXPIRE 顶回 ~10s，说明泄漏会被无限续期")
-
-	// 被拒绝请求的真实路径：预留 → 回滚（release）。回滚同样不得把聚合键 TTL 续满。
-	require.NoError(s.T(), cache.ReleaseUserBalanceReservation(ctx, scope, "req-second", 0.10, ttl), "回滚第二笔")
-	remainingAfterRollback, err := rdb.TTL(ctx, key).Result()
-	require.NoError(s.T(), err, "TTL after rollback")
-	require.Less(s.T(), remainingAfterRollback, 8*time.Second,
-		"回滚不得续期：被拒绝的请求不能给历史泄漏续命")
+	total, err := cache.ReservedUserBalanceTotal(ctx, scope)
+	require.NoError(s.T(), err, "读回总额")
+	require.Zero(s.T(), total, "泄漏成员到期后不得再计入聚合：持续流量不能给历史泄漏续命")
 }
 
 func (s *BillingReservationSuite) TestReserveIsIdempotentForSameRequestID() {
@@ -228,7 +225,7 @@ func (s *BillingReservationSuite) TestReserveFallsBackToCacheTTLWhenTTLMissing()
 	cache, rdb := s.reservationCache()
 	ctx := context.Background()
 	scope := "9003"
-	key := billingReservedKeyPrefix + scope
+	key := billingReservedKey(scope)
 
 	_, err := cache.ReserveUserBalance(ctx, scope, "req-a", 0.05, 0)
 	require.NoError(s.T(), err, "ReserveUserBalance 应以缺省 TTL 兜底")
@@ -256,7 +253,7 @@ func (s *BillingReservationSuite) TestReleaseReducesAndDeletesAtZero() {
 	cache, rdb := s.reservationCache()
 	ctx := context.Background()
 	scope := "9005"
-	key := billingReservedKeyPrefix + scope
+	key := billingReservedKey(scope)
 
 	_, err := cache.ReserveUserBalance(ctx, scope, "req-a", 0.30, 10*time.Minute)
 	require.NoError(s.T(), err, "ReserveUserBalance")
@@ -283,7 +280,7 @@ func (s *BillingReservationSuite) TestReleaseOnMissingReceiptIsNoop() {
 	cache, rdb := s.reservationCache()
 	ctx := context.Background()
 	scope := "9006"
-	key := billingReservedKeyPrefix + scope
+	key := billingReservedKey(scope)
 
 	err := cache.ReleaseUserBalanceReservation(ctx, scope, "never-reserved", 0.10, 10*time.Minute)
 	require.ErrorIs(s.T(), err, service.ErrBillingReservationExpired, "从未预留过也要安全 no-op")
@@ -302,38 +299,39 @@ func (s *BillingReservationSuite) TestExpiredReceiptReleaseDoesNotEatOtherReserv
 	cache, rdb := s.reservationCache()
 	ctx := context.Background()
 	scope := "9007"
-	key := billingReservedKeyPrefix + scope
+	key := billingReservedKey(scope)
 
 	// A 预留 0.10。
 	_, err := cache.ReserveUserBalance(ctx, scope, "req-a", 0.10, 10*time.Minute)
 	require.NoError(s.T(), err, "A 预留")
 
-	// 模拟 A 的凭据被 TTL 自愈回收（聚合键仍在：保守方向，偏高不会放行超额）。
-	require.NoError(s.T(), rdb.Del(ctx, billingReservedItemKey(scope, "req-a")).Err(), "回收 A 的凭据")
+	// 模拟 A 的凭据随 TTL 过期：把它在过期索引里的到期时刻拨到过去
+	// （聚合按存活成员实时求和，过期成员下一次访问时被清理）。
+	require.NoError(s.T(), rdb.ZAdd(ctx, billingReservedKey(scope), redis.Z{Score: 1, Member: "req-a"}).Err(), "让 A 的凭据过期")
 
 	// B 之后预留 0.30。
 	_, err = cache.ReserveUserBalance(ctx, scope, "req-b", 0.30, 10*time.Minute)
 	require.NoError(s.T(), err, "B 预留")
 	total, err := cache.ReservedUserBalanceTotal(ctx, scope)
 	require.NoError(s.T(), err, "读回总额")
-	require.InDelta(s.T(), 0.40, total, 1e-9, "聚合总额应为 A+B")
+	require.InDelta(s.T(), 0.30, total, 1e-9, "过期的 A 不再计入聚合（泄漏不残留），只剩 B")
 
 	// A 晚到的归还：必须 no-op，绝不能吃掉 B 的 0.30。
 	err = cache.ReleaseUserBalanceReservation(ctx, scope, "req-a", 0.10, 10*time.Minute)
 	require.ErrorIs(s.T(), err, service.ErrBillingReservationExpired, "过期凭据的归还必须被拒绝")
 	total, err = cache.ReservedUserBalanceTotal(ctx, scope)
 	require.NoError(s.T(), err, "读回总额")
-	require.InDelta(s.T(), 0.40, total, 1e-9, "过期凭据的归还不得影响他人预留")
+	require.InDelta(s.T(), 0.30, total, 1e-9, "过期凭据的归还不得影响他人预留")
 
-	// B 正常归还：只剩 A 那笔已被 TTL 回收的残留份额。
+	// B 正常归还：账本清空，索引键随之删除。
 	require.NoError(s.T(), cache.ReleaseUserBalanceReservation(ctx, scope, "req-b", 0.30, 10*time.Minute), "B 归还")
 	total, err = cache.ReservedUserBalanceTotal(ctx, scope)
 	require.NoError(s.T(), err, "读回总额")
-	require.InDelta(s.T(), 0.10, total, 1e-9, "归还只能减掉自己的份额")
+	require.Zero(s.T(), total, "归还只能减掉自己的份额")
 
 	exists, err := rdb.Exists(ctx, key).Result()
 	require.NoError(s.T(), err, "Exists")
-	require.Equal(s.T(), int64(1), exists, "残留份额仍挂在聚合键上，等聚合键 TTL 兜底")
+	require.Equal(s.T(), int64(0), exists, "账本为空时索引键被删除")
 }
 
 func (s *BillingReservationSuite) TestRenewExtendsReceiptTTL() {
