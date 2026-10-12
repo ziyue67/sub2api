@@ -143,6 +143,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyAffiliateRebateDurationDays:               strconv.Itoa(AffiliateRebateDurationDaysDefault),
 		SettingKeyAffiliateRebatePerInviteeCap:              strconv.FormatFloat(AffiliateRebatePerInviteeCapDefault, 'f', 2, 64),
 		SettingKeyDefaultUserRPMLimit:                       "0",
+		SettingKeyInflightReservationBudgetMultiplier:       "1",
 		SettingKeyDefaultSubscriptions:                      "[]",
 		SettingKeyAuthSourceDefaultEmailBalance:             "0",
 		SettingKeyAuthSourceDefaultEmailConcurrency:         "5",
@@ -478,6 +479,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.DefaultBalance = balance
 	} else {
 		result.DefaultBalance = s.cfg.Default.UserBalance
+	}
+	// 在途预留预算倍数：非法或 <1 一律回退 1.0（严格模式），绝不让坏值放宽准入。
+	if multiplier, err := strconv.ParseFloat(settings[SettingKeyInflightReservationBudgetMultiplier], 64); err == nil && multiplier >= 1 {
+		result.InflightReservationBudgetMultiplier = multiplier
+	} else {
+		result.InflightReservationBudgetMultiplier = 1.0
 	}
 	if rebateRate, err := strconv.ParseFloat(settings[SettingKeyAffiliateRebateRate], 64); err == nil {
 		result.AffiliateRebateRate = clampAffiliateRebateRate(rebateRate)

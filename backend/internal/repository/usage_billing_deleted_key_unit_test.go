@@ -20,9 +20,9 @@ func expectDeletedKeySettlementPrefix(mock sqlmock.Sqlmock) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 	mock.ExpectQuery("SELECT request_fingerprint.*FROM usage_billing_dedup_archive").
 		WillReturnRows(sqlmock.NewRows([]string{"request_fingerprint"}))
-	mock.ExpectQuery(conditionalBalanceDeductSQL).
-		WithArgs(1.25, int64(42)).
-		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(98.75))
+	mock.ExpectQuery(floorBalanceDeductSQL).
+		WithArgs(1.25, int64(42), 0.0).
+		WillReturnRows(sqlmock.NewRows([]string{"previous_balance", "new_balance"}).AddRow(100.0, 98.75))
 }
 
 // A database failure on a key counter must not turn into a successful,

@@ -181,15 +181,18 @@ type UpdateSettingsRequest struct {
 	CustomEndpoints             *[]dto.CustomEndpoint `json:"custom_endpoints"`
 
 	// 默认配置
-	DefaultConcurrency                        int                               `json:"default_concurrency"`
-	DefaultBalance                            float64                           `json:"default_balance"`
-	AffiliateRebateRate                       *float64                          `json:"affiliate_rebate_rate"`
-	AffiliateRebateFreezeHours                *int                              `json:"affiliate_rebate_freeze_hours"`
-	AffiliateRebateDurationDays               *int                              `json:"affiliate_rebate_duration_days"`
-	AffiliateRebatePerInviteeCap              *float64                          `json:"affiliate_rebate_per_invitee_cap"`
-	AdminRechargeRebateEnabled                *bool                             `json:"affiliate_admin_recharge_enabled"`
-	DefaultUserRPMLimit                       int                               `json:"default_user_rpm_limit"`
-	DefaultSubscriptions                      []dto.DefaultSubscriptionSetting  `json:"default_subscriptions"`
+	DefaultConcurrency           int                              `json:"default_concurrency"`
+	DefaultBalance               float64                          `json:"default_balance"`
+	AffiliateRebateRate          *float64                         `json:"affiliate_rebate_rate"`
+	AffiliateRebateFreezeHours   *int                             `json:"affiliate_rebate_freeze_hours"`
+	AffiliateRebateDurationDays  *int                             `json:"affiliate_rebate_duration_days"`
+	AffiliateRebatePerInviteeCap *float64                         `json:"affiliate_rebate_per_invitee_cap"`
+	AdminRechargeRebateEnabled   *bool                            `json:"affiliate_admin_recharge_enabled"`
+	DefaultUserRPMLimit          int                              `json:"default_user_rpm_limit"`
+	DefaultSubscriptions         []dto.DefaultSubscriptionSetting `json:"default_subscriptions"`
+	// InflightReservationBudgetMultiplier 在途预留聚合闸门预算倍数（指针 = 可选，未传则沿用旧值）：
+	// 1 = 严格（零坏账）；调高放宽并发准入直到余额触及封底，代价是允许 shortfall 坏账。
+	InflightReservationBudgetMultiplier       *float64                          `json:"inflight_reservation_budget_multiplier"`
 	AuthSourceDefaultEmailBalance             *float64                          `json:"auth_source_default_email_balance"`
 	AuthSourceDefaultEmailConcurrency         *int                              `json:"auth_source_default_email_concurrency"`
 	AuthSourceDefaultEmailSubscriptions       *[]dto.DefaultSubscriptionSetting `json:"auth_source_default_email_subscriptions"`
@@ -687,6 +690,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if req.DefaultBalance < 0 {
 		req.DefaultBalance = 0
+	}
+	// 在途预留预算倍数：未传沿用旧值；<1 一律归一为 1.0（严格模式），
+	// 避免 0 / 负数这类坏值把准入放宽成危险模式。
+	inflightReservationBudgetMultiplier := previousSettings.InflightReservationBudgetMultiplier
+	if req.InflightReservationBudgetMultiplier != nil {
+		inflightReservationBudgetMultiplier = *req.InflightReservationBudgetMultiplier
+	}
+	if inflightReservationBudgetMultiplier < 1 {
+		inflightReservationBudgetMultiplier = 1.0
 	}
 	affiliateRebateRate := previousSettings.AffiliateRebateRate
 	if req.AffiliateRebateRate != nil {
@@ -1787,6 +1799,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AdminRechargeRebateEnabled:             adminRechargeRebateEnabled,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
+		InflightReservationBudgetMultiplier:    inflightReservationBudgetMultiplier,
 		EnableModelFallback:                    req.EnableModelFallback,
 		FallbackModelAnthropic:                 req.FallbackModelAnthropic,
 		FallbackModelOpenAI:                    req.FallbackModelOpenAI,
@@ -2663,6 +2676,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AdminRechargeRebateEnabled:                             updatedSettings.AdminRechargeRebateEnabled,
 		DefaultUserRPMLimit:                                    updatedSettings.DefaultUserRPMLimit,
 		DefaultSubscriptions:                                   updatedDefaultSubscriptions,
+		InflightReservationBudgetMultiplier:                    updatedSettings.InflightReservationBudgetMultiplier,
 		EnableModelFallback:                                    updatedSettings.EnableModelFallback,
 		FallbackModelAnthropic:                                 updatedSettings.FallbackModelAnthropic,
 		FallbackModelOpenAI:                                    updatedSettings.FallbackModelOpenAI,

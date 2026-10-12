@@ -941,12 +941,16 @@ database:
   # SSL 模式：disable（禁用）, prefer（优先加密，默认）, require（要求）, verify-ca（验证CA）, verify-full（完全验证）
   # 默认值为 "prefer"，数据库支持 SSL 时自动使用加密连接，不支持时回退明文
   sslmode: "prefer"
-  # Max open connections (高并发场景建议 256+，需配合 PostgreSQL max_connections 调整)
+  # Max open connections: 必须显著低于 PostgreSQL max_connections（默认 100）；
+  # 多实例部署按实例数均摊（例：3 实例建议 ≤ 30）。默认 32 覆盖绝大多数部署，
+  # 过高会在并发突发时打满 PG 连接槽，导致贴近底线的余额复核 fail-closed（503）。
+  # Max open connections: keep well below PostgreSQL max_connections (default 100);
+  # divide by instance count for multi-instance deployments.
   # 最大打开连接数
-  max_open_conns: 256
-  # Max idle connections (建议为 max_open_conns 的 50%，减少频繁建连开销)
+  max_open_conns: 32
+  # Max idle connections (建议为 max_open_conns 的 25%-50%，减少频繁建连开销)
   # 最大空闲连接数
-  max_idle_conns: 128
+  max_idle_conns: 8
   # Connection max lifetime (minutes)
   # 连接最大存活时间（分钟）
   conn_max_lifetime_minutes: 30
@@ -1208,10 +1212,99 @@ billing:
     # Number of requests to allow in half-open state
     # 半开状态允许通过的请求数
     half_open_requests: 3
-  # Conservative minimum balance required before forwarding balance-billed requests.
-  # Set to 0 to only require balance > 0.
-  # 余额计费请求转发前要求的保守最小余额；设为 0 则仅要求余额 > 0。
-  minimum_balance_reserve: 0.000001
+  # Wallet floor for balance-billed requests (a non-spendable minimum balance).
+  # - Preflight: once the balance is <= this floor, requests are rejected with
+  #   403 INSUFFICIENT_BALANCE before anything is sent upstream.
+  # - Settlement (billing is post-paid, the upstream call has already happened):
+  #   the deduction is clamped at the floor. A request the wallet cannot fully
+  #   cover drains it exactly to the floor — never below, never negative — and
+  #   the uncollected remainder is written off (usage_log.actual_cost records the
+  #   amount actually collected; an ALERT log records the shortfall). The next
+  #   preflight then sees balance <= floor and rejects, so the write-off is
+  #   bounded to the tail of one request per in-flight slot.
+  # Hitting the floor also triggers the low-balance email.
+  # Set to 0 to make the floor 0 (users can spend everything; the balance still
+  # never goes negative).
+  # 余额计费的钱包底线（不可花的最低余额）。
+  # - 预检：余额 <= 底线时直接 403 INSUFFICIENT_BALANCE，不再转发上游。
+  # - 结算（后付费，上游成本已经发生）：扣费以底线为下限。余额不足以覆盖全额时
+  #   只扣到底线——绝不低于底线、绝不为负——差额记为坏账（usage_log.actual_cost
+  #   记实际扣到的金额，差额打 ALERT 日志）。之后预检看到余额 <= 底线即拒绝，
+  #   因此坏账最多是每个并发槽位最后一笔请求的尾巴。
+  # 触及底线时还会触发“余额不足”邮件提醒。
+  # 设为 0 则底线为 0（用户可花完全部余额，余额同样永不为负）。
+  minimum_balance_reserve: 0.1
+  # Preflight DB-recheck band above the floor (USD): when the cached balance is
+  # <= minimum_balance_reserve + band (and at least 2*minimum_balance_reserve),
+  # the preflight re-verifies the wallet against the database before forwarding.
+  # This closes the stale-cache window where an outdated higher balance snapshot
+  # keeps admitting requests that can no longer be collected.
+  # 预检 DB 复核带宽（美元）：缓存余额 <= 底线 + 带宽 时，先用 DB 真值复核再转发，
+  # 堵住“旧余额缓存偏高 -> 持续放行注定扣不到钱的请求”这一免费窗口。
+  # 设为 0 时退回保守的 2*底线 复核带。
+  balance_recheck_band: 1.0
+  # Preflight worst-case request-spend gate (zero-overshoot). When enabled, a
+  # balance-mode request is rejected with 403 before forwarding unless the wallet
+  # covers minimum_balance_reserve + the request's worst-case spend estimate.
+  # 放行前最坏费用预估（零超发闸门）：启用时余额预检要求余额覆盖
+  # 「最低余额底线 + 本次请求最坏费用上界」，付不满的请求转发前直接 403，
+  # 不再出现“先服务、结算只能扣到封底”的微量超发。
+  # 设为 true 可关闭（仅在明确接受最后一笔微量超发/坏账时使用）。
+  request_spend_precheck_disabled: false
+  # Default output-token upper bound used when the request declares none
+  # (max_tokens / max_completion_tokens / max_output_tokens all absent). Default 8192.
+  # 请求未声明输出上限时，预估输出费用上界使用的缺省输出 token 数（默认 8192）。
+  request_spend_default_max_output_tokens: 8192
+  # Safety multiplier applied on top of the same-source worst-case estimate.
+  # >1 = more conservative (blocks more, zero write-off), <1 = more permissive.
+  # 预检安全系数：>1 更保守（多拦、零坏账），<1 更激进（少拦、可能微量超发）。
+  request_spend_safety_multiplier: 1.0
+  # Minimum output-token upper bound for the preflight estimate. Some upstream
+  # bridges do not honour the request's declared cap (the /v1/responses bridge
+  # produced 999 tokens for a declared max_tokens of 64 / 190), so trusting a
+  # small declared cap under-estimates the worst case and can still leave a
+  # write-off when the wallet sits at the floor. When > 0 the estimate uses
+  # max(declared, this floor); 0 = keep the legacy "trust the declared cap"
+  # behaviour (default).
+  # 预检输出上界下限（token）：上游桥可能不执行请求声明的 max_tokens（实测声明
+  # 64/190 仍产出 999 token），信任小上限会低估最坏费用、贴底时仍产生坏账。
+  # >0 时按 max(声明值, 本下限) 预检；0 = 保持信任声明值的旧行为（默认）。
+  #
+  # 作用范围：本下限只"抬高偏小的声明值"，对 >= 本值的声明值（含大 max_tokens）
+  # 逐位不变，因此不会让大 max_tokens 请求更早被 403。
+  #
+  # 何时打开：部署后观察 ops 端点 /api/v1/admin/ops/billing-guard 的
+  # settlement_shortfall_count —— 斜率 > 0（仍在产生 write-off）就把本值配成
+  # 8192（与"未声明输出上限"时的缺省上界一致），即可把这类桥按保守输出量预检；
+  # 恒为 0 则保持 0 即可。Floor for the preflight's output-token upper bound:
+  # enable (8192 = the default undeclared cap) only when settlement_shortfall_count
+  # keeps growing; 0 keeps the legacy "trust the declared cap" behaviour.
+  request_spend_min_output_tokens: 0
+  # CJK tokens-per-character upper bound used by the input estimate. 0 = built-in
+  # 1 (calibrated on the production upstream: 0.5-1 token per CJK char). That value
+  # is NOT an upper bound for byte-fallback tokenizers (rare Han chars in
+  # cl100k/o200k, Llama-family CJK vocabularies reach 2-3 tokens per char), which
+  # would under-estimate the worst case and re-open the write-off window. Deployments
+  # routing Chinese traffic to those models should set 2 (or 3); the cost is a
+  # tighter concurrency admission for large CJK requests.
+  # CJK 每字 token 上界（预检输入折算）：0 = 内置值 1（按生产上游实测 0.5–1 token/字
+  # 校准）。该值对**字节回退型分词器**（cl100k/o200k 生僻汉字、Llama 系 CJK 词表可达
+  # 2–3 token/字）不是上界，按 1 计会低估最坏费用、贴底时重新产生坏账。路由到这类
+  # 模型的部署应设为 2（或 3），代价是 CJK 大包的并发准入变紧。
+  # 允许范围 0-8（0 = 内置 1）：超出会在启动校验时被拒绝，运行期也会钳到 8 ——
+  # 防止误配成 1e6（CJK 请求全量 403）或极大值（乘法溢出 → 闸门 fail-open）。
+  request_spend_cjk_tokens_per_rune: 0
+  # In-flight reservation budget multiplier (spendable balance covered by
+  # reservations). 1.0 = strict: reservations never exceed the spendable balance, so
+  # concurrent admission can never leave an uncollected shortfall, but concurrency is
+  # capped at spendable / per-request worst case. Raise it to admit more concurrency
+  # at the cost of bounded write-offs; it can also be overridden at runtime from
+  # /admin/settings ("inflight_reservation_budget_multiplier"), which takes priority
+  # and applies immediately after saving.
+  # 在途预留聚合闸门预算倍数（可花余额被预留总额覆盖的倍数）：1.0 = 严格（并发下
+  # 绝不产生坏账，但并发量被"可花余额 / 单笔最坏费用"卡住）。调高即用有界坏账换取
+  # 并发；也可在后台 /admin/settings 覆盖（后台值优先），保存后立即生效。
+  inflight_reservation_budget_multiplier: 1.0
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口
   user_platform_quota_cache_ttl_seconds: 86400
@@ -1237,8 +1330,11 @@ billing:
     # 估算输出 / 输入 token 上限
     max_output_tokens: 128000
     max_input_tokens: 200000
-    # Cap for a single reservation in USD (0 = no cap)
-    # 单请求预留金额上限（USD，0 为不设上限）
+    # Reservation in USD for requests that cannot be priced at all (0 = do not
+    # reserve; such requests then skip every in-flight reservation scope).
+    # Recommended in production. Priced requests are never capped by this value.
+    # "完全无法定价"请求的保守预留额（USD，0 = 不预留，这类请求会跳过钱包/订阅/
+    # 平台配额/API Key 的全部在途预留）。生产建议配置；可定价请求不受此值封顶。
     max_reservation_usd: 0
     # When a request cannot be priced (no base / group / channel pricing for the
     # billing model), reject it instead of admitting it without reservation.

@@ -156,7 +156,10 @@ type UserRepository interface {
 	UpdateUserLastActiveAt(ctx context.Context, userID int64, activeAt time.Time) error
 
 	UpdateBalance(ctx context.Context, id int64, amount float64) error
-	DeductBalance(ctx context.Context, id int64, amount float64) error
+	// DeductBalance 原子扣减用户余额，余额不足以覆盖 amount + reserve 时返回
+	// ErrInsufficientBalance，绝不产生负余额。minimumReserve 可省略（legacy 调用方
+	// 默认 reserve=0，即余额必须 >= amount）。
+	DeductBalance(ctx context.Context, id int64, amount float64, minimumReserve ...float64) error
 	// AdjustBalance 原子地把 delta 累加到余额上，并返回变更前后的值。结果为负时
 	// 拒绝写入并返回 ErrBalanceNegative。管理员的加/扣款必须走这里而不是
 	// "读余额→算新值→整行写回"，否则并发的计费扣款会被旧快照抹掉。
@@ -1171,6 +1174,11 @@ func (s *UserService) UpdateBalance(ctx context.Context, userID int64, amount fl
 			defer cancel()
 			if err := s.billingCache.InvalidateUserBalance(cacheCtx, userID); err != nil {
 				slog.Error("invalidate user balance cache failed", "user_id", userID, "error", err)
+			}
+			// 只有余额**增加**才清除"钱包已耗尽"标记：扣款/不变时用户依然没钱，
+			// 清标记等于错误解除护栏（审计 H6）。
+			if amount > 0 {
+				ClearBalanceExhaustedMarker(cacheCtx, s.billingCache, userID)
 			}
 		}()
 	}

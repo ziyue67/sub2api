@@ -1926,3 +1926,63 @@ func TestSonnet55BedrockCCCompatTransformsBeforeValidation(t *testing.T) {
 		})
 	}
 }
+
+// TestGatewayService_AnthropicAPIKeyPassthrough_DropsClientRequestIDHeaders 锁死审计 N1：
+// API Key 透传路径不得把客户端可控的请求 id header 发往上游。计费幂等键取自**上游响应**
+// 的 x-request-id（resolveUsageBillingRequestID）；若某上游把收到的客户端 id 回显为响应
+// x-request-id，恒定发送同一个 header 就能让多笔真实调用折叠成一笔（静默去重、不扣费）。
+func TestGatewayService_AnthropicAPIKeyPassthrough_DropsClientRequestIDHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Set("X-Client-Request-ID", "client-controlled-shared-id")
+	c.Request.Header.Set("X-Request-ID", "client-controlled-request-id")
+
+	upstreamJSON := `{"id":"msg_1","type":"message","usage":{"input_tokens":12,"output_tokens":7}}`
+	upstream := &anthropicHTTPUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"x-request-id": []string{"rid-upstream-trusted"},
+			},
+			Body: io.NopCloser(strings.NewReader(upstreamJSON)),
+		},
+	}
+	svc := &GatewayService{
+		cfg:              &config.Config{},
+		httpUpstream:     upstream,
+		rateLimitService: &RateLimitService{},
+	}
+
+	body := []byte(`{"model":"claude-3-5-sonnet-latest","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`)
+	_, err := svc.forwardAnthropicAPIKeyPassthrough(
+		context.Background(), c, newAnthropicAPIKeyAccountForTest(), body,
+		"claude-3-5-sonnet-latest", "claude-3-5-sonnet-latest", false, time.Now(),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, upstream.lastReq)
+
+	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "x-client-request-id"),
+		"客户端可控的 x-client-request-id 不得透传到上游（审计 N1）")
+	require.Empty(t, getHeaderRaw(upstream.lastReq.Header, "x-request-id"),
+		"客户端可控的 x-request-id 不得透传到上游（审计 N1）")
+}
+
+// TestPassthroughAllowlistsExcludeClientRequestIDHeaders 锁死审计 N1 的白名单约束：
+// 任何上游透传白名单都不得包含客户端可控的请求 id header（防止将来被加回）。
+func TestPassthroughAllowlistsExcludeClientRequestIDHeaders(t *testing.T) {
+	t.Parallel()
+
+	for name, allowlist := range map[string]map[string]bool{
+		"anthropic": allowedHeaders,
+		"openai":    openaiPassthroughAllowedHeaders,
+	} {
+		for key := range allowlist {
+			lower := strings.ToLower(strings.TrimSpace(key))
+			require.NotContains(t, lower, "request-id",
+				"%s 透传白名单不得包含客户端可控的请求 id header（审计 N1）", name)
+		}
+	}
+}

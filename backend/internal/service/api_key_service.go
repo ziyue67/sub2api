@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/dgraph-io/ristretto"
@@ -1310,12 +1311,38 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
 
+	// quota_used 被重置 / 额度被调整后必须清掉"已用额度"共享账本：账本是单调高水位
+	// （只增不减），残留的旧高水位会在 TTL 内压住新额度，让已重置的 key 被误拦。
+	if fields.QuotaUsed || fields.Quota {
+		s.clearAPIKeyQuotaUsedLedger(ctx, apiKey.ID)
+	}
+
 	// Invalidate Redis rate limit cache so reset takes effect immediately
 	if resetRateLimit && s.rateLimitCacheInvalid != nil {
 		_ = s.rateLimitCacheInvalid.InvalidateAPIKeyRateLimit(ctx, apiKey.ID)
 	}
 
 	return apiKey, nil
+}
+
+// clearAPIKeyQuotaUsedLedger 清除 API Key 已用额度的共享高水位账本。
+//
+// 只在"quota_used 或 quota 被管理员改写"的路径调用：账本是只增不减的高水位，
+// 若不清除，重置后的 key 会在账本 TTL（30 分钟）内继续按旧高水位判定 —— 表现为
+// "已重置配额却仍然 403"。
+func (s *APIKeyService) clearAPIKeyQuotaUsedLedger(ctx context.Context, apiKeyID int64) {
+	if s == nil || apiKeyID <= 0 {
+		return
+	}
+	store := APIKeyQuotaUsedLedgerReader()
+	if store == nil {
+		return
+	}
+	if err := store.ClearAPIKeyQuotaUsedLedger(ctx, apiKeyID); err != nil {
+		logger.LegacyPrintf("service.apikey",
+			"Warning: clear api key quota used ledger failed key=%d: %v (stale high-water may block the key until TTL)",
+			apiKeyID, err)
+	}
 }
 
 // Delete 删除API Key
@@ -1555,6 +1582,10 @@ func (s *APIKeyService) UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cos
 		if err != nil {
 			return fmt.Errorf("increment quota used: %w", err)
 		}
+		// 把结算后的 DB 真值发布到"已用额度"共享高水位账本：鉴权缓存里的 quota_used
+		// 是快照（L1 15s / L2 300s），不发布的话在快照过期前预检会按冻结的旧值
+		// 重复放行（见 reserveAPIKeySpend 与 APIKeyQuotaUsedLedger）。
+		s.publishAPIKeyQuotaUsedLedger(ctx, apiKeyID, state)
 		if state != nil && state.Status == StatusAPIKeyQuotaExhausted && strings.TrimSpace(state.Key) != "" {
 			s.InvalidateAuthCacheByKey(ctx, state.Key)
 		}
@@ -1566,6 +1597,7 @@ func (s *APIKeyService) UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cos
 	if err != nil {
 		return fmt.Errorf("increment quota used: %w", err)
 	}
+	s.publishAPIKeyQuotaUsedLedger(ctx, apiKeyID, &APIKeyQuotaUsageState{QuotaUsed: newQuotaUsed})
 
 	// Check if quota is now exhausted and update status if needed
 	apiKey, err := s.apiKeyRepo.GetByID(ctx, apiKeyID)
@@ -1586,6 +1618,29 @@ func (s *APIKeyService) UpdateQuotaUsed(ctx context.Context, apiKeyID int64, cos
 	}
 
 	return nil
+}
+
+// publishAPIKeyQuotaUsedLedger 把结算后的 quota_used 真值发布到共享高水位账本。
+//
+// 失败不阻断计费（账本只是"让预检更早看到真值"的加速器）：但必须计数 + ALERT，
+// 并失效该 key 的鉴权缓存，让下一次预检回源到 DB 真值。
+func (s *APIKeyService) publishAPIKeyQuotaUsedLedger(ctx context.Context, apiKeyID int64, state *APIKeyQuotaUsageState) {
+	if s == nil || state == nil || apiKeyID <= 0 {
+		return
+	}
+	store := APIKeyQuotaUsedLedgerReader()
+	if store == nil {
+		return
+	}
+	if err := store.SetAPIKeyQuotaUsedLedger(ctx, apiKeyID, state.QuotaUsed); err != nil {
+		RecordBillingAPIKeyQuotaLedgerWriteError()
+		logger.LegacyPrintf("service.apikey",
+			"ALERT: publish api key quota used ledger failed key=%d used=%f: %v (invalidating auth cache, next preflight reads DB truth)",
+			apiKeyID, state.QuotaUsed, err)
+		if strings.TrimSpace(state.Key) != "" {
+			s.InvalidateAuthCacheByKey(ctx, state.Key)
+		}
+	}
 }
 
 // GetRateLimitData returns rate limit usage and window state for an API key.

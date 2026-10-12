@@ -83,16 +83,38 @@ func selectedGroupRouteSubscription(c *gin.Context, apiKeyService *service.APIKe
 	return subscription, nil
 }
 
-func checkSelectedGroupRouteEligibility(c *gin.Context, billing *service.BillingCacheService, apiKey *service.APIKey, subscription *service.UserSubscription) error {
+// recheckSelectedGroupRouteEligibility replaces the reservation created for the
+// previous route with one priced and scoped for the newly selected route.
+//
+// 所有路由切换点都必须走这里：只做"基础阈值检查"的旧版本（checkSelectedGroupRouteEligibility）
+// 不重估最坏费用、也不替换预留，会让新分组按自己的倍率结算却按旧分组的额度放行。
+// 该旧版本在 grok_media 也切换过来之后已无调用者，已删除（审计 R5）。
+//
+// slot 传 nil 表示该入口没有在途预留槽位（例如 grok media），此时只补最坏费用闸门。
+func recheckSelectedGroupRouteEligibility(
+	c *gin.Context,
+	billing *service.BillingCacheService,
+	apiKey *service.APIKey,
+	subscription *service.UserSubscription,
+	worstSpend float64,
+	slot *service.BillingReservationSlot,
+) error {
 	if c == nil || billing == nil || apiKey == nil {
 		return nil
 	}
+	if slot != nil {
+		slot.Release(c.Request.Context())
+		slot.ResetForRetry()
+	}
+	opts := make([]service.BillingEligibilityOption, 0, 2)
+	if worstSpend > 0 {
+		opts = append(opts, service.WithMaxRequestSpend(worstSpend))
+	}
+	if slot != nil {
+		opts = append(opts, service.WithBalanceReservation(slot))
+	}
 	return billing.CheckBillingEligibility(
-		c.Request.Context(),
-		apiKey.User,
-		apiKey,
-		apiKey.Group,
-		subscription,
-		service.QuotaPlatform(c.Request.Context(), apiKey),
+		c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription,
+		service.QuotaPlatform(c.Request.Context(), apiKey), opts...,
 	)
 }

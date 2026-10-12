@@ -185,6 +185,10 @@ type SystemSettings struct {
 	AdminRechargeRebateEnabled        bool
 	DefaultUserRPMLimit               int
 	DefaultSubscriptions              []DefaultSubscriptionSetting
+	// InflightReservationBudgetMultiplier 在途预留聚合闸门预算倍数（/admin/settings 可改）：
+	// 1.0 = 严格（预留总额不得超过可花余额，零坏账）；调高放宽并发准入，直到余额花到
+	// 封底才拒，代价是允许 shortfall 坏账。
+	InflightReservationBudgetMultiplier float64
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`

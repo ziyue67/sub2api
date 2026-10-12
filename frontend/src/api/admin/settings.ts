@@ -634,6 +634,9 @@ export interface SystemSettings {
   // 分组隔离
   allow_ungrouped_key_scheduling: boolean;
 
+  // 在途预留聚合闸门预算倍数：1 = 严格（零坏账），调高放宽并发准入直到余额触及封底
+  inflight_reservation_budget_multiplier: number;
+
   // Gateway forwarding behavior
   openai_ttft_mode: string;
   enable_fingerprint_unification: boolean;
@@ -1005,6 +1008,7 @@ export interface UpdateSettingsRequest {
   min_claude_code_version?: string;
   max_claude_code_version?: string;
   allow_ungrouped_key_scheduling?: boolean;
+  inflight_reservation_budget_multiplier?: number;
   openai_ttft_mode?: string;
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;

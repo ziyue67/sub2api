@@ -1165,6 +1165,96 @@ func (s *SettingService) IsBackendModeEnabled(ctx context.Context) bool {
 	return false
 }
 
+// cachedInflightReservationBudget 缓存在途预留聚合闸门预算倍数（进程内缓存，60s TTL）。
+type cachedInflightReservationBudget struct {
+	multiplier float64
+	expiresAt  int64 // unix nano
+}
+
+var inflightReservationBudgetCache atomic.Value // *cachedInflightReservationBudget
+var inflightReservationBudgetSF singleflight.Group
+
+// inflightReservationBudgetSFKey 是单飞键。失效路径要一并 Forget，避免在途的旧值
+// 覆盖刚保存的新值（沿用 refreshCachedSettings 里其他缓存的同一约定）。
+const inflightReservationBudgetSFKey = "inflight_reservation_budget"
+
+const inflightReservationBudgetCacheTTL = 60 * time.Second
+const inflightReservationBudgetErrorTTL = 5 * time.Second
+const inflightReservationBudgetDBTimeout = 5 * time.Second
+
+// GetInflightReservationBudgetMultiplier 读取后台设置里的「在途预留聚合闸门预算倍数」
+// （/admin/settings 可改）。热路径走进程内 atomic.Value 缓存（60s TTL），不触库。
+//
+// 语义：允许「可花余额」被在途预留总额覆盖的倍数。1.0 = 严格（预留总额不得超过可花
+// 余额，零坏账）；调高则放宽并发准入，直到余额花到封底才拒，代价是允许 shortfall 坏账。
+//
+// 取值优先级：DB 设置（合法且 >=1）> 静态配置 cfg.Billing.InflightReservationBudgetMultiplier
+// （合法且 >=1）> 1.0。DB 里的值非法（解析失败、<1）时回退到下一级，绝不因为一个坏值
+// 把准入放宽成危险模式。
+func (s *SettingService) GetInflightReservationBudgetMultiplier(ctx context.Context) float64 {
+	fallback := s.inflightReservationBudgetFallback()
+	if s == nil || s.settingRepo == nil {
+		return fallback
+	}
+	if cached, ok := inflightReservationBudgetCache.Load().(*cachedInflightReservationBudget); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.multiplier
+		}
+	}
+	result, _, _ := inflightReservationBudgetSF.Do(inflightReservationBudgetSFKey, func() (any, error) {
+		if cached, ok := inflightReservationBudgetCache.Load().(*cachedInflightReservationBudget); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached.multiplier, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), inflightReservationBudgetDBTimeout)
+		defer cancel()
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyInflightReservationBudgetMultiplier)
+		if err != nil {
+			if !errors.Is(err, ErrSettingNotFound) {
+				slog.Warn("failed to get inflight_reservation_budget_multiplier setting", "error", err)
+			}
+			// 读不到（未配置 / DB 抖动）一律按静态回退，短 TTL 让恢复后尽快生效。
+			inflightReservationBudgetCache.Store(&cachedInflightReservationBudget{
+				multiplier: fallback,
+				expiresAt:  time.Now().Add(inflightReservationBudgetErrorTTL).UnixNano(),
+			})
+			return fallback, nil
+		}
+		multiplier := fallback
+		if parsed, parseErr := strconv.ParseFloat(strings.TrimSpace(value), 64); parseErr == nil && parsed >= 1 {
+			multiplier = parsed
+		}
+		inflightReservationBudgetCache.Store(&cachedInflightReservationBudget{
+			multiplier: multiplier,
+			expiresAt:  time.Now().Add(inflightReservationBudgetCacheTTL).UnixNano(),
+		})
+		return multiplier, nil
+	})
+	if val, ok := result.(float64); ok {
+		return val
+	}
+	return fallback
+}
+
+// InvalidateInflightReservationBudgetCache 让后台设置保存后立即生效，不必等 60s TTL。
+// 由 refreshCachedSettings（设置写回后的统一刷新点）调用。
+func (s *SettingService) InvalidateInflightReservationBudgetCache() {
+	inflightReservationBudgetSF.Forget(inflightReservationBudgetSFKey)
+	inflightReservationBudgetCache.Store(&cachedInflightReservationBudget{
+		multiplier: s.inflightReservationBudgetFallback(),
+		expiresAt:  time.Now().UnixNano(), // 立即过期
+	})
+}
+
+// inflightReservationBudgetFallback 返回静态配置的预算倍数；缺省或 <1 一律 1.0（严格）。
+func (s *SettingService) inflightReservationBudgetFallback() float64 {
+	if s == nil || s.cfg == nil || s.cfg.Billing.InflightReservationBudgetMultiplier < 1 {
+		return 1.0
+	}
+	return s.cfg.Billing.InflightReservationBudgetMultiplier
+}
+
 type gatewayForwardingSettingsResult struct {
 	openAITTFTMode                                                                        string
 	fp, mp, cch, claudeOAuthSystemPromptInjection, cacheTTL1h, rewriteMessageCacheControl bool

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -40,6 +42,60 @@ type apiKeyCache struct {
 
 func NewAPIKeyCache(rdb *redis.Client) service.APIKeyCache {
 	return &apiKeyCache{rdb: rdb}
+}
+
+// apiKeyCache 同时实现 service.APIKeyQuotaUsedLedger：把"结算后的 DB 真值"发布为
+// API Key 已用额度的共享高水位。账本与鉴权缓存共用同一条 Redis，键与脚本定义见
+// billing_cache.go（apiKeyQuotaUsedLedgerKey / apiKeyQuotaUsedLedgerKeyPrefix）。
+var _ service.APIKeyQuotaUsedLedger = (*apiKeyCache)(nil)
+
+// GetAPIKeyQuotaUsedLedger 读取账本高水位；键不存在（含已过期）返回 0。
+func (c *apiKeyCache) GetAPIKeyQuotaUsedLedger(ctx context.Context, apiKeyID int64) (float64, error) {
+	if c == nil || c.rdb == nil || apiKeyID <= 0 {
+		return 0, nil
+	}
+	val, err := c.rdb.Get(ctx, apiKeyQuotaUsedLedgerKey(apiKeyID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	used, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse api key quota used ledger: %w", err)
+	}
+	return used, nil
+}
+
+// SetAPIKeyQuotaUsedLedger 以"只增不减"的方式发布结算后的 quota_used。
+//
+// 只增不减是必需的：并发结算的完成顺序与 DB 递增顺序无关，若允许覆盖写小，
+// 就会出现"账本比 DB 真值小"的窗口，护栏又会按偏小的已用额度放行。
+func (c *apiKeyCache) SetAPIKeyQuotaUsedLedger(ctx context.Context, apiKeyID int64, quotaUsed float64) error {
+	if c == nil || c.rdb == nil || apiKeyID <= 0 {
+		return nil
+	}
+	if quotaUsed <= 0 || math.IsNaN(quotaUsed) || math.IsInf(quotaUsed, 0) {
+		return nil
+	}
+	_, err := setAPIKeyQuotaUsedLedgerScript.Run(ctx, c.rdb,
+		[]string{apiKeyQuotaUsedLedgerKey(apiKeyID)},
+		strconv.FormatFloat(quotaUsed, 'f', -1, 64),
+		apiKeyQuotaUsedLedgerTTL.Milliseconds(),
+	).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	return nil
+}
+
+// ClearAPIKeyQuotaUsedLedger 清除账本（管理员重置 quota_used / 关闭额度时必须调用）。
+func (c *apiKeyCache) ClearAPIKeyQuotaUsedLedger(ctx context.Context, apiKeyID int64) error {
+	if c == nil || c.rdb == nil || apiKeyID <= 0 {
+		return nil
+	}
+	return c.rdb.Del(ctx, apiKeyQuotaUsedLedgerKey(apiKeyID)).Err()
 }
 
 func (c *apiKeyCache) GetCreateAttemptCount(ctx context.Context, userID int64) (int, error) {

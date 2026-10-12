@@ -100,7 +100,13 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		defer userRelease()
 	}
 
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 最坏费用闸门 + 在途预留：token 上界与「token + 1 次搜索」的计费同口径估算取较高者。
+	var balanceReservation service.BillingReservationSlot
+	billingOpts := billingAdmissionOptions(c.Request.Context(), h.gatewayService, apiKey,
+		h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, requestedModel, body),
+		service.InflightEstimateRequest{Model: requestedModel, BodyBytes: len(body), MaxTokens: requestMaxOutputTokens(body), Kind: service.InflightEstimateToken, SearchCalls: 1},
+		&balanceReservation)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingOpts...); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
@@ -109,17 +115,8 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		return
 	}
 
-	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{Model: requestedModel, BodyBytes: len(body), MaxTokens: requestMaxOutputTokens(body), Kind: service.InflightEstimateToken, SearchCalls: 1})
-	if inflightErr != nil {
-		status, code, message, retryAfter := billingErrorDetails(inflightErr)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.errorResponse(c, status, code, message)
-		return
-	}
-	defer inflightDone()
+	// 收尾兜底归还预留：已提交结算任务（HandOff）时由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	searchID := strings.TrimSpace(gjson.GetBytes(body, "id").String())
 	sessionHash := h.gatewayService.GenerateSessionHashWithFallback(c, nil, searchID)
@@ -225,7 +222,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		if err == nil {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), true, nil)
 			if result != nil {
-				h.recordAlphaSearchUsage(c, apiKey, account, subscription, channelMapping, requestedModel, body, result, subject.UserID)
+				h.recordAlphaSearchUsage(c, &balanceReservation, apiKey, account, subscription, channelMapping, requestedModel, body, result, subject.UserID)
 			}
 			return
 		}
@@ -301,6 +298,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 // 与 images 一致使用 mandatory 池提交，池满时同步兜底执行，保证扣费不丢。
 func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 	c *gin.Context,
+	balanceReservation *service.BillingReservationSlot,
 	apiKey *service.APIKey,
 	account *service.Account,
 	subscription *service.UserSubscription,
@@ -318,8 +316,10 @@ func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 
-	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+	h.submitMandatoryUsageRecordTaskWithReservation(c.Request.Context(), balanceReservation, func(ctx context.Context) {
+		// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+		defer balanceReservation.Release(ctx)
+		err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
 			APIKey:             apiKey,
 			User:               apiKey.User,
@@ -335,7 +335,9 @@ func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 			SessionID:          sessionID,
 			ChannelUsageFields: channelMapping.ToUsageFields(requestedModel, result.UpstreamModel),
 			PricingAt:          service.OpenAIPricingAtFromContext(c.Request.Context()),
-		}); err != nil {
+		})
+		balanceReservation.Settle(ctx, err)
+		if err != nil {
 			logger.L().With(
 				zap.String("component", "handler.openai_gateway.alpha_search"),
 				zap.Int64("user_id", userID),

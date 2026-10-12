@@ -198,7 +198,7 @@ func (m *mockUserRepo) UpdateUserLastActiveAt(_ context.Context, userID int64, a
 	m.updateLastActiveAt = append(m.updateLastActiveAt, activeAt)
 	return m.updateLastActiveErr
 }
-func (m *mockUserRepo) DeductBalance(ctx context.Context, id int64, amount float64) error {
+func (m *mockUserRepo) DeductBalance(ctx context.Context, id int64, amount float64, _ ...float64) error {
 	if m.deductBalanceFn != nil {
 		return m.deductBalanceFn(ctx, id, amount)
 	}

@@ -3924,6 +3924,25 @@
                     {{ t("admin.settings.defaults.defaultUserRpmLimitHint") }}
                   </p>
                 </div>
+                <div>
+                  <label
+                    class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.defaults.inflightReservationBudgetMultiplier") }}
+                  </label>
+                  <input
+                    v-model.number="form.inflight_reservation_budget_multiplier"
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="input"
+                    placeholder="1"
+                    data-testid="inflight-reservation-budget-multiplier"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.defaults.inflightReservationBudgetMultiplierHint") }}
+                  </p>
+                </div>
               </div>
 
               <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
@@ -10376,6 +10395,7 @@ const form = reactive<SettingsForm>({
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
   default_user_rpm_limit: 0,
+  inflight_reservation_budget_multiplier: 1,
   site_name: "Sub2API",
   site_logo: "",
   site_subtitle: "Subscription to API Conversion Platform",
@@ -12245,6 +12265,13 @@ async function saveSettings() {
       default_subscriptions: normalizedDefaultSubscriptions,
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
       default_user_rpm_limit: form.default_user_rpm_limit,
+      // 同 audit_log_retention_days：清空数字框时 v-model.number 得到空串，后端 float64
+      // 字段收到空串会 400 拒绝整次保存；<1 与后端一样归一为 1（严格模式）。
+      inflight_reservation_budget_multiplier: Number.isFinite(
+        form.inflight_reservation_budget_multiplier,
+      )
+        ? Math.max(1, form.inflight_reservation_budget_multiplier)
+        : 1,
       site_name: form.site_name,
       site_logo: form.site_logo,
       site_subtitle: form.site_subtitle,

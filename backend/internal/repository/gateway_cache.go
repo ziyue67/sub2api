@@ -612,3 +612,41 @@ func (c *gatewayCache) MarkLiveCallClosed(ctx context.Context, callHash string, 
 	result, err := markLiveCallClosedScript.Run(ctx, c.rdb, []string{liveCallKey(callHash)}, int64(ttl.Seconds())).Int()
 	return result == 1, err
 }
+
+// responseContextTokensPrefix 记录 Responses 响应完成后的会话上下文规模（token）：
+// 下一轮带 previous_response_id 的请求由上游在服务端拼接这段上下文并按输入计费，
+// 预检读它补齐最坏费用上界（请求体里只有新增的几十个 token）。
+const responseContextTokensPrefix = "openai:resp_ctx_tokens:"
+
+// SetResponseContextTokens 实现 service.ResponseContextTokenStore。
+func (c *gatewayCache) SetResponseContextTokens(ctx context.Context, responseID string, tokens int, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("gateway cache unavailable")
+	}
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" || tokens <= 0 {
+		return nil
+	}
+	return c.rdb.Set(ctx, responseContextTokensPrefix+responseID, tokens, ttl).Err()
+}
+
+// GetResponseContextTokens 实现 service.ResponseContextTokenStore；未命中返回 (0, false, nil)。
+func (c *gatewayCache) GetResponseContextTokens(ctx context.Context, responseID string) (int, bool, error) {
+	if c == nil || c.rdb == nil {
+		return 0, false, errors.New("gateway cache unavailable")
+	}
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		return 0, false, nil
+	}
+	n, err := c.rdb.Get(ctx, responseContextTokensPrefix+responseID).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return n, true, nil
+}
+
+var _ service.ResponseContextTokenStore = (*gatewayCache)(nil)

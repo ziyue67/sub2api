@@ -79,7 +79,12 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 
 	// Billing eligibility (same as other requests)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 最坏费用闸门 + 在途预留：按次搜索价（计费同口径估算）。
+	var balanceReservation service.BillingReservationSlot
+	billingOpts := billingAdmissionOptions(c.Request.Context(), h.gatewayService, apiKey, 0,
+		service.InflightEstimateRequest{Model: "grok-" + strings.ReplaceAll(searchLabel, "_", "-"), Kind: service.InflightEstimatePerRequest, SearchCalls: 1},
+		&balanceReservation)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingOpts...); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
@@ -88,17 +93,8 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 		return
 	}
 
-	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{Model: "grok-" + strings.ReplaceAll(searchLabel, "_", "-"), Kind: service.InflightEstimatePerRequest, SearchCalls: 1})
-	if inflightErr != nil {
-		status, code, message, retryAfter := billingErrorDetails(inflightErr)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
-		return
-	}
-	defer inflightDone()
+	// 收尾兜底归还预留：已提交结算任务（HandOff）时由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	subject, _ := middleware2.GetAuthSubjectFromContext(c)
 	reqLog := requestLogger(c, "handler.gateway.web_search")
@@ -246,8 +242,10 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			).Info("gateway.web_search.search_price_per_1k_explicit_free")
 		}
 	}
-	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+	h.submitMandatoryUsageRecordTaskWithReservation(c.Request.Context(), &balanceReservation, func(ctx context.Context) {
+		// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+		defer balanceReservation.Release(ctx)
+		err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 			Result: &service.ForwardResult{
 				RequestID:   searchRequestID,
 				Model:       "grok-" + strings.ReplaceAll(searchLabel, "_", "-"),
@@ -265,7 +263,9 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 			RequestPayloadHash: requestPayloadHash,
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
-		}); err != nil {
+		})
+		balanceReservation.Settle(ctx, err)
+		if err != nil {
 			logger.L().With(
 				zap.String("component", "handler.gateway.web_search"),
 				zap.Int64("user_id", apiKey.User.ID),

@@ -488,6 +488,11 @@ export default {
         defaultConcurrencyHint: 'Maximum concurrent requests for new users',
         defaultUserRpmLimit: 'Default User RPM Limit',
         defaultUserRpmLimitHint: 'Default max requests per minute for new users; 0 = unlimited. Only applied at new user creation.',
+        inflightReservationBudgetMultiplier: 'Inflight Reservation Budget Multiplier',
+        inflightReservationBudgetMultiplierHint:
+          'Controls concurrency admission: 1 = strict (in-flight reservations may not exceed spendable balance, zero bad debt, but high concurrency gets many 403s). ' +
+          'Raise it to admit as long as a single request worst case is affordable, until the balance hits the floor — at the cost of allowing some bad debt. ' +
+          'Only raise it for large-context + high-concurrency workloads; values < 1 are treated as 1.',
         defaultSubscriptions: 'Default Subscriptions',
         defaultSubscriptionsHint: 'Auto-assign these subscriptions when a new user is created or registered',
         addDefaultSubscription: 'Add Default Subscription',

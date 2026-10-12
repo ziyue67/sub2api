@@ -502,6 +502,7 @@ const baseSettingsResponse = {
   min_claude_code_version: "",
   max_claude_code_version: "",
   allow_ungrouped_key_scheduling: false,
+  inflight_reservation_budget_multiplier: 1,
   openai_ttft_mode: "semantic",
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
@@ -2762,5 +2763,32 @@ describe("admin SettingsView platform quota matrix", () => {
     const quotas = payload["default_platform_quotas"] as Record<string, Record<string, unknown>>;
     // 不管输入是什么，提交值应为 null（而非 "" 或 NaN）
     expect(quotas["anthropic"]?.["daily"]).toBe(null);
+  });
+
+  it("清空在途预留预算倍数输入框时提交 1 而非空串（否则后端整次保存 400）", async () => {
+    // 回归：v-model.number 在清空数字框时产出 ""，后端 float64 字段反序列化空串会
+    // 400 拒绝整个 PUT /admin/settings；提交前必须归一为数字（<1 → 1 = 严格模式）。
+    // 按 data-testid 定位（测试环境 i18n 未装载时 label 文本是 i18n key，不能按文案找）。
+    const wrapper = mountView();
+    await flushPromises();
+    await openUsersTab(wrapper);
+
+    const selector = '[data-testid="inflight-reservation-budget-multiplier"]';
+    const input = wrapper.find(selector);
+    expect(input.exists()).toBe(true);
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    const before = updateSettings.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(before["inflight_reservation_budget_multiplier"]).toBe(1);
+
+    // 清空输入框 → 提交值仍必须是数字 1（回归前是 ""）
+    await input.setValue("");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(payload["inflight_reservation_budget_multiplier"]).toBe(1);
+    expect(typeof payload["inflight_reservation_budget_multiplier"]).toBe("number");
   });
 });
