@@ -101,6 +101,7 @@ func TestCalculateOpenAIRecordUsageCost_WebSearchIsAdditiveToTokens(t *testing.T
 		UsageTokens{InputTokens: 1000, OutputTokens: 500},
 		"",
 		boolPtr(false),
+		false,
 		time.Time{},
 	)
 	require.NoError(t, err)
@@ -127,6 +128,7 @@ func TestCalculateOpenAIRecordUsageCost_WebSearchIsAdditiveToImage(t *testing.T)
 		UsageTokens{},
 		"",
 		boolPtr(false),
+		false,
 		time.Time{},
 	)
 	require.NoError(t, err)
