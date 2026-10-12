@@ -24,7 +24,7 @@ func TestCodex780StreamErrorsAreTerminalAndRedacted(t *testing.T) {
 		{`{"type":"error","error":{"code":"PRIVATE_TOKEN"}}`, "response_incomplete_or_error", false},
 		{`{"type":"error","status":403}`, "account_error", true},
 	} {
-		err := readCodex780Created(strings.NewReader("data: "+tt.body+"\n\n"), "gpt-6-astra")
+		err := readCodexHarvestComplete(strings.NewReader("data: " + tt.body + "\n\n"))
 		var mint *codexMintError
 		require.ErrorAs(t, err, &mint)
 		require.Equal(t, tt.kind, mint.kind)

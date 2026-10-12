@@ -56,6 +56,34 @@ func (s *ProxyRepoSuite) TestGetByID_NotFound() {
 	s.Require().Error(err, "expected error for non-existent ID")
 }
 
+func (s *ProxyRepoSuite) TestMihomoNodeIdentityPersistsAndIsUniqueUntilDeleted() {
+	proxy := &service.Proxy{Name: "Mihomo fixture", Protocol: "http", Host: "127.0.0.1", Port: 32000, Status: service.StatusActive, MihomoNodeID: "node-fixture", FallbackMode: service.FallbackModeNone}
+	s.Require().NoError(s.repo.Create(s.ctx, proxy))
+	got, err := s.repo.GetByMihomoNodeID(s.ctx, "node-fixture")
+	s.Require().NoError(err)
+	s.Require().Equal(proxy.ID, got.ID)
+	s.Require().Equal("node-fixture", got.MihomoNodeID)
+	got.Name = "renamed"
+	s.Require().NoError(s.repo.Update(s.ctx, got))
+	rows, _, err := s.repo.ListWithFiltersAndAccountCount(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, "", "", "renamed")
+	s.Require().NoError(err)
+	s.Require().Len(rows, 1)
+	s.Require().Equal("node-fixture", rows[0].MihomoNodeID)
+	_, err = s.tx.ExecContext(s.ctx, "SAVEPOINT duplicate_static_node")
+	s.Require().NoError(err)
+	duplicate := *proxy
+	duplicate.ID = 0
+	s.Require().Error(s.repo.Create(s.ctx, &duplicate), "the node identity must be unique")
+	_, err = s.tx.ExecContext(s.ctx, "ROLLBACK TO SAVEPOINT duplicate_static_node")
+	s.Require().NoError(err)
+	s.Require().NoError(s.repo.Delete(s.ctx, proxy.ID))
+	got, err = s.repo.GetByMihomoNodeID(s.ctx, "node-fixture")
+	s.Require().NoError(err)
+	s.Require().Nil(got)
+	s.Require().NoError(s.repo.Create(s.ctx, &duplicate), "a deleted node proxy can be added again")
+	s.Require().NotEqual(proxy.ID, duplicate.ID)
+}
+
 func (s *ProxyRepoSuite) TestUpdate() {
 	proxy := &service.Proxy{
 		Name:     "original",

@@ -207,6 +207,45 @@ describe('V3 status page', () => {
     expect(admin.get('[data-testid="monitor-v3-footer-note"]').text()).toBe('channelMonitorV3.page.defaultFooter')
   })
 
+  it('explains slots judged by idle probes and mentions probing in the rules and footer', async () => {
+    const status = page({ idle_probe: true })
+    const codex = status.categories[0].components[0]
+    codex.cells = [
+      cell('operational', { probed: true, success_rate: 1, ttft_p50_ms: null, probe_latency_ms: 1834 }),
+      cell('degraded', { probed: true, success_rate: 1, ttft_p50_ms: null, probe_latency_ms: 12400 }),
+      null,
+      cell('down', { probed: true, success_rate: 0, ttft_p50_ms: null, probe_latency_ms: null, top_error: 'wrong_answer', probes: 1, probe_errors: 1, requests: 1 }),
+    ]
+    const wrapper = render(status)
+    const cells = wrapper.findAll('[data-testid="monitor-v3-component"]')[0].findAll('[data-testid="monitor-v3-cell"]')
+    expect(cells.map((item) => item.attributes('data-status'))).toEqual(['operational', 'degraded', 'down'])
+
+    await cells[0].trigger('mouseenter')
+    expect(tooltip()!.querySelector('[data-testid="monitor-v3-tooltip-probe"]')!.textContent).toContain('channelMonitorV3.tooltip.probe')
+    expect(tooltip()!.textContent).toContain('channelMonitorV3.tooltip.probeLatency')
+    expect(tooltip()!.textContent).toContain('channelMonitorV3.tooltip.seconds:{"value":"1.8"}')
+    expect(tooltip()!.textContent).toContain('channelMonitorV3.tooltip.probeNote')
+    expect(tooltip()!.textContent).not.toContain('channelMonitorV3.tooltip.successRate')
+    expect(tooltip()!.querySelector('[data-testid="monitor-v3-tooltip-probe-note"]')).toBeNull()
+
+    await cells[1].trigger('click')
+    expect(tooltip()!.textContent).toContain('channelMonitorV3.tooltip.probeSlow')
+    expect(tooltip()!.textContent).toContain('channelMonitorV3.tooltip.seconds:{"value":"12"}')
+    expect(tooltip()!.querySelector('[data-testid="monitor-v3-tooltip-probe-note"]')).not.toBeNull()
+
+    await cells[2].trigger('click')
+    expect(tooltip()!.textContent).toContain('channelMonitorV3.tooltip.error')
+    expect(tooltip()!.textContent).toContain('channelMonitorV3.errors.wrong_answer')
+    expect(tooltip()!.textContent).toContain('channelMonitorV3.tooltip.probeLatency—')
+    expect(tooltip()!.querySelector('[data-testid="monitor-v3-tooltip-volume"]')!.textContent).toContain('channelMonitorV3.tooltip.probeVolume:{"probes":1,"requests":1}')
+
+    expect(wrapper.get('[data-testid="monitor-v3-rules"]').attributes('title')).toContain('channelMonitorV3.page.probeRules')
+    expect(wrapper.get('[data-testid="monitor-v3-footer-note"]').text()).toBe('channelMonitorV3.page.defaultFooterchannelMonitorV3.page.probeFooter')
+    const custom = render(page({ idle_probe: true, footer_note: 'Measured by us' }))
+    expect(custom.get('[data-testid="monitor-v3-footer-note"]').text()).toBe('Measured by us')
+    expect(render(page()).get('[data-testid="monitor-v3-rules"]').attributes('title')).not.toContain('probeRules')
+  })
+
   it('shows a skeleton before the first load', () => {
     const wrapper = render(null, true)
     expect(wrapper.find('[aria-busy="true"]').exists()).toBe(true)

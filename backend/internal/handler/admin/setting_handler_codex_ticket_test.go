@@ -145,6 +145,7 @@ func TestSettingsCodexHarvestScopeRoundTripOmissionAndValidation(t *testing.T) {
 		{"mode": "selected", "group_ids": []int64{24, 2, 2}},
 		{"mode": "selected", "group_ids": []int64{}},
 		{"mode": "all", "group_ids": []int64{}},
+		{"mode": "selected_accounts", "group_ids": []int64{}, "account_policy": "prioritize_schedulable"},
 	} {
 		rec := doUpdateSettings(t, h, map[string]any{key: scope}, nil)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -231,4 +232,26 @@ func TestSettingsCodexTicketFailClosedDefaultsOffAndPersists(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "false", repo.values[key])
 	require.False(t, h.settingService.GetOpenAICodexTicketFailClosed(context.Background()))
+}
+
+func TestSettingsCodexTicketCandyObservationRoundTrip(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{})
+	key := service.SettingKeyOpenAICodexTicketCandyObservation
+	require.False(t, h.settingService.CodexTicketCandyObservation(context.Background()))
+	rec := doUpdateSettings(t, h, map[string]any{key: true}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"openai_codex_ticket_candy_observation":true`)
+	require.True(t, h.settingService.CodexTicketCandyObservation(context.Background()))
+	rec = doUpdateSettings(t, h, map[string]any{"site_name": "preserve-beta"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", repo.values[key])
+	get := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(get)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/settings", nil)
+	h.GetSettings(c)
+	require.Contains(t, get.Body.String(), `"openai_codex_ticket_candy_observation":true`)
+	rec = doUpdateSettings(t, h, map[string]any{key: false}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "false", repo.values[key])
+	require.Contains(t, rec.Body.String(), `"openai_codex_ticket_candy_observation":false`)
 }

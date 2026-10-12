@@ -39,7 +39,7 @@ func (r *astraModeRepo) ApplyAstraScheduling(_ context.Context, _ int64, s confi
 	r.calls++
 	return AstraSchedulingActionResult{Changed: true, Allowed: ready, Action: s.EffectiveSchedulingMode()}, nil
 }
-func TestAstraModeSyncDoesNotSkipUnchangedAccountFlag(t *testing.T) {
+func TestAstraModeSyncNeverAppliesProbeScheduling(t *testing.T) {
 	s := config.AstraRoutingSettings{AccountScheduling: true, SchedulingMode: "model", Revision: "test", CookiePool: config.CodexGatewayPinConfig{Enabled: true, TargetAccountIDs: []int64{300}}}
 	cfg := &config.Config{}
 	cfg.SetAstraRoutingLoader(func(context.Context) config.AstraRoutingSettings { return s })
@@ -47,11 +47,11 @@ func TestAstraModeSyncDoesNotSkipUnchangedAccountFlag(t *testing.T) {
 	repo := &astraModeRepo{astraSchedulingRepo: astraSchedulingRepo{accounts: map[int64]*Account{300: a}}}
 	svc := &AccountTestService{cfg: cfg, accountRepo: repo, httpUpstream: &astraSetupUpstream{snapshot: AstraGatewayRuntime{Revision: "test"}}}
 	svc.syncAstraAccountScheduling(t.Context())
-	require.Equal(t, 1, repo.calls)
+	require.Zero(t, repo.calls)
 	require.Empty(t, repo.writes)
 	s.AccountScheduling = false
 	svc.syncAstraAccountScheduling(t.Context())
-	require.Equal(t, 1, repo.calls)
+	require.Zero(t, repo.calls)
 }
 
 func TestAstraModelBlockPreservesSpecificOtherModelWithWildcard(t *testing.T) {

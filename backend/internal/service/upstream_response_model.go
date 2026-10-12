@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -218,6 +219,36 @@ func upstreamResponseModelObserverFromContext(c *gin.Context) *upstreamResponseM
 
 func observedUpstreamResponseModel(c *gin.Context) string {
 	return upstreamResponseModelObserverFromContext(c).Model()
+}
+
+// observeAnthropicUpstreamResponseModel records the model declared by a raw
+// Anthropic response body or SSE event. Protocol converters must call this on
+// the upstream payload before they rewrite the client-facing model.
+func observeAnthropicUpstreamResponseModel(c *gin.Context, payload []byte) {
+	if c == nil || len(bytes.TrimSpace(payload)) == 0 {
+		return
+	}
+	observer := upstreamResponseModelObserverFromContext(c)
+	if observer == nil {
+		observer = beginUpstreamResponseModelObservation(c)
+	}
+	observer.ObserveAnthropic(payload)
+}
+
+func applyObservedUpstreamResponseModel(c *gin.Context, result *OpenAIForwardResult) {
+	if result == nil {
+		return
+	}
+	result.UpstreamResponseModel = observedUpstreamResponseModel(c)
+	result.UpstreamResponseModelConflict = observedUpstreamResponseModelConflict(c)
+}
+
+func applyObservedGatewayResponseModel(c *gin.Context, result *ForwardResult) {
+	if result == nil {
+		return
+	}
+	result.UpstreamResponseModel = observedUpstreamResponseModel(c)
+	result.UpstreamResponseModelConflict = observedUpstreamResponseModelConflict(c)
 }
 
 func observedUpstreamResponseModelConflict(c *gin.Context) bool {

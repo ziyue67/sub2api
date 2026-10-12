@@ -476,7 +476,7 @@
     <CreateAccountModal :show="showCreate" :proxies="proxies" :groups="groups" @close="showCreate = false" @created="reload" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
-    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @tested="reload" />
     <BatchAccountTestModal :show="showBatchTest" :account-ids="selIds" :accounts="accounts" @close="showBatchTest = false" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <AccountProxyLanesModal :show="showProxyLanes" :account="proxyLanesAcc" :proxies="proxies" @close="showProxyLanes = false" @updated="reload" />

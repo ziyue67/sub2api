@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	ManualHarvestNodeSwitchEveryRequest = "every_request"
-	ManualHarvestNodeSwitch312Or2Fail   = "312_or_2fail"
-	ManualHarvestNodeSwitch312Only      = "312_only"
-	ManualHarvestNodeSwitchNever        = "never"
+	ManualHarvestNodeSwitchEveryRequest    = "every_request"
+	ManualHarvestNodeSwitchRejectedOr2Fail = "rejected_or_2fail"
+	ManualHarvestNodeSwitchRejectedOnly    = "rejected_only"
+	ManualHarvestNodeSwitchNever           = "never"
 )
 
 type ManualHarvestRequest struct {
@@ -119,7 +119,7 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 		MaxAttempts: req.MaxAttempts,
 		Result:      "start",
 		Level:       "INFO",
-		Message:     fmt.Sprintf("开始单号打票：账号=%s 模型=%s 换节点=%s", account.Name, strings.Join(req.Models, ","), req.NodeSwitchRule),
+		Message:     fmt.Sprintf("开始单号打票：账号=%s 模型=%s 换节点=%s", account.Name, strings.Join(req.Models, ","), manualHarvestSwitchLabel(req.NodeSwitchRule)),
 	})
 	if manualHarvestRunComplete(req.StopOnSuccess, req.Models, got) {
 		emit(ManualHarvestProgress{MaxAttempts: req.MaxAttempts, Result: "hit", Level: "OK", Done: true, Message: "目标模型已有有效门票，手动打票结束。"})
@@ -227,14 +227,28 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 
 			started := time.Now()
 			session := s.harvestAttemptSession(account, model, lease)
-			result := s.executeCodexHarvestProbe(ctx, account, token, model, lease.proxy, timeout, func() bool { return ctx.Err() == nil }, session)
+			first := true // The node attempt already reserved the first request.
+			result := s.executeCodexHarvestProbe(ctx, account, token, model, lease.proxy, timeout, func() bool {
+				if ctx.Err() != nil || s.codexTicketChatHeld(account.ID) {
+					return false
+				}
+				if first {
+					first = false
+					return true
+				}
+				if attempt >= req.MaxAttempts {
+					return false
+				}
+				attempt++
+				return true
+			}, session)
 			s.completeManualHarvestAttempt(ctx, lease, result, time.Since(started), controls)
 			length, blocks := len(result.State), result.Shape.Blocks
 			raw := ""
 			if result.Err != nil {
 				raw = result.Err.Error()
 			}
-			message, level, detail := describeCodexHarvestOutcome(result.Kind, raw, result.Status, length, blocks, expectedLength, expectedBlocks, model, nodeName)
+			message, level, detail := describeCodexHarvestOutcome(result.Kind, raw, result.Status, model, nodeName, result.ProbeVerified)
 			progressResult := "error"
 			switch result.Kind {
 			case "success":
@@ -244,7 +258,7 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 			case "rate_limited":
 				progressResult = "rate_limited"
 			}
-			recordCodexHarvestProbe(account, model, result.Kind, nodeName, raw, result.Status, length, blocks, expectedLength, expectedBlocks)
+			recordCodexHarvestProbe(account, model, result.Kind, nodeName, raw, result.Status, length, blocks, expectedLength, expectedBlocks, result.ProbeVerified)
 
 			if result.Kind == "success" {
 				consecutiveFails = 0
@@ -287,8 +301,8 @@ func (s *OpenAIGatewayService) ExecuteManualHarvest(ctx context.Context, req Man
 				}
 			}
 
-			if result.Kind != "success" && manualHarvestShouldSwitch(req.NodeSwitchRule, consecutiveFails, result.Kind, length, blocks) {
-				emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: nodeName, Result: "node_switch", Level: "WARN", Message: fmt.Sprintf("按规则 %s 准备换节点（连续失败 %d）。", req.NodeSwitchRule, consecutiveFails), TicketsStored: ticketsStored})
+			if result.Kind != "success" && manualHarvestShouldSwitch(req.NodeSwitchRule, consecutiveFails, result.Kind) {
+				emit(ManualHarvestProgress{Attempt: attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: nodeName, Result: "node_switch", Level: "WARN", Message: fmt.Sprintf("按规则 %s 准备换节点（连续失败 %d）。", manualHarvestSwitchLabel(req.NodeSwitchRule), consecutiveFails), TicketsStored: ticketsStored})
 				forceSwitch = true
 				consecutiveFails = 0
 			}
@@ -333,9 +347,11 @@ func NormalizeManualHarvestRequest(req ManualHarvestRequest) (ManualHarvestReque
 
 	req.NodeSwitchRule = strings.TrimSpace(req.NodeSwitchRule)
 	switch req.NodeSwitchRule {
-	case "", ManualHarvestNodeSwitch312Or2Fail:
-		req.NodeSwitchRule = ManualHarvestNodeSwitch312Or2Fail
-	case ManualHarvestNodeSwitchEveryRequest, ManualHarvestNodeSwitch312Only, ManualHarvestNodeSwitchNever:
+	case "", ManualHarvestNodeSwitchRejectedOr2Fail, "312_or_2fail":
+		req.NodeSwitchRule = ManualHarvestNodeSwitchRejectedOr2Fail
+	case ManualHarvestNodeSwitchRejectedOnly, "312_only":
+		req.NodeSwitchRule = ManualHarvestNodeSwitchRejectedOnly
+	case ManualHarvestNodeSwitchEveryRequest, ManualHarvestNodeSwitchNever:
 	default:
 		return req, errors.New("invalid node_switch_rule")
 	}
@@ -388,17 +404,30 @@ func waitManualHarvest(ctx context.Context, seconds int) error {
 	}
 }
 
-func manualHarvestShouldSwitch(rule string, consecutiveFails int, kind string, length, blocks int) bool {
-	degraded := kind == "invalid_state" && (blocks == 11 || blocks == 13 || length == 312 || length == 356)
+func manualHarvestSwitchLabel(rule string) string {
+	switch rule {
+	case ManualHarvestNodeSwitchRejectedOnly:
+		return "验票失败时切换"
+	case ManualHarvestNodeSwitchEveryRequest:
+		return "每次请求切换"
+	case ManualHarvestNodeSwitchNever:
+		return "保持当前出口"
+	default:
+		return "验票失败或连续失败两次时切换"
+	}
+}
+
+func manualHarvestShouldSwitch(rule string, consecutiveFails int, kind string) bool {
+	rejected := kind == "probe_reissued" || kind == "probe_route_changed" || kind == "invalid_state" || kind == "invalid_route"
 	switch rule {
 	case ManualHarvestNodeSwitchNever:
 		return false
 	case ManualHarvestNodeSwitchEveryRequest:
 		return true
-	case ManualHarvestNodeSwitch312Only:
-		return degraded
+	case ManualHarvestNodeSwitchRejectedOnly:
+		return rejected
 	default:
-		return degraded || consecutiveFails >= 2
+		return rejected || consecutiveFails >= 2
 	}
 }
 
@@ -550,29 +579,29 @@ func describeCodexProbeFailure(rawErr string, status int, model, node string) (m
 	case status == http.StatusUnauthorized:
 		return "账号登录凭证已失效，需要重新登录该账号", "ERROR", detail
 	case status == http.StatusForbidden:
-		return "上游拒绝了本次请求（账号或模型被限制）→ 换节点重试", "WARN", detail
+		return "上游拒绝了本次请求，具体原因未确认", "WARN", detail
 	case strings.Contains(lower, "invalid probe event"):
-		return "节点返回的内容不是有效数据，可能被拦截了 → 换节点重试", "WARN", detail
+		return "节点返回的内容不是有效数据，可能被拦截了", "WARN", detail
 	case strings.Contains(lower, "probe response failed"):
-		return "上游明确返回失败（账号或模型被限制）→ 换节点重试", "WARN", detail
+		return "上游返回失败，本次探针未通过", "WARN", detail
 	case strings.Contains(lower, "invalid probe completion"):
-		return "上游回复不完整就中断了 → 换节点重试", "WARN", detail
+		return "上游回复不完整就中断了", "WARN", detail
 	case strings.Contains(lower, "invalid probe stream"):
-		return "响应数据流损坏，读不下去 → 换节点重试", "WARN", detail
+		return "响应数据流损坏，读不下去", "WARN", detail
 	case strings.Contains(lower, "unterminated probe event"):
-		return "响应被中途截断（连接被掐断）→ 换节点重试", "WARN", detail
+		return "响应在完成前被截断", "WARN", detail
 	case strings.Contains(lower, "probe did not complete successfully"):
-		return "上游没给出完整结果就结束了 → 换节点重试", "WARN", detail
+		return "上游没给出完整结果就结束了", "WARN", detail
 	case strings.Contains(lower, "deadline exceeded"), strings.Contains(lower, "client.timeout"),
 		strings.Contains(lower, "timeout"), strings.Contains(lower, "timed out"):
-		return "节点响应超时（超过设定时间没有回）→ 换节点重试", "WARN", detail
+		return "探针超过时间限制，尚未完成验收", "WARN", detail
 	case strings.Contains(lower, "no such host"), strings.Contains(lower, "connection refused"):
-		return "出口节点连不上 → 换节点重试", "WARN", detail
+		return "出口节点连不上", "WARN", detail
 	case strings.Contains(lower, "eof"), strings.Contains(lower, "connection reset"),
 		strings.Contains(lower, "connection aborted"), strings.Contains(lower, "broken pipe"):
-		return "节点连接被中断 → 换节点重试", "WARN", detail
+		return "节点连接被中断", "WARN", detail
 	}
-	return "本次探针没有拿到合规门票 → 换节点重试", "WARN", detail
+	return "本次探针未通过验收", "WARN", detail
 }
 
 const (

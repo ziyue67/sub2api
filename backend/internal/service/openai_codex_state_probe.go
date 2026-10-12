@@ -81,6 +81,7 @@ type OpenAICodexStateProbeResult struct {
 }
 
 type openAICodexStateShot struct {
+	answer  string
 	status  int
 	state   string
 	cookies []string
@@ -341,11 +342,15 @@ func IsOpenAICodexStateProbeRequest(ctx context.Context) bool {
 }
 
 func fireOpenAICodexStateShotRequest(ctx context.Context, headers http.Header, model, turnState, cookie string, send func(*http.Request) (*http.Response, error)) (openAICodexStateShot, error) {
+	return fireOpenAICodexPromptShotRequest(ctx, headers, model, turnState, cookie, "Reply with OK.", "Reply with OK.", send)
+}
+
+func fireOpenAICodexPromptShotRequest(ctx context.Context, headers http.Header, model, turnState, cookie, instructions, prompt string, send func(*http.Request) (*http.Response, error)) (openAICodexStateShot, error) {
 	var out openAICodexStateShot
 	ctx = context.WithValue(ctx, openAICodexStateProbeContextKey{}, true)
 	shotCtx, cancel := context.WithTimeout(ctx, openAICodexStateProbeShotTimeout)
 	defer cancel()
-	body := []byte(`{"model":` + jsonString(model) + `,"instructions":"Reply with OK.","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply with OK."}]}],"stream":true,"store":false,"parallel_tool_calls":true,"include":["reasoning.encrypted_content"]}`)
+	body := []byte(`{"model":` + jsonString(model) + `,"instructions":` + jsonString(instructions) + `,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":` + jsonString(prompt) + `}]}],"stream":true,"store":false,"parallel_tool_calls":true,"include":["reasoning.encrypted_content"]}`)
 	req, err := http.NewRequestWithContext(shotCtx, http.MethodPost, chatgptCodexURL, bytes.NewReader(body))
 	if err != nil {
 		return out, err
@@ -403,6 +408,7 @@ func fireOpenAICodexStateShotRequest(ctx context.Context, headers http.Header, m
 		out.detail = openAICodexStateDetail(data)
 		return out, nil
 	}
+	out.answer = astraCandyStreamAnswer(data)
 	out.model = openAICodexStateStreamModel(data)
 	if out.streamErr = validateCodexProbeResponse(data); out.streamErr != nil {
 		out.detail = openAICodexStateDetail(openAICodexStateStreamErrorPayload(data))

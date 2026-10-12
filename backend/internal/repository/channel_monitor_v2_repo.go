@@ -26,11 +26,11 @@ func (r *channelMonitorV2Repository) GetConfig(ctx context.Context) (*service.Ch
 		SELECT version, enabled, refresh_interval_seconds, platforms, group_ids,
 		       COALESCE(ignored_error_categories, '{}'),
 		       COALESCE(health_thresholds, '{}'::jsonb), candy_probes,
-		       updated_at, updated_by
+		       candy_history_limit, updated_at, updated_by
 		FROM channel_monitor_v2_config WHERE id = 1`).Scan(
 		&cfg.Version, &cfg.Enabled, &cfg.RefreshIntervalSeconds, &platforms,
 		pq.Array(&cfg.GroupIDs), pq.Array(&cfg.IgnoredErrorCategories),
-		&thresholds, &probes,
+		&thresholds, &probes, &cfg.CandyHistoryLimit,
 		&cfg.UpdatedAt, &cfg.UpdatedBy,
 	)
 	if err != nil {
@@ -45,6 +45,7 @@ func (r *channelMonitorV2Repository) GetConfig(ctx context.Context) (*service.Ch
 	if err := json.Unmarshal(probes, &cfg.CandyProbes); err != nil {
 		return nil, err
 	}
+	cfg.CandyHistoryLimit = service.EffectiveChannelMonitorV2CandyHistoryLimit(cfg.CandyHistoryLimit)
 	cfg.HealthThresholds = service.DefaultChannelMonitorV2HealthThresholds()
 	if len(thresholds) > 0 {
 		_ = json.Unmarshal(thresholds, &cfg.HealthThresholds)
@@ -70,23 +71,27 @@ func (r *channelMonitorV2Repository) UpdateConfig(ctx context.Context, cfg servi
 	if err != nil {
 		return nil, err
 	}
+	if cfg.CandyHistoryLimit == 0 {
+		cfg.CandyHistoryLimit = service.ChannelMonitorV2CandyHistoryDefault
+	}
 	var updated service.ChannelMonitorV2Config
 	var raw, rawThresholds, rawProbes []byte
 	err = r.db.QueryRowContext(ctx, `
 		UPDATE channel_monitor_v2_config
 		SET version = version + 1, enabled = $1, refresh_interval_seconds = $2,
 		    platforms = $3, group_ids = $4, ignored_error_categories = $5,
-		    health_thresholds = $6, updated_by = $7, updated_at = NOW(), candy_probes = $9
+		    health_thresholds = $6, updated_by = $7, updated_at = NOW(), candy_probes = $9,
+		    candy_history_limit = $10
 		WHERE id = 1 AND version = $8
 		RETURNING version, enabled, refresh_interval_seconds, platforms, group_ids,
 		          COALESCE(ignored_error_categories, '{}'),
 		          COALESCE(health_thresholds, '{}'::jsonb), candy_probes,
-		          updated_at, updated_by`,
+		          candy_history_limit, updated_at, updated_by`,
 		cfg.Enabled, cfg.RefreshIntervalSeconds, platforms, pq.Array(cfg.GroupIDs),
-		pq.Array(cfg.IgnoredErrorCategories), thresholds, cfg.UpdatedBy, expectedVersion, probes,
+		pq.Array(cfg.IgnoredErrorCategories), thresholds, cfg.UpdatedBy, expectedVersion, probes, cfg.CandyHistoryLimit,
 	).Scan(&updated.Version, &updated.Enabled, &updated.RefreshIntervalSeconds, &raw,
 		pq.Array(&updated.GroupIDs), pq.Array(&updated.IgnoredErrorCategories),
-		&rawThresholds, &rawProbes,
+		&rawThresholds, &rawProbes, &updated.CandyHistoryLimit,
 		&updated.UpdatedAt, &updated.UpdatedBy)
 	if err == sql.ErrNoRows {
 		return nil, service.ErrChannelMonitorV2ConfigConflict
@@ -103,6 +108,7 @@ func (r *channelMonitorV2Repository) UpdateConfig(ctx context.Context, cfg servi
 	if err := json.Unmarshal(rawProbes, &updated.CandyProbes); err != nil {
 		return nil, err
 	}
+	updated.CandyHistoryLimit = service.EffectiveChannelMonitorV2CandyHistoryLimit(updated.CandyHistoryLimit)
 	updated.HealthThresholds = service.DefaultChannelMonitorV2HealthThresholds()
 	_ = json.Unmarshal(rawThresholds, &updated.HealthThresholds)
 	updated.HealthThresholds = service.NormalizeChannelMonitorV2HealthThresholds(updated.HealthThresholds)
@@ -213,7 +219,7 @@ func (r *channelMonitorV2Repository) GetDimensions(ctx context.Context, filter s
 		Models:    []service.ChannelMonitorV2Dimension{},
 	}
 	for value, count := range platformCounts {
-		result.Platforms = append(result.Platforms, service.ChannelMonitorV2Dimension{Value: value, Label: value, RequestCount: count})
+		result.Platforms = append(result.Platforms, service.ChannelMonitorV2Dimension{Value: value, Label: service.ChannelMonitorV2PlatformLabel(value), RequestCount: count})
 	}
 	for value, meta := range modelCounts {
 		result.Models = append(result.Models, service.ChannelMonitorV2Dimension{Value: value, Label: channelMonitorV2ModelLabel(value), Platform: meta.platform, RequestCount: meta.count})
@@ -221,7 +227,9 @@ func (r *channelMonitorV2Repository) GetDimensions(ctx context.Context, filter s
 	for id, value := range groupCounts {
 		result.Groups = append(result.Groups, service.ChannelMonitorV2GroupDimension{ID: id, Name: value.name, Platform: value.platform, RequestCount: value.count})
 	}
-	sort.Slice(result.Platforms, func(i, j int) bool { return result.Platforms[i].RequestCount > result.Platforms[j].RequestCount })
+	sort.Slice(result.Platforms, func(i, j int) bool {
+		return channelMonitorV2PlatformLess(cfg, result.Platforms[i].Value, result.Platforms[j].Value)
+	})
 	sort.Slice(result.Models, func(i, j int) bool { return result.Models[i].RequestCount > result.Models[j].RequestCount })
 	sort.Slice(result.Groups, func(i, j int) bool { return result.Groups[i].RequestCount > result.Groups[j].RequestCount })
 	return result, rows.Err()
@@ -360,6 +368,8 @@ func (r *channelMonitorV2Repository) GetModels(ctx context.Context, filter servi
 		applyIgnoredErrors(&metrics, ignoredByPM[key])
 		items = append(items, service.ChannelMonitorV2ModelRow{Platform: parts[0], Model: parts[1], Metrics: metrics, Health: service.ChannelMonitorV2HealthForWithThresholds(metrics, cfg.HealthThresholds)})
 	}
+	// Model ranking stays by request volume. Platform display order applies to
+	// filters, cards, and the matrix, not this table.
 	sort.Slice(items, func(i, j int) bool { return items[i].Metrics.RequestCount > items[j].Metrics.RequestCount })
 	return &service.ChannelMonitorV2List[service.ChannelMonitorV2ModelRow]{Coverage: *coverage, Items: items}, nil
 }
@@ -496,7 +506,7 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 	sort.Slice(result.Items, func(i, j int) bool {
 		a, b := result.Items[i], result.Items[j]
 		if a.Platform != b.Platform {
-			return a.Platform < b.Platform
+			return channelMonitorV2PlatformLess(cfg, a.Platform, b.Platform)
 		}
 		if a.GroupName != b.GroupName {
 			return a.GroupName < b.GroupName
@@ -1197,6 +1207,15 @@ func channelMonitorV2Where(filter service.ChannelMonitorV2Filter, cfg service.Ch
 		conditions = append(conditions, fmt.Sprintf("%s.group_id = ANY($%d)", alias, len(args)))
 	}
 	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func channelMonitorV2PlatformLess(cfg service.ChannelMonitorV2Config, a, b string) bool {
+	ia := service.ChannelMonitorV2PlatformIndex(cfg, a)
+	ib := service.ChannelMonitorV2PlatformIndex(cfg, b)
+	if ia != ib {
+		return ia < ib
+	}
+	return a < b
 }
 
 func channelMonitorV2EnabledPlatforms(cfg service.ChannelMonitorV2Config) []string {

@@ -14,27 +14,28 @@ import (
 
 type candyRepoFake struct {
 	channelMonitorV2RepoStub
-	mu             sync.Mutex
-	claims         map[string]int64
-	results        []ChannelMonitorV2CandyResult
-	history        []ChannelMonitorV2CandyResult
-	historyConfigs map[int64]string
-	historySince   time.Time
-	prunes         int
+	mu            sync.Mutex
+	claims        map[string]int64
+	results       []ChannelMonitorV2CandyResult
+	history       []ChannelMonitorV2CandyResult
+	historyScopes []ChannelMonitorV2CandyScope
+	historySince  time.Time
+	historyLimit  int
+	prunes        int
 }
 
-func (r *candyRepoFake) ClaimCandyProbe(_ context.Context, p ChannelMonitorV2CandyProbe, _ string, slot time.Time, version int) (int64, error) {
+func (r *candyRepoFake) ClaimCandyProbe(_ context.Context, p ChannelMonitorV2CandyProbe, key string, slot time.Time, version int) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := fmt.Sprint(p.GroupID, slot)
+	claimKey := fmt.Sprintf("%d\x00%s\x00%d", p.GroupID, key, slot.Unix())
 	if r.claims == nil {
 		r.claims = map[string]int64{}
 	}
-	if _, ok := r.claims[key]; ok || version != r.config.Version {
+	if _, ok := r.claims[claimKey]; ok || version != r.config.Version {
 		return 0, nil
 	}
 	id := int64(len(r.claims) + 1)
-	r.claims[key] = id
+	r.claims[claimKey] = id
 	return id, nil
 }
 func (r *candyRepoFake) FinishCandyProbe(_ context.Context, result ChannelMonitorV2CandyResult) error {
@@ -43,9 +44,10 @@ func (r *candyRepoFake) FinishCandyProbe(_ context.Context, result ChannelMonito
 	r.results = append(r.results, result)
 	return nil
 }
-func (r *candyRepoFake) CandyHistory(_ context.Context, configs map[int64]string, since time.Time) ([]ChannelMonitorV2CandyResult, error) {
-	r.historyConfigs = configs
+func (r *candyRepoFake) CandyHistory(_ context.Context, scopes []ChannelMonitorV2CandyScope, since time.Time, limit int) ([]ChannelMonitorV2CandyResult, error) {
+	r.historyScopes = scopes
 	r.historySince = since
+	r.historyLimit = limit
 	return r.history, nil
 }
 func (r *candyRepoFake) PruneCandyHistory(context.Context, time.Time) error { r.prunes++; return nil }
@@ -124,35 +126,81 @@ func TestChannelMonitorV2CandyGatesAndValidation(t *testing.T) {
 	}
 	require.Error(t, normalizeChannelMonitorV2CandyProbes([]ChannelMonitorV2CandyProbe{candyProbeFixture(), candyProbeFixture()}))
 	require.Error(t, normalizeChannelMonitorV2CandyProbes(make([]ChannelMonitorV2CandyProbe, 65)))
+	second := candyProbeFixture()
+	second.Model = "gpt-other"
+	require.NoError(t, normalizeChannelMonitorV2CandyProbes([]ChannelMonitorV2CandyProbe{candyProbeFixture(), second}))
+	otherEffort := second
+	otherEffort.ReasoningEffort = "high"
+	require.NoError(t, normalizeChannelMonitorV2CandyProbes([]ChannelMonitorV2CandyProbe{second, otherEffort}))
+	sameEffort := second
+	sameEffort.IntervalMinutes = 5
+	require.Error(t, normalizeChannelMonitorV2CandyProbes([]ChannelMonitorV2CandyProbe{second, sameEffort}))
+	for _, limit := range []int{29, 101} {
+		cfg := ChannelMonitorV2Config{RefreshIntervalSeconds: 60, CandyHistoryLimit: limit}
+		require.ErrorIs(t, normalizeChannelMonitorV2Config(&cfg), ErrChannelMonitorV2InvalidConfig)
+	}
+	cfg := ChannelMonitorV2Config{RefreshIntervalSeconds: 60, CandyHistoryLimit: 30}
+	require.NoError(t, normalizeChannelMonitorV2Config(&cfg))
+	require.Equal(t, 30, cfg.CandyHistoryLimit)
+	cfg.CandyHistoryLimit = ChannelMonitorV2CandyHistoryMax
+	require.NoError(t, normalizeChannelMonitorV2Config(&cfg))
+	require.Equal(t, ChannelMonitorV2CandyHistoryMax, cfg.CandyHistoryLimit)
+	cfg.CandyHistoryLimit = 0
+	require.NoError(t, normalizeChannelMonitorV2Config(&cfg))
+	require.Equal(t, ChannelMonitorV2CandyHistoryDefault, cfg.CandyHistoryLimit)
 }
 
 func TestChannelMonitorV2CandyHistoryScopeAndRedaction(t *testing.T) {
 	p := candyProbeFixture()
+	second := p
+	second.Model = "gpt-other"
 	other := p
 	other.GroupID = 99
 	repo := &candyRepoFake{history: []ChannelMonitorV2CandyResult{
 		{GroupID: 4, ConfigKey: p.key(), Verdict: "correct", AnswerPreview: "private answer", Reason: "private reason"},
+		{GroupID: 4, ConfigKey: second.key(), Verdict: "incorrect", AnswerPreview: "second private", Reason: "second reason"},
 		{GroupID: 4, ConfigKey: "obsolete model", Verdict: "incorrect"},
 		{GroupID: 99, ConfigKey: other.key(), Verdict: "incorrect", AnswerPreview: "other group"},
 	}}
 	groups, _ := newGroupTestService(newGroupTestRepoFake(), &groupTestRouterFake{}, nil)
 	s := candyServiceFixture(repo, groups)
 	cfg := candyConfigFixture()
-	cfg.CandyProbes = append(cfg.CandyProbes, other)
+	cfg.CandyHistoryLimit = 40
+	cfg.CandyProbes = []ChannelMonitorV2CandyProbe{p, second, other}
 	id := int64(4)
 	matrix := &ChannelMonitorV2Matrix{Items: []ChannelMonitorV2MatrixRow{{GroupID: &id}}}
 	require.NoError(t, s.attachHistory(context.Background(), matrix, &cfg, false))
-	require.Equal(t, map[int64]string{4: p.key()}, repo.historyConfigs)
+	require.Equal(t, []ChannelMonitorV2CandyScope{{GroupID: 4, ConfigKey: p.key()}, {GroupID: 4, ConfigKey: second.key()}}, repo.historyScopes)
+	require.Equal(t, 40, repo.historyLimit)
 	require.Equal(t, groupTestNow.Add(-24*time.Hour), repo.historySince)
 	require.Len(t, matrix.Items[0].Candy.Results, 1)
+	require.Len(t, matrix.Items[0].CandyChecks, 2)
+	require.Equal(t, "gpt-other", matrix.Items[0].CandyChecks[1].Model)
+	require.Equal(t, 40, matrix.Items[0].CandyChecks[1].HistoryLimit)
+	require.Empty(t, matrix.Items[0].CandyChecks[1].Results[0].AnswerPreview)
 	encoded, err := json.Marshal(matrix)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "private")
 	require.NotContains(t, string(encoded), "other group")
 	require.NoError(t, s.attachHistory(context.Background(), matrix, &cfg, true))
 	require.Equal(t, "private answer", matrix.Items[0].Candy.Results[0].AnswerPreview)
+	require.Equal(t, "second private", matrix.Items[0].CandyChecks[1].Results[0].AnswerPreview)
 	redactChannelMonitorV2PublicConfig(&cfg)
 	require.Nil(t, cfg.CandyProbes)
+}
+
+func TestChannelMonitorV2CandyRunsEachConfiguredModel(t *testing.T) {
+	repo := &candyRepoFake{channelMonitorV2RepoStub: channelMonitorV2RepoStub{config: candyConfigFixture()}}
+	second := candyProbeFixture()
+	second.Model = "gpt-other"
+	repo.config.CandyProbes = append(repo.config.CandyProbes, second)
+	groups, _ := newGroupTestService(newGroupTestRepoFake(), &groupTestRouterFake{}, func(context.Context, int64, string, *PelicanTestConfig) (*ScheduledTestResult, error) {
+		return &ScheduledTestResult{Status: "success", ResponseText: "21"}, nil
+	})
+	s := candyServiceFixture(repo, groups)
+	s.RunDue(context.Background(), groupTestNow)
+	require.Len(t, repo.results, 2)
+	require.ElementsMatch(t, []string{candyProbeFixture().key(), second.key()}, []string{repo.results[0].ConfigKey, repo.results[1].ConfigKey})
 }
 
 type candyRouterSpy struct {

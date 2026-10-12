@@ -3,11 +3,13 @@ package admin
 import (
 	"context"
 	"errors"
+	"net/http"
+
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/mihomo"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
-	"net/http"
 )
 
 // mihomoNodeChecker runs the static proxy list's connection test and quality
@@ -15,6 +17,7 @@ import (
 type mihomoNodeChecker interface {
 	TestMihomoNode(ctx context.Context, kernel service.MihomoNodeProber, name string) (*service.ProxyTestResult, error)
 	CheckMihomoNodeQuality(ctx context.Context, kernel service.MihomoNodeProber, name string) (*service.ProxyQualityCheckResult, error)
+	CreateMihomoNodeProxies(ctx context.Context, kernel service.MihomoStaticNodeBinder, names []string) (*service.MihomoNodeProxyImportResult, error)
 }
 
 // SetMihomoNodeChecker enables per-node connection tests and quality checks.
@@ -46,6 +49,36 @@ func (h *SystemHandler) CheckMihomoNodeQuality(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+// AddMihomoNodesAsStaticProxies exposes selected subscription or dynamic nodes
+// as fixed local exits in IP Management's ordinary static proxy list.
+func (h *SystemHandler) AddMihomoNodesAsStaticProxies(c *gin.Context) {
+	if h.nodeChecker == nil {
+		response.Error(c, http.StatusServiceUnavailable, "node proxy creation is unavailable")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+	var req struct {
+		Names []string `json:"names" binding:"required,min=1,max=100"`
+	}
+	if c.ShouldBindJSON(&req) != nil {
+		response.Error(c, http.StatusBadRequest, "select between 1 and 100 nodes")
+		return
+	}
+	result, err := h.nodeChecker.CreateMihomoNodeProxies(c.Request.Context(), h.kernel, req.Names)
+	if response.ErrorFrom(c, err) {
+		return
+	}
+	created := make([]*dto.AdminProxy, 0, len(result.Created))
+	for i := range result.Created {
+		created = append(created, dto.ProxyFromServiceAdmin(&result.Created[i]))
+	}
+	existing := make([]*dto.AdminProxy, 0, len(result.Existing))
+	for i := range result.Existing {
+		existing = append(existing, dto.ProxyFromServiceAdmin(&result.Existing[i]))
+	}
+	response.Success(c, gin.H{"created": created, "existing": existing, "failed": result.Failed})
 }
 
 func (h *SystemHandler) GetMihomo(c *gin.Context) { response.Success(c, h.kernel.Status()) }

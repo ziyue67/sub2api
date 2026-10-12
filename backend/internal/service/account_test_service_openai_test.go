@@ -779,3 +779,26 @@ func TestAccountTestService_OpenAIChatCompletionsPathRejectsNonJSONStream(t *tes
 	require.Contains(t, recorder.Body.String(), "/v1/chat/completions")
 	require.NotContains(t, recorder.Body.String(), `"success":true`)
 }
+
+func TestAccountTestService_AstraSourceProbeDoesNotChangeSchedulingState(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			ctx, _ := newTestContext()
+			ctx.Request = ctx.Request.WithContext(WithAstraSourceAcquisition(ctx.Request.Context()))
+			resp := newJSONResponse(status, `{"error":{"type":"usage_limit_reached","resets_at":1999999999}}`)
+			resp.Header.Set("x-codex-primary-used-percent", "100")
+			resp.Header.Set("x-codex-primary-reset-after-seconds", "3600")
+			repo := &openAIAccountTestRepo{}
+			svc := &AccountTestService{accountRepo: repo, httpUpstream: &queuedHTTPUpstream{responses: []*http.Response{resp}}}
+			account := &Account{ID: 88, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"access_token": "test-token"}}
+			require.Error(t, svc.testOpenAIAccountConnection(ctx, account, "gpt-6-astra", "Reply OK", ""))
+			require.Zero(t, repo.setErrorID)
+			require.Zero(t, repo.rateLimitedID)
+			require.Zero(t, repo.clearedErrorID)
+			require.Empty(t, repo.updatedExtra)
+			require.Equal(t, StatusActive, account.Status)
+			require.True(t, account.Schedulable)
+			require.Nil(t, account.RateLimitResetAt)
+		})
+	}
+}

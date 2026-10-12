@@ -45,6 +45,15 @@ afterEach(() => {
 })
 
 describe('HarvestManualConsole', () => {
+  it('renders as a section without a second card when embedded in harvest controls', () => {
+    const wrapper = mount(HarvestManualConsole, {
+      props: { accounts: [], models: [], embedded: true },
+      global: { stubs: { Icon: true } }
+    })
+    expect(wrapper.classes()).not.toContain('card')
+    wrapper.unmount()
+  })
+
   it('streams a directed harvest with the selected switch rule', async () => {
     const pending = deferred<void>()
     let onProgress: ((progress: ManualHarvestProgress) => void) | undefined

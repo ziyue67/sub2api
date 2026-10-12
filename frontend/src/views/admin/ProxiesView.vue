@@ -98,7 +98,8 @@
 
       <template #table>
         <div v-if="activeManagementTab !== 'proxies'" class="min-h-0 flex-1 overflow-y-auto p-4">
-          <MihomoSettings :section="activeManagementTab" />
+          <HarvestProxySettings v-if="activeManagementTab === 'harvest'" />
+          <MihomoSettings v-else :section="activeManagementTab" @static-proxies-added="loadProxies" />
         </div>
         <div v-show="activeManagementTab === 'proxies'" ref="proxyTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DataTable
@@ -130,8 +131,9 @@
             />
           </template>
 
-          <template #cell-name="{ value }">
+          <template #cell-name="{ value, row }">
             <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+            <span v-if="row.mihomo_node_id" class="badge badge-primary ml-2">Mihomo</span>
           </template>
 
           <template #cell-protocol="{ value }">
@@ -692,12 +694,12 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.proxies.protocol') }}</label>
-          <Select v-model="editForm.protocol" :options="protocolSelectOptions" />
+          <Select v-model="editForm.protocol" :options="protocolSelectOptions" :disabled="!!editingProxy?.mihomo_node_id" />
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="input-label">{{ t('admin.proxies.host') }}</label>
-            <input v-model="editForm.host" type="text" required class="input" />
+            <input v-model="editForm.host" type="text" required class="input" :disabled="!!editingProxy?.mihomo_node_id" />
           </div>
           <div>
             <label class="input-label">{{ t('admin.proxies.port') }}</label>
@@ -708,12 +710,13 @@
               min="1"
               max="65535"
               class="input"
+              :disabled="!!editingProxy?.mihomo_node_id"
             />
           </div>
         </div>
         <div>
           <label class="input-label">{{ t('admin.proxies.username') }}</label>
-          <input v-model="editForm.username" type="text" class="input" />
+          <input v-model="editForm.username" type="text" class="input" :disabled="!!editingProxy?.mihomo_node_id" />
         </div>
         <div>
           <label class="input-label">{{ t('admin.proxies.password') }}</label>
@@ -723,11 +726,13 @@
               :type="editPasswordVisible ? 'text' : 'password'"
               :placeholder="t('admin.proxies.leaveEmptyToKeep')"
               class="input pr-10"
+              :disabled="!!editingProxy?.mihomo_node_id"
               @input="editPasswordDirty = true"
             />
             <button
               type="button"
               class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              :disabled="!!editingProxy?.mihomo_node_id"
               @click="editPasswordVisible = !editPasswordVisible"
             >
               <Icon :name="editPasswordVisible ? 'eyeOff' : 'eye'" size="md" />
@@ -912,6 +917,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MihomoSettings from './settings/MihomoSettings.vue'
+import HarvestProxySettings from '@/components/admin/HarvestProxySettings.vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -942,6 +948,7 @@ const route = useRoute()
 const router = useRouter()
 const managementTabs = [
   { key: 'proxies', label: 'admin.proxies.proxyList' },
+  { key: 'harvest', label: 'admin.settings.gatewayForwarding.codexTicketHarvestProxy' },
   { key: 'subscriptions', label: 'admin.proxies.subscriptions' },
   { key: 'dynamic', label: 'admin.proxies.dynamicProxies' },
   { key: 'nodes', label: 'admin.proxies.nodes' },
@@ -1436,6 +1443,13 @@ const handleUpdateProxy = async () => {
       fallback_mode: editForm.fallback_mode,
       backup_proxy_id: editForm.fallback_mode === 'proxy' ? editForm.backup_proxy_id : null,
       expiry_warn_days: editForm.expiry_warn_days,
+    }
+
+    if (editingProxy.value.mihomo_node_id) {
+      delete updateData.protocol
+      delete updateData.host
+      delete updateData.port
+      delete updateData.username
     }
 
     // Only include password if user actually modified the field

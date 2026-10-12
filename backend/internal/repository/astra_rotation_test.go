@@ -75,6 +75,11 @@ func rotationFixture(t *testing.T, limit int, successNode string) (*astraRouting
 func rotationTarget(t *testing.T) *http.Request {
 	r := pinRequest(t)
 	r.Header.Set("Authorization", "Bearer target-only")
+	return forceAstraProbe(r)
+}
+func rotationBusinessTarget(t *testing.T) *http.Request {
+	r := pinRequest(t)
+	r.Header.Set("Authorization", "Bearer target-only")
 	return r
 }
 
@@ -91,7 +96,7 @@ func TestAstraGatewayRotationRejectsBadNodeAndPinsSuccessfulNode(t *testing.T) {
 	require.Equal(t, "SG", snapshot.Targets[0].ProxyCountry)
 	require.Equal(t, "SG fixture", snapshot.Targets[0].ProxyNode)
 	// A new private listener for the same node must reuse qualification, not credentials.
-	resp, err = s.Do(rotationTarget(t), "target-original", 300, 1)
+	resp, err = s.Do(rotationBusinessTarget(t), "target-original", 300, 1)
 	consumeAffinityResponse(t, resp, err)
 	require.Len(t, *calls, 8)
 	cookie, proxy, release, err := s.CodexGatewayPinWSRequest(t.Context(), rotationTarget(t).Header, "target-original", 300, 1)
@@ -102,7 +107,7 @@ func TestAstraGatewayRotationRejectsBadNodeAndPinsSuccessfulNode(t *testing.T) {
 	release()
 	require.Zero(t, *leases)
 	require.Len(t, *calls, 8, "WS reuses node qualification while owning its own dial lease")
-	// Expiration picks the next eligible exit rather than extending old Cookie lifetime.
+	// Explicit diagnostics can acquire another exit after expiration.
 	pool := s.current(t.Context())
 	route := pool.routes[299]
 	route.expires = time.Now().Add(-time.Second)

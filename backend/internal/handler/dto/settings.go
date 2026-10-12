@@ -30,6 +30,7 @@ type CustomEndpoint struct {
 type SystemSettings struct {
 	OpenAICodexTicketHarvestScope       service.CodexTicketHarvestScope `json:"openai_codex_ticket_harvest_scope"`
 	OpenAICodexTicketStrictResponse     bool                            `json:"openai_codex_ticket_strict_response,omitempty"`
+	OpenAICodexTicketCandyObservation   bool                            `json:"openai_codex_ticket_candy_observation"`
 	OpenAICodexTicketFailClosed         bool                            `json:"openai_codex_ticket_fail_closed"`
 	OpenAICodexTicketStrategy           string                          `json:"openai_codex_ticket_strategy"`
 	RegistrationEnabled                 bool                            `json:"registration_enabled"`
@@ -225,6 +226,7 @@ type SystemSettings struct {
 	OpenAICodexClientVersion                string   `json:"openai_codex_client_version"`
 	OpenAICodexClientVersionSynced          string   `json:"openai_codex_client_version_synced"`
 	OpenAICodexVersionAutoSyncEnabled       bool     `json:"openai_codex_version_auto_sync_enabled"`
+	OpenAIRequestTimezoneEnabled            bool     `json:"openai_request_timezone_enabled"`
 	OpenAICodexTicketEnabled                bool     `json:"openai_codex_ticket_enabled"`
 	OpenAICodexTicketHarvestProxyURL        string   `json:"openai_codex_ticket_harvest_proxy_url"`
 	OpenAICodexTicketStaticProxyURL         string   `json:"openai_codex_ticket_static_proxy_url,omitempty"`

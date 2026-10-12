@@ -89,6 +89,12 @@ export function formatMonitorV3Bucket(ms: number | null | undefined): string {
   return `≤ ${Number((ms / 1000).toFixed(2))}s`
 }
 
+/** A probe time in seconds: 1834 → "1.8", 12000 → "12", 40 → "<0.1". */
+export function formatMonitorV3Seconds(ms: number): string {
+  if (ms < 100) return '<0.1'
+  return String(Number((ms / 1000).toFixed(ms < 10_000 ? 1 : 0)))
+}
+
 /** "10/4 15:35 - 15:40", or both dates when the slot crosses midnight. */
 export function formatMonitorV3Slot(start: string, intervalMinutes: number): string {
   const from = new Date(start)

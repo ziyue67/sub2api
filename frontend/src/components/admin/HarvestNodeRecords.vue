@@ -18,7 +18,7 @@
           <div class="min-w-0">
             <p class="truncate text-sm font-medium text-gray-900 dark:text-white">{{ node.node_name }}</p>
             <p class="mt-1 truncate text-[11px] text-gray-400">
-              {{ node.provider }} · #{{ node.account_id }} {{ accountNames?.[node.account_id] || '—' }} · {{ node.model }} · {{ node.blocks }}
+              {{ node.provider }} · #{{ node.account_id }} {{ accountNames?.[node.account_id] || '—' }} · {{ node.model }}
             </p>
           </div>
           <button

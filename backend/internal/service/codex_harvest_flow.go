@@ -66,17 +66,19 @@ type CodexHarvestFlowStage struct {
 }
 
 type CodexHarvestFlowAccount struct {
-	ID           int64                     `json:"id"`
-	Name         string                    `json:"name"`
-	Status       string                    `json:"status"`
-	Schedulable  bool                      `json:"schedulable"`
-	SkipHarvest  bool                      `json:"skip_harvest"`
-	InScope      bool                      `json:"in_scope"`
-	Availability string                    `json:"availability"`
-	RecoverAt    *time.Time                `json:"recover_at,omitempty"`
-	Tickets      []OpenAICodexTicketStatus `json:"tickets"`
-	ReadyCount   int                       `json:"ready_count"`
-	BlockedCount int                       `json:"blocked_count"`
+	Coverage        *CodexHarvestAccountCoverage `json:"coverage,omitempty"`
+	ID              int64                        `json:"id"`
+	Name            string                       `json:"name"`
+	Status          string                       `json:"status"`
+	Schedulable     bool                         `json:"schedulable"`
+	HarvestSelected bool                         `json:"harvest_selected"`
+	SkipHarvest     bool                         `json:"skip_harvest"`
+	InScope         bool                         `json:"in_scope"`
+	Availability    string                       `json:"availability"`
+	RecoverAt       *time.Time                   `json:"recover_at,omitempty"`
+	Tickets         []OpenAICodexTicketStatus    `json:"tickets"`
+	ReadyCount      int                          `json:"ready_count"`
+	BlockedCount    int                          `json:"blocked_count"`
 }
 
 type CodexHarvestFlowHarvest struct {
@@ -122,6 +124,7 @@ type CodexHarvestFlowCounts struct {
 }
 
 type CodexHarvestFlowSnapshot struct {
+	Coverage    *CodexHarvestCoverage     `json:"coverage,omitempty"`
 	GeneratedAt time.Time                 `json:"generated_at"`
 	Harvest     CodexHarvestFlowHarvest   `json:"harvest"`
 	Sidecar     CodexHarvestFlowSidecar   `json:"sidecar"`
@@ -287,7 +290,7 @@ func recordCodexHarvestNode(now, groupType string, allCount int) {
 	})
 }
 
-func recordCodexHarvestProbe(account *Account, model, result, node, detail string, httpStatus, length, blocks, expectedLength, expectedBlocks int) {
+func recordCodexHarvestProbe(account *Account, model, result, node, detail string, httpStatus, length, blocks, expectedLength, expectedBlocks int, verified ...bool) {
 	kind := "probe_miss"
 	if result == "success" {
 		kind = "probe_hit"
@@ -306,8 +309,13 @@ func recordCodexHarvestProbe(account *Account, model, result, node, detail strin
 		Result:         result,
 		Detail:         detail,
 	}
+	if result == "success" && len(verified) > 0 && verified[0] {
+		// Reason is persisted by the existing event schema. Old shape-only hits
+		// have no marker and cannot become successful probes after a restart.
+		event.Reason = "probe_verified"
+	}
 	if result != "success" {
-		message, _, _ := describeCodexHarvestOutcome(result, detail, httpStatus, length, blocks, expectedLength, expectedBlocks, model, node)
+		message, _, _ := describeCodexHarvestOutcome(result, detail, httpStatus, model, node, event.Reason == "probe_verified")
 		event.Detail = message
 		// Native mint errors contain only controlled diagnostic categories.
 		if (result == "invalid_route" || result == "model_mismatch" || strings.HasPrefix(detail, "mint transport:")) && detail != "" {
@@ -315,7 +323,11 @@ func recordCodexHarvestProbe(account *Account, model, result, node, detail strin
 		}
 		event.Reason = result
 	} else if strings.TrimSpace(detail) == "" && length > 0 {
-		event.Detail = fmt.Sprintf("合格门票 %d 字节 / %d 块", length, blocks)
+		if event.Reason == "probe_verified" {
+			event.Detail = "探针校验通过：完整续接，原票未重签"
+		} else {
+			event.Detail = "已捕获票据，未记录续接验收结果"
+		}
 	}
 	if account != nil {
 		event.AccountID = account.ID
@@ -392,6 +404,22 @@ func recordCodexHarvestSelect(account *Account, model, kind, reason, detail stri
 		Reason: reason,
 		Detail: detail,
 	}
+	if account != nil {
+		event.AccountID = account.ID
+		event.AccountName = account.Name
+	}
+	recordCodexHarvestFlow(event)
+}
+
+// recordCodexHarvestScheduling publishes the account-pool handoff in the same
+// redacted flow used by the harvest page. It contains no credentials, routes or
+// upstream response data; the select stage is now the scheduling timeline.
+func recordCodexHarvestScheduling(account *Account, mode, reason string, schedulable bool) {
+	kind := "schedule_leave"
+	if schedulable {
+		kind = "schedule_join"
+	}
+	event := CodexHarvestFlowEvent{Stage: "select", Kind: kind, Reason: clipFlowText(reason, 64), Detail: clipFlowText(reason, 64), Result: clipFlowText(mode, 32)}
 	if account != nil {
 		event.AccountID = account.ID
 		event.AccountName = account.Name
@@ -749,7 +777,7 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 	rawEvents := listCodexHarvestFlowEvents()
 	events := make([]CodexHarvestFlowEvent, 0, len(rawEvents))
 	for _, event := range rawEvents {
-		if event.Stage == "select" {
+		if event.Stage == "select" && event.Kind != "schedule_join" && event.Kind != "schedule_leave" && event.Kind != "candy_pass" && event.Kind != "candy_fail" {
 			continue
 		}
 		events = append(events, event)
@@ -782,6 +810,10 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 		Events:   events,
 		Accounts: []CodexHarvestFlowAccount{},
 	}
+	if len(controls) > 0 && controls[0] != nil {
+		coverage := controls[0].coverage.snapshot()
+		snapshot.Coverage = &coverage
+	}
 	if snapshot.Harvest.HarvestProxy == "" && harvestProxy == mihomo.Endpoint {
 		snapshot.Harvest.HarvestProxy = mihomo.Endpoint
 	}
@@ -791,26 +823,27 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 		}
 		availability, recoverAt := ResolveCodexAccountAvailability(&account, now)
 		item := CodexHarvestFlowAccount{
-			ID:           account.ID,
-			Name:         account.Name,
-			Status:       account.Status,
-			Schedulable:  account.Schedulable,
-			SkipHarvest:  openAICodexSkipHarvest(&account),
-			InScope:      !openAICodexSkipHarvest(&account) && scope.includes(&account),
-			Availability: availability,
-			RecoverAt:    recoverAt,
-			Tickets:      OpenAICodexTicketStatuses(&account, ticketCfg, now),
+			ID:              account.ID,
+			Name:            account.Name,
+			Status:          account.Status,
+			Schedulable:     account.Schedulable,
+			SkipHarvest:     openAICodexSkipHarvest(&account),
+			HarvestSelected: !openAICodexSkipHarvest(&account) && (scope.Mode != "selected_accounts" || scope.includes(&account)),
+			InScope:         !openAICodexSkipHarvest(&account) && scope.includes(&account),
+			Availability:    availability,
+			RecoverAt:       recoverAt,
+			Tickets:         OpenAICodexTicketStatuses(&account, ticketCfg, now),
 		}
 		for i := range item.Tickets {
 			ticket := &item.Tickets[i]
-			if ticket.Length == 780 && (ticket.Transport != policy.Transport || !codex780GatewayAllowed(ticket.Gateway, policy.TargetGateway)) {
+			if ticket.Length == 780 && ticket.Transport != policy.Transport {
 				ticket.Ready = false
 				ticket.RemainingSeconds = 0
 				ticket.ExpiresAt = nil
 				ticket.StandbyExpiresAt = nil
 				ticket.Blocked = ticketCfg.FailClosed && !item.SkipHarvest
 			}
-			if ticketCfg.FailClosed && !item.SkipHarvest && !item.InScope {
+			if ticketCfg.FailClosed && scope.Mode == "selected" && !item.SkipHarvest && !item.InScope {
 				ticket.Blocked = true
 			}
 			if ticket.Ready && !ticket.Blocked {
@@ -820,6 +853,11 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 			if ticket.Blocked {
 				item.BlockedCount++
 				snapshot.Counts.TicketsBlocked++
+			}
+		}
+		if snapshot.Coverage != nil {
+			if coverage, ok := snapshot.Coverage.Accounts[account.ID]; ok {
+				item.Coverage = &coverage
 			}
 		}
 		snapshot.Accounts = append(snapshot.Accounts, item)
@@ -834,9 +872,9 @@ func BuildCodexHarvestFlow(ctx context.Context, cfg *config.Config, settings *Se
 			snapshot.Counts.TicketAccept++
 		case "reject":
 			snapshot.Counts.TicketReject++
-		case "selected":
+		case "schedule_join":
 			snapshot.Counts.SelectOK++
-		case "skip":
+		case "schedule_leave":
 			snapshot.Counts.SelectSkip++
 		case "failed", "unavailable":
 			snapshot.Counts.SelectFail++
@@ -911,6 +949,7 @@ func buildCodexHarvestFlowStages(snapshot CodexHarvestFlowSnapshot) []CodexHarve
 
 	probe := stageFromEvent("probe", last["probe"], "waiting for harvest probe")
 	if event, ok := last["probe"]; ok {
+		probe.Detail = event.Result
 		copyFlowMetrics(&probe, event)
 		if event.Kind == "probe_hit" {
 			probe.Status = "ok"
@@ -922,7 +961,7 @@ func buildCodexHarvestFlowStages(snapshot CodexHarvestFlowSnapshot) []CodexHarve
 		}
 	}
 
-	shape := shapeStageFromEvents(last, snapshot.Counts.TicketsReady)
+	shape := probeValidationStageFromEvents(last)
 
 	ticket := CodexHarvestFlowStage{ID: "ticket", Status: "idle", Detail: "no stored ticket"}
 	switch {
@@ -941,11 +980,9 @@ func buildCodexHarvestFlowStages(snapshot CodexHarvestFlowSnapshot) []CodexHarve
 		if event.Kind == "reject" && snapshot.Counts.TicketsReady == 0 {
 			ticket.Status = "fail"
 			ticket.Detail = "response rejected"
-		} else if event.Kind == "accept" && ticket.Status != "fail" {
-			ticket.Status = "ok"
-			if snapshot.Counts.TicketsReady == 0 && event.Standby {
-				ticket.Detail = "standby stored"
-			}
+		} else if event.Kind == "accept" && snapshot.Counts.TicketsReady == 0 && ticket.Status != "fail" {
+			ticket.Status = "warn"
+			ticket.Detail = "no valid ticket"
 		}
 	}
 
@@ -953,9 +990,9 @@ func buildCodexHarvestFlowStages(snapshot CodexHarvestFlowSnapshot) []CodexHarve
 	if event, ok := last["select"]; ok {
 		copyFlowMetrics(&selectStage, event)
 		switch event.Kind {
-		case "selected":
+		case "schedule_join", "candy_pass":
 			selectStage.Status = "ok"
-		case "skip":
+		case "schedule_leave":
 			selectStage.Status = "warn"
 		default:
 			selectStage.Status = "fail"
@@ -964,61 +1001,29 @@ func buildCodexHarvestFlowStages(snapshot CodexHarvestFlowSnapshot) []CodexHarve
 	return []CodexHarvestFlowStage{node, probe, shape, ticket, selectStage}
 }
 
-func shapeStageFromEvents(last map[string]CodexHarvestFlowEvent, ready int) CodexHarvestFlowStage {
-	shape := CodexHarvestFlowStage{ID: "shape", Status: "idle", Detail: "waiting for ticket validation"}
+func probeValidationStageFromEvents(last map[string]CodexHarvestFlowEvent) CodexHarvestFlowStage {
+	// Keep the stage ID for API compatibility; only a recorded continuation
+	// result can establish success. Old lengths and earlier hits are not evidence.
+	stage := CodexHarvestFlowStage{ID: "shape", Status: "idle", Detail: "waiting for ticket validation"}
 	latest := last["probe"]
-	hit := last["probe:probe_hit"]
-	if flowEventEmpty(latest) && flowEventEmpty(hit) {
-		return shape
+	if latest.ID == "" && latest.At.IsZero() {
+		return stage
 	}
-	if latest.Result != "invalid_state" && latest.Kind != "probe_hit" && latest.Length == latest.ExpectedLength && latest.Blocks == latest.ExpectedBlocks && latest.Length > 0 {
-		at := latest.At
-		shape.At, shape.Model = &at, latest.Model
-		copyFlowMetrics(&shape, latest)
-		shape.Status = "warn"
-		shape.Detail = "ticket shape matches; validation incomplete"
-		return shape
+	at := latest.At
+	stage.At, stage.Model = &at, latest.Model
+	copyFlowMetrics(&stage, latest)
+	stage.Status, stage.Detail = "warn", latest.Result
+	if latest.Kind == "probe_hit" && latest.Result == "success" && latest.Reason == "probe_verified" {
+		stage.Status, stage.Detail = "ok", "probe_verified"
+	} else {
+		switch latest.Result {
+		case "probe_reissued", "probe_route_changed", "invalid_state", "invalid_route":
+			stage.Status = "fail"
+		case "success", "":
+			stage.Detail = "probe_inconclusive"
+		}
 	}
-	if (latest.HTTPStatus == 200 || latest.HTTPStatus == 101) && latest.Length > 0 && (latest.Kind != "probe_hit" || (latest.ExpectedLength > 0 && latest.Length != latest.ExpectedLength)) {
-		at := latest.At
-		shape.At = &at
-		shape.Model = latest.Model
-		copyFlowMetrics(&shape, latest)
-		shape.Status = "fail"
-		shape.Detail = fmt.Sprintf("got %d/%d want %d/%d", latest.Length, latest.Blocks, latest.ExpectedLength, latest.ExpectedBlocks)
-		return shape
-	}
-	source := hit
-	if flowEventEmpty(source) {
-		source = latest
-	}
-	if source.Kind == "probe_hit" && (source.ExpectedLength == 0 || source.Length == source.ExpectedLength) {
-		at := source.At
-		shape.At = &at
-		shape.Model = source.Model
-		copyFlowMetrics(&shape, source)
-		shape.Status = "ok"
-		shape.Detail = fmt.Sprintf("%d / %d blk", source.Length, source.Blocks)
-		return shape
-	}
-	if ready > 0 {
-		shape.Status = "ok"
-		shape.Detail = fmt.Sprintf("%d ready", ready)
-		return shape
-	}
-	if !flowEventEmpty(latest) {
-		at := latest.At
-		shape.At = &at
-		shape.Model = latest.Model
-		copyFlowMetrics(&shape, latest)
-		shape.Status = "warn"
-		shape.Detail = "no ticket body"
-	}
-	return shape
-}
-
-func flowEventEmpty(event CodexHarvestFlowEvent) bool {
-	return event.ID == "" && event.At.IsZero()
+	return stage
 }
 
 func stageFromEvent(id string, event CodexHarvestFlowEvent, idle string) CodexHarvestFlowStage {
@@ -1056,30 +1061,28 @@ func copyFlowMetrics(stage *CodexHarvestFlowStage, event CodexHarvestFlowEvent) 
 	stage.ExpectedBlocks = event.ExpectedBlocks
 }
 
-func describeCodexHarvestOutcome(kind, raw string, status, length, blocks, expectedLen, expectedBlk int, model, node string) (message, level, detail string) {
-	if kind == "model_mismatch" {
-		_, _, detail = describeCodexProbeFailure(raw, status, model, node)
-		return "上游模型声明与请求不一致，门票未入库", "WARN", detail
-	}
-	if kind == "invalid_route" {
-		_, _, detail = describeCodexProbeFailure(raw, status, model, node)
-		return fmt.Sprintf("已收到 %d 字节票体，但路由 Cookie 验收失败，未入库", length), "WARN", detail
-	}
-	if kind == "success" {
-		detailParts := []string{fmt.Sprintf("len=%d blk=%d", length, blocks)}
-		if node != "" {
-			detailParts = append(detailParts, "node="+node)
+func describeCodexHarvestOutcome(kind, raw string, status int, model, node string, verified bool) (message, level, detail string) {
+	_, _, detail = describeCodexProbeFailure(raw, status, model, node)
+	switch kind {
+	case "probe_reissued":
+		return "探针续接返回新票，原票未通过校验", "WARN", detail
+	case "probe_route_changed":
+		return "探针续接更换了路由，原票未通过校验", "WARN", detail
+	case "probe_inconclusive":
+		return "探针未完成，票据未入库（请检查剩余请求预算）", "WARN", detail
+	case "model_mismatch":
+		return "上游模型声明与请求不一致，票据未入库", "WARN", detail
+	case "invalid_route":
+		return "路由 Cookie 未通过校验，票据未入库", "WARN", detail
+	case "invalid_state":
+		return "票据未通过校验，未入库", "WARN", detail
+	case "success":
+		if verified {
+			return "探针校验通过：完整续接，原票未重签，路由未变", "OK", detail
 		}
-		return fmt.Sprintf("成功捕获合规门票（%d 字节 / %d 块）", length, blocks), "OK", strings.Join(detailParts, " · ")
-	}
-	if kind == "invalid_state" && (blocks == 11 || blocks == 13 || length == 312 || length == 356) {
-		_, _, detail = describeCodexProbeFailure(raw, status, model, node)
-		return fmt.Sprintf("拿到的是降智票据（%d 字节 / %d 块），已拒收 → 换节点重试", length, blocks), "WARN",
-			fmt.Sprintf("%s · 合规应为 %d/%d", detail, expectedLen, expectedBlk)
-	}
-	if kind == "rate_limited" || status == http.StatusTooManyRequests {
-		_, _, detail = describeCodexProbeFailure(raw, status, model, node)
-		return "上游限流了，进入冷静期后自动继续", "WARN", detail
+		return "已捕获票据，未记录续接验收结果", "INFO", detail
+	case "rate_limited":
+		return "上游限流，本次探针未通过", "WARN", detail
 	}
 	return describeCodexProbeFailure(raw, status, model, node)
 }

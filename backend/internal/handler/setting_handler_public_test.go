@@ -7,16 +7,20 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type settingHandlerPublicRepoStub struct {
 	values map[string]string
+	// fallback, when non-empty, is returned for every key missing from values.
+	fallback string
 }
 
 func (s *settingHandlerPublicRepoStub) Get(ctx context.Context, key string) (*service.Setting, error) {
@@ -36,6 +40,8 @@ func (s *settingHandlerPublicRepoStub) GetMultiple(ctx context.Context, keys []s
 	for _, key := range keys {
 		if value, ok := s.values[key]; ok {
 			out[key] = value
+		} else if s.fallback != "" {
+			out[key] = s.fallback
 		}
 	}
 	return out, nil
@@ -154,4 +160,125 @@ func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *
 	require.True(t, resp.Data.WeChatOAuthEnabled)
 	require.True(t, resp.Data.WeChatOAuthOpenEnabled)
 	require.True(t, resp.Data.WeChatOAuthMPEnabled)
+}
+
+func TestSettingHandler_GetPublicSettings_ExposesProtocolFeatureSwitches(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name      string
+		values    map[string]string
+		wantBPS   bool
+		wantPrism bool
+	}{
+		{
+			// Installations upgraded from before the switches existed have no rows.
+			name:      "unset keeps BPS on and Prism off",
+			values:    map[string]string{},
+			wantBPS:   true,
+			wantPrism: false,
+		},
+		{
+			name: "both enabled",
+			values: map[string]string{
+				service.SettingKeyExcelBPSEnabled:     "true",
+				service.SettingKeyPrismBrowserEnabled: "true",
+			},
+			wantBPS:   true,
+			wantPrism: true,
+		},
+		{
+			name: "both disabled",
+			values: map[string]string{
+				service.SettingKeyExcelBPSEnabled:     "false",
+				service.SettingKeyPrismBrowserEnabled: "false",
+			},
+			wantBPS:   false,
+			wantPrism: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewSettingHandler(service.NewSettingService(&settingHandlerPublicRepoStub{values: tt.values}, &config.Config{}), "test-version")
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
+
+			h.GetPublicSettings(c)
+
+			require.Equal(t, http.StatusOK, recorder.Code)
+
+			var resp struct {
+				Code int `json:"code"`
+				Data struct {
+					ExcelBPSEnabled     bool `json:"excel_bps_enabled"`
+					PrismBrowserEnabled bool `json:"prism_browser_enabled"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+			require.Equal(t, 0, resp.Code)
+			require.Equal(t, tt.wantBPS, resp.Data.ExcelBPSEnabled)
+			require.Equal(t, tt.wantPrism, resp.Data.PrismBrowserEnabled)
+		})
+	}
+}
+
+// The frontend hydrates cachedPublicSettings from the SSR-injected payload and
+// replaces it with this response on forced refreshes (for example after an
+// admin saves system settings). A field the handler forgets to copy reaches the
+// browser as its zero value and silently flips the feature flag, so every
+// injected field must come back here with the same value.
+func TestSettingHandler_GetPublicSettings_MatchesInjectionPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// "true" for every key turns on every boolean flag and fills every string,
+	// so a field missing from the handler cannot hide behind its zero value.
+	// custom_endpoints needs a real JSON array: the injection forwards the raw
+	// JSON while the handler decodes it into dto.CustomEndpoint.
+	repo := &settingHandlerPublicRepoStub{
+		fallback: "true",
+		values: map[string]string{
+			service.SettingKeyCustomEndpoints: `[{"name":"Primary","endpoint":"https://api.example.com","description":"Main entry"}]`,
+		},
+	}
+	settingService := service.NewSettingService(repo, &config.Config{})
+	settingService.SetVersion("test-version")
+	h := NewSettingHandler(settingService, "test-version")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
+
+	h.GetPublicSettings(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var resp struct {
+		Code int                        `json:"code"`
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+
+	injection, err := settingService.GetPublicSettingsForInjection(context.Background())
+	require.NoError(t, err)
+	raw, err := json.Marshal(injection)
+	require.NoError(t, err)
+	var injected map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &injected))
+
+	keys := make([]string, 0, len(injected))
+	for key := range injected {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		got, ok := resp.Data[key]
+		if !assert.Truef(t, ok, "/api/v1/settings/public is missing injected field %q", key) {
+			continue
+		}
+		assert.JSONEqf(t, string(injected[key]), string(got), "/api/v1/settings/public disagrees with the injected value of %q", key)
+	}
 }

@@ -203,7 +203,15 @@
         </div>
       </section>
 
-      <MonitorStatusCards v-if="!analytics" :items="matrix?.items || []" :coverage="matrix?.coverage" :loading="loading" :countdown="countdown" :now="clockNow" />
+      <MonitorStatusCards
+        v-if="!analytics"
+        :items="matrix?.items || []"
+        :coverage="matrix?.coverage"
+        :loading="loading"
+        :countdown="countdown"
+        :now="clockNow"
+        :platform-order="cardPlatformOrder"
+      />
       <template v-else>
       <!-- Overview KPI: success · TTFT · tokens/s(optional) · cache · (+ RPM when throughput visible) -->
       <section
@@ -323,7 +331,7 @@
                     <div class="flex items-center gap-2">
                       <span :class="statusDot(row.health)" aria-hidden="true"></span>
                       <div>
-                        <span class="block text-xs text-gray-500 dark:text-dark-400">{{ row.platform }}</span>
+                        <span class="block text-xs text-gray-500 dark:text-dark-400">{{ providerLabel(row.platform) }}</span>
                         <strong class="font-semibold text-gray-900 dark:text-white">
                           {{ row.model === '__other__' ? t('channelMonitorV2.otherModels') : row.model }}
                         </strong>
@@ -430,7 +438,7 @@
                     class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-dark-900/50 dark:text-dark-300"
                   >
                     <div class="mb-1 flex flex-wrap items-center gap-2">
-                      <span class="badge badge-gray !px-1.5 !py-0 text-[10px]">{{ detail.platform || '-' }}</span>
+                      <span class="badge badge-gray !px-1.5 !py-0 text-[10px]">{{ detail.platform ? providerLabel(detail.platform) : '-' }}</span>
                       <span class="truncate font-medium">{{ detail.model || '-' }}</span>
                       <span v-if="detail.status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.http', { code: detail.status_code }) }}</span>
                       <span v-if="detail.upstream_status_code" class="text-gray-400">{{ t('channelMonitorV2.errorDetail.upstream', { code: detail.upstream_status_code }) }}</span>
@@ -578,12 +586,14 @@ import Select from '@/components/common/Select.vue'
 import FilterMultiSelect from '@/features/channel-monitor-v2/FilterMultiSelect.vue'
 import MonitorStatusCards from '@/features/channel-monitor-v2/MonitorStatusCards.vue'
 import { hasMonitorSamples, monitorRefreshSeconds } from '@/features/channel-monitor-v2/monitorCards'
+import { monitorCardPlatformOrder } from '@/features/channel-monitor-v2/monitorFormat'
 import MetricCell from '@/features/channel-monitor-v2/MetricCell.vue'
 import MonitorRankBadge from '@/features/channel-monitor-v2/MonitorRankBadge.vue'
 import MonitorTrendChart from '@/features/channel-monitor-v2/MonitorTrendChart.vue'
 import RelayPulseMatrix from '@/features/channel-monitor-v2/RelayPulseMatrix.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
+import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { isChannelMonitorThroughputHidden, isChannelMonitorUserRankingHidden } from '@/utils/featureFlags'
 import * as api from '@/api/channelMonitorV2'
@@ -622,6 +632,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const { t, te, locale } = useI18n()
+const { providerLabel } = useChannelMonitorFormat()
 const analytics = ref(false)
 const clockNow = ref(Date.now())
 const nextRefreshAt = ref(0)
@@ -674,6 +685,9 @@ const healthMode = ref<HealthMode>(parseHealthMode(route.query.health_mode))
 const trendView = ref<TrendView>(parseTrendView(route.query.trend_view))
 const dimensions = ref<MonitorDimensions>({ platforms: [], groups: [], models: [] })
 const snapshot = ref<MonitorSnapshot | null>(null)
+// Dimensions load only in analytics mode. Cards are the default view, so their
+// order comes from the snapshot config fetched with the matrix.
+const cardPlatformOrder = computed(() => monitorCardPlatformOrder(snapshot.value?.config?.platforms))
 const matrix = ref<MonitorMatrixResponse | null>(null)
 const modelRows = ref<MonitorModelRow[]>([])
 const errorRows = ref<MonitorErrorRow[]>([])
@@ -694,7 +708,7 @@ const hasDimensionFilter = computed(
 const platformOptions = computed(() =>
   (dimensions.value.platforms || []).map((item) => ({
     value: item.value,
-    label: item.label,
+    label: providerLabel(item.value) || item.label,
   }))
 )
 const selectedPlatforms = computed(() => new Set(filter.value.platforms))
@@ -708,7 +722,7 @@ const groupOptions = computed(() =>
     )
     .map((item) => ({
       value: String(item.id),
-      label: item.platform ? `${item.platform} / ${item.name || `#${item.id}`}` : item.name || `#${item.id}`,
+      label: item.platform ? `${providerLabel(item.platform)} / ${item.name || `#${item.id}`}` : item.name || `#${item.id}`,
     }))
 )
 const modelOptions = computed(() =>
@@ -721,10 +735,7 @@ const modelOptions = computed(() =>
     )
     .map((item) => ({
       value: item.value,
-      label:
-        item.platform && !item.label.includes(item.platform)
-          ? `${item.platform} / ${item.label}`
-          : item.label,
+      label: item.platform ? `${providerLabel(item.platform)} / ${item.label}` : item.label,
     }))
 )
 const selectedGroupIds = computed({

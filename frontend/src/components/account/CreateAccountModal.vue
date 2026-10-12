@@ -3198,6 +3198,8 @@
         </div>
       </div>
 
+      <OpenAIRequestTimezoneField v-if="form.platform === 'openai'" v-model="openAIRequestTimezone" />
+
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
       <div
         v-if="form.platform === 'openai' && form.type === 'oauth'"
@@ -4077,6 +4079,7 @@
 </template>
 
 <script setup lang="ts">
+import OpenAIRequestTimezoneField from '@/components/account/OpenAIRequestTimezoneField.vue'
 import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@/utils/accountCost'
 
 import OpenAITwoFAImport from './OpenAITwoFAImport.vue'
@@ -4635,7 +4638,7 @@ function onCnPresetSelect(preset: { mode: CnAccountMode; protocol: CnApiProtocol
 }
 
 const syncPreviewCredentials = computed(() => {
-  if (!apiKeyValue.value) return undefined
+  if (!apiKeyValue.value.trim()) return undefined
   const baseUrl = isMultiProtocolPlatform.value && apiProtocol.value === 'adaptive'
     ? adaptiveBaseUrls.value.chat_completions.trim() || apiKeyBaseUrl.value.trim()
     : isOpenAIAPIKeyAccount.value && openAIApiProtocol.value === 'adaptive'
@@ -4650,7 +4653,8 @@ const syncPreviewCredentials = computed(() => {
     platform: form.platform,
     type: form.type,
     base_url: baseUrl || undefined,
-    api_key: apiKeyValue.value,
+    api_key: apiKeyValue.value.trim(),
+    proxy_id: authStore.isObserver ? undefined : form.proxy_id ?? undefined,
     ...(modelMapping ? { model_mapping: modelMapping } : {})
   }
 })
@@ -4736,6 +4740,7 @@ const applyGrokOAuthUpstreamConfig = (credentials: Record<string, unknown>) => {
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(true)
 const copilotSDKEnabled = ref(false)
+const openAIRequestTimezone = ref('Asia/Singapore')
 const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
@@ -5632,6 +5637,7 @@ const resetForm = () => {
   autoBPS.reset()
   twoFABusy.value = false
   form.name = ''
+  openAIRequestTimezone.value = 'Asia/Singapore'
   form.notes = ''
   form.platform = 'anthropic'
   form.type = 'oauth'
@@ -5766,6 +5772,7 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
 
   const extra: Record<string, unknown> = { ...(base || {}) }
+  extra.openai_request_timezone = openAIRequestTimezone.value
   if (isOpenAIBPSOAuth.value) {
     extra.openai_excel_bps = true
     extra.openai_excel_bps_models = [...new Set(bpsOAuthModels.value.map(m => m.trim()).filter(Boolean))]

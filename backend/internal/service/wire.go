@@ -1130,6 +1130,7 @@ var ProviderSet = wire.NewSet(
 	ProvideChannelMonitorV2Service,
 	ProvideChannelMonitorV2Aggregator,
 	ProvideChannelMonitorV3Service,
+	ProvideChannelMonitorV3Prober,
 	NewSupportTicketService,
 	NewChannelMonitorRequestTemplateService,
 	ProvideUserPlatformQuotaUsageFlusher,
@@ -1220,6 +1221,14 @@ func ProvideChannelMonitorV2Service(repo ChannelMonitorV2Repository, settingServ
 // the V2 passive aggregates, which the V2 aggregator keeps in v2 and v3 mode.
 func ProvideChannelMonitorV3Service(repo ChannelMonitorV3Repository, groupRepo GroupRepository) *ChannelMonitorV3Service {
 	return NewChannelMonitorV3Service(repo, groupRepo)
+}
+
+// ProvideChannelMonitorV3Prober starts the opt-in idle probes of V3, which send
+// requests only for checked groups while the site shows V3.
+func ProvideChannelMonitorV3Prober(repo ChannelMonitorV3Repository, groups *PelicanGroupTestService, settingService *SettingService, cfg *config.Config) *ChannelMonitorV3Prober {
+	prober := NewChannelMonitorV3Prober(repo, groups, settingService)
+	startBackgroundService(cfg, prober)
+	return prober
 }
 
 // ProvideChannelMonitorV2Aggregator starts the passive minute-rollup worker.

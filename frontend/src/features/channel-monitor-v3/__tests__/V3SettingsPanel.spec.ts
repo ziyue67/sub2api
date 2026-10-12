@@ -60,6 +60,8 @@ function settings(extra: Partial<MonitorV3Settings> = {}): MonitorV3Settings {
     components: [component(1, 1, { model: 'gpt-5.5' }), component(2, 1, { enabled: false }), component(3, 2), component(4, null)],
     error_categories: ['client_cancelled', 'timeout', 'upstream_5xx'],
     data_through: new Date().toISOString(),
+    idle_probe: { enabled: false, groups: [] },
+    idle_probe_stats: [],
     ...extra,
   }
 }

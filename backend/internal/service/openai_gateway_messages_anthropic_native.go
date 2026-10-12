@@ -278,7 +278,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 	body = reverseToolNamesIfPresent(c, body)
 	c.Data(resp.StatusCode, contentType, body)
 
-	return &OpenAIForwardResult{
+	result := &OpenAIForwardResult{
 		RequestID:        resp.Header.Get("x-request-id"),
 		UpstreamHeaders:  resp.Header,
 		Usage:            claudeUsageToOpenAIUsage(usage),
@@ -290,7 +290,9 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 		Stream:           false,
 		ReasoningEffort:  reasoningEffort,
 		Duration:         time.Since(startTime),
-	}, nil
+	}
+	applyObservedUpstreamResponseModel(c, result)
+	return result, nil
 }
 
 // handleNativeAnthropicStreamingResponse 处理流式原生 Anthropic 响应：
@@ -553,7 +555,7 @@ func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 	if usage == nil {
 		usage = &ClaudeUsage{}
 	}
-	return &OpenAIForwardResult{
+	result := &OpenAIForwardResult{
 		RequestID:        resp.Header.Get("x-request-id"),
 		UpstreamHeaders:  resp.Header,
 		Usage:            claudeUsageToOpenAIUsage(usage),
@@ -568,6 +570,8 @@ func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
 	}
+	applyObservedUpstreamResponseModel(c, result)
+	return result
 }
 
 // claudeUsageToOpenAIUsage 把 Anthropic 格式 usage 映射到 OpenAI 网关统一的

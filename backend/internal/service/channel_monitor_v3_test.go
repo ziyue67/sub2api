@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"sync"
@@ -23,6 +24,23 @@ type monitorV3RepoFake struct {
 	through    *time.Time
 	slotCalls  []monitorV3SlotCall
 	nextID     int64
+
+	// Idle probe state: probeSlots answer slot queries, probeTotals range totals.
+	probeSlots    []ChannelMonitorV3ProbeFact
+	probeTotals   []ChannelMonitorV3ProbeFact
+	probeCalls    []monitorV3ProbeCall
+	probeStats    []ChannelMonitorV3IdleProbeStat
+	successCounts []ChannelMonitorV3Fact
+	countCalls    []monitorV3SlotCall
+	claims        map[string]int64
+	finished      []ChannelMonitorV3ProbeResult
+	prunedBefore  []time.Time
+}
+
+type monitorV3ProbeCall struct {
+	groups   []int64
+	from, to time.Time
+	interval time.Duration
 }
 
 type monitorV3SlotCall struct {
@@ -158,6 +176,62 @@ func (r *monitorV3RepoFake) RangeFacts(context.Context, []int64, time.Time, time
 	return &totals, nil
 }
 func (r *monitorV3RepoFake) DataThrough(context.Context) (*time.Time, error) { return r.through, nil }
+func (r *monitorV3RepoFake) UpdateIdleProbe(_ context.Context, probe ChannelMonitorV3IdleProbe) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.config.IdleProbe = probe
+	return nil
+}
+func (r *monitorV3RepoFake) SuccessCounts(_ context.Context, groups []int64, from, to time.Time) ([]ChannelMonitorV3Fact, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.countCalls = append(r.countCalls, monitorV3SlotCall{groups: groups, from: from, to: to})
+	return r.successCounts, nil
+}
+func (r *monitorV3RepoFake) ClaimProbe(_ context.Context, groupID int64, model string, slot time.Time, slotMinutes int) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := fmt.Sprint(groupID, "/", model, "/", slot.Format(time.RFC3339), "/", slotMinutes)
+	if r.claims == nil {
+		r.claims = map[string]int64{}
+	}
+	if _, taken := r.claims[key]; taken {
+		return 0, nil
+	}
+	r.claims[key] = int64(len(r.claims) + 1)
+	return r.claims[key], nil
+}
+func (r *monitorV3RepoFake) FinishProbe(_ context.Context, result ChannelMonitorV3ProbeResult) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.finished = append(r.finished, result)
+	return nil
+}
+func (r *monitorV3RepoFake) ProbeFacts(_ context.Context, groups []int64, from, to time.Time, interval time.Duration) ([]ChannelMonitorV3ProbeFact, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.probeCalls = append(r.probeCalls, monitorV3ProbeCall{groups: groups, from: from, to: to, interval: interval})
+	out := []ChannelMonitorV3ProbeFact{}
+	source := r.probeSlots
+	if interval == 0 {
+		source = r.probeTotals
+	}
+	for _, f := range source {
+		if slices.Contains(groups, f.GroupID) && (interval == 0 || (!f.Slot.Before(from) && f.Slot.Before(to))) {
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+func (r *monitorV3RepoFake) ProbeStats(context.Context, time.Time) ([]ChannelMonitorV3IdleProbeStat, error) {
+	return r.probeStats, nil
+}
+func (r *monitorV3RepoFake) PruneProbes(_ context.Context, before time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.prunedBefore = append(r.prunedBefore, before)
+	return nil
+}
 
 var monitorV3Now = time.Date(2026, 10, 4, 9, 31, 20, 0, time.UTC)
 

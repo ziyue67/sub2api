@@ -21,11 +21,23 @@ type monitorV3HandlerRepo struct {
 	service.ChannelMonitorV3Repository
 	components []service.ChannelMonitorV3Component
 	facts      service.ChannelMonitorV3Facts
+	idleProbe  service.ChannelMonitorV3IdleProbe
+	probes     []service.ChannelMonitorV3ProbeFact
 }
 
 func (r *monitorV3HandlerRepo) GetConfig(context.Context) (*service.ChannelMonitorV3Config, error) {
 	return &service.ChannelMonitorV3Config{Version: 1, IntervalMinutes: 5, Cells: 30, AvailabilityRange: "7d",
-		DownErrorRate: 0.2, DegradedErrorRate: 0.05, DegradedTTFTMs: 10000, MinRequests: 1}, nil
+		DownErrorRate: 0.2, DegradedErrorRate: 0.05, DegradedTTFTMs: 10000, MinRequests: 1, IdleProbe: r.idleProbe}, nil
+}
+func (r *monitorV3HandlerRepo) UpdateIdleProbe(_ context.Context, probe service.ChannelMonitorV3IdleProbe) error {
+	r.idleProbe = probe
+	return nil
+}
+func (r *monitorV3HandlerRepo) ProbeFacts(_ context.Context, _ []int64, _, _ time.Time, interval time.Duration) ([]service.ChannelMonitorV3ProbeFact, error) {
+	if interval == 0 {
+		return nil, nil
+	}
+	return r.probes, nil
 }
 func (r *monitorV3HandlerRepo) ListCategories(context.Context) ([]service.ChannelMonitorV3Category, error) {
 	return []service.ChannelMonitorV3Category{{ID: 1, Name: "GPT"}}, nil
@@ -65,6 +77,11 @@ func (s *monitorModeSetterStub) SetChannelMonitorMode(_ context.Context, mode st
 }
 
 func monitorV3HandlerFixture() (*ChannelMonitorV3Handler, *monitorV3AccessStub) {
+	h, access, _ := monitorV3HandlerFixtureWithRepo()
+	return h, access
+}
+
+func monitorV3HandlerFixtureWithRepo() (*ChannelMonitorV3Handler, *monitorV3AccessStub, *monitorV3HandlerRepo) {
 	cat := int64(1)
 	slot := time.Now().UTC().Truncate(5 * time.Minute)
 	repo := &monitorV3HandlerRepo{
@@ -75,7 +92,7 @@ func monitorV3HandlerFixture() (*ChannelMonitorV3Handler, *monitorV3AccessStub) 
 		facts: service.ChannelMonitorV3Facts{Metrics: []service.ChannelMonitorV3Fact{{GroupID: 4, Model: "gpt", Slot: slot, Success: 1, Errors: 4321}}},
 	}
 	access := &monitorV3AccessStub{groups: []service.Group{{ID: 4}}, rates: map[int64]float64{4: 0.15}}
-	return &ChannelMonitorV3Handler{service: service.NewChannelMonitorV3Service(repo, nil), access: access}, access
+	return &ChannelMonitorV3Handler{service: service.NewChannelMonitorV3Service(repo, nil), access: access}, access, repo
 }
 
 func monitorV3Request(target string, role string, body string) (*gin.Context, *httptest.ResponseRecorder) {
@@ -158,4 +175,44 @@ func TestChannelMonitorV3SetModeOnlyTouchesTheMode(t *testing.T) {
 	h.SetMode(c)
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Equal(t, []string{"v3", "v9"}, setter.modes)
+}
+
+func TestChannelMonitorV3UpdateIdleProbeSavesOnlyTheProbeSettings(t *testing.T) {
+	h, _, repo := monitorV3HandlerFixtureWithRepo()
+	c, recorder := monitorV3Request("/admin/channel-monitor-v3/idle-probe", service.RoleAdmin,
+		`{"enabled":true,"groups":[{"group_id":4,"model":" gpt-5.5 ","reasoning_effort":"LOW"}]}`)
+	h.UpdateIdleProbe(c)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.JSONEq(t, `{"code":0,"message":"success","data":{"enabled":true,"groups":[{"group_id":4,"model":"gpt-5.5","reasoning_effort":"low"}]}}`, recorder.Body.String())
+	require.Equal(t, "gpt-5.5", repo.idleProbe.Groups[0].Model)
+
+	c, recorder = monitorV3Request("/admin/channel-monitor-v3/idle-probe", service.RoleAdmin, `{"enabled":true,"groups":[{"group_id":4}]}`)
+	h.UpdateIdleProbe(c)
+	require.Equal(t, http.StatusBadRequest, recorder.Code, "a group shown as a whole needs a model to ask")
+
+	c, recorder = monitorV3Request("/admin/channel-monitor-v3/idle-probe", service.RoleAdmin, `{"enabled":"yes"}`)
+	h.UpdateIdleProbe(c)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Equal(t, "gpt-5.5", repo.idleProbe.Groups[0].Model, "rejected input changes nothing")
+}
+
+func TestChannelMonitorV3StatusMarksProbedSlotsWithoutVolumesForUsers(t *testing.T) {
+	h, _, repo := monitorV3HandlerFixtureWithRepo()
+	repo.facts = service.ChannelMonitorV3Facts{}
+	repo.idleProbe = service.ChannelMonitorV3IdleProbe{Enabled: true, Groups: []service.ChannelMonitorV3IdleProbeGroup{{GroupID: 4, Model: "gpt"}}}
+	slot := time.Now().UTC().Truncate(5 * time.Minute).Add(-5 * time.Minute)
+	repo.probes = []service.ChannelMonitorV3ProbeFact{{GroupID: 4, Model: "gpt", Slot: slot, Count: 1, LatencyP50Ms: 1800}}
+
+	c, recorder := monitorV3Request("/channel-monitor-v3/status", service.RoleUser, "")
+	h.Status(c)
+	status := decodeMonitorV3Status(t, recorder)
+	require.True(t, status.IdleProbe)
+	cell := status.Categories[0].Components[0].Cells[28]
+	require.True(t, cell.Probed)
+	require.Equal(t, int64(1800), *cell.ProbeLatencyMs)
+	require.NotContains(t, recorder.Body.String(), `"probes"`)
+
+	c, recorder = monitorV3Request("/channel-monitor-v3/status", service.RoleAdmin, "")
+	h.Status(c)
+	require.Contains(t, recorder.Body.String(), `"probes":1`)
 }

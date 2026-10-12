@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/mihomo"
@@ -15,9 +16,10 @@ import (
 )
 
 type stubMihomoNodeChecker struct {
-	kernel service.MihomoNodeProber
-	names  []string
-	err    error
+	kernel      service.MihomoNodeProber
+	names       []string
+	err         error
+	staticNames []string
 }
 
 func (s *stubMihomoNodeChecker) TestMihomoNode(_ context.Context, kernel service.MihomoNodeProber, name string) (*service.ProxyTestResult, error) {
@@ -38,12 +40,42 @@ func (s *stubMihomoNodeChecker) CheckMihomoNodeQuality(_ context.Context, kernel
 	return &service.ProxyQualityCheckResult{Score: 78, Grade: "B", Items: []service.ProxyQualityCheckItem{{Target: "base_connectivity", Status: "pass"}}}, nil
 }
 
+func (s *stubMihomoNodeChecker) CreateMihomoNodeProxies(_ context.Context, kernel service.MihomoStaticNodeBinder, names []string) (*service.MihomoNodeProxyImportResult, error) {
+	s.staticNames = append([]string{}, names...)
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &service.MihomoNodeProxyImportResult{Created: []service.Proxy{{ID: 7, Name: "Mihomo · fixture", Protocol: "http", Host: "127.0.0.1", Port: 32000, MihomoNodeID: names[0]}}}, nil
+}
+
 func mihomoNodeCheckRouter(h *SystemHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/v1/admin/system/mihomo/nodes/:name/test", h.TestMihomoNode)
 	router.POST("/api/v1/admin/system/mihomo/nodes/:name/quality-check", h.CheckMihomoNodeQuality)
+	router.POST("/api/v1/admin/system/mihomo/nodes/static-proxies", h.AddMihomoNodesAsStaticProxies)
 	return router
+}
+
+func TestMihomoStaticProxyCreationValidatesAndReturnsProxyIdentity(t *testing.T) {
+	kernel := mihomo.New(t.TempDir())
+	t.Cleanup(kernel.Close)
+	checker := &stubMihomoNodeChecker{}
+	h := &SystemHandler{kernel: kernel}
+	h.SetMihomoNodeChecker(checker)
+	router := mihomoNodeCheckRouter(h)
+	path := "/api/v1/admin/system/mihomo/nodes/static-proxies"
+	for _, body := range []string{`{}`, `{"names":[]}`, `{"names":["` + strings.Repeat("n", 20000) + `"]}`} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)))
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"names":["node-one","DYNAMIC-two"]}`)))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []string{"node-one", "DYNAMIC-two"}, checker.staticNames)
+	require.Contains(t, rec.Body.String(), `"mihomo_node_id":"node-one"`)
+	require.NotContains(t, rec.Body.String(), "fixture-secret")
 }
 
 func postMihomoNodeCheck(t *testing.T, router *gin.Engine, path string) (int, map[string]any) {

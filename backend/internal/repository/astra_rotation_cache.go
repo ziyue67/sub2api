@@ -111,17 +111,6 @@ func (p *codexGatewayPinUpstream) nodeCooling(node mihomo.AstraNode, host string
 	}
 	return true
 }
-func (p *codexGatewayPinUpstream) rememberTargetFailure(id int64, check astraTargetValidation) {
-	if !p.config.RotateNodes || p.rotationCache == nil || check.node.Identity == "" {
-		return
-	}
-	seconds := p.config.NodeCooldownSeconds
-	if seconds == 0 {
-		seconds = 3600
-	}
-	now := time.Now()
-	p.rotationCache.reject(id, check.node.Identity, check.gateway, now.Add(time.Duration(seconds)*time.Second), now)
-}
 func (c *astraRotationCache) snapshot(ids []int64, now time.Time) []service.AstraRotationCooldown {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -10,6 +10,7 @@ import (
 )
 
 type bulkOpenAISettings struct {
+	requestTimezone         bool
 	excelBPS                bool
 	longContextBilling      bool
 	endpointCapabilities    bool
@@ -19,13 +20,19 @@ type bulkOpenAISettings struct {
 }
 
 func (s bulkOpenAISettings) any() bool {
-	return s.excelBPS || s.longContextBilling || s.endpointCapabilities || s.responsesMode
+	return s.requestTimezone || s.excelBPS || s.longContextBilling || s.endpointCapabilities || s.responsesMode
 }
 
 func normalizeBulkOpenAISettings(input *BulkUpdateAccountsInput) (bulkOpenAISettings, error) {
 	var settings bulkOpenAISettings
 	if input == nil {
 		return settings, nil
+	}
+	if _, exists := input.Extra[openAIRequestTimezoneExtraKey]; exists {
+		settings.requestTimezone = true
+		if err := ValidateOpenAIRequestTimezoneExtra(PlatformOpenAI, input.Extra); err != nil {
+			return settings, err
+		}
 	}
 	var err error
 	settings.excelBPS, err = normalizeBulkExcelBPSExtra(input.Extra)
@@ -248,6 +255,11 @@ func validateBulkOpenAISettingsTargets(
 			return 0, invalidBulkOpenAITarget(accountID, "account does not exist")
 		}
 
+		if settings.requestTimezone {
+			if err := ValidateOpenAIRequestTimezoneExtra(account.Platform, input.Extra); err != nil {
+				return 0, err
+			}
+		}
 		if settings.excelBPS && (account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth ||
 			account.IsShadow() || account.IsOpenAIAgentIdentity() || account.IsOpenAIPersonalAccessToken()) {
 			return 0, invalidBulkOpenAITarget(accountID, "Excel / BPS requires a regular ChatGPT OAuth account")

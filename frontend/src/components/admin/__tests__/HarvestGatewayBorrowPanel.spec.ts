@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import HarvestGatewayBorrowPanel from '../HarvestGatewayBorrowPanel.vue'
-import AstraGatewayRuntime from '@/components/admin/AstraGatewayRuntime.vue'
 import { normalizeAstraGateway } from '@/api/admin/astraGateway'
 const mocks = vi.hoisted(() => ({ get: vi.fn(), save: vi.fn(), list: vi.fn() }))
 vi.mock('@/api/admin/astraGateway', async importOriginal => ({ ...await importOriginal<typeof import('@/api/admin/astraGateway')>(), getAstraGateway: mocks.get, saveAstraGateway: mocks.save }))
@@ -15,6 +14,13 @@ function value() { return { cookie_pool: { enabled: false, source_account_ids: [
 function render() { const wrapper = mount(HarvestGatewayBorrowPanel, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } }); void wrapper.get('[data-testid="expand-borrow"]').trigger('click'); return wrapper }
 beforeEach(() => { vi.clearAllMocks(); mocks.get.mockResolvedValue(value()); mocks.list.mockResolvedValue({ items: [{ id: 299, name: 'source' }, { id: 300, name: 'target' }], pages: 1 }); mocks.save.mockImplementation(v => Promise.resolve({ ...v, revision: 'two' })) })
 describe('Astra gateway configuration', () => {
+  it('renders as a section without a second card when embedded in harvest controls', async () => {
+    const w = mount(HarvestGatewayBorrowPanel, { props: { embedded: true }, global: { stubs: { RouterLink: true } } })
+    await flushPromises()
+    expect(w.get('[data-testid="gateway-borrow-panel"]').classes()).not.toContain('card')
+    w.unmount()
+  })
+
   it('keeps gateway borrowing in its own collapsed card and preserves edits when collapsed', async () => {
     const w = mount(HarvestGatewayBorrowPanel, { global: { stubs: { RouterLink: true } } })
     await flushPromises()
@@ -33,54 +39,17 @@ describe('Astra gateway configuration', () => {
     w.unmount()
   })
 
-  it('requires selected groups and persists each scheduling mode', async () => {
-    mocks.get.mockResolvedValue({ ...value(), account_scheduling: true })
+  it('preserves the latest ticket scheduling policy when saving borrowing settings', async () => {
     const w = render(); await flushPromises()
-    expect(w.get('[data-testid="scheduling-mode"]').element).toHaveProperty('value', 'account')
-    await w.get('[data-testid="scheduling-mode"]').setValue('groups'); await flushPromises()
-    expect(w.get('[data-testid="save"]').attributes('disabled')).toBeDefined()
-    await w.get('[data-testid="scheduling-groups"] input').setValue(true)
+    expect(w.find('[data-testid="account-scheduling-toggle"]').exists()).toBe(false)
+    expect(w.find('[data-testid="scheduling-records"]').exists()).toBe(false)
+    mocks.get.mockResolvedValue({ ...value(), account_scheduling: false, ticket_pool_scheduling: true, scheduling_mode: 'groups', scheduling_group_ids: [7] })
+    await w.get('[data-testid="cookie-toggle"]').trigger('click')
     await w.get('form').trigger('submit'); await flushPromises()
-    expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ scheduling_mode: 'groups', scheduling_group_ids: [7] }))
-    await w.get('[data-testid="scheduling-mode"]').setValue('model')
-    await w.get('form').trigger('submit'); await flushPromises()
-    expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ scheduling_mode: 'model' }))
+    expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ account_scheduling: false, ticket_pool_scheduling: true, scheduling_mode: 'groups', scheduling_group_ids: [7] }))
     w.unmount()
   })
-  it('shows the latest three scheduling changes from runtime refresh', async () => {
-    const w = render(); await flushPromises()
-    expect(w.get('[data-testid="scheduling-records"]').text()).toContain('schedulingLogEmpty')
-    w.findComponent(AstraGatewayRuntime).vm.$emit('scheduling', [300, 343, 344, 345].map((id, i) => ({ account_id: id, schedulable: i === 0, checked_at: '2026-09-24T12:00:00Z', reason: 'target_candy_passed' })))
-    await flushPromises()
-    const log = w.get('[data-testid="scheduling-records"]')
-    expect(log.findAll('li')).toHaveLength(3)
-    expect(log.text()).toContain('#300')
-    expect(log.text()).not.toContain('#345')
-    expect(log.text()).toContain('admin.astraGateway.enabled')
-    expect(log.text()).toContain('admin.astraGateway.disabled')
-    w.unmount()
-  })
-  it('defaults scheduling off and persists it without changing route settings', async () => {
-    const w = render(); await flushPromises()
-    const toggle = w.get('[data-testid="account-scheduling-toggle"]')
-    expect(toggle.attributes('aria-checked')).toBe('false')
-    await toggle.trigger('click')
-    await w.get('form').trigger('submit'); await flushPromises()
-    expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ account_scheduling: true, cookie_pool: expect.objectContaining({ enabled: false, target_account_ids: [300] }) }))
-    expect(toggle.attributes('aria-checked')).toBe('true')
-    w.unmount()
-  })
-  it('shows joined and removed memberships for group scheduling records', async () => {
-    const w = render(); await flushPromises()
-    w.findComponent(AstraGatewayRuntime).vm.$emit('scheduling', [true, false].map(ready => ({ account_id: 300, mode: 'groups', schedulable: ready, checked_at: '2026-10-09T08:00:00Z', reason: ready ? 'target_probe_passed' : 'route_expired' })))
-    await flushPromises()
-    const log = w.get('[data-testid="scheduling-records"]')
-    expect(log.text()).toContain('admin.astraGateway.groupsJoined')
-    expect(log.text()).toContain('admin.astraGateway.groupsRemoved')
-    expect(log.text()).not.toContain('admin.astraGateway.enabled')
-    expect(log.text()).not.toContain('admin.astraGateway.disabled')
-    w.unmount()
-  })
+
   it('loads disabled defaults and saves independent switches', async () => {
     const w = render(); await flushPromises()
     expect(w.get('[data-testid="cookie-toggle"]').attributes('aria-checked')).toBe('false')

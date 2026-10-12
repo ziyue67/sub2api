@@ -70,14 +70,14 @@ func TestDescribeCodexProbeFailure(t *testing.T) {
 		wantSubstr string
 	}{
 		{"invalid probe event", 200, "WARN", "不是有效数据"},
-		{"probe response failed", 200, "WARN", "上游明确返回失败"},
-		{"unterminated probe event", 200, "WARN", "被中途截断"},
-		{`Post "https://chatgpt.com/...": context deadline exceeded`, 0, "WARN", "响应超时"},
+		{"probe response failed", 200, "WARN", "上游返回失败"},
+		{"unterminated probe event", 200, "WARN", "完成前被截断"},
+		{`Post "https://chatgpt.com/...": context deadline exceeded`, 0, "WARN", "探针超过时间限制"},
 		{"unexpected EOF", 0, "WARN", "连接被中断"},
 		{"dial tcp: lookup x: no such host", 0, "WARN", "连不上"},
 		{"", 401, "ERROR", "凭证已失效"},
 		{"", 403, "WARN", "上游拒绝"},
-		{"completely unknown", 200, "WARN", "没有拿到合规门票"},
+		{"completely unknown", 200, "WARN", "未通过验收"},
 	}
 	for _, tc := range cases {
 		message, level, detail := describeCodexProbeFailure(tc.raw, tc.status, "gpt-6-astra", "node-abc")
@@ -101,22 +101,34 @@ func TestManualHarvestShouldSwitch(t *testing.T) {
 		rule  string
 		fails int
 		kind  string
-		len   int
-		blk   int
 		want  bool
 	}{
-		{"never", 9, "invalid_state", 312, 11, false},
-		{"every_request", 0, "success", 292, 10, true},
-		{"312_only", 0, "invalid_state", 312, 11, true},
-		{"312_only", 2, "network_error", 0, 0, false},
-		{"312_or_2fail", 2, "network_error", 0, 0, true},
-		{"312_or_2fail", 1, "network_error", 0, 0, false},
-		{"312_or_2fail", 0, "invalid_state", 356, 13, true},
+		{"never", 9, "invalid_state", false},
+		{"every_request", 0, "success", true},
+		{"rejected_only", 0, "invalid_state", true},
+		{"rejected_only", 0, "probe_reissued", true},
+		{"rejected_only", 0, "probe_route_changed", true},
+		{"rejected_only", 0, "invalid_route", true},
+		{"rejected_only", 2, "network_error", false},
+		{"rejected_only", 2, "probe_inconclusive", false},
+		{"rejected_or_2fail", 2, "network_error", true},
+		{"rejected_or_2fail", 1, "network_error", false},
 	}
 	for _, tc := range cases {
-		got := manualHarvestShouldSwitch(tc.rule, tc.fails, tc.kind, tc.len, tc.blk)
-		if got != tc.want {
+		if got := manualHarvestShouldSwitch(tc.rule, tc.fails, tc.kind); got != tc.want {
 			t.Errorf("%s fails=%d kind=%s -> %v, want %v", tc.rule, tc.fails, tc.kind, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizeManualHarvestLegacyRules(t *testing.T) {
+	for old, want := range map[string]string{"312_only": "rejected_only", "312_or_2fail": "rejected_or_2fail"} {
+		got, err := NormalizeManualHarvestRequest(ManualHarvestRequest{NodeSwitchRule: old})
+		if err != nil || got.NodeSwitchRule != want {
+			t.Fatalf("legacy rule %s: %+v, %v", old, got, err)
+		}
+		if strings.Contains(manualHarvestSwitchLabel(got.NodeSwitchRule), "312") {
+			t.Fatal("legacy rule leaked into the log")
 		}
 	}
 }
@@ -126,7 +138,7 @@ func TestNormalizeManualHarvestRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.NodeSwitchRule != ManualHarvestNodeSwitch312Or2Fail || got.ProbeIntervalSeconds != 10 || got.MaxAttempts != 20 {
+	if got.NodeSwitchRule != ManualHarvestNodeSwitchRejectedOr2Fail || got.ProbeIntervalSeconds != 10 || got.MaxAttempts != 20 {
 		t.Fatalf("defaults = %+v", got)
 	}
 	if _, err := NormalizeManualHarvestRequest(ManualHarvestRequest{NodeSwitchRule: "nope"}); err == nil {
@@ -208,12 +220,12 @@ func TestCodexTicketChatHold(t *testing.T) {
 }
 
 func TestDescribeCodexHarvestOutcome(t *testing.T) {
-	msg, level, _ := describeCodexHarvestOutcome("success", "", 200, 292, 10, 292, 10, "gpt-6-astra", "node-a")
-	if level != "OK" || !strings.Contains(msg, "成功捕获合规门票") {
-		t.Fatalf("success: level=%s msg=%s", level, msg)
+	msg, level, detail := describeCodexHarvestOutcome("success", "", 200, "gpt-6-astra", "node-a", true)
+	if level != "OK" || !strings.Contains(msg, "完整续接") || strings.Contains(detail, "len=") {
+		t.Fatalf("success: level=%s msg=%s detail=%s", level, msg, detail)
 	}
-	msg, level, detail := describeCodexHarvestOutcome("invalid_state", "", 200, 312, 11, 292, 10, "gpt-6-astra", "node-a")
-	if level != "WARN" || !strings.Contains(msg, "降智票据") || !strings.Contains(detail, "292/10") {
-		t.Fatalf("degraded: level=%s msg=%s detail=%s", level, msg, detail)
+	msg, level, detail = describeCodexHarvestOutcome("invalid_state", "", 200, "gpt-6-astra", "node-a", false)
+	if level != "WARN" || !strings.Contains(msg, "票据未通过校验") || strings.Contains(msg+detail, "降智") {
+		t.Fatalf("rejected: level=%s msg=%s detail=%s", level, msg, detail)
 	}
 }

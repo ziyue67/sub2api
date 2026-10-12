@@ -1,6 +1,7 @@
 import { apiClient } from '../client'
 
 export interface AstraGatewaySettings {
+  ticket_pool_scheduling?: boolean
   account_scheduling?: boolean
   scheduling_mode?: 'account' | 'model' | 'groups'
   scheduling_group_ids?: number[]
@@ -11,6 +12,7 @@ export interface AstraGatewaySettings {
 export function normalizeAstraGateway(value: AstraGatewaySettings): AstraGatewaySettings {
   return {
     account_scheduling: value.account_scheduling ?? false,
+    ticket_pool_scheduling: value.ticket_pool_scheduling ?? false,
     scheduling_mode: value.scheduling_mode || 'account',
     scheduling_group_ids: [...(value.scheduling_group_ids || [])],
     cookie_pool: {

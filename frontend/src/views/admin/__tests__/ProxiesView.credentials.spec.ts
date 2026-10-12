@@ -36,6 +36,19 @@ async function submit() {
 }
 
 describe('proxy credential updates', () => {
+  it('preserves the managed endpoint when renaming a Mihomo static proxy', async () => {
+    list.mockResolvedValue({ items: [{ id: 9, name: 'Mihomo fixture', protocol: 'http', host: '127.0.0.1', port: 32000, mihomo_node_id: 'node-one', status: 'active' }], total: 1, pages: 1 })
+    await edit()
+    const inputs = wrapper.findAll<HTMLInputElement>('#edit-proxy-form input')
+    expect(inputs.find(input => input.element.value === '127.0.0.1')?.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('#edit-proxy-form input[type="password"]').attributes('disabled')).toBeDefined()
+    const payload = await submit()
+    expect(payload).not.toHaveProperty('host')
+    expect(payload).not.toHaveProperty('port')
+    expect(payload).not.toHaveProperty('protocol')
+    expect(payload).not.toHaveProperty('username')
+    expect(payload).not.toHaveProperty('password')
+  })
   it('sends an explicit empty username when cleared', async () => {
     await edit()
     const username = wrapper.findAll<HTMLInputElement>('#edit-proxy-form input').find(input => input.element.value === 'old-user')!

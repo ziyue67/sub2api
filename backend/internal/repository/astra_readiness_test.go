@@ -56,7 +56,7 @@ func TestAstraReadinessSnapshotDoesNotWaitForNetwork(t *testing.T) {
 	cfg.Gateway.CodexGatewayPin = pinConfig()
 	wrapper := &astraRoutingUpstream{cfg: cfg}
 	pool := wrapper.current(t.Context())
-	pool.targetProbeMu.Lock()
+	require.NoError(t, pool.targetProbeMu.Lock(t.Context()))
 	defer pool.targetProbeMu.Unlock()
 	done := make(chan struct{})
 	go func() { wrapper.AstraGatewaySnapshot(context.Background()); close(done) }()
@@ -98,7 +98,7 @@ func TestAstraProbeTransportFailureRevokesExistingPass(t *testing.T) {
 	}}
 	resp, err := wrapper.Do(pinRequest(t), "", 299, 1)
 	consumeAffinityResponse(t, resp, err)
-	resp, err = wrapper.Do(pinRequest(t), "", 300, 1)
+	resp, err = wrapper.Do(forceAstraProbe(pinRequest(t)), "", 300, 1)
 	consumeAffinityResponse(t, resp, err)
 	require.Equal(t, 1, wrapper.AstraGatewaySnapshot(t.Context()).ReadyRoutes)
 	fail = true

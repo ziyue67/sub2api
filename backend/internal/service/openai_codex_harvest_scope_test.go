@@ -279,3 +279,50 @@ func TestCodexHarvestScopeExpiredCacheDoesNotHideStorageFailure(t *testing.T) {
 	_, err = s.settingService.GetCodexTicketHarvestScope(context.Background())
 	require.Error(t, err)
 }
+
+func TestCodexHarvestSelectedOAuthAccountsUsesAccountSwitch(t *testing.T) {
+	enabled := harvestScopeAccount(1, true)
+	enabled.Extra = map[string]any{OpenAICodexSkipHarvestExtraKey: false}
+	disabled := harvestScopeAccount(2, true, 24)
+	disabled.Extra = map[string]any{OpenAICodexSkipHarvestExtraKey: true}
+	stopped := harvestScopeAccount(3, false)
+	stopped.Extra = map[string]any{OpenAICodexSkipHarvestExtraKey: false}
+	api := harvestScopeAccount(4, true)
+	api.Type = AccountTypeAPIKey
+	limited := harvestScopeAccount(5, true)
+	until := time.Now().Add(time.Hour)
+	limited.RateLimitResetAt = &until
+	s, u, _ := harvestScopeService(t, `{"mode":"selected_accounts","group_ids":[],"account_policy":"prioritize_schedulable"}`, []Account{enabled, disabled, stopped, api, limited, harvestScopeAccount(6, true)}, 20)
+	s.refreshOpenAICodexTickets(context.Background())
+	require.Equal(t, []int64{1, 3}, u.ids)
+	require.False(t, s.openAICodexTicketHarvestExcluded(&disabled), "account harvest selection must not become a routing group gate")
+	scope, err := s.settingService.GetCodexTicketHarvestScope(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "selected_accounts", scope.Mode)
+}
+
+func TestCodexHarvestOAuthScopeDefaultsAndOptOut(t *testing.T) {
+	account := harvestScopeAccount(1, true)
+	selected := CodexTicketHarvestScope{Mode: "selected_accounts"}
+	require.False(t, selected.includes(&account))
+	account.Extra = map[string]any{OpenAICodexSkipHarvestExtraKey: false}
+	require.True(t, selected.includes(&account))
+	account.Extra[OpenAICodexSkipHarvestExtraKey] = true
+	require.False(t, selected.includes(&account))
+	s, u, _ := harvestScopeService(t, `{"mode":"all"}`, []Account{account, harvestScopeAccount(2, true)}, 20)
+	s.refreshOpenAICodexTickets(context.Background())
+	require.Equal(t, []int64{2}, u.ids)
+}
+
+func TestCodexHarvestSelectedAccountControlsReflectOptIn(t *testing.T) {
+	account := harvestScopeAccount(1, true)
+	s, _, _ := harvestScopeService(t, `{"mode":"selected_accounts"}`, []Account{account}, 1)
+	snapshot := BuildCodexHarvestFlow(t.Context(), &config.Config{}, s.settingService, []Account{account})
+	require.Len(t, snapshot.Accounts, 1)
+	require.False(t, snapshot.Accounts[0].HarvestSelected, "unselected account must offer Enable harvest")
+	require.False(t, snapshot.Accounts[0].InScope)
+	account.Extra = map[string]any{OpenAICodexSkipHarvestExtraKey: false}
+	snapshot = BuildCodexHarvestFlow(t.Context(), &config.Config{}, s.settingService, []Account{account})
+	require.True(t, snapshot.Accounts[0].HarvestSelected)
+	require.True(t, snapshot.Accounts[0].InScope)
+}

@@ -4,13 +4,14 @@ import (
 	"context"
 	"go.uber.org/zap"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
-// Read existing validation state only: never prepare routes or issue model requests.
+// Read ticket availability only: probe state never controls scheduling.
 func (s *AccountTestService) startAstraAccountScheduling() func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -36,9 +37,15 @@ func astraAccountSchedulingReady(settings config.AstraRoutingSettings, snapshot 
 	if !settings.CookiePool.Enabled || snapshot.Revision != settings.Revision {
 		return false
 	}
+	if !slices.Contains(settings.CookiePool.TargetAccountIDs, id) {
+		return false
+	}
+	if snapshot.RouteExpiresAt != nil && now.Before(*snapshot.RouteExpiresAt) {
+		return true
+	}
 	for _, row := range snapshot.Targets {
-		if row.AccountID == id {
-			return row.State == "ready" && row.Reason == "target_probe_passed" && row.ExpiresAt != nil && now.Before(*row.ExpiresAt)
+		if row.AccountID == id && row.State == "ready" && row.ExpiresAt != nil && now.Before(*row.ExpiresAt) {
+			return true
 		}
 	}
 	return false
@@ -46,13 +53,18 @@ func astraAccountSchedulingReady(settings config.AstraRoutingSettings, snapshot 
 
 func (s *AccountTestService) syncAstraAccountScheduling(ctx context.Context) {
 	settings := s.cfg.AstraRouting(ctx)
-	if !settings.AccountScheduling {
+	if !settings.TicketPoolScheduling || s.openaiGatewayService == nil || !s.openaiGatewayService.openAICodexTicketEnabledContext(ctx) {
 		return
 	}
-	provider, ok := s.httpUpstream.(AstraGatewayRuntimeProvider)
-	snapshot := AstraGatewayRuntime{}
-	if ok {
-		snapshot = provider.AstraGatewaySnapshot(ctx)
+	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
+	if err != nil {
+		return
+	}
+	var ids []int64
+	for i := range accounts {
+		if s.openaiGatewayService.ticketPoolSchedulingIncludes(ctx, &accounts[i]) {
+			ids = append(ids, accounts[i].ID)
+		}
 	}
 	// Serialize writes with local saves; stale work cannot act on removed targets.
 	if s.settingService != nil {
@@ -62,7 +74,7 @@ func (s *AccountTestService) syncAstraAccountScheduling(ctx context.Context) {
 			return
 		}
 	}
-	for _, id := range settings.CookiePool.TargetAccountIDs {
+	for _, id := range ids {
 		if ctx.Err() != nil {
 			return
 		}
@@ -70,9 +82,16 @@ func (s *AccountTestService) syncAstraAccountScheduling(ctx context.Context) {
 		if err != nil || account == nil {
 			continue
 		}
-		ready := astraAccountSchedulingReady(settings, snapshot, id, time.Now())
+		if !s.openaiGatewayService.ticketPoolSchedulingIncludes(ctx, account) {
+			continue
+		}
+		ready := s.openaiGatewayService.ticketPoolSchedulingReady(account, settings)
 		ready = ready && account.IsOpenAIOAuthLike() && account.Status == StatusActive && account.ParentAccountID == nil && (account.ExpiresAt == nil || time.Now().Before(*account.ExpiresAt))
-		fields := astraSchedulingLogFields(settings, snapshot, account, ready, time.Now())
+		reason := "ticket_unavailable"
+		if ready {
+			reason = "ticket_ready"
+		}
+		fields := []zap.Field{zap.Int64("account_id", id), zap.Bool("schedulable", ready), zap.String("reason", reason), zap.String("trigger", "ticket_pool_sync")}
 		action, err := applyAstraScheduling(ctx, s.accountRepo, account, settings, ready)
 		if err != nil {
 			code := "write_failed"
@@ -88,36 +107,41 @@ func (s *AccountTestService) syncAstraAccountScheduling(ctx context.Context) {
 		}
 		fields = append(fields, zap.String("mode", action.Action))
 		logger.L().Info("astra_account_scheduling_changed", fields...)
-		reason := "target_not_verified"
-		for _, field := range fields {
-			if field.Key == "reason" {
-				reason = field.String
-			}
-		}
 		astraRecentScheduling.add(AstraSchedulingRecord{CheckedAt: time.Now(), AccountID: id, Schedulable: ready, Reason: reason, Mode: action.Action})
+		recordCodexHarvestScheduling(account, action.Action, reason, ready)
 	}
 }
 
 // Only explicit non-secret fields: no account credentials, cookies, proxy URLs
 // or upstream errors. unchanged states never call this logger.
 func astraSchedulingLogFields(settings config.AstraRoutingSettings, snapshot AstraGatewayRuntime, account *Account, ready bool, now time.Time) []zap.Field {
-	reason := "target_not_verified"
+	reason := "source_route_unavailable"
 	gateway := ""
-	var expiry *time.Time
+	expiry := snapshot.RouteExpiresAt
 	for _, row := range snapshot.Targets {
 		if row.AccountID == account.ID {
-			gateway, expiry = row.Gateway, row.ExpiresAt
+			if expiry == nil {
+				expiry = row.ExpiresAt
+			}
+			if row.Gateway != "" {
+				gateway = row.Gateway
+			}
 			if row.Reason != "" {
 				reason = row.Reason
-			}
-			if row.State != "ready" && reason == "target_probe_passed" {
-				reason = "target_not_verified"
 			}
 			break
 		}
 	}
+	for _, row := range snapshot.Sources {
+		if row.Active {
+			gateway = row.Gateway
+			break
+		}
+	}
 	if ready {
-		reason = "target_probe_passed"
+		if reason == "source_route_unavailable" {
+			reason = "source_route_available"
+		}
 	} else if !settings.CookiePool.Enabled {
 		reason = "cookie_pool_disabled"
 	} else if snapshot.Revision != settings.Revision {
@@ -136,4 +160,30 @@ func astraSchedulingLogFields(settings config.AstraRoutingSettings, snapshot Ast
 		}
 	}
 	return append(fields, zap.Int64("route_remaining_seconds", remaining))
+}
+
+// Both acquisition paths publish into the same per-account ticket store.
+// Scheduling only reads admission state; it never probes or borrows a ticket.
+func (s *OpenAIGatewayService) ticketPoolSchedulingIncludes(ctx context.Context, account *Account) bool {
+	if s == nil || account == nil || !isOpenAICodexTicketAccount(account) || openAICodexSkipHarvest(account) {
+		return false
+	}
+	scope, err := s.settingService.GetCodexTicketHarvestScope(ctx)
+	return err == nil && scope.includes(account)
+}
+func (s *OpenAIGatewayService) ticketPoolSchedulingReady(account *Account, settings config.AstraRoutingSettings) bool {
+	cfg := s.openAICodexTicketConfig()
+	for _, model := range cfg.Models {
+		model = normalizeOpenAICodexTicketModel(model)
+		if model == "" || (settings.EffectiveSchedulingMode() == "model" && model != "gpt-6-astra") {
+			continue
+		}
+		if !isOpenAICodexTicketAccount(account, model) {
+			continue
+		}
+		if s.lookupOpenAICodexTicket(account, model).valid(time.Now(), openAICodexTicketTargetLength(account, cfg)) {
+			return true
+		}
+	}
+	return false
 }

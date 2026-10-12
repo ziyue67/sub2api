@@ -78,21 +78,55 @@ func TestCodex780WebSocketMetadataAndEdgeHost(t *testing.T) {
 		if json.Unmarshal(raw, &payload) != nil || payload["type"] != "response.create" || payload["stream"] != nil {
 			return
 		}
+		metadata, ok := payload["client_metadata"].(map[string]any)
+		if !ok || metadata[openAICodexTurnStateHeader] != ticket || r.Header.Get(openAICodexTurnStateHeader) != ticket {
+			return
+		}
 		_ = conn.Write(r.Context(), coderws.MessageText, []byte(`{"type":"response.created","response":{"id":"r1","model":"gpt-6-astra"}}`))
-		metadata, _ := json.Marshal(map[string]any{"type": "codex.response.metadata", "headers": map[string]string{"x-codex-turn-state": ticket}})
-		_ = conn.Write(r.Context(), coderws.MessageText, metadata)
+		rawMetadata, _ := json.Marshal(map[string]any{"type": "codex.response.metadata", "headers": map[string]string{"x-codex-turn-state": ticket}})
+		_ = conn.Write(r.Context(), coderws.MessageText, rawMetadata)
+		_ = conn.Write(r.Context(), coderws.MessageText, []byte(`{"type":"response.completed","response":{"status":"completed","model":"gpt-6-astra"}}`))
 		_, _, _ = conn.Read(r.Context())
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "POST", strings.Replace(server.URL, "127.0.0.1", "mint.example", 1), nil)
+	req.Header.Set(openAICodexTurnStateHeader, ticket)
 	out := requestCodex780WS(req, "", "127.0.0.1", []byte(`{"model":"gpt-6-astra","stream":true}`), nil, "unified-95", "gpt-6-astra")
 	require.NoError(t, out.Err)
 	require.Equal(t, 101, out.Status)
 	require.Equal(t, ticket, out.State)
 	require.Equal(t, req.URL.Host, <-observed)
 	require.Equal(t, "websocket", out.Transport)
+}
+
+func TestCodex780WebSocketHandshakeAndShapeDoNotPassProbe(t *testing.T) {
+	state := mint780State(time.Now())
+	pair := mint780Pair(time.Now().Add(time.Hour), "unified-123")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(openAICodexTurnStateHeader, state)
+		for _, cookie := range pair {
+			w.Header().Add("Set-Cookie", cookie)
+		}
+		conn, err := coderws.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		if _, _, err = conn.Read(r.Context()); err != nil {
+			return
+		}
+		_ = conn.Write(r.Context(), coderws.MessageText, []byte(`{"type":"response.created","response":{"id":"r","model":"gpt-6-astra"}}`))
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, nil)
+	out := requestCodex780WS(req, "", "", []byte(`{"model":"gpt-6-astra","stream":true}`), nil, "any", "gpt-6-astra")
+	require.Equal(t, http.StatusSwitchingProtocols, out.Status)
+	require.Len(t, out.State, 780)
+	require.Error(t, out.Err)
 }
 
 func TestCodex780EdgeCONNECTDestination(t *testing.T) {

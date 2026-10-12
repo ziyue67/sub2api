@@ -17,18 +17,19 @@ import (
 )
 
 type codexHarvestProbeResult struct {
-	EdgeIP     string
-	Transport  string
-	Gateway    string
-	State      string
-	Status     int
-	RetryAfter time.Duration
-	Err        error
-	Shape      openAICodexTicketShape
-	Kind       string
-	Sent       bool
-	Terminal   bool
-	Cookies    []string
+	ProbeVerified bool
+	EdgeIP        string
+	Transport     string
+	Gateway       string
+	State         string
+	Status        int
+	RetryAfter    time.Duration
+	Err           error
+	Shape         openAICodexTicketShape
+	Kind          string
+	Sent          bool
+	Terminal      bool
+	Cookies       []string
 }
 
 func responseCookiePairs(resp *http.Response) []string {
@@ -110,6 +111,9 @@ func (s *OpenAIGatewayService) executeCodexHarvestProbe(ctx context.Context, acc
 	}
 	result = s.requestCodexHarvestProbe(attempt, account, token, model, proxy, reserve, sessionID)
 	result.Shape, result.Kind = classifyCodexHarvestProbe(ctx, account, s.openAICodexTicketConfig(), result)
+	if openAICodexTicketTargetLength(account, s.openAICodexTicketConfig()) == 780 && result.Kind == "success" && !result.ProbeVerified {
+		result.Kind = "probe_inconclusive"
+	}
 	if openAICodexTicketTargetLength(account, s.openAICodexTicketConfig()) == 780 {
 		result.Terminal = codex780TerminalFailure(result)
 	}
@@ -240,7 +244,7 @@ func codexHarvestTicket(account *Account, model string, r codexHarvestProbeResul
 			transport = "sse"
 		}
 	}
-	return &openAICodexTicket{EdgeIP: r.EdgeIP, Transport: transport, Gateway: r.Gateway, AccountID: account.ID, Model: model, State: r.State, Length: len(r.State),
+	return &openAICodexTicket{Acquisition: "self", ProbeVerified: r.ProbeVerified, EdgeIP: r.EdgeIP, Transport: transport, Gateway: r.Gateway, AccountID: account.ID, Model: model, State: r.State, Length: len(r.State),
 		CapturedAt: now, ExpiresAt: expires, Attempts: attempts, Blocks: r.Shape.Blocks, IssuedAt: r.Shape.IssuedAt,
 		HarvestLite: len(r.State) != 780, HarvestCookies: append([]string(nil), r.Cookies...), HarvestCookiesAt: now}
 }

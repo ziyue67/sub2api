@@ -92,14 +92,14 @@ func (r *codexHarvestNodeRepository) Reset(ctx context.Context, id int64) error 
 }
 
 func (r *codexHarvestNodeRepository) Record(ctx context.Context, f service.CodexHarvestNodeFeedback) (bool, error) {
-	if f.Result == "cancelled" {
+	if f.Result == "cancelled" || f.Result == "probe_inconclusive" {
 		return false, nil
 	}
 	success, miss, network, account := 0, 0, 0, 0
 	switch f.Result {
 	case "success":
 		success = 1
-	case "invalid_state", "invalid_route", "model_mismatch", "response_incomplete_or_error", "upstream_error":
+	case "invalid_state", "invalid_route", "model_mismatch", "probe_reissued", "probe_route_changed", "response_incomplete_or_error", "upstream_error":
 		miss = 1
 	case "network_error":
 		network = 1

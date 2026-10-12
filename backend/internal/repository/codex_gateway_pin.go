@@ -27,7 +27,7 @@ type codexGatewayPinUpstream struct {
 	nodeCursor            int
 	rotationRetryAfter    time.Time
 	targetMu              sync.Mutex
-	targetProbeMu         sync.Mutex
+	targetProbeMu         astraContextMutex
 	targetChecks          map[int64]astraTargetValidation
 	delegate              service.HTTPUpstream
 	config                config.CodexGatewayPinConfig

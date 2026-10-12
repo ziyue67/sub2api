@@ -252,8 +252,9 @@ func TestAstraGatewayRuntimeRevisionClearsPool(t *testing.T) {
 	settings.Revision = "two"
 	second := wrapper.current(t.Context())
 	require.NotSame(t, first, second)
-	_, err = wrapper.CodexGatewayPinWSHeader(300)
-	require.Error(t, err)
+	cookie, err = wrapper.CodexGatewayPinWSHeader(300)
+	require.NoError(t, err)
+	require.Empty(t, cookie)
 	settings.CookiePool.Enabled = false
 	require.Nil(t, wrapper.current(t.Context()))
 	cookie, err = wrapper.CodexGatewayPinWSHeader(300)
@@ -363,7 +364,7 @@ func TestAstraGatewayTargetPreparesSourceBeforeForwarding(t *testing.T) {
 		wrapper.current(t.Context()).recordSource(id, now, &codexGatewayRoute{cookie: http.Cookie{Name: "__oailb", Value: "ready", Path: "/"}, expires: now.Add(time.Minute)}, true)
 		return nil
 	})
-	resp, err := wrapper.Do(pinRequest(t), "", 300, 1)
+	resp, err := wrapper.Do(forceAstraProbe(pinRequest(t)), "", 300, 1)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, 3, calls)

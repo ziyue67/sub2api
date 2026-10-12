@@ -219,6 +219,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 			continue
 		}
 
+		observeAnthropicUpstreamResponseModel(c, []byte(payload))
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue
@@ -283,7 +284,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		c.JSON(http.StatusOK, ccResp)
 	}
 
-	return &OpenAIForwardResult{
+	result := &OpenAIForwardResult{
 		RequestID:        requestID,
 		UpstreamHeaders:  resp.Header,
 		Usage:            claudeUsageToOpenAIUsage(&usage),
@@ -294,7 +295,9 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		ReasoningEffort:  reasoningEffort,
 		Stream:           false,
 		Duration:         time.Since(startTime),
-	}, nil
+	}
+	applyObservedUpstreamResponseModel(c, result)
+	return result, nil
 }
 
 // handleCCStreamingFromNativeAnthropic reads Anthropic SSE events, converts each
@@ -337,7 +340,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	resultWithUsage := func() *OpenAIForwardResult {
-		return &OpenAIForwardResult{
+		result := &OpenAIForwardResult{
 			RequestID:        requestID,
 			UpstreamHeaders:  resp.Header,
 			Usage:            claudeUsageToOpenAIUsage(&usage),
@@ -351,6 +354,8 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			FirstTokenMs:     firstTokenMs,
 			ClientDisconnect: clientDisconnected,
 		}
+		applyObservedUpstreamResponseModel(c, result)
+		return result
 	}
 
 	// 读间隔上限：上游挂住 SSE（不发数据也不断连）时结束排水。上游 ctx 为
@@ -463,6 +468,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			continue
 		}
 
+		observeAnthropicUpstreamResponseModel(c, []byte(payload))
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			continue

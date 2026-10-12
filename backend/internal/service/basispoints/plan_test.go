@@ -1,7 +1,9 @@
 package basispoints
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -194,4 +196,27 @@ func TestNativePlanRejectsUnrelatedNativeCallsAndMissingIdentity(t *testing.T) {
 			t.Fatal("unrelated native tools and missing identities must be rejected without leaking arguments")
 		}
 	}
+}
+
+// A failed shared-state write must not deliver an unreplayable plan call.
+func TestNativePlanRejectsFailedReplayPersistence(t *testing.T) {
+	for _, want := range []error{ErrStateUnavailable, ErrStateCapacity} {
+		t.Run(want.Error(), func(t *testing.T) {
+			bridge := nativePlanTestBridge("")
+			bridge.replay, _ = NewPersistentCaches(context.Background(), planFailingStateStore{err: want})
+			result, err := bridge.translateNativePlan(nativePlanTestItem(object{"plan": []any{object{"step": "Inspect", "status": "pending"}}}))
+			if !errors.Is(err, want) || result != nil {
+				t.Fatalf("expected no tool call and %v, got result=%v err=%v", want, result, err)
+			}
+		})
+	}
+}
+
+type planFailingStateStore struct{ err error }
+
+func (s planFailingStateStore) LoadBPSState(context.Context, string, string) ([]byte, uint64, error) {
+	return nil, 0, nil
+}
+func (s planFailingStateStore) SaveBPSState(context.Context, string, string, *uint64, []byte) (bool, error) {
+	return false, s.err
 }

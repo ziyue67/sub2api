@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -10,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -117,66 +117,62 @@ func codex780Route(cookies []string, target string, now time.Time) ([]string, ti
 		return nil, time.Time{}, mintRouteError("route_pair_expired")
 	}
 	match := codex780GatewayRE.FindSubmatch(raw)
-	if len(match) != 2 {
+	if target != "any" && len(match) != 2 {
 		return nil, time.Time{}, mintRouteError("route_gateway_unknown")
 	}
-	if !codex780GatewayAllowed(string(match[1]), target) {
+	if target != "any" && !codex780GatewayAllowed(string(match[1]), target) {
 		return nil, time.Time{}, mintRouteError("route_gateway_mismatch: got=" + string(match[1]) + " want=" + target)
 	}
 	return []string{"__cflb=" + pair["__cflb"], "__oailb=" + pair["__oailb"]}, time.Unix(claims.Exp, 0), nil
 }
 
-// A complete created event suffices for the model declaration. Stop early, bound reads,
-// and never expose response bodies in diagnostics. This is not a capability test.
-func readCodex780Created(body io.Reader, model string) error {
-	scanner := bufio.NewScanner(io.LimitReader(body, 16*1024))
-	scanner.Buffer(make([]byte, 1024), 16*1024)
-	scanner.Split(splitCodex780SSELine)
-	var data []string
-	eventName := ""
-	for scanner.Scan() {
-		line := strings.TrimPrefix(scanner.Text(), "\ufeff")
-		if line == "" {
-			raw := []byte(strings.Join(data, "\n"))
-			if err := codex780EventError(raw, eventName); err != nil {
-				return err
-			}
-			var event struct {
-				Type     string `json:"type"`
-				Response struct {
-					ID    string `json:"id"`
-					Model string `json:"model"`
-				} `json:"response"`
-			}
-			if json.Unmarshal(raw, &event) == nil {
-				if event.Type == "response.created" {
-					if (eventName != "" && eventName != event.Type) || strings.TrimSpace(event.Response.ID) == "" || event.Response.Model != model {
-						return &codexMintError{kind: "model_mismatch", detail: "mint model declaration mismatch"}
-					}
-					return nil
-				}
-			}
-			data = nil
-			eventName = ""
-			continue
-		}
-		field, value, _ := strings.Cut(line, ":")
-		value = strings.TrimPrefix(value, " ")
-		if field == "data" {
-			data = append(data, value)
-		}
-		if field == "event" {
-			eventName = value
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return mintTransportError(err)
-	}
-	return &codexMintError{kind: "response_incomplete_or_error", detail: "mint created event missing or incomplete"}
+type codex780SeedContextKey struct{}
+type codex780Seed struct {
+	state   string
+	cookies []string
 }
 
 func (s *OpenAIGatewayService) requestCodex780Probe(ctx context.Context, account *Account, token, model, proxy string, reserve func() bool, session string) (out codexHarvestProbeResult) {
+	// Self collection has no seed. Fast reuse is an explicit candidate, and
+	// only the new state issued to the target may enter its account store.
 	controls, _ := s.harvestControls(ctx)
+	seed, borrowed := ctx.Value(codex780SeedContextKey{}).(codex780Seed)
+	out = s.requestCodex780Shot(ctx, account, token, model, proxy, reserve, session, seed.state, seed.cookies, controls)
+	if borrowed && out.Err == nil && out.State == seed.state {
+		out.Err = &codexMintError{kind: "probe_inconclusive", detail: "reuse did not issue a target-owned state"}
+		return
+	}
+	out.Shape, out.Kind = classifyCodexHarvestProbe(ctx, account, s.openAICodexTicketConfig(), out)
+	if out.Kind != "success" {
+		return
+	}
+	continuation := s.requestCodex780Shot(ctx, account, token, model, proxy, reserve, session, out.State, out.Cookies, controls)
+	if !continuation.Sent {
+		out.Err = &codexMintError{kind: "probe_inconclusive", detail: "ticket probe not admitted"}
+		if ctx.Err() != nil {
+			out.Err = mintTransportError(ctx.Err())
+		}
+		return
+	}
+	// Classify transport and stream failures before comparing ticket headers.
+	if continuation.Err != nil || (continuation.Status != http.StatusOK && continuation.Status != http.StatusSwitchingProtocols) {
+		out.Err, out.Status, out.RetryAfter = continuation.Err, continuation.Status, continuation.RetryAfter
+		return
+	}
+	if continuation.State != "" && continuation.State != out.State {
+		out.Err = &codexMintError{kind: "probe_reissued", detail: "ticket probe issued a different state"}
+		return
+	}
+	if !slices.Equal(continuation.Cookies, out.Cookies) {
+		out.Err = &codexMintError{kind: "probe_route_changed", detail: "ticket probe changed the route pair"}
+		return
+	}
+	out.ProbeVerified = true
+	return
+}
+
+func (s *OpenAIGatewayService) requestCodex780Shot(ctx context.Context, account *Account, token, model, proxy string, reserve func() bool, session, state string, seed []string, controls CodexHarvestControls) (out codexHarvestProbeResult) {
+	ctx = context.WithValue(ctx, openAICodexStateProbeContextKey{}, true)
 	if edge, ok := ctx.Value(codexMintEdgeContextKey{}).(string); ok {
 		controls.EdgeIP = edge
 	}
@@ -184,14 +180,12 @@ func (s *OpenAIGatewayService) requestCodex780Probe(ctx context.Context, account
 		out.Err = err
 		return
 	}
-	target := controls.TargetGateway
-	if target == "" {
-		target = "unified-88"
-	}
+	// Gateway claims describe routing, not ticket quality.
+	target := "any"
 	out.Gateway = target
 	out.Transport = "sse"
 	out.EdgeIP = controls.EdgeIP
-	payload := []byte(`{"model":` + jsonString(model) + `,"instructions":"","stream":true,"store":false,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"ping"}]}],"reasoning":{"effort":"low"},"tool_choice":"auto","parallel_tool_calls":false}`)
+	payload := []byte(`{"model":` + jsonString(model) + `,"instructions":"Reply with exactly OK. Do not call tools.","stream":true,"store":false,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply OK"}]}],"parallel_tool_calls":false}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatgptCodexURL, bytes.NewReader(payload))
 	if err != nil {
 		out.Err = errors.New("cannot construct mint request")
@@ -204,29 +198,19 @@ func (s *OpenAIGatewayService) requestCodex780Probe(ctx context.Context, account
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("session-id", session)
+	req.Header.Set("session_id", session)
+	if state != "" {
+		req.Header.Set(openAICodexTurnStateHeader, state)
+	}
 	req.Header.Set("User-Agent", "codex-tui/0.154.0 (Ubuntu 24.04; x86_64) OVH (codex-tui; 0.154.0)")
 	req.Header.Set("originator", "codex-tui")
 	if err = resolveAndSetOpenAIChatGPTAccountHeaders(ctx, s.accountRepo, req.Header, account); err != nil {
 		out.Err = errors.New("account identity unavailable")
 		return
 	}
-	// Keep a target route even when no acceptable ticket was returned. Models
-	// share routes only within the same account, credentials and protocol.
-	protocol := controls.Transport
-	if protocol == "" {
-		protocol = "sse"
-	}
-	key := codex780RouteKey(account, token, req.Header.Get("Chatgpt-Account-Id"), target, protocol)
-	seed, cached := s.codex780Routes.get(key, time.Now())
-	if !cached {
-		if ticket := s.lookupOpenAICodexTicket(account, model); ticket != nil && !ticket.Revoked {
-			seed, _, _ = codex780Route(ticket.HarvestCookies, target, time.Now())
-		}
-	}
 	if len(seed) > 0 {
 		req.Header.Set("Cookie", strings.Join(seed, "; "))
 	}
-	defer func() { s.codex780Routes.update(key, target, seed, out, time.Now()) }()
 	if ctx.Err() != nil || (reserve != nil && !reserve()) {
 		out.Err = errors.New("mint request no longer admitted")
 		return
@@ -268,7 +252,7 @@ func (s *OpenAIGatewayService) requestCodex780Probe(ctx context.Context, account
 		return
 	}
 	out.State = extractOpenAICodexTurnState(resp.Header)
-	modelErr := readCodex780Created(resp.Body, model)
+	modelErr := readCodexHarvestComplete(resp.Body)
 	out.Cookies, err = codex780ResponseRoute(resp, seed, target, time.Now())
 	var eventErr *codexMintError
 	if errors.As(modelErr, &eventErr) && (eventErr.terminal || eventErr.kind == "rate_limited") {
@@ -280,8 +264,36 @@ func (s *OpenAIGatewayService) requestCodex780Probe(ctx context.Context, account
 		return
 	}
 	out.Gateway = codex780CookieGateway(out.Cookies)
+	if out.Gateway == "" {
+		out.Gateway = "any"
+	}
 	out.Err = modelErr
 	return
+}
+
+// Model names and response.created alone are not acceptance evidence. Require
+// a complete, bounded stream, preserving only controlled error categories.
+func readCodexHarvestComplete(body io.Reader) error {
+	raw, err := io.ReadAll(io.LimitReader(body, openAICodexStateProbeMaxBody+1))
+	if err != nil {
+		return mintTransportError(err)
+	}
+	if len(raw) > openAICodexStateProbeMaxBody {
+		return &codexMintError{kind: "response_incomplete_or_error", detail: "ticket probe response too large"}
+	}
+	// SSE permits a BOM and CR, CRLF or LF line endings.
+	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
+	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	raw = bytes.ReplaceAll(raw, []byte("\r"), []byte("\n"))
+	for _, event := range openAICodexStateStreamEvents(raw) {
+		if err := codex780EventError(event, ""); err != nil {
+			return err
+		}
+	}
+	if err := validateCodexProbeResponse(raw); err != nil {
+		return &codexMintError{kind: "response_incomplete_or_error", detail: "ticket probe did not complete"}
+	}
+	return nil
 }
 
 func codex780ResponseRoute(resp *http.Response, seed []string, target string, now time.Time) ([]string, error) {
@@ -301,26 +313,4 @@ func codex780ResponseRoute(resp *http.Response, seed []string, target string, no
 	// A changed pair must be complete; never combine old and new halves.
 	clean, _, err := codex780Route(incoming, target, now)
 	return clean, err
-}
-
-func splitCodex780SSELine(data []byte, atEOF bool) (int, []byte, error) {
-	for i, b := range data {
-		if b != '\r' && b != '\n' {
-			continue
-		}
-		n := 1
-		if b == '\r' {
-			if i+1 == len(data) && !atEOF {
-				return 0, nil, nil
-			}
-			if i+1 < len(data) && data[i+1] == '\n' {
-				n = 2
-			}
-		}
-		return i + n, data[:i], nil
-	}
-	if atEOF && len(data) > 0 {
-		return len(data), data, nil
-	}
-	return 0, nil, nil
 }
