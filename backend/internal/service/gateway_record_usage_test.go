@@ -143,12 +143,17 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.Equal(t, payloadHash, billingRepo.lastCmd.RequestPayloadHash)
 }
 
-func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {
+func TestGatewayServiceRecordUsage_BillingFingerprintNeverFallsBackToClientContextID(t *testing.T) {
+	// 安全回归（审计 H5）：计费幂等键的指纹绝不能由客户端可控的 X-Request-ID /
+	// X-Client-Request-ID 决定 —— 否则客户端固定一个 id 就能把多笔不同请求折叠成
+	// 一笔（静默去重、不扣费）。缺失真实负载哈希时必须用服务端算出的指纹
+	// （UsageBillingCommand.Normalize() → buildUsageBillingFingerprint）。
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
 
 	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "req-local-123")
+	ctx = context.WithValue(ctx, ctxkey.ClientRequestID, "client-evil-123")
 	err := svc.RecordUsage(ctx, &RecordUsageInput{
 		Result: &ForwardResult{
 			RequestID: "gateway_payload_fallback",
@@ -165,7 +170,12 @@ func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID
 	})
 	require.NoError(t, err)
 	require.NotNil(t, billingRepo.lastCmd)
-	require.Equal(t, "local:req-local-123", billingRepo.lastCmd.RequestPayloadHash)
+	// 生产路径由 usageBillingRepository.Apply → cmd.Normalize() 补齐服务端指纹；
+	// 这里的 stub 不做 Normalize，显式调一次以核对最终口径。
+	billingRepo.lastCmd.Normalize()
+	require.NotContains(t, billingRepo.lastCmd.RequestFingerprint, "client-evil-123")
+	require.NotContains(t, billingRepo.lastCmd.RequestFingerprint, "req-local-123")
+	require.NotEmpty(t, billingRepo.lastCmd.RequestFingerprint, "缺失负载哈希时必须由服务端 usage 数据派生指纹")
 }
 
 func TestGatewayServiceRecordUsage_AddsAnthropicWebSearchSurcharge(t *testing.T) {
@@ -653,13 +663,15 @@ func TestGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling(t *testi
 	require.Equal(t, 1, quotaSvc.quotaCalls)
 }
 
-func TestGatewayServiceRecordUsage_UsesFallbackRequestIDForUsageLog(t *testing.T) {
+func TestGatewayServiceRecordUsage_FallbackRequestIDIsServerGenerated(t *testing.T) {
+	// 审计 H5：没有上游 id 时必须服务端生成，绝不能回落到客户端 header
+	// （否则固定 header 即可让多笔调用共用同一个计费幂等键 → 免费调用）。
 	usageRepo := &openAIRecordUsageLogRepoStub{}
-	userRepo := &openAIRecordUsageUserRepoStub{}
-	subRepo := &openAIRecordUsageSubRepoStub{}
-	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, subRepo)
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
 
 	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "gateway-local-fallback")
+	ctx = context.WithValue(ctx, ctxkey.ClientRequestID, "client-stable-xyz")
 	err := svc.RecordUsage(ctx, &RecordUsageInput{
 		Result: &ForwardResult{
 			RequestID: "",
@@ -677,10 +689,15 @@ func TestGatewayServiceRecordUsage_UsesFallbackRequestIDForUsageLog(t *testing.T
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, "local:gateway-local-fallback", usageRepo.lastLog.RequestID)
+	require.NotEqual(t, "local:gateway-local-fallback", usageRepo.lastLog.RequestID)
+	require.NotEqual(t, "client:client-stable-xyz", usageRepo.lastLog.RequestID)
+	require.Contains(t, usageRepo.lastLog.RequestID, "generated:")
+	require.Equal(t, usageRepo.lastLog.RequestID, billingRepo.lastCmd.RequestID)
 }
 
-func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t *testing.T) {
+func TestGatewayServiceRecordUsage_NeverUsesClientRequestIDAsBillingKey(t *testing.T) {
+	// 安全回归（审计 H5）：即使客户端同时提供 X-Client-Request-ID 与 X-Request-ID，
+	// 计费幂等键也必须用上游 id（服务端可信、每笔调用唯一）。
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
 	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
@@ -704,9 +721,48 @@ func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t
 
 	require.NoError(t, err)
 	require.NotNil(t, billingRepo.lastCmd)
-	require.Equal(t, "client:client-stable-123", billingRepo.lastCmd.RequestID)
+	require.Equal(t, "upstream-volatile-456", billingRepo.lastCmd.RequestID)
+	require.NotContains(t, billingRepo.lastCmd.RequestID, "client-stable-123")
+	require.NotContains(t, billingRepo.lastCmd.RequestID, "req-local-ignored")
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, "client:client-stable-123", usageRepo.lastLog.RequestID)
+	require.Equal(t, "upstream-volatile-456", usageRepo.lastLog.RequestID)
+}
+
+// TestGatewayServiceRecordUsage_ConflictRetryAlignsUsageLogRequestID 锁死审计 N2：
+// 上游复用/伪造 request id 导致指纹冲突时，会换服务端新 id **重新落账**（不丢单）；
+// 此时 usage_log 必须记录**实际计费键**，否则钱包侧的扣费记录挂在一个"影子 id"上，
+// 按 request_id 对账时两边对不上（usage_billing_dedup 与 usage_log 不一致）。
+func TestGatewayServiceRecordUsage_ConflictRetryAlignsUsageLogRequestID(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{
+		result: &UsageBillingApplyResult{Applied: true},
+		errSeq: []error{ErrUsageBillingRequestConflict, nil},
+	}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "upstream-reused-id",
+			Usage: ClaudeUsage{
+				InputTokens:  10,
+				OutputTokens: 6,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 508},
+		User:    &User{ID: 608},
+		Account: &Account{ID: 708},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, billingRepo.calls, "冲突后必须换新 id 重试一次")
+	require.Len(t, billingRepo.cmdIDs, 2)
+	require.Equal(t, "upstream-reused-id", billingRepo.cmdIDs[0], "首次必须用上游 id")
+	require.Contains(t, billingRepo.cmdIDs[1], ":conflict:", "重试必须换服务端新 id")
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, billingRepo.cmdIDs[1], usageRepo.lastLog.RequestID,
+		"usage_log 必须记录实际计费键，保证与 usage_billing_dedup 一致（审计 N2）")
 }
 
 func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *testing.T) {
@@ -791,7 +847,7 @@ func TestGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *testin
 	})
 
 	require.ErrorIs(t, err, billingErr)
-	require.Equal(t, 1, billingRepo.calls)
+	require.Equal(t, usageBillingApplyMaxAttempts, billingRepo.calls, "transient billing errors are retried")
 	require.Equal(t, 1, usageRepo.calls)
 	require.NotNil(t, usageRepo.lastLog)
 	require.Equal(t, 10, usageRepo.lastLog.InputTokens)
@@ -800,6 +856,265 @@ func TestGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *testin
 	require.Greater(t, usageRepo.lastLog.OutputCost, 0.0)
 	require.Greater(t, usageRepo.lastLog.TotalCost, 0.0)
 	require.Zero(t, usageRepo.lastLog.ActualCost)
+}
+
+func TestGatewayServiceRecordUsage_InsufficientBalanceInvalidatesBalanceCache(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	cache := &balanceEligibilityCacheStub{balance: 0.30}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	// billing repo 原子扣费失败（余额不足以覆盖 amount + reserve）→
+	// recordUsageCore 应把余额缓存失效，保证下一次 preflight 从 DB 重读并 403。
+	billingRepo := &openAIRecordUsageBillingRepoStub{err: ErrInsufficientBalance}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.usageBillingRepo = billingRepo
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_billing_insufficient",
+			Usage: ClaudeUsage{
+				InputTokens:  100,
+				OutputTokens: 60,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 509},
+		User:    &User{ID: 609},
+		Account: &Account{ID: 709},
+	})
+
+	require.ErrorIs(t, err, ErrInsufficientBalance)
+	require.Equal(t, int64(1), cache.invalidateCalls.Load(), "insufficient-balance billing error must invalidate the balance cache")
+}
+
+// 钱包不足以覆盖全额时，统一计费事务把余额扣到 reserve 保留线为止（永不为负），
+// 返回 BalanceShortfall > 0。RecordUsage 必须：
+//   - 视为成功（上游成本已发生，能收的已收），不返回错误；
+//   - usage_log.ActualCost 记为实收金额，保证 sum(actual_cost) == 实际扣减；
+//   - 失效余额缓存，让下一次预检回源读到 balance == floor → 403。
+func TestGatewayServiceRecordUsage_PartialCollectionSettlesUsageLogAndInvalidatesCache(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	cache := &balanceEligibilityCacheStub{balance: 0.30}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	// 1000/600 tokens 的 claude-sonnet-4 按回退价 ×1.1 约 $0.0132；钱包只剩 0.105，
+	// 扣到 floor 0.10 实收 0.005，其余记为 shortfall。
+	floor := 0.10
+	const collected = 0.005
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{
+		Applied:          true,
+		NewBalance:       &floor,
+		BalanceCollected: collected,
+		BalanceShortfall: 0.0082,
+	}}
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+	svc.usageBillingRepo = billingRepo
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_billing_partial",
+			Usage: ClaudeUsage{
+				InputTokens:  1000,
+				OutputTokens: 600,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 510},
+		User:    &User{ID: 610},
+		Account: &Account{ID: 710},
+	})
+
+	require.NoError(t, err, "partial collection is a settled request, not a billing failure")
+	require.Equal(t, 1, billingRepo.calls)
+	require.NotNil(t, billingRepo.lastCmd)
+	require.Greater(t, billingRepo.lastCmd.BalanceCost, collected, "the full cost must still be submitted to the billing transaction")
+	require.NotNil(t, usageRepo.lastLog)
+	require.Greater(t, usageRepo.lastLog.TotalCost, collected, "TotalCost keeps the real upstream cost")
+	require.InDelta(t, collected, usageRepo.lastLog.ActualCost, 1e-9, "ActualCost must equal the amount actually collected")
+	require.Equal(t, int64(1), cache.invalidateCalls.Load(), "draining to the floor must invalidate the balance cache so the next preflight returns 403")
+
+	// 闭环验证：缓存失效后，预检以 DB 真实余额（== floor）判定，拒绝后续请求。
+	cache.cacheMissAfterInvalidate = true
+	billingCacheSvc.userRepo = &balanceLoadUserRepoStub{balance: floor}
+	err = billingCacheSvc.CheckBillingEligibility(context.Background(), &User{ID: 610}, nil, nil, nil, "")
+	require.ErrorIs(t, err, ErrInsufficientBalance)
+}
+
+// legacyFloorUserRepoStub 模拟生产 userRepository：实现 DeductBalanceToFloor，
+// 让 repo=nil 的 legacy 兜底路径也走“扣到底线为止”的语义。
+type legacyFloorUserRepoStub struct {
+	openAIRecordUsageUserRepoStub
+
+	deduction  BalanceDeduction
+	floorErr   error
+	floorCalls int
+	lastFloor  float64
+
+	// 债务模式（billing.settlement_debt_mode）分支的调用记录。debtNewBalance 是
+	// 模拟仓储把余额扣成负数（欠款）后的余额。
+	debtNewBalance float64
+	debtErr        error
+	debtCalls      int
+}
+
+func (s *legacyFloorUserRepoStub) DeductBalanceToFloor(ctx context.Context, id int64, amount, floor float64) (BalanceDeduction, error) {
+	s.floorCalls++
+	s.lastAmount = amount
+	s.lastFloor = floor
+	s.lastCtxErr = ctx.Err()
+	if s.floorErr != nil {
+		return BalanceDeduction{}, s.floorErr
+	}
+	return s.deduction, nil
+}
+
+func TestGatewayServiceRecordUsage_LegacyFallbackDrainsToFloorAndSettlesUsageLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	userRepo := &legacyFloorUserRepoStub{deduction: BalanceDeduction{NewBalance: 0.10, Collected: 0.01, Shortfall: 0.04}}
+	cache := &balanceEligibilityCacheStub{balance: 0.11}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	// repo=nil → legacy fallback；cfg 带 reserve，兜底路径必须把 floor 透传给仓储。
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+	svc.cfg.Billing.MinimumBalanceReserve = 0.10
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_legacy_partial",
+			Usage: ClaudeUsage{
+				InputTokens:  1000,
+				OutputTokens: 600,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 511},
+		User:    &User{ID: 611},
+		Account: &Account{ID: 711},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, userRepo.floorCalls, "legacy path must prefer the floor-capable deduction")
+	require.Equal(t, 0, userRepo.deductCalls, "strict DeductBalance must not be used when the floor variant is available")
+	require.InDelta(t, 0.10, userRepo.lastFloor, 1e-9)
+	require.NoError(t, userRepo.lastCtxErr)
+	require.NotNil(t, usageRepo.lastLog)
+	require.InDelta(t, 0.01, usageRepo.lastLog.ActualCost, 1e-9, "ActualCost must equal the amount actually collected")
+	require.Equal(t, int64(1), cache.invalidateCalls.Load())
+}
+
+// legacyFloorUserRepoStub 同时实现债务扣款（生产 userRepository 两者都实现），
+// 用于验证 billing.settlement_debt_mode 下的 legacy 分支选择。
+func (s *legacyFloorUserRepoStub) DeductBalanceAllowNegative(ctx context.Context, id int64, amount float64) (BalanceDeduction, error) {
+	s.debtCalls++
+	s.lastAmount = amount
+	s.lastCtxErr = ctx.Err()
+	if s.debtErr != nil {
+		return BalanceDeduction{}, s.debtErr
+	}
+	// 债务模式全额入账：实收 == 请求金额、差额不核销（由余额变负承担），
+	// 与生产 userRepository.DeductBalanceAllowNegative 的返回语义一致。
+	return BalanceDeduction{NewBalance: s.debtNewBalance, Collected: amount, Shortfall: 0}, nil
+}
+
+// TestGatewayServiceRecordUsage_LegacyFallbackDebtModeKeepsFullCost 锁死降级路径与统一路径
+// 语义一致：billing.settlement_debt_mode=true 时必须走债务扣款（余额可为负、无核销），
+// 而不是继续封底核销。
+func TestGatewayServiceRecordUsage_LegacyFallbackDebtModeKeepsFullCost(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	userRepo := &legacyFloorUserRepoStub{
+		floorErr: errors.New("floor path must not run in debt mode"),
+		// 钱包 0.0032 付不满本笔成本 → 债务模式把余额扣成负数（欠款）。
+		debtNewBalance: -0.0088,
+	}
+	cache := &balanceEligibilityCacheStub{balance: 0.0032}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	cfg.Billing.SettlementDebtMode = true
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+	svc.cfg.Billing.MinimumBalanceReserve = 0.10
+	svc.cfg.Billing.SettlementDebtMode = true
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_legacy_debt",
+			Usage: ClaudeUsage{
+				InputTokens:  1000,
+				OutputTokens: 600,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:  &APIKey{ID: 513},
+		User:    &User{ID: 613},
+		Account: &Account{ID: 713},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, userRepo.debtCalls, "debt mode must use the negative-balance deduction")
+	require.Equal(t, 0, userRepo.floorCalls, "floor deduction must not run when debt mode is on")
+	require.NotNil(t, usageRepo.lastLog)
+	require.InDelta(t, userRepo.lastAmount, usageRepo.lastLog.ActualCost, 1e-9,
+		"debt mode must record the full billed amount as collected (no write-off)")
+}
+
+func TestGatewayServiceRecordUsage_LegacyFallbackAtFloorFailsClosed(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	userRepo := &legacyFloorUserRepoStub{floorErr: ErrInsufficientBalance}
+	quotaSvc := &openAIRecordUsageAPIKeyQuotaStub{}
+	cache := &balanceEligibilityCacheStub{balance: 0.10}
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	billingCacheSvc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingCacheSvc.Stop)
+
+	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
+	svc.cfg.Billing.MinimumBalanceReserve = 0.10
+	svc.billingCacheService = billingCacheSvc
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "gateway_legacy_at_floor",
+			Usage: ClaudeUsage{
+				InputTokens:  1000,
+				OutputTokens: 600,
+			},
+			Model:    "claude-sonnet-4",
+			Duration: time.Second,
+		},
+		APIKey:        &APIKey{ID: 512, Quota: 100},
+		User:          &User{ID: 612},
+		Account:       &Account{ID: 712},
+		APIKeyService: quotaSvc,
+	})
+
+	// 钱包已经在 floor 上：一分钱都扣不到 → 整笔 fail-closed，usage_log ActualCost=0，
+	// 不累加 APIKey quota，并失效缓存。
+	require.ErrorIs(t, err, ErrInsufficientBalance)
+	require.Equal(t, 1, userRepo.floorCalls)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Zero(t, usageRepo.lastLog.ActualCost)
+	require.Equal(t, 0, quotaSvc.quotaCalls, "quota must not be consumed when nothing was collected")
+	// legacy 路径与 recordUsageCore 各失效一次（幂等 DEL），只断言“确实失效过”。
+	require.GreaterOrEqual(t, cache.invalidateCalls.Load(), int64(1))
 }
 
 func TestGatewayServiceRecordUsage_ReasoningEffortPersisted(t *testing.T) {

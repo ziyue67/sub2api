@@ -143,7 +143,16 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	// 2. Re-check billing
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 最坏费用预检：余额必须覆盖「封底线 + 本次最坏费用」，付不满的请求在转发前
+	// 直接 403，不再出现"先服务、结算只能扣到封底"的微量超发。
+	var billingEligibilityOpts []service.BillingEligibilityOption
+	if worstSpend := admissionWorstSpend(c.Request.Context(), h.gatewayService, apiKey, h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body), tokenInflightEstimate(reqModel, body)); worstSpend > 0 {
+		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
+	}
+	// 在途预留：并发请求不能再用同一份余额快照同时放行（结算才发现的坏账来源）。
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts = append(billingEligibilityOpts, service.WithBalanceReservation(&balanceReservation))
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingEligibilityOpts...); err != nil {
 		reqLog.Info("gateway.cc.billing_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -152,19 +161,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		h.chatCompletionsErrorResponse(c, status, code, message)
 		return
 	}
-
-	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
-	if err != nil {
-		reqLog.Info("gateway.cc.inflight_reservation_rejected", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.chatCompletionsErrorResponse(c, status, code, message)
-		return
-	}
-	defer inflightRelease()
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	// Parse request for session hash
 	bodyRef := service.NewRequestBodyRef(body)
@@ -412,8 +410,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
 		stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
-		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+		h.submitUsageRecordTaskWithReservation(c.Request.Context(), &balanceReservation, func(ctx context.Context) {
+			// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+			defer balanceReservation.Release(ctx)
+			err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:             result,
 				QuotaPlatform:      quotaPlatform,
 				APIKey:             apiKey,
@@ -429,7 +429,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				APIKeyService:      h.apiKeyService,
 				SessionID:          sessionID,
 				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
-			}); err != nil {
+			})
+			balanceReservation.Settle(ctx, err)
+			if err != nil {
 				reqLog.Error("gateway.cc.record_usage_failed",
 					zap.Int64("account_id", account.ID),
 					zap.Error(err),

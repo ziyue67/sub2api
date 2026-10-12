@@ -56,6 +56,20 @@ func TestMain(m *testing.M) {
 			log.Printf("docker is not available (CI=true); failing integration tests")
 			os.Exit(1)
 		}
+		// 本机没有 Docker 时，仍允许跑"只需要 Redis"的集成套件：显式提供外部 Redis
+		// （如本机 redis-server）即可。此时不准备 Postgres，Postgres 相关套件不可用，
+		// 请用 -run 只挑选 Redis 套件（例如 TestBillingReservationSuite）。
+		if external := strings.TrimSpace(os.Getenv("SUB2API_TEST_REDIS_ADDR")); external != "" {
+			log.Printf("docker is not available; running Redis-only integration suites against %s", external)
+			integrationRedis = redisclient.NewClient(&redisclient.Options{Addr: external, DB: 0})
+			if err := integrationRedis.Ping(ctx).Err(); err != nil {
+				log.Printf("failed to ping external redis %s: %v", external, err)
+				os.Exit(1)
+			}
+			code := m.Run()
+			_ = integrationRedis.Close()
+			os.Exit(code)
+		}
 		log.Printf("docker is not available; skipping integration tests (start Docker to enable)")
 		os.Exit(0)
 	}

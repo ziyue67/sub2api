@@ -361,6 +361,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.DefaultBalance != after.DefaultBalance {
 		changed = append(changed, "default_balance")
 	}
+	if before.InflightReservationBudgetMultiplier != after.InflightReservationBudgetMultiplier {
+		changed = append(changed, "inflight_reservation_budget_multiplier")
+	}
 	if before.AffiliateRebateRate != after.AffiliateRebateRate {
 		changed = append(changed, "affiliate_rebate_rate")
 	}

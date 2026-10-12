@@ -100,7 +100,12 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 	if userRelease != nil {
 		defer userRelease()
 	}
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 最坏费用闸门 + 在途预留（钱包 / 订阅 / 平台配额 / API Key 额度），与 /v1/messages 同口径。
+	var balanceReservation service.BillingReservationSlot
+	billingOpts := billingAdmissionOptions(c.Request.Context(), h.gatewayService, apiKey,
+		h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, model, body),
+		tokenInflightEstimate(model, body), &balanceReservation)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingOpts...); err != nil {
 		reqLog.Info("systemone.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -109,18 +114,8 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 		h.errorResponse(c, status, code, message)
 		return
 	}
-	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(model, body))
-	if err != nil {
-		reqLog.Info("systemone.inflight_reservation_rejected", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.errorResponse(c, status, code, message)
-		return
-	}
-	defer inflightRelease()
+	// 收尾兜底归还预留：已提交结算任务（HandOff）时由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	fs := NewFailoverState(h.maxAccountSwitches, false)
 	for {
@@ -245,12 +240,12 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 		}
 
 		c.Data(result.StatusCode, result.ContentType, result.Body)
-		h.recordSystemOneUsage(c, apiKey, account, subscription, channelMapping, model, body, result, subject.UserID, pricingAt)
+		h.recordSystemOneUsage(c, &balanceReservation, apiKey, account, subscription, channelMapping, model, body, result, subject.UserID, pricingAt)
 		return
 	}
 }
 
-func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, mapping service.ChannelMappingResult, model string, body []byte, result *service.SystemOneForwardResult, userID int64, pricingAt time.Time) {
+func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, balanceReservation *service.BillingReservationSlot, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, mapping service.ChannelMappingResult, model string, body []byte, result *service.SystemOneForwardResult, userID int64, pricingAt time.Time) {
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
 	inboundEndpoint := GetInboundEndpoint(c)
@@ -259,8 +254,10 @@ func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.AP
 	sessionID := service.ExtractClientSessionID(c)
 	requestPayloadHash := service.HashUsageRequestPayload(body)
 
-	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+	h.submitMandatoryUsageRecordTaskWithReservation(c.Request.Context(), balanceReservation, func(ctx context.Context) {
+		// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+		defer balanceReservation.Release(ctx)
+		err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 			Result:             &result.ForwardResult,
 			APIKey:             apiKey,
 			User:               apiKey.User,
@@ -276,7 +273,9 @@ func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.AP
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
 			ChannelUsageFields: clientRequestedUsageFields(c, mapping, model, result.UpstreamModel),
-		}); err != nil {
+		})
+		balanceReservation.Settle(ctx, err)
+		if err != nil {
 			logger.L().With(
 				zap.String("component", "handler.gateway.systemone"),
 				zap.Int64("user_id", userID),

@@ -900,7 +900,16 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 2. Re-check billing eligibility after wait
-	if err := h.checkRegionalBillingEligibility(c.Request.Context(), apiKey, subscription); err != nil {
+	// 最坏费用预检：余额必须覆盖「封底线 + 本次最坏费用」，付不满的请求在转发前
+	// 直接 403，不再出现"先服务、结算只能扣到封底"的微量超发。
+	var billingEligibilityOpts []service.BillingEligibilityOption
+	if worstSpend := admissionWorstSpend(c.Request.Context(), h.gatewayService, apiKey, h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body), hostedWebSearchInflightEstimate(reqModel, body)); worstSpend > 0 {
+		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
+	}
+	// 在途预留：并发请求不能再用同一份余额快照同时放行（结算才发现的坏账来源）。
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts = append(billingEligibilityOpts, service.WithBalanceReservation(&balanceReservation))
+	if err := h.checkRegionalBillingEligibility(c.Request.Context(), apiKey, subscription, billingEligibilityOpts...); err != nil {
 		reqLog.Info("openai.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -909,19 +918,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
-
-	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, hostedWebSearchInflightEstimate(reqModel, body))
-	if err != nil {
-		reqLog.Info("openai.inflight_reservation_rejected", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
-	}
-	defer inflightRelease()
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	// Generate session hash (header first; fallback to prompt_cache_key)
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
@@ -1021,7 +1019,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				} else if switched {
 					subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
 					if switchErr == nil {
-						switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+						worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body)
+						switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription, worstSpend, &balanceReservation)
 					}
 					if switchErr != nil {
 						reqLog.Warn("openai.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -1055,7 +1054,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			} else if switched {
 				subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
 				if switchErr == nil {
-					switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+					worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body)
+					switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription, worstSpend, &balanceReservation)
 				}
 				if switchErr != nil {
 					reqLog.Warn("openai.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -1208,8 +1208,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractOpenAIClientSessionID(c, sessionHashBody)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+			h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), res, &balanceReservation, func(ctx context.Context) {
+				// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+				defer balanceReservation.Release(ctx)
+				err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
 					User:               apiKey.User,
@@ -1227,7 +1229,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					PricingAt:          pricingAt,
 					CyberBlocked:       cyberBlocked,
 					NativeCompactionV2: nativeV2,
-				}); err != nil {
+				})
+				balanceReservation.Settle(ctx, err)
+				if err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.responses"),
 						zap.Int64("user_id", subject.UserID),
@@ -1332,7 +1336,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						} else if switched {
 							subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
 							if switchErr == nil {
-								switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+								worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body)
+								switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription, worstSpend, &balanceReservation)
 							}
 							if switchErr != nil {
 								reqLog.Warn("openai.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -1415,8 +1420,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 
 		// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+		h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), result, &balanceReservation, func(ctx context.Context) {
+			// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+			defer balanceReservation.Release(ctx)
+			err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,
 				User:               apiKey.User,
@@ -1433,7 +1440,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				ChannelUsageFields: clientRequestedUsageFields(c, attemptChannelMapping, reqModel, result.UpstreamModel),
 				PricingAt:          pricingAt,
 				CyberBlocked:       cyberBlocked,
-			}); err != nil {
+			})
+			balanceReservation.Settle(ctx, err)
+			if err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.responses"),
 					zap.Int64("user_id", subject.UserID),
@@ -1712,7 +1721,16 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	if err := h.checkRegionalBillingEligibility(c.Request.Context(), apiKey, subscription); err != nil {
+	// 最坏费用预检：余额必须覆盖「封底线 + 本次最坏费用」，付不满的请求在转发前
+	// 直接 403，不再出现"先服务、结算只能扣到封底"的微量超发。
+	var billingEligibilityOpts []service.BillingEligibilityOption
+	if worstSpend := admissionWorstSpend(c.Request.Context(), h.gatewayService, apiKey, h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body), hostedWebSearchInflightEstimate(reqModel, body)); worstSpend > 0 {
+		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
+	}
+	// 在途预留：并发请求不能再用同一份余额快照同时放行（结算才发现的坏账来源）。
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts = append(billingEligibilityOpts, service.WithBalanceReservation(&balanceReservation))
+	if err := h.checkRegionalBillingEligibility(c.Request.Context(), apiKey, subscription, billingEligibilityOpts...); err != nil {
 		reqLog.Info("openai_messages.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -1721,18 +1739,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
-
-	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, hostedWebSearchInflightEstimate(reqModel, body))
-	if inflightErr != nil {
-		status, code, message, retryAfter := billingErrorDetails(inflightErr)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.anthropicStreamingAwareError(c, status, code, message, streamStarted)
-		return
-	}
-	defer inflightDone()
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
@@ -1903,8 +1911,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractOpenAIClientSessionID(c, body)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+			h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), res, &balanceReservation, func(ctx context.Context) {
+				// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+				defer balanceReservation.Release(ctx)
+				err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
 					User:               apiKey.User,
@@ -1921,7 +1931,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					ChannelUsageFields: clientRequestedUsageFields(c, channelMappingMsg, reqModel, res.UpstreamModel),
 					PricingAt:          pricingAt,
 					CyberBlocked:       cyberBlocked,
-				}); err != nil {
+				})
+				balanceReservation.Settle(ctx, err)
+				if err != nil {
 					logger.L().With(
 						zap.String("component", "handler.openai_gateway.messages"),
 						zap.Int64("user_id", subject.UserID),
@@ -2041,8 +2053,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		sessionID := service.ExtractClientSessionID(c)
 
 		cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-		h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
-			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+		h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), result, &balanceReservation, func(ctx context.Context) {
+			// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+			defer balanceReservation.Release(ctx)
+			err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 				Result:             result,
 				APIKey:             apiKey,
 				User:               apiKey.User,
@@ -2059,7 +2073,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				ChannelUsageFields: clientRequestedUsageFields(c, channelMappingMsg, reqModel, result.UpstreamModel),
 				PricingAt:          pricingAt,
 				CyberBlocked:       cyberBlocked,
-			}); err != nil {
+			})
+			balanceReservation.Settle(ctx, err)
+			if err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.messages"),
 					zap.Int64("user_id", subject.UserID),
@@ -3259,22 +3275,29 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if requestPlatform == service.PlatformGrok {
 		requiredTransport = service.OpenAIUpstreamTransportHTTPSSE
 	}
-	if err := h.checkRegionalBillingEligibility(ctx, apiKey, subscription); err != nil {
+	// 按 turn 的最坏费用闸门 + 在途预留（钱包 / 订阅 / 平台配额 / API Key 额度）：
+	// 每个 response.create 都是一次独立的上游计费请求，必须在转发前各自预留，
+	// 结算任务扣费完成后归还；否则长连接上的多轮请求会共用握手时的一次余额快照。
+	// 区域资金分支优先（funds.Check），回落本地校验时透传 PR112 的预检+预留 opts。
+	turnReservations := newOpenAIWSTurnReservations()
+	defer turnReservations.releaseAll(context.WithoutCancel(ctx))
+	admitWSTurn := func(admitCtx context.Context, turn int, model string, payload []byte, extra ...service.BillingEligibilityOption) error {
+		slot := &service.BillingReservationSlot{}
+		opts := billingAdmissionOptions(admitCtx, h.gatewayService, apiKey,
+			h.gatewayService.EstimateRequestSpendUpperBound(admitCtx, apiKey.User, apiKey, model, payload),
+			hostedWebSearchInflightEstimate(model, payload), slot)
+		opts = append(opts, extra...)
+		if err := h.checkRegionalBillingEligibility(admitCtx, apiKey, subscription, opts...); err != nil {
+			return err
+		}
+		turnReservations.put(admitCtx, turn, slot)
+		return nil
+	}
+	if err := admitWSTurn(ctx, 1, reqModel, firstMessage); err != nil {
 		reqLog.Info("openai.websocket_billing_eligibility_check_failed", zap.Error(err))
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
 		return
 	}
-
-	// 余额模式在途预留（会话级）：按首帧估算一次，会话期间续期；每轮计费任务接管引用，
-	// 会话结束且所有轮次扣减落地后释放。
-	inflightCtx, inflightDone, inflightErr := reserveInflightBalanceCtx(ctx, h.billingCacheService, h.gatewayService, apiKey, subscription, hostedWebSearchInflightEstimate(reqModel, firstMessage))
-	if inflightErr != nil {
-		reqLog.Info("openai.websocket_inflight_reservation_rejected", zap.Error(inflightErr))
-		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
-		return
-	}
-	defer inflightDone()
-	ctx = inflightCtx
 
 	// A WebSocket may outlive a key's remaining spending window. Recheck
 	// after acquiring turn slots, including the first account-selection wait.
@@ -3717,6 +3740,14 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					writeSecurityAuditWSError(ctx, wsConn, decision)
 					return service.NewOpenAIWSClientCloseError(securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision), nil)
 				}
+				// 本轮额度闸门 + 在途预留（简易模式由 BeforeTurn 的 checkSimpleModeTurnBilling 负责）。
+				// RPM 已在握手准入时计过，这里不重复计数。
+				if h.cfg == nil || h.cfg.RunMode != config.RunModeSimple {
+					if err := admitWSTurn(ctx, turn, model, payload, service.WithoutRPMCheck()); err != nil {
+						reqLog.Info("openai.websocket_turn_billing_rejected", zap.Int("turn", turn), zap.Error(err))
+						return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "billing check failed", err)
+					}
+				}
 				return nil
 			},
 			MapRequestModel: func(turn int, originalModel string) (string, error) {
@@ -3885,8 +3916,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					cyberMarked && !h.cyberPolicyLogOnly(c, apiKey),
 					turnErr,
 				)
+				// 首轮失败可能随后在其他账号上重试同一首帧（握手预留需保留到重试结算），
+				// 由会话结束的 releaseAll 兜底；后续 turn 不跨账号重试，失败即归还。
 				if turnErr != nil {
 					if result == nil || (result.ImageCount <= 0 && result.WebSearchCalls <= 0) {
+						if turn > 1 {
+							turnReservations.release(ctx, turn)
+						}
 						return
 					}
 					// 已完成的图片/托管搜索必须与 token 在同一条 usage 中结算。
@@ -3899,6 +3935,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					)
 				}
 				if result == nil {
+					if turn > 1 {
+						turnReservations.release(ctx, turn)
+					}
 					return
 				}
 				result.BillingModel = openAIWSTurnBillingModel(result, turnMapping, turnRequestedModel, turnUpstreamModel)
@@ -3924,8 +3963,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
 				turnBillingAPIKey := turnBillingAPIKeys.forTurn(turn, apiKey)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
-				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
-					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
+				turnSlot := turnReservations.take(turn)
+				h.submitOpenAIUsageRecordTaskWithReservation(ctx, result, turnSlot, func(taskCtx context.Context) {
+					// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+					defer turnSlot.Release(taskCtx)
+					err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:             result,
 						APIKey:             turnBillingAPIKey,
 						User:               apiKey.User,
@@ -3942,7 +3984,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						ChannelUsageFields: turnUsageFields,
 						PricingAt:          turnRecordPricingAt,
 						CyberBlocked:       cyberBlocked,
-					}); err != nil {
+					})
+					turnSlot.Settle(taskCtx, err)
+					if err != nil {
 						reqLog.Error("openai.websocket_record_usage_failed",
 							zap.Int64("account_id", account.ID),
 							zap.String("request_id", result.RequestID),
@@ -4237,19 +4281,25 @@ func getContextInt64(c *gin.Context, key string) (int64, bool) {
 }
 
 func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
+	h.submitUsageRecordTaskTracked(parent, task)
+}
+
+// submitUsageRecordTaskTracked 返回任务是否会被执行（见 GatewayHandler 同名方法）。
+func (h *OpenAIGatewayHandler) submitUsageRecordTaskTracked(parent context.Context, task service.UsageRecordTask) bool {
 	if task == nil {
-		return
+		return false
 	}
 	task, abandon := wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
-		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
-			if mode.Dropped() {
-				abandon()
-			}
-			return
+		mode := h.usageRecordWorkerPool.Submit(task)
+		if !mode.Dropped() {
+			return true
+		}
+		if mode != service.UsageRecordSubmitModeDroppedStopped {
+			abandon()
+			return false
 		}
 		// 池已停止（进程关停窗口）：计费任务不能静默丢失，降级为内联同步执行。
-		// 显式配置的 drop/sample 溢出丢弃仍按配置语义保留。
 		logger.L().With(
 			zap.String("component", "handler.openai_gateway.responses"),
 		).Warn("openai.usage_record_task_stopped_sync_fallback")
@@ -4266,6 +4316,7 @@ func (h *OpenAIGatewayHandler) submitUsageRecordTask(parent context.Context, tas
 		}
 	}()
 	task(ctx)
+	return true
 }
 
 func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTask(parent context.Context, result *service.OpenAIForwardResult, task service.UsageRecordTask) {
@@ -4285,6 +4336,31 @@ func shouldRecordCyberPolicyFallbackUsage(forwardErrored bool, result *service.O
 	// These partial results continue through the ordinary RecordUsage path so
 	// token usage and per-call surcharges are persisted atomically in one row.
 	return result == nil || (result.ImageCount <= 0 && result.WebSearchCalls <= 0)
+}
+
+// submitOpenAIUsageRecordTaskWithReservation 提交 OpenAI 结算任务并一并处理在途预留的
+// 归还责任：任务被接收则 HandOff（由结算任务扣费后 Release）；任务被丢弃则立即归还，
+// 避免"没扣费却占着额度直到 TTL"。
+func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTaskWithReservation(parent context.Context, result *service.OpenAIForwardResult, slot *service.BillingReservationSlot, task service.UsageRecordTask) {
+	if slot == nil {
+		h.submitOpenAIUsageRecordTask(parent, result, task)
+		return
+	}
+	// 持有在途预留的结算任务一律走 mandatory 路径（见 GatewayHandler 同名方法，审计 L1）。
+	h.submitMandatoryUsageRecordTask(parent, task)
+	slot.HandOff()
+}
+
+// submitMandatoryUsageRecordTaskWithReservation 提交"永不丢弃"的结算任务并移交预留
+// 归还责任。mandatory 路径不会丢弃任务，因此不存在"任务没跑但预留还在"的窗口；
+// 任务若在池停止窗口内联执行，其 defer Release 会先行归还，随后的 HandOff 为 no-op。
+func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTaskWithReservation(parent context.Context, slot *service.BillingReservationSlot, task service.UsageRecordTask) {
+	if slot == nil {
+		h.submitMandatoryUsageRecordTask(parent, task)
+		return
+	}
+	h.submitMandatoryUsageRecordTask(parent, task)
+	slot.HandOff()
 }
 
 func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
@@ -5494,12 +5570,15 @@ func summarizeWSCloseErrorForLog(err error) (string, string) {
 	return closeStatus, closeReason
 }
 
-func (h *OpenAIGatewayHandler) checkRegionalBillingEligibility(ctx context.Context, key *service.APIKey, subscription *service.UserSubscription) error {
+// checkRegionalBillingEligibility 区域资金分支（funds.Check）优先；回落到本地计费
+// 校验时透传 opts —— 调用方借此注入 PR112 的最坏费用预检（WithMaxRequestSpend）与
+// 多 scope 在途预留（WithBalanceReservation 等）。区域部署（funds != nil）下 opts 不生效。
+func (h *OpenAIGatewayHandler) checkRegionalBillingEligibility(ctx context.Context, key *service.APIKey, subscription *service.UserSubscription, opts ...service.BillingEligibilityOption) error {
 	if funds := h.gatewayService.RegionalFundsReadiness(); funds != nil {
 		return funds.Check(ctx)
 	}
 	if h.cfg != nil && h.cfg.Runtime.RegionalFundsFile != "" {
 		return errors.New("coordinated funds unavailable")
 	}
-	return h.billingCacheService.CheckBillingEligibility(ctx, key.User, key, key.Group, subscription, service.QuotaPlatform(ctx, key))
+	return h.billingCacheService.CheckBillingEligibility(ctx, key.User, key, key.Group, subscription, service.QuotaPlatform(ctx, key), opts...)
 }

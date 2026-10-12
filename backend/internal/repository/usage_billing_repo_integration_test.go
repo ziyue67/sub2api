@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -78,6 +79,85 @@ func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	var dedupCount int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&dedupCount))
 	require.Equal(t, 1, dedupCount)
+}
+
+// 后付费结算：钱包不足以覆盖全额时，统一计费事务把余额扣到 reserve 底线为止
+// （永不为负），事务照常提交（dedup / quota 一起生效），结果带回 collected/shortfall；
+// 钱包已经在底线上时整笔原子拒绝，一分不扣。
+func TestUsageBillingRepositoryApply_DrainsWalletToReserveFloor(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	cfg := &config.Config{}
+	cfg.Billing.MinimumBalanceReserve = 0.10
+	repo := NewUsageBillingRepository(client, integrationDB, cfg)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-floor-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+		Balance:      0.30,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID: user.ID,
+		Key:    "sk-usage-billing-floor-" + uuid.NewString(),
+		Name:   "billing-floor",
+		Quota:  100,
+	})
+	account := mustCreateAccount(t, client, &service.Account{
+		Name: "usage-billing-floor-account-" + uuid.NewString(),
+		Type: service.AccountTypeAPIKey,
+	})
+
+	// 第一笔：成本 0.75 > 可花余额 0.20 → 扣到 0.10，实收 0.20，差额 0.55。
+	first := &service.UsageBillingCommand{
+		RequestID:       uuid.NewString(),
+		APIKeyID:        apiKey.ID,
+		UserID:          user.ID,
+		AccountID:       account.ID,
+		AccountType:     service.AccountTypeAPIKey,
+		BalanceCost:     0.75,
+		APIKeyQuotaCost: 0.75,
+	}
+	result, err := repo.Apply(ctx, first)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Applied)
+	require.NotNil(t, result.NewBalance)
+	require.InDelta(t, 0.10, *result.NewBalance, 1e-6)
+	require.InDelta(t, 0.20, result.BalanceCollected, 1e-6)
+	require.InDelta(t, 0.55, result.BalanceShortfall, 1e-6)
+
+	var balance float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	require.InDelta(t, 0.10, balance, 1e-6, "wallet must stop exactly at the reserve floor")
+
+	var quotaUsed float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT quota_used FROM api_keys WHERE id = $1", apiKey.ID).Scan(&quotaUsed))
+	require.InDelta(t, 0.75, quotaUsed, 1e-6, "the transaction commits: quota reflects the real consumption")
+
+	var dedupCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2", first.RequestID, apiKey.ID).Scan(&dedupCount))
+	require.Equal(t, 1, dedupCount)
+
+	// 第二笔：钱包已在底线 → 整笔原子拒绝，余额、quota、dedup 都不变。
+	second := &service.UsageBillingCommand{
+		RequestID:       uuid.NewString(),
+		APIKeyID:        apiKey.ID,
+		UserID:          user.ID,
+		AccountID:       account.ID,
+		AccountType:     service.AccountTypeAPIKey,
+		BalanceCost:     0.05,
+		APIKeyQuotaCost: 0.05,
+	}
+	_, err = repo.Apply(ctx, second)
+	require.ErrorIs(t, err, service.ErrInsufficientBalance)
+
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	require.InDelta(t, 0.10, balance, 1e-6, "a rejected settlement must not touch the wallet")
+	require.GreaterOrEqual(t, balance, 0.0, "balance must never become negative")
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT quota_used FROM api_keys WHERE id = $1", apiKey.ID).Scan(&quotaUsed))
+	require.InDelta(t, 0.75, quotaUsed, 1e-6, "a rejected settlement must roll back quota consumption too")
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2", second.RequestID, apiKey.ID).Scan(&dedupCount))
+	require.Equal(t, 0, dedupCount, "a rejected settlement must not claim the dedup key")
 }
 
 func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.T) {
