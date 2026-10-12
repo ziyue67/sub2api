@@ -618,8 +618,18 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 		go func() {
 			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := s.billingCacheService.InvalidateUserBalance(cacheCtx, userID); err != nil {
-				logger.LegacyPrintf("service.admin", "invalidate user balance cache failed: user_id=%d err=%v", userID, err)
+			// 余额**增加**：失效余额缓存并清除"钱包已耗尽"标记（否则刚充值的用户会在
+			// 标记 TTL 内继续被 403）。
+			// 余额**减少/不变**：只失效缓存，绝不能清标记 —— 管理员扣款后用户依然没钱，
+			// 清掉标记等于把护栏错误解除（审计 H6）。
+			var err error
+			if balanceDiff > 0 {
+				err = s.billingCacheService.InvalidateUserBalanceAfterCredit(cacheCtx, userID)
+			} else {
+				err = s.billingCacheService.InvalidateUserBalance(cacheCtx, userID)
+			}
+			if err != nil {
+				logger.LegacyPrintf("service.admin", "invalidate user balance cache failed: user_id=%d diff=%v err=%v", userID, balanceDiff, err)
 			}
 		}()
 	}

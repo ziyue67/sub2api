@@ -458,6 +458,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyAffiliateRebatePerInviteeCap] = strconv.FormatFloat(settings.AffiliateRebatePerInviteeCap, 'f', 8, 64)
 	updates[SettingKeyAffiliateAdminRechargeEnabled] = strconv.FormatBool(settings.AdminRechargeRebateEnabled)
 	updates[SettingKeyDefaultUserRPMLimit] = strconv.Itoa(settings.DefaultUserRPMLimit)
+	// 在途预留预算倍数：<1 一律落库为 1.0（严格模式），避免坏值放宽准入。
+	inflightBudget := settings.InflightReservationBudgetMultiplier
+	if inflightBudget < 1 {
+		inflightBudget = 1.0
+	}
+	updates[SettingKeyInflightReservationBudgetMultiplier] = strconv.FormatFloat(inflightBudget, 'f', 8, 64)
 	defaultSubsJSON, err := json.Marshal(settings.DefaultSubscriptions)
 	if err != nil {
 		return nil, fmt.Errorf("marshal default subscriptions: %w", err)
@@ -948,6 +954,10 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		}),
 		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
 	})
+	// Inflight 预留聚合闸门的预算倍数：改完必须立刻失效，否则热路径的 60s 进程内缓存
+	// 会让"调回严格模式"这个安全方向的操作延迟一分钟才生效（放宽方向同理）。
+	// 这里只失效、不重算：生效值还取决于静态配置兜底，下一次读会自行重建。
+	s.InvalidateInflightReservationBudgetCache()
 	// Invalidate the quota auto-pause cache and let the next read trigger a fresh load.
 	// We can't know from here whether ops_advanced_settings was also touched, so be
 	// defensive: store an expired entry — GetOpenAIQuotaAutoPauseSettings will serve

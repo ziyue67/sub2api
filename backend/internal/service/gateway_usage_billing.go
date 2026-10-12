@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -140,14 +142,43 @@ func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
 	return p.Cost.TotalCost > 0 && p.Account.IsAPIKeyOrBedrock() && p.Account.HasAnyQuotaLimit()
 }
 
+// balanceFloorDeductor is the optional repository capability used by the legacy
+// fallback billing path to drain a wallet to the reserve floor instead of
+// rejecting the whole post-paid deduction. The production userRepository
+// implements it; lightweight test doubles that only implement DeductBalance keep
+// the strict all-or-nothing behavior.
+type balanceFloorDeductor interface {
+	DeductBalanceToFloor(ctx context.Context, id int64, amount, floor float64) (BalanceDeduction, error)
+}
+
+// balanceDebtDeductor is the optional repository capability used by the legacy
+// fallback billing path when billing.settlement_debt_mode is on: it charges the
+// full amount and lets the wallet go negative (debt, repaid by the next top-up)
+// instead of clamping the deduction at the reserve floor. The production
+// userRepository implements it, keeping this degraded path consistent with the
+// unified usage_billing_repo path.
+type balanceDebtDeductor interface {
+	DeductBalanceAllowNegative(ctx context.Context, id int64, amount float64) (BalanceDeduction, error)
+}
+
 // postUsageBilling is the legacy fallback billing path used when the unified
 // billing repo is unavailable (nil). Production uses applyUsageBilling → repo.Apply
 // for atomic billing. This path only runs in tests or degraded mode.
-func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) {
+//
+// It returns an error when the balance deduction fails so the caller can stop
+// updating APIKey/account/platform quotas and fail closed: a request whose
+// balance was not deducted must not also record quota consumption (or look
+// successful). Callers keep usage-log bookkeeping with ActualCost=0 on error.
+//
+// On success the returned result carries the post-deduction balance and, when
+// the wallet was drained to the floor, the collected/shortfall split so the
+// caller can settle the usage log for the amount actually charged.
+func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps) (*UsageBillingApplyResult, error) {
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
 	cost := p.Cost
+	result := &UsageBillingApplyResult{Applied: true}
 
 	if p.IsSubscriptionBill {
 		// Subscription usage tracked by ActualCost so group rate multiplier
@@ -155,13 +186,73 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		if cost.ActualCost > 0 {
 			if err := deps.userSubRepo.IncrementUsage(billingCtx, p.Subscription.ID, cost.ActualCost); err != nil {
 				slog.Error("increment subscription usage failed", "subscription_id", p.Subscription.ID, "error", err)
+				return nil, err
 			}
 		}
 	} else {
 		if cost.ActualCost > 0 {
-			if err := deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost); err != nil {
-				slog.Error("deduct balance failed", "user_id", p.User.ID, "error", err)
-			} else if deps.billingCacheService != nil {
+			// legacy 兜底路径：同样拒绝透支。reserve 缺省由调用方传入；此处沿用
+			// cfg 的 minimum_balance_reserve，与统一 usage_billing_repo 路径语义一致，
+			// 避免降级模式下用户花掉最后 reserve 或产生负余额。
+			minimumReserve := 0.0
+			if deps != nil && deps.cfg != nil && deps.cfg.Billing.MinimumBalanceReserve > 0 {
+				minimumReserve = deps.cfg.Billing.MinimumBalanceReserve
+			}
+			if deps.userRepo == nil {
+				// 降级装配缺失用户仓储：不能 panic（审计 H12），按可观测的失败返回。
+				return nil, fmt.Errorf("billing deps missing user repository")
+			}
+			var err error
+			if floorDeductor, ok := deps.userRepo.(balanceFloorDeductor); ok {
+				// 后付费结算：余额不足以覆盖全额时扣到 floor 为止（永不为负），
+				// 差额记为 shortfall；余额本来就 <= floor 时才返回 ErrInsufficientBalance。
+				var deduction BalanceDeduction
+				if debtDeductor, ok := deps.userRepo.(balanceDebtDeductor); ok && deps.cfg != nil && deps.cfg.Billing.SettlementDebtMode {
+					// billing.settlement_debt_mode：债务模式，全额入账、余额可扣成负数（欠款由充值
+					// 抵扣），与统一 usage_billing_repo 路径的 deductUsageBillingBalanceWithMode 语义一致。
+					deduction, err = debtDeductor.DeductBalanceAllowNegative(billingCtx, p.User.ID, cost.ActualCost)
+				} else {
+					deduction, err = floorDeductor.DeductBalanceToFloor(billingCtx, p.User.ID, cost.ActualCost, minimumReserve)
+				}
+				if err == nil {
+					newBalance := deduction.NewBalance
+					result.NewBalance = &newBalance
+					result.BalanceCollected = deduction.Collected
+					result.BalanceShortfall = deduction.Shortfall
+				}
+			} else {
+				err = deps.userRepo.DeductBalance(billingCtx, p.User.ID, cost.ActualCost, minimumReserve)
+				if err == nil {
+					result.BalanceCollected = cost.ActualCost
+					// 严格扣费路径不返回新余额；这里补读一次（仅降级路径，非热路径），
+					// 否则 settlementReachedWalletFloor 永远看不到"正好扣到封底"，
+					// 会漏打"钱包已耗尽"标记（审计 H12）。
+					if user, getErr := deps.userRepo.GetByID(billingCtx, p.User.ID); getErr == nil && user != nil {
+						newBalance := user.Balance
+						result.NewBalance = &newBalance
+					} else if getErr != nil {
+						slog.Warn("read balance after legacy deduction failed", "user_id", p.User.ID, "error", getErr)
+					}
+				}
+			}
+			if err != nil {
+				slog.Error("deduct balance failed", "user_id", p.User.ID, "amount", cost.ActualCost, "error", err)
+				// 余额不足导致扣费失败：立刻失效余额缓存，确保下一次请求的
+				// preflight 会从 DB 读到真实余额并返回 403（INSUFFICIENT_BALANCE），
+				// 而不是继续拿 Redis 里过期的余额放行。
+				if errors.Is(err, ErrInsufficientBalance) && deps.billingCacheService != nil {
+					// 与统一路径保持一致：扣费被拒时同时打“钱包已耗尽”标记并失效缓存，
+					// 双重保证下一次预检 fail-closed（标记不受回源写回竞态影响）。
+					deps.billingCacheService.MarkBalanceExhausted(billingCtx, p.User.ID)
+					if invalidateErr := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); invalidateErr != nil {
+						slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", invalidateErr)
+					}
+				}
+				// 扣费失败必须立即 fail-closed：余额未扣却继续累加 APIKey/account/
+				// platform quota 会造成账务不一致，也让上层以为计费已成功。
+				return nil, err
+			}
+			if deps.billingCacheService != nil {
 				if err := deps.billingCacheService.InvalidateUserBalance(billingCtx, p.User.ID); err != nil {
 					slog.Warn("invalidate balance cache after legacy deduction failed", "user_id", p.User.ID, "error", err)
 				}
@@ -169,6 +260,9 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 		}
 	}
 
+	// 注：配额/限流按全额累加（与统一路径一致）：它们衡量"这笔请求真实消耗了多少"，
+	// 与钱包能否全额收回无关（钱包侧实收/坏账由 result.BalanceShortfall 表达）。
+	// 复审 H10 的"按实收"建议经评估属产品语义选择，保持既有设计。
 	if p.shouldDeductAPIKeyQuota() {
 		if err := p.APIKeyService.UpdateQuotaUsed(billingCtx, p.APIKey.ID, cost.ActualCost); err != nil {
 			slog.Error("update api key quota failed", "api_key_id", p.APIKey.ID, "error", err)
@@ -196,8 +290,10 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	//   - 失败仅记 ALERT log + counter，不阻断主扣费流程
 	if !p.IsSubscriptionBill && p.Platform != "" && cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil {
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(billingCtx, p.User.ID, p.Platform) {
-			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, cost.ActualCost)
-			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
+			// handledByDB=true：缓存累加被跳过或 Redis 写失败，本函数已把这笔 cost
+			// 同步写进 DB（否则该增量在 flusher 模式下会永久丢失）。
+			handledByDB := deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, cost.ActualCost)
+			if !handledByDB && (deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled) {
 				// 降级路径:flusher 未启用时保留原有同步直写 DB
 				if err := deps.userPlatformQuotaRepo.IncrementUsageWithReset(billingCtx, p.User.ID, p.Platform, cost.ActualCost, time.Now().UTC()); err != nil {
 					userPlatformQuotaDBIncrLegacyErrorTotal.Add(1)
@@ -212,36 +308,37 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	// cache updates. The legacy path does DB writes directly; the finalize path
 	// does cache queue + notifications. Notifications are dispatched separately
 	// by the caller after recording the usage log.
+	return result, nil
 }
 
-func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string) string {
-	// Forced durable money-event IDs must win over client/local context IDs so
-	// standalone web_search / async video cannot collapse under a reused client id.
-	if requestID := strings.TrimSpace(upstreamRequestID); requestID != "" {
-		if isForcedUsageBillingRequestID(requestID) {
-			return requestID
-		}
-	}
-	if ctx != nil {
-		if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
-			return "client:" + strings.TrimSpace(clientRequestID)
-		}
-		if requestID, _ := ctx.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
-			return "local:" + strings.TrimSpace(requestID)
-		}
-	}
-	if requestID := strings.TrimSpace(upstreamRequestID); requestID != "" {
+// resolveUsageBillingRequestID 解析计费幂等键的 request_id。
+//
+// 安全约束（审计 H5）：**幂等键必须由服务端决定**，绝不能落在客户端可控的
+// `X-Client-Request-ID` / `X-Request-ID` 上。旧实现优先取这两个 header，于是客户端
+// 只要恒定发送同一个 id，就能让多笔真实调用命中同一个 (request_id, api_key_id)：
+//   - 指纹相同  → 静默去重（Applied=false，不扣费、不报错）
+//   - 指纹不同  → ErrUsageBillingRequestConflict → ActualCost=0
+//
+// 两种情况下上游都已经被调用、响应都已经返回，钱包却分文未动 —— 可无限免费调用。
+//
+// 取值优先级（全部服务端可信）：
+//  1. 强持久 money-event id（web_search / grok-video / grok_audio / grok_realtime）：
+//     这些流程用稳定 id 把多次轮询合并成一笔账单；
+//  2. 上游返回的请求 id：每笔上游调用唯一；
+//  3. 服务端生成的一次性 id。
+//
+// 前提（运维约束，审计 N3）：上游返回的 request id 必须**不由客户端 header 决定**。
+// 因此 `X-Request-ID` / `X-Client-Request-ID` 不在上游透传白名单里（见
+// `allowedHeaders` 的注释）——否则"把收到的客户端 id 回显为响应 x-request-id"的上游
+// 会让本函数重新拿到一个客户端可控的值，恒定一个 id 即可把多笔真实调用折叠成一笔。
+//
+// ctx 参数保留仅为兼容调用方签名（不再读取其中的客户端 id）。
+func resolveUsageBillingRequestID(_ context.Context, upstreamRequestID string) string {
+	requestID := strings.TrimSpace(upstreamRequestID)
+	if requestID != "" {
 		return requestID
 	}
 	return "generated:" + generateRequestID()
-}
-
-func isForcedUsageBillingRequestID(requestID string) bool {
-	id := strings.TrimSpace(requestID)
-	return strings.HasPrefix(id, "web_search:") ||
-		strings.HasPrefix(id, "grok-video:") ||
-		strings.HasPrefix(id, "grok_audio:") ||
-		strings.HasPrefix(id, "grok_realtime:")
 }
 
 // StableGrokAudioBillingRequestID is the durable usage_logs / dedup key for one
@@ -270,19 +367,21 @@ func StableGrokRealtimeBillingRequestID(sessionID string) string {
 	return "grok_realtime:" + sessionID
 }
 
-func resolveUsageBillingPayloadFingerprint(ctx context.Context, requestPayloadHash string) string {
-	if payloadHash := strings.TrimSpace(requestPayloadHash); payloadHash != "" {
-		return payloadHash
-	}
-	if ctx != nil {
-		if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
-			return "client:" + strings.TrimSpace(clientRequestID)
-		}
-		if requestID, _ := ctx.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
-			return "local:" + strings.TrimSpace(requestID)
-		}
-	}
-	return ""
+// resolveUsageBillingPayloadFingerprint 解析计费幂等键的"负载指纹"。
+//
+// 安全约束（审计 H5）：指纹**绝不能**由客户端可控的值兜底。旧实现在没有
+// request_payload_hash 时回落到 `client:<X-Client-Request-ID>`（或 `local:<X-Request-ID>`），
+// 而这两个 header 都由调用方提供 —— 于是客户端只要固定发送同一个 id，多笔**不同**
+// 的请求就会得到同一个 (request_id, fingerprint)，命中"静默去重"分支：上游已经调用、
+// 响应已经返回，钱包分文未动（实测可无限免费调用）。
+//
+// 因此这里在缺失真实负载哈希时返回空串，交由 UsageBillingCommand.Normalize() 用
+// **服务端算出的** buildUsageBillingFingerprint（模型 + token 数 + 金额）兜底：
+// 同一次调用的重复记录指纹一致（仍然幂等），不同调用则不同。
+//
+// 保留 ctx 参数以兼容调用方签名（当前实现不再读取其中的客户端 id）。
+func resolveUsageBillingPayloadFingerprint(_ context.Context, requestPayloadHash string) string {
+	return strings.TrimSpace(requestPayloadHash)
 }
 
 func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsageBillingParams) *UsageBillingCommand {
@@ -360,9 +459,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		if p.SimpleModeKeyRateLimitOnly {
 			return false, ErrSimpleModeKeyRateLimitBillingUnavailable
 		}
-		// The legacy path is only a fallback for standard billing. Simple mode
-		// must retain request-id deduplication and never bill other balances.
-		postUsageBilling(ctx, p, deps)
+		// Legacy fallback: propagate deduction failures so quota updates stop
+		// immediately and the caller records the usage log as unsettled (fail-closed).
+		result, err := postUsageBilling(ctx, p, deps)
+		if err != nil {
+			return false, err
+		}
+		settleUsageLogBalance(requestID, usageLog, p, result)
+		markBalanceExhaustedAfterSettlement(ctx, p, deps, result)
 		return true, nil
 	}
 
@@ -370,7 +474,42 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	defer cancel()
 
 	result, err := repo.Apply(billingCtx, cmd)
+	if errors.Is(err, ErrUsageBillingRequestConflict) {
+		// 同一个 request_id 已被另一笔**不同负载**的调用占用（典型：上游复用/伪造了
+		// request id，或历史数据里已有同 id 的不同指纹）。这绝不能变成"免费调用"：
+		// 换一个服务端新 id 重新落账，把这笔钱收回来。
+		cmd.RequestID = requestID + ":conflict:" + generateRequestID()
+		logger.LegacyPrintf("service.gateway",
+			"ALERT: usage billing request id conflict, retrying with a fresh server id: original=%s actual=%s",
+			requestID, cmd.RequestID)
+		result, err = repo.Apply(billingCtx, cmd)
+		if err == nil {
+			// 让 usage_log 与 usage_billing_dedup 两侧的 request_id 一致（审计 N2）：
+			// 否则钱包侧的扣费记录挂在一个"影子 id"上，按 request_id 对账时两边对不上。
+			// 两处 usage_log 都在 applyUsageBilling 之后才落库（见调用方），
+			// 因此这里回写会作用到最终写入的那条记录上；原 id 已在上面的 ALERT 里留痕。
+			requestID = cmd.RequestID
+			if usageLog != nil {
+				usageLog.RequestID = cmd.RequestID
+			}
+		}
+	}
+	// 瞬时 DB 错误（超时 / 死锁 / 连接中断）重试：Apply 以 request_id 去重，重复提交
+	// 只会命中 dedup，不会二次扣费。不重试就会把这笔上游成本记成 0（审计 M3）。
+	for attempt := 1; err != nil && attempt < usageBillingApplyMaxAttempts && usageBillingApplyRetryable(err); attempt++ {
+		select {
+		case <-billingCtx.Done():
+		case <-time.After(time.Duration(attempt) * usageBillingApplyRetryBackoff):
+		}
+		if billingCtx.Err() != nil {
+			break
+		}
+		result, err = repo.Apply(billingCtx, cmd)
+	}
 	if err != nil {
+		if !errors.Is(err, ErrInsufficientBalance) {
+			RecordBillingSettlementFailedUncharged()
+		}
 		return false, err
 	}
 
@@ -379,14 +518,53 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		return false, nil
 	}
 
+	settleUsageLogBalance(requestID, usageLog, p, result)
+	markBalanceExhaustedAfterSettlement(billingCtx, p, deps, result)
+
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
 			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
 		}
 	}
+	publishAPIKeyQuotaUsedLedger(billingCtx, p, deps, result)
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
 	return true, nil
+}
+
+// publishAPIKeyQuotaUsedLedger 把本次结算提交后的 quota_used 真值发布到共享高水位账本。
+//
+// 为什么必须发布：API Key 总额度的准入（reserveAPIKeyQuotaSpend）读的是鉴权缓存里的
+// quota_used 快照（L1 15s / L2 300s），而结算只递增 DB。快照过期前它是冻结的旧值：
+// 等此前放行的请求陆续结算并归还完在途预留，聚合预留归零而快照仍旧，同一个 key 就能
+// 在一个快照周期内把剩余额度重复放行一遍。账本（单调不减，值恒 ≤ DB 真值）让准入取
+// max(快照, 账本)，从而在快照过期前也能看到已结算用量。
+//
+// 失败兜底：写账本失败时失效该 key 的鉴权缓存，让下一次预检回源到 DB 真值
+// （结算已提交），并计数 + ALERT 暴露给 ops。
+func publishAPIKeyQuotaUsedLedger(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
+	if p == nil || p.APIKey == nil || result == nil || deps == nil {
+		return
+	}
+	if result.APIKeyQuotaUsed == nil {
+		// nil：本次没有触碰该 key 的额度。
+		return
+	}
+	// 注：已耗尽（APIKeyQuotaExhausted）时**同样要发布** —— 账本里的 used >= quota 会让
+	// 后续预检即使拿到尚未失效的鉴权快照也立刻判拒，与"失效鉴权缓存"互为兜底。
+	store := APIKeyQuotaUsedLedgerReader()
+	if store == nil {
+		return
+	}
+	if err := store.SetAPIKeyQuotaUsedLedger(ctx, p.APIKey.ID, *result.APIKeyQuotaUsed); err != nil {
+		RecordBillingAPIKeyQuotaLedgerWriteError()
+		logger.LegacyPrintf("service.gateway",
+			"ALERT: publish api key quota used ledger failed key=%d used=%f: %v (invalidating auth cache, next preflight reads DB truth)",
+			p.APIKey.ID, *result.APIKeyQuotaUsed, err)
+		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey.Key != "" {
+			invalidator.InvalidateAuthCacheByKey(ctx, p.APIKey.Key)
+		}
+	}
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
@@ -410,14 +588,18 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	if p.IsSubscriptionBill {
 		if p.Cost.ActualCost > 0 && p.User != nil && p.APIKey != nil && p.APIKey.GroupID != nil {
-			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
+			// 同步写（而不是异步入队）：handler 在结算任务返回后立刻 defer Release 归还
+			// 在途预留，若用量还躺在异步队列里，就会出现"预留已归零、usage 仍是旧值"，
+			// 下一批并发请求会重新拿到一整份剩余额度再次放行。
+			deps.billingCacheService.SyncSubscriptionUsageAfterSettlement(ctx, p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
 		}
 	} else if p.Cost.ActualCost > 0 && p.User != nil {
 		syncBalanceCacheAfterDeduction(ctx, p, deps, result)
 	}
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() && deps.billingCacheService != nil {
-		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, p.Cost.ActualCost)
+		// 同理：限流预检优先读 Redis 窗口用量，异步累加会让限流被穿透。
+		deps.billingCacheService.SyncAPIKeyRateLimitUsageAfterSettlement(ctx, p.APIKey.ID, p.Cost.ActualCost)
 	}
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
@@ -431,8 +613,10 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	//   - flusher_enabled=true:不直写 DB,由 flusher 异步批量刷（markDirty 已在 IncrementUserPlatformQuotaUsage 内部完成）
 	if !p.IsSubscriptionBill && p.Platform != "" && p.Cost.ActualCost > 0 && p.User != nil && deps.userPlatformQuotaRepo != nil && deps.billingCacheService != nil {
 		if deps.billingCacheService.HasUserPlatformQuotaLimit(ctx, p.User.ID, p.Platform) {
-			deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
-			if deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled {
+			// handledByDB=true：增量已被同步写进 DB（缓存累加被跳过 / Redis 写失败），
+			// 不能再走下面的异步直写，否则双记。
+			handledByDB := deps.billingCacheService.IncrementUserPlatformQuotaUsage(p.User.ID, p.Platform, p.Cost.ActualCost)
+			if !handledByDB && (deps.cfg == nil || !deps.cfg.Database.UserPlatformQuotaFlusherEnabled) {
 				// 降级路径:flusher 未启用时保留原有异步直写 DB
 				dbCtx, dbCancel := detachedBillingContext(ctx)
 				userID, platform, cost := p.User.ID, p.Platform, p.Cost.ActualCost
@@ -462,32 +646,123 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	go notifyAccountQuota(p, deps, result)
 }
 
+// settleUsageLogBalance reconciles the usage log with what the wallet actually
+// paid. Normally nothing changes. When the deduction drained the wallet to the
+// reserve floor (result.BalanceShortfall > 0), the usage log's ActualCost is
+// lowered to the collected amount so the ledger stays consistent
+// (sum(actual_cost) == total deducted), while TotalCost keeps recording the real
+// upstream cost of the request. The written-off remainder is logged at ALERT
+// level and counted in GatewayBillingShortfallStats() for reconciliation; it is
+// bounded to a single request per in-flight slot because the next preflight now
+// sees balance <= floor and returns 403.
+func settleUsageLogBalance(requestID string, usageLog *UsageLog, p *postUsageBillingParams, result *UsageBillingApplyResult) {
+	if result == nil || result.BalanceShortfall <= 0 || p == nil || p.IsSubscriptionBill {
+		return
+	}
+	collected := result.BalanceCollected
+	if collected < 0 {
+		collected = 0
+	}
+	if usageLog != nil {
+		usageLog.ActualCost = collected
+	}
+	var userID int64
+	if p.User != nil {
+		userID = p.User.ID
+	}
+	var newBalance float64
+	if result.NewBalance != nil {
+		newBalance = *result.NewBalance
+	}
+	var requested float64
+	if p.Cost != nil {
+		requested = p.Cost.ActualCost
+	}
+	logger.LegacyPrintf("service.gateway",
+		"ALERT: balance drained to reserve floor, request cost partially uncollected: user=%d request=%s cost=%.8f collected=%.8f shortfall=%.8f new_balance=%.8f",
+		userID, requestID, requested, collected, result.BalanceShortfall, newBalance)
+	recordBillingSettlementShortfall(result.BalanceShortfall)
+}
+
+// collectedBalanceCost returns the amount actually taken from the wallet for
+// this request. Results that carry no collection detail (legacy stubs, older
+// repositories) are treated as fully collected.
+func collectedBalanceCost(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
+	if result != nil && (result.BalanceCollected > 0 || result.BalanceShortfall > 0) {
+		return result.BalanceCollected
+	}
+	if p != nil && p.Cost != nil {
+		return p.Cost.ActualCost
+	}
+	return 0
+}
+
+// recordBillingSettlementShortfall 记录一次结算封顶（write-off）：笔数 +1、无法
+// 收回的金额累加到微美元、刷新最近事件时间。指标由 GatewayBillingShortfallStats()
+// 暴露给 ops 面板：只要斜率 > 0，就说明“放行前最坏费用预检”仍有漏网（例如上游
+// 桥不执行请求声明的 max_tokens），应收紧 billing.request_spend_min_output_tokens
+// / billing.request_spend_default_max_output_tokens。
+func recordBillingSettlementShortfall(shortfall float64) {
+	if shortfall <= 0 || math.IsNaN(shortfall) {
+		return
+	}
+	billingSettlementShortfallTotal.Add(1)
+	if micros := math.Round(shortfall * 1e6); micros > 0 {
+		billingSettlementShortfallMicros.Add(int64(micros))
+	}
+	billingSettlementShortfallLastUnix.Store(time.Now().Unix())
+}
+
+// markBalanceExhaustedAfterSettlement 在结算把钱包扣到 reserve 底线（存在无法收回的
+// 差额 BalanceShortfall）时，给用户打上"钱包已耗尽"标记。
+//
+// 这一步是"钱花完就立刻停止放行"的闭环关键：结算已经知道这笔钱扣不动了，不能只靠
+// InvalidateUserBalance 让下一次预检去回源——余额缓存的回源写回是异步的，扣费前读到
+// 的旧余额可能在失效之后才落盘，使预检在缓存 TTL 内持续放行（后付费下上游成本已经
+// 发生，等于免费调用）。标记与回源写回完全解耦，预检看到它立即 403。
+func markBalanceExhaustedAfterSettlement(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
+	if p == nil || p.User == nil || p.IsSubscriptionBill || deps == nil || deps.billingCacheService == nil {
+		return
+	}
+	if result == nil || !settlementReachedWalletFloor(deps, result) {
+		return
+	}
+	markCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	deps.billingCacheService.MarkBalanceExhausted(markCtx, p.User.ID)
+}
+
+// settlementReachedWalletFloor 判断结算结果是否说明钱包已无可花额度：
+//   - BalanceShortfall > 0：本笔被扣到 reserve 底线为止（部分收取，差额记为 write-off）；
+//   - NewBalance != nil 且 <= 底线：本笔正好把余额扣到/落在底线（例如请求成本恰好
+//     等于可花余额，shortfall == 0）。此时钱包同样已经一分不能花，必须打标记，
+//     否则残留的旧余额缓存（回源异步写回的竞态）还会继续放行注定扣不到钱的请求。
+func settlementReachedWalletFloor(deps *billingDeps, result *UsageBillingApplyResult) bool {
+	if result.BalanceShortfall > 0 {
+		return true
+	}
+	if result.NewBalance == nil {
+		return false
+	}
+	reserve := 0.0
+	if deps != nil && deps.billingCacheService != nil {
+		reserve = deps.billingCacheService.minimumBalanceReserve()
+	}
+	return *result.NewBalance <= reserve+1e-9
+}
+
 func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {
 	if p == nil || p.Cost == nil || p.User == nil || deps == nil || deps.billingCacheService == nil {
 		return
 	}
-	if result != nil && result.NewBalance != nil && deps.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
-		if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
-			slog.Warn("invalidate balance cache after exhausted deduction failed",
-				"user_id", p.User.ID,
-				"new_balance", *result.NewBalance,
-				"balance_overdrafted", result.BalanceOverdrafted,
-				"error", err,
-			)
-		}
-		return
+	// 统一扣费事务完成后，始终以 InvalidateUserBalance 失效缓存，避免并发扣费下
+	// 乱序裸 SET 覆盖最新真实余额。后续请求由 singleflight 回源从 DB 读取带 reserve 的真实余额。
+	if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
+		slog.Warn("invalidate balance cache after deduction failed",
+			"user_id", p.User.ID,
+			"error", err,
+		)
 	}
-	if deps.billingCacheService.InflightReservationEnabled() {
-		// 在途预留开启时同步扣减余额缓存：计费任务结束后才会释放预留，
-		// 必须保证此时准入读取的缓存余额已反映本次扣费，否则释放与扣减之间
-		// 仍存在「在途=0 且余额未扣」的窗口。本函数运行在计费 worker 中，不在请求热路径。
-		err := deps.billingCacheService.DeductBalanceCache(ctx, p.User.ID, p.Cost.ActualCost)
-		if err == nil {
-			return
-		}
-		logger.LegacyPrintf("service.gateway", "Warning: sync deduct balance cache failed for user %d, falling back to queue: %v", p.User.ID, err)
-	}
-	deps.billingCacheService.QueueDeductBalance(p.User.ID, p.Cost.ActualCost)
 }
 
 // notifyBalanceLow sends balance low notification after deduction.
@@ -510,22 +785,27 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 	}
 
 	oldBalance := resolveOldBalance(p, result)
+	// Use the amount actually taken from the wallet: when the wallet was drained
+	// to the floor, old - collected == floor exactly, which is what triggers the
+	// "last available balance" notification.
+	collected := collectedBalanceCost(p, result)
 	slog.Debug("notifyBalanceLow: calling CheckBalanceAfterDeduction",
 		"user_id", p.User.ID,
 		"old_balance", oldBalance,
 		"cost", p.Cost.ActualCost,
+		"collected", collected,
 		"notify_enabled", p.User.BalanceNotifyEnabled,
 		"threshold", p.User.BalanceNotifyThreshold,
 		"result_has_new_balance", result != nil && result.NewBalance != nil,
 	)
-	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, p.Cost.ActualCost)
+	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, collected)
 }
 
 // resolveOldBalance returns the pre-deduction balance.
-// Prefers the DB transaction result (newBalance + cost) over snapshot.
+// Prefers the DB transaction result (newBalance + collected) over snapshot.
 func resolveOldBalance(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
 	if result != nil && result.NewBalance != nil {
-		return *result.NewBalance + p.Cost.ActualCost
+		return *result.NewBalance + collectedBalanceCost(p, result)
 	}
 	// Legacy fallback: snapshot balance from request context
 	return p.User.Balance
@@ -560,6 +840,28 @@ func notifyAccountQuota(p *postUsageBillingParams, deps *billingDeps, result *Us
 		"has_quota_state", quotaState != nil,
 	)
 	deps.balanceNotifyService.CheckAccountQuotaAfterIncrement(context.Background(), p.Account, accountCost, quotaState)
+}
+
+const (
+	usageBillingApplyMaxAttempts  = 3
+	usageBillingApplyRetryBackoff = 200 * time.Millisecond
+)
+
+// usageBillingApplyRetryable 判断结算失败是否值得重试：业务性拒绝（余额不足、
+// 记录不存在、指纹冲突、参数错误）重试也不会成功，其余（DB 超时、死锁、连接错误）视为瞬时。
+func usageBillingApplyRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, permanent := range []error{
+		ErrInsufficientBalance, ErrUsageBillingRequestConflict, ErrUsageBillingRequestIDRequired,
+		ErrUserNotFound, ErrSubscriptionNotFound, ErrAPIKeyNotFound, ErrSimpleModeKeyRateLimitBillingUnavailable,
+	} {
+		if errors.Is(err, permanent) {
+			return false
+		}
+	}
+	return true
 }
 
 func detachedBillingContext(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -943,6 +1245,19 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if billingErr != nil {
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+		// 余额不足导致整笔计费被原子拒绝：打上"钱包已耗尽"标记，让下一次请求的
+		// preflight 立刻以 403 拒绝，而不再依赖余额缓存失效是否及时（回源的异步
+		// 写回可能把扣费前的旧余额复活，使预检在缓存 TTL 内持续放行）。
+		// 这里用脱离请求生命周期的 ctx：用量记录跑在后台 worker 上，请求 ctx 可能
+		// 已经结束，直接用它会让 Redis 写入静默失败。
+		if errors.Is(billingErr, ErrInsufficientBalance) && user != nil && s.billingCacheService != nil {
+			markCtx, cancel := detachedBillingContext(ctx)
+			s.billingCacheService.MarkBalanceExhausted(markCtx, user.ID)
+			if invalidateErr := s.billingCacheService.InvalidateUserBalance(markCtx, user.ID); invalidateErr != nil {
+				slog.Warn("invalidate balance cache after billing rejection", "user_id", user.ID, "error", invalidateErr)
+			}
+			cancel()
+		}
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")

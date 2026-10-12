@@ -672,6 +672,16 @@ const (
 
 	// SettingKeyAllowUngroupedKeyScheduling 允许未分组 API Key 调度（默认 false：未分组 Key 返回 403）
 	SettingKeyAllowUngroupedKeyScheduling = "allow_ungrouped_key_scheduling"
+
+	// SettingKeyInflightReservationBudgetMultiplier 在途预留聚合闸门预算倍数：
+	// 允许「可花余额」(balance - MinimumBalanceReserve) 被在途预留总额覆盖的倍数。
+	//   1.0  = 严格（默认）：预留总额不得超过可花余额，任何并发下都不会产生坏账，
+	//          但并发准入量被「可花余额 / 单笔最坏费用」限制住。
+	//   调高 = 放宽：只要单笔最坏费用付得起就放行，并发不再被预留总额卡住，停止点
+	//          交给封底（余额花到 MinimumBalanceReserve 才拒），代价是允许 shortfall
+	//          坏账（结算 SQL 仍把余额夹在封底之上、绝不为负）。
+	// <1 或未配置一律按 1.0 处理。优先于静态配置的同名项。
+	SettingKeyInflightReservationBudgetMultiplier = "inflight_reservation_budget_multiplier"
 	// SettingKeyOpenAILowUpstreamRatePriorityEnabled 旧调度是否按上游 token 倍率优先。
 	SettingKeyOpenAILowUpstreamRatePriorityEnabled = "openai_low_upstream_rate_priority_enabled"
 	// SettingKeyOpenAIOAuthSchedulingRateMultiplier OAuth 账号参与成本调度时使用的参考倍率。

@@ -257,7 +257,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	// 2. 【新增】Wait后二次检查余额/订阅
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 最坏费用预检：余额必须覆盖「封底线 + 本次最坏费用」，付不满的请求在转发前
+	// 直接 403，不再出现"先服务、结算只能扣到封底"的微量超发。
+	var billingEligibilityOpts []service.BillingEligibilityOption
+	if worstSpend := admissionWorstSpend(c.Request.Context(), h.gatewayService, apiKey, h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, reqModel, body), tokenInflightEstimate(reqModel, body)); worstSpend > 0 {
+		billingEligibilityOpts = append(billingEligibilityOpts, service.WithMaxRequestSpend(worstSpend))
+	}
+	// 在途预留：并发请求不能再用同一份余额快照同时放行（结算才发现的坏账来源）。
+	var balanceReservation service.BillingReservationSlot
+	billingEligibilityOpts = append(billingEligibilityOpts, service.WithBalanceReservation(&balanceReservation))
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingEligibilityOpts...); err != nil {
 		reqLog.Info("gateway.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -266,19 +275,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
-
-	// 余额模式在途预留：防止并发请求在预检时看到同一份余额而集体透支。
-	inflightRelease, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, body))
-	if err != nil {
-		reqLog.Info("gateway.inflight_reservation_rejected", zap.Error(err))
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.handleStreamingAwareError(c, status, code, message, streamStarted)
-		return
-	}
-	defer inflightRelease()
+	// 收尾兜底归还预留：若已提交结算任务（HandOff），由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	// 设置请求所属分组 ID（用于渠道级功能判断，如 WebSearch 模拟）
 	parsedReq.GroupID = apiKey.GroupID
@@ -610,8 +608,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			forceCacheBilling := fs.ForceCacheBilling
 			quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 			sessionID := service.ExtractClientSessionID(c)
-			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+			h.submitUsageRecordTaskWithReservation(c.Request.Context(), &balanceReservation, func(ctx context.Context) {
+				// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+				defer balanceReservation.Release(ctx)
+				err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:             result,
 					QuotaPlatform:      quotaPlatform,
 					APIKey:             apiKey,
@@ -628,7 +628,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					ForceCacheBilling:  forceCacheBilling,
 					APIKeyService:      h.apiKeyService,
 					ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
-				}); err != nil {
+				})
+				balanceReservation.Settle(ctx, err)
+				if err != nil {
 					logger.L().With(
 						zap.String("component", "handler.gateway.messages"),
 						zap.Int64("user_id", subject.UserID),
@@ -712,7 +714,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					} else if switched {
 						currentSubscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, currentAPIKey)
 						if switchErr == nil {
-							switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, currentAPIKey, currentSubscription)
+							worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), currentAPIKey.User, currentAPIKey, reqModel, body)
+							switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, currentAPIKey, currentSubscription, worstSpend, &balanceReservation)
 						}
 						if switchErr != nil {
 							reqLog.Warn("gateway.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -758,7 +761,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					} else if switched {
 						currentSubscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, currentAPIKey)
 						if switchErr == nil {
-							switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, currentAPIKey, currentSubscription)
+							worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), currentAPIKey.User, currentAPIKey, reqModel, body)
+							switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, currentAPIKey, currentSubscription, worstSpend, &balanceReservation)
 						}
 						if switchErr != nil {
 							reqLog.Warn("gateway.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -1027,8 +1031,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				forceCacheBilling := fs.ForceCacheBilling
 				quotaPlatform := service.QuotaPlatform(c.Request.Context(), currentAPIKey)
 				sessionID := service.ExtractClientSessionID(c)
-				h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-					if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+				h.submitUsageRecordTaskWithReservation(c.Request.Context(), &balanceReservation, func(ctx context.Context) {
+					// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+					defer balanceReservation.Release(ctx)
+					err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 						Result:             result,
 						QuotaPlatform:      quotaPlatform,
 						APIKey:             currentAPIKey,
@@ -1045,7 +1051,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						ForceCacheBilling:  forceCacheBilling,
 						APIKeyService:      h.apiKeyService,
 						ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
-					}); err != nil {
+					})
+					balanceReservation.Settle(ctx, err)
+					if err != nil {
 						logger.L().With(
 							zap.String("component", "handler.gateway.messages"),
 							zap.Int64("user_id", subject.UserID),
@@ -1093,7 +1101,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							return
 						}
 						fallbackAPIKey := cloneAPIKeyWithGroup(apiKey, fallbackGroup)
-						if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
+						// 兜底分组可能切换计费模式或倍率；旧分组的预留必须被替换，不能只重做资格检查。
+						worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, reqModel, body)
+						if err := recheckSelectedGroupRouteEligibility(c, h.billingCacheService, fallbackAPIKey, nil, worstSpend, &balanceReservation); err != nil {
 							status, code, message, retryAfter := billingErrorDetails(err)
 							if retryAfter > 0 {
 								c.Header("Retry-After", strconv.Itoa(retryAfter))
@@ -1133,7 +1143,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						} else if switched {
 							currentSubscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, currentAPIKey)
 							if switchErr == nil {
-								switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, currentAPIKey, currentSubscription)
+								worstSpend := h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), currentAPIKey.User, currentAPIKey, reqModel, body)
+								switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, currentAPIKey, currentSubscription, worstSpend, &balanceReservation)
 							}
 							if switchErr != nil {
 								reqLog.Warn("gateway.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -2692,19 +2703,32 @@ func (h *GatewayHandler) maybeLogCompatibilityFallbackMetrics(reqLog *zap.Logger
 }
 
 func (h *GatewayHandler) submitUsageRecordTask(parent context.Context, task service.UsageRecordTask) {
+	h.submitUsageRecordTaskTracked(parent, task)
+}
+
+// submitUsageRecordTaskTracked 与 submitUsageRecordTask 语义完全一致，但额外返回
+// "任务是否会被执行"：
+//   - true：任务已入队，或已在关停窗口内联同步执行（两种情况都会真正跑）；
+//   - false：任务被池按显式 drop/sample 语义丢弃，**永远不会运行**。
+//
+// 调用方（尤其是持有在途预留的结算路径）必须据返回值决定后续动作：任务不会跑就意味着
+// 既不会扣费、也不会归还预留，预留只能靠 TTL 自愈 —— 那会白占用户额度十分钟。
+func (h *GatewayHandler) submitUsageRecordTaskTracked(parent context.Context, task service.UsageRecordTask) bool {
 	if task == nil {
-		return
+		return false
 	}
 	task, abandon := wrapUsageRecordTaskContext(parent, task)
 	if h.usageRecordWorkerPool != nil {
-		if mode := h.usageRecordWorkerPool.Submit(task); mode != service.UsageRecordSubmitModeDroppedStopped {
-			if mode.Dropped() {
-				abandon()
-			}
-			return
+		mode := h.usageRecordWorkerPool.Submit(task)
+		if !mode.Dropped() {
+			return true
+		}
+		if mode != service.UsageRecordSubmitModeDroppedStopped {
+			// 显式配置的 drop/sample 溢出丢弃：按配置语义保留，任务不会执行。
+			abandon()
+			return false
 		}
 		// 池已停止（进程关停窗口）：计费任务不能静默丢失，降级为内联同步执行。
-		// 显式配置的 drop/sample 溢出丢弃仍按配置语义保留。
 		logger.L().With(
 			zap.String("component", "handler.gateway.messages"),
 		).Warn("gateway.usage_record_task_stopped_sync_fallback")
@@ -2721,6 +2745,33 @@ func (h *GatewayHandler) submitUsageRecordTask(parent context.Context, task serv
 		}
 	}()
 	task(ctx)
+	return true
+}
+
+// submitUsageRecordTaskWithReservation 提交结算任务并一并处理在途预留的归还责任。
+//
+// 三条路径：
+//   - 任务被接收（入队 / 内联执行）：HandOff()，归还责任交给结算任务，扣费完成后 Release；
+//   - 任务被丢弃：永远不会扣费，立即 Release 归还预留，不等 TTL（否则用户在没消费的
+//     情况下被白占额度十分钟，且只能靠 TTL 自愈）；
+//   - task == nil：没有结算发生，同样立即归还。
+func (h *GatewayHandler) submitUsageRecordTaskWithReservation(parent context.Context, slot *service.BillingReservationSlot, task service.UsageRecordTask) {
+	if slot == nil {
+		h.submitUsageRecordTask(parent, task)
+		return
+	}
+	// 持有在途预留的结算任务一律走 mandatory 路径：overflow_policy=drop/sample 只能丢弃
+	// 统计类任务，不能丢弃扣费——否则被丢的请求既不扣费、预留也立即归还，
+	// 等于免费放行（审计 L1）。
+	h.submitMandatoryUsageRecordTask(parent, task)
+	slot.HandOff()
+}
+
+// submitMandatoryUsageRecordTaskWithReservation 提交"永不丢弃"的结算任务并移交预留归还责任
+// （见 OpenAIGatewayHandler 同名方法）。任务内必须 defer slot.Release。
+func (h *GatewayHandler) submitMandatoryUsageRecordTaskWithReservation(parent context.Context, slot *service.BillingReservationSlot, task service.UsageRecordTask) {
+	h.submitMandatoryUsageRecordTask(parent, task)
+	slot.HandOff()
 }
 
 // submitMandatoryUsageRecordTask never silently drops billing work on pool overflow.

@@ -194,7 +194,7 @@ func (s *stubUserRepo) UpdateBalance(ctx context.Context, id int64, amount float
 	panic("unexpected UpdateBalance call")
 }
 
-func (s *stubUserRepo) DeductBalance(ctx context.Context, id int64, amount float64) error {
+func (s *stubUserRepo) DeductBalance(ctx context.Context, id int64, amount float64, _ ...float64) error {
 	panic("unexpected DeductBalance call")
 }
 

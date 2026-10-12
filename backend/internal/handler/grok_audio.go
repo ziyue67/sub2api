@@ -35,7 +35,18 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		return
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	reqLog := requestLogger(c, "handler.openai_gateway.grok_realtime")
+	model := c.Query("model")
+	if strings.TrimSpace(model) == "" {
+		model = "grok-voice-latest"
+	}
+	// 最坏费用闸门 + 在途预留：按 1 分钟 realtime 音频价预留，会话期间由心跳续期，
+	// 结算任务扣费完成后归还。
+	var balanceReservation service.BillingReservationSlot
+	billingOpts := billingAdmissionOptions(c.Request.Context(), h.gatewayService, apiKey, 0,
+		service.InflightEstimateRequest{Model: model, Kind: service.InflightEstimateAudio, AudioMode: "realtime", AudioUnits: 1},
+		&balanceReservation)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingOpts...); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
@@ -43,23 +54,8 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		h.errorResponse(c, status, code, message)
 		return
 	}
-
-	reqLog := requestLogger(c, "handler.openai_gateway.grok_realtime")
-	model := c.Query("model")
-	if strings.TrimSpace(model) == "" {
-		model = "grok-voice-latest"
-	}
-	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{Model: model, Kind: service.InflightEstimateAudio, AudioMode: "realtime", AudioUnits: 1})
-	if inflightErr != nil {
-		status, code, message, retryAfter := billingErrorDetails(inflightErr)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.errorResponse(c, status, code, message)
-		return
-	}
-	defer inflightDone()
+	// 收尾兜底归还预留：已提交结算任务（HandOff）时由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	// Keep the HTTP response uncommitted while selecting and probing an account.
 	keyRelease, keyErr := h.concurrencyHelper.AcquireAPIKeySlot(c.Request.Context(), apiKey.ID, apiKey.ConcurrencyLimit)
@@ -177,7 +173,7 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		}
 	}
 	if result := grokRealtimeBillingResult(model, elapsed, audioObserved); result != nil {
-		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result)
+		h.recordGrokVoiceUsage(c, &balanceReservation, apiKey, selection.Account, subscription, "realtime", nil, result)
 	}
 }
 
@@ -217,14 +213,6 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 		return
 	}
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
-		status, code, message, retryAfter := billingErrorDetails(err)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.errorResponse(c, status, code, message)
-		return
-	}
 
 	body, err := readGrokVoiceGatewayBody(c)
 	if err != nil {
@@ -249,17 +237,21 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			return
 		}
 	}
-	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, grokVoiceInflightEstimate(endpoint, body))
-	if inflightErr != nil {
-		status, code, message, retryAfter := billingErrorDetails(inflightErr)
+	// 最坏费用闸门 + 在途预留：TTS 按字符数、STT 按音频时长（计费同口径估算）。
+	// 需要请求体才能估算，因此放在读取请求体之后、转发上游之前。
+	var balanceReservation service.BillingReservationSlot
+	billingOpts := billingAdmissionOptions(c.Request.Context(), h.gatewayService, apiKey, 0,
+		grokVoiceInflightEstimate(endpoint, body), &balanceReservation)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingOpts...); err != nil {
+		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
 		h.errorResponse(c, status, code, message)
 		return
 	}
-	defer inflightDone()
+	// 收尾兜底归还预留：已提交结算任务（HandOff）时由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	contentType := c.GetHeader("Content-Type")
 	if strings.TrimSpace(contentType) == "" {
@@ -327,7 +319,7 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			return h.gatewayService.ForwardGrokVoice(c.Request.Context(), c, account, endpoint, body, contentType)
 		}()
 		if forwardErr == nil {
-			h.recordGrokVoiceUsage(c, apiKey, account, subscription, endpoint, body, result)
+			h.recordGrokVoiceUsage(c, &balanceReservation, apiKey, account, subscription, endpoint, body, result)
 			return
 		}
 		var failoverErr *service.UpstreamFailoverError
@@ -352,6 +344,7 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 // recordGrokVoiceUsage bills TTS/STT/realtime via group audio prices when AudioUsage is set.
 func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	c *gin.Context,
+	slot *service.BillingReservationSlot,
 	apiKey *service.APIKey,
 	account *service.Account,
 	subscription *service.UserSubscription,
@@ -386,8 +379,10 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 		model = endpoint
 	}
 
-	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+	h.submitMandatoryUsageRecordTaskWithReservation(c.Request.Context(), slot, func(ctx context.Context) {
+		// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+		defer slot.Release(ctx)
+		err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
 			APIKey:             apiKey,
 			User:               apiKey.User,
@@ -402,7 +397,9 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 			QuotaPlatform:      quotaPlatform,
 			SessionID:          sessionID,
 			ChannelUsageFields: clientRequestedUsageFields(c, service.ChannelMappingResult{}, model, result.UpstreamModel),
-		}); err != nil {
+		})
+		slot.Settle(ctx, err)
+		if err != nil {
 			logger.L().With(
 				zap.String("component", "handler.openai_gateway.grok_voice"),
 				zap.Int64("user_id", apiKey.User.ID),

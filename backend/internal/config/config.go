@@ -944,10 +944,90 @@ func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error)
 
 type BillingConfig struct {
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-	// MinimumBalanceReserve is the conservative preflight floor for balance billing.
-	// Requests in balance mode are rejected when the cached balance is below this
-	// amount, even if it is still positive. Set to 0 to keep the legacy balance > 0 gate.
+	// MinimumBalanceReserve is the wallet floor for balance billing (a non-spendable
+	// minimum balance). Two guarantees hang off it:
+	//   - Preflight rejects balance-mode requests with 403 INSUFFICIENT_BALANCE once
+	//     the balance is <= this floor.
+	//   - Post-paid deduction is clamped at the floor: a request the wallet cannot
+	//     fully cover drains it exactly to the floor (never below, never negative),
+	//     the uncollected remainder is written off and logged, and the next
+	//     preflight is rejected. Set to 0 to make the floor 0.
+	//     SettlementDebtMode=true 时不再夹取：全额入账，余额可为负（见该字段）。
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
+	// SettlementDebtMode 决定余额模式结算时“收不满”如何处理（对照 new-api
+	// model/user.go 的 decreaseUserQuota：扣费不带余额下限，余额可为负）：
+	//
+	//   - false（默认，零值安全）：封底核销 —— GREATEST(balance - amount, floor)，
+	//     余额永不为负，收不满的差额记 write-off（settlement_shortfall_count）并告警，
+	//     不再追偿。本仓库历史线上问题（usage_log.actual_cost = 0）正是核销缺失造成的，
+	//     因此默认保持封底。
+	//   - true：债务模式 —— 全额入账，余额可被扣成负数（=欠款），下次充值先抵扣欠款；
+	//     usage_log.actual_cost 保持真实成本，账本与“真实消耗”一致，无需 write-off 对账。
+	//     适合“先服务、后追偿”的运营方式。
+	//
+	// 两种模式都防白嫖（预检 balance <= reserve 即 403），差别只在追偿 vs 核销。
+	// 开启前请确认充值/催收流程能识别负余额用户。
+	SettlementDebtMode bool `mapstructure:"settlement_debt_mode"`
+	// BalanceRecheckBand (USD) widens the preflight's DB-truth recheck: when the
+	// cached balance is <= MinimumBalanceReserve + band (and at least
+	// 2*MinimumBalanceReserve), the preflight re-verifies the real wallet against
+	// the database before admitting a balance-mode request. This closes the
+	// stale-cache window where an outdated higher balance snapshot keeps
+	// admitting requests that can no longer be collected. Set to 0 to keep only
+	// the legacy 2*reserve band.
+	BalanceRecheckBand float64 `mapstructure:"balance_recheck_band"`
+	// RequestSpendPrecheckDisabled 关闭"放行前最坏费用预估"闸门（零超发防线）。
+	// 默认 false=启用：余额模式预检要求余额覆盖 MinimumBalanceReserve + 本次请求
+	// 最坏费用（输入按请求体字节数保守折算、输出按 max_tokens 类字段或
+	// RequestSpendDefaultMaxOutputTokens），付不满的请求在转发前直接 403，
+	// 不再出现"先服务、结算只能扣到封底"的微量超发。反向命名保证零值安全：
+	// 手工构造的 Config（测试/工具）不经 viper 加载时也默认启用。
+	RequestSpendPrecheckDisabled bool `mapstructure:"request_spend_precheck_disabled"`
+	// RequestSpendDefaultMaxOutputTokens 请求未声明 max_tokens /
+	// max_completion_tokens / max_output_tokens 时，预估输出费用上界使用的缺省
+	// 输出 token 数。默认 8192。
+	RequestSpendDefaultMaxOutputTokens int `mapstructure:"request_spend_default_max_output_tokens"`
+	// RequestSpendSafetyMultiplier 预检安全系数：把与结算同源算出的最坏费用再乘
+	// 该系数。>1 更保守（多拦、零坏账），<1 更激进（少拦、可能微量超发）。默认 1.0。
+	RequestSpendSafetyMultiplier float64 `mapstructure:"request_spend_safety_multiplier"`
+	// RequestSpendMinOutputTokens 预检输出上界下限（token）。部分上游桥不执行
+	// 请求声明的 max_tokens / max_output_tokens（实测 /v1/responses 桥声明 64 或
+	// 190 仍产出 999 token）：预检若信任声明的小上限就会低估最坏费用，钱包贴底
+	// 时结算仍会封顶产生坏账。>0 时输出上界取 max(声明值, 本下限)。
+	//
+	// 默认 0 = 保持"信任声明值"的既有行为，升级零行为变化；观察到 write-off 指标
+	// （settlement_shortfall_count）非零时再显式打开（推荐 8192 = 缺省上界）。
+	//
+	// 作用范围：本下限只"抬高偏小的声明值"，对 >= 本值的声明值（含大 max_tokens）
+	// 逐位不变，因此不会让"大 max_tokens 请求更早被 403"。
+	RequestSpendMinOutputTokens int `mapstructure:"request_spend_min_output_tokens"`
+	// RequestSpendCJKTokensPerRune CJK 文本每字符的 token 上界（预检输入折算用）。
+	//
+	// 默认 0 = 内置值 1（按生产上游 deepseek 实测 0.5–1 token/字 校准）。1 token/字
+	// 对**字节回退型分词器**（cl100k/o200k 的生僻汉字、Llama 系小 CJK 词表）不是上界：
+	// 这类分词器对非常用汉字可达 2–3 token/字，按 1 计会低估最坏费用、在钱包贴底时
+	// 重新产生 write-off。路由到这类模型（OpenAI GPT 系 / Llama 系）的部署建议设为 2，
+	// 代价是 CJK 大包的并发准入变紧（预检数字变大）。
+	RequestSpendCJKTokensPerRune int `mapstructure:"request_spend_cjk_tokens_per_rune"`
+	// InflightReservationBudgetMultiplier 是「在途预留聚合闸门」的预算倍数：允许
+	// 当前的「可花余额」(balance - MinimumBalanceReserve) 被在途预留总额覆盖的倍数。
+	//
+	// 默认 1.0 = 严格模式：在途预留总额不得超过可花余额，任何并发下都不会出现
+	// "结算时收不满"的坏账，但并发准入量被 (可花余额 / 单笔最坏费用) 限制住 ——
+	// 10 万 token 上下文单笔最坏费用约 $0.075，$1 余额只能同时放行 ~12 笔，
+	// 100/200 并发会被大量 403。
+	//
+	// 调高它即可把准入语义放宽为「只要这一笔的最坏费用付得起就放行，直到余额花到
+	// 封底为止」：并发不再被预留总额卡住，结算仍按实际用量精确扣费，余额由结算 SQL 的
+	// GREATEST(balance - amount, floor) 夹在封底之上、永不为负。代价是在途请求的实际
+	// 总花费可能超过可花余额，超出部分记为 shortfall（坏账）。
+	//
+	// 因此：仅在明确接受"允许坏账以换取高并发"时调高（例如设为 1000 表示实际不限）。
+	// <1（含 0）与未配置一律按 1.0 处理，保证零值/缺省即最安全语义。
+	//
+	// 运行时可被后台设置 inflight_reservation_budget_multiplier 覆盖（/admin/settings），
+	// 且后台设置优先于本配置项。本项仅作为未配置后台设置时的兜底。
+	InflightReservationBudgetMultiplier float64 `mapstructure:"inflight_reservation_budget_multiplier"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：
 	//   - billing_cache_service.cacheWriteWorker 异步累加
@@ -975,7 +1055,9 @@ type InflightReservationConfig struct {
 	MaxOutputTokens int `mapstructure:"max_output_tokens"`
 	// MaxInputTokens 输入 token 估算（请求体字节数 / 4）的上限。
 	MaxInputTokens int `mapstructure:"max_input_tokens"`
-	// MaxReservationUSD 单请求预留金额上限；0 表示不设上限。
+	// MaxReservationUSD 两重含义：旧版钱包预留（ReserveInflight）的单请求金额上限；
+	// 以及网关准入在"完全无法定价"时使用的保守预留额（0 = 不预留）。可定价请求的
+	// 最坏费用不受它封顶。
 	MaxReservationUSD float64 `mapstructure:"max_reservation_usd"`
 	// FailClosedOnUnpriced 无法为请求估算费用（模型/分组/渠道均无定价）时是否拒绝请求。
 	// 默认 false：放行且不预留（fail-open，节流告警日志）。
@@ -2107,6 +2189,13 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
+	// Billing reserve 迁移：2026-09 前版本把 legacy 默认 0.000001 写进了老 config.yaml，
+	// Viper 默认值 0.1 无法覆盖显式文件值。仅当该值确实来自配置文件 (InConfig) 且精确等于
+	// legacy 默认时才提升到 0.1；显式环境变量或其它配置值一律保留。
+	if viper.InConfig("billing.minimum_balance_reserve") && cfg.Billing.MinimumBalanceReserve == 0.000001 {
+		cfg.Billing.MinimumBalanceReserve = 0.1
+		slog.Warn("billing.minimum_balance_reserve migrated from legacy default 0.000001 to 0.1; remove the key from config.yaml to stop this warning")
+	}
 	if trustedProxiesEnvConfigured {
 		cfg.Server.TrustedProxies = normalizeStringSlice(strings.Split(trustedProxiesEnv, ","))
 	}
@@ -2386,7 +2475,42 @@ func setDefaults() {
 	viper.SetDefault("billing.circuit_breaker.failure_threshold", 5)
 	viper.SetDefault("billing.circuit_breaker.reset_timeout_seconds", 30)
 	viper.SetDefault("billing.circuit_breaker.half_open_requests", 3)
-	viper.SetDefault("billing.minimum_balance_reserve", 0.000001)
+	// Keep a small spendable floor so users cannot consume their final $0.10;
+	// the atomic billing transaction enforces the same reserve to close races.
+	viper.SetDefault("billing.minimum_balance_reserve", 0.1)
+	// DB-truth recheck band above the reserve floor (USD): cached balances
+	// within reserve+band are re-verified against the database before
+	// forwarding, so a stale-high balance cache cannot keep admitting
+	// requests that can no longer be collected.
+	viper.SetDefault("billing.balance_recheck_band", 1.0)
+	// 在途预留聚合闸门预算倍数：默认 1.0 = 严格（预留总额不得超过可花余额，零坏账）。
+	// 运行时可被后台设置 inflight_reservation_budget_multiplier 覆盖。
+	viper.SetDefault("billing.inflight_reservation_budget_multiplier", 1.0)
+	// 余额模式结算的“收不满”处理：false（默认）= 封底核销；true = 债务模式
+	// （全额入账、余额可为负，充值先抵扣欠款，对齐 new-api decreaseUserQuota）。
+	viper.SetDefault("billing.settlement_debt_mode", false)
+	// 放行前最坏费用预估（零超发）：默认启用，缺省输出上界 8192 token，安全系数 1.0。
+	// 见 BillingConfig.RequestSpendPrecheckDisabled 注释。
+	viper.SetDefault("billing.request_spend_precheck_disabled", false)
+	viper.SetDefault("billing.request_spend_default_max_output_tokens", 8192)
+	viper.SetDefault("billing.request_spend_safety_multiplier", 1.0)
+	// 输出上界下限，默认 0 = 保持"信任请求声明值"的既有行为（升级零行为变化）。
+	//
+	// 何时需要打开：部分上游桥不执行请求声明的 max_tokens（实测声明 64/190 仍产出
+	// 999 token），此时预检会低估最坏费用、钱包贴底时产生坏账（usage_log 实证
+	// 应收 0.099561 / 实收 0.095776）。把本值配成 8192（= 未声明时的缺省上界）即可
+	// 把这类桥按保守输出量预检。
+	//
+	// 作用范围（很重要）：本下限只"抬高偏小的声明值"，对 >= 本值的声明值（含大
+	// max_tokens）逐位不变。因此它**不会**让"大 max_tokens 请求更早被 403" ——
+	// 那来自最坏费用闸门本身按声明上限计价，是零超发的既有取舍。
+	//
+	// 是否打开由 write-off 指标决定：settlement_shortfall_count 斜率 > 0 就打开它
+	// 或收紧 request_spend_default_max_output_tokens；恒为 0 则保持 0 即可。
+	viper.SetDefault("billing.request_spend_min_output_tokens", 0)
+	// CJK 每字 token 上界：0 = 使用内置值 1（按上游实测校准）。路由到字节回退型
+	// 分词器的部署应显式设为 2，避免对生僻汉字低估最坏费用。
+	viper.SetDefault("billing.request_spend_cjk_tokens_per_rune", 0)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
 	viper.SetDefault("billing.inflight_reservation.enabled", true)
@@ -2478,8 +2602,12 @@ func setDefaults() {
 	viper.SetDefault("database.password", "postgres")
 	viper.SetDefault("database.dbname", "sub2api")
 	viper.SetDefault("database.sslmode", "prefer")
-	viper.SetDefault("database.max_open_conns", 256)
-	viper.SetDefault("database.max_idle_conns", 128)
+	// 默认连接池必须显著低于 PostgreSQL max_connections（默认 100）：过高的默认值
+	// 会在并发突发时把 PG 的连接槽打满（pq: sorry, too many clients already），
+	// 连带让贴近底线的余额复核拿不到连接而 fail-closed（503）。多实例部署需按
+	// 实例数再均摊；需要更高吞吐时显式调大并同步调大 PG max_connections。
+	viper.SetDefault("database.max_open_conns", 32)
+	viper.SetDefault("database.max_idle_conns", 8)
 	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
 	viper.SetDefault("database.conn_max_idle_time_minutes", 5)
 	viper.SetDefault("database.user_platform_quota_flusher_enabled", false)
@@ -3445,6 +3573,27 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("billing.circuit_breaker.half_open_requests must be positive")
 		}
 	}
+	// NaN / ±Inf 必须显式拒绝（先于所有 `< 0` 判断）：它们通过所有大小比较，却会让
+	// 护栏静默失效。
+	// 例：minimum_balance_reserve = .nan → 封底判断（balance <= NaN 恒 false）、
+	// 最坏费用闸门（balance < NaN 恒 false）与 DB 复核全部不再触发，而结算 SQL
+	// `WHERE balance > $3` 在 PG 中 NaN 视为最大值 → 所有结算返回余额不足。
+	// inflight_reservation_budget_multiplier = .inf → 在途预留闸门永久放开。
+	// 这类值只能来自 config 文件/环境变量（JSON 管理接口无法表达），但一次模板事故
+	// 就足以打穿整条护栏，因此在这里 fail-fast。
+	for _, f := range []struct {
+		key   string
+		value float64
+	}{
+		{"billing.minimum_balance_reserve", c.Billing.MinimumBalanceReserve},
+		{"billing.balance_recheck_band", c.Billing.BalanceRecheckBand},
+		{"billing.inflight_reservation_budget_multiplier", c.Billing.InflightReservationBudgetMultiplier},
+		{"billing.request_spend_safety_multiplier", c.Billing.RequestSpendSafetyMultiplier},
+	} {
+		if math.IsNaN(f.value) || math.IsInf(f.value, 0) {
+			return fmt.Errorf("%s must be a finite number, got %v", f.key, f.value)
+		}
+	}
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
 	}
@@ -3452,6 +3601,30 @@ func (c *Config) Validate() error {
 		c.Billing.InflightReservation.MaxOutputTokens < 0 || c.Billing.InflightReservation.MaxInputTokens < 0 ||
 		c.Billing.InflightReservation.MaxReservationUSD < 0 {
 		return fmt.Errorf("billing.inflight_reservation values must be non-negative")
+	}
+	if c.Billing.BalanceRecheckBand < 0 {
+		return fmt.Errorf("billing.balance_recheck_band must be non-negative")
+	}
+	if c.Billing.InflightReservationBudgetMultiplier < 0 {
+		return fmt.Errorf("billing.inflight_reservation_budget_multiplier must be non-negative")
+	}
+	if c.Billing.RequestSpendDefaultMaxOutputTokens < 0 {
+		return fmt.Errorf("billing.request_spend_default_max_output_tokens must be non-negative")
+	}
+	if c.Billing.RequestSpendSafetyMultiplier < 0 {
+		return fmt.Errorf("billing.request_spend_safety_multiplier must be non-negative")
+	}
+	if c.Billing.RequestSpendMinOutputTokens < 0 {
+		return fmt.Errorf("billing.request_spend_min_output_tokens must be non-negative")
+	}
+	if c.Billing.RequestSpendCJKTokensPerRune < 0 {
+		return fmt.Errorf("billing.request_spend_cjk_tokens_per_rune must be non-negative")
+	}
+	// 上界同样是安全阀：该值只应表达"每字几个 token"，误配成 1e6 会让 CJK 请求
+	// 全量 403（6000 字估出 60 亿 token），配成极大值还会让乘法溢出、把闸门变成
+	// fail-open。观测最坏 3（字节回退分词器的生僻汉字），取 8 留足余量。
+	if c.Billing.RequestSpendCJKTokensPerRune > 8 {
+		return fmt.Errorf("billing.request_spend_cjk_tokens_per_rune must be <= 8")
 	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")

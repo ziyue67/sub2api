@@ -935,6 +935,10 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 		logger.LegacyPrintf("service.setting", "Warning: migrate Grok default text model failed: %v", err)
 	}
 	antigravity.SetUserAgentVersionResolver(svc.GetAntigravityUserAgentVersion)
+	// 在途预留聚合闸门的预算倍数来自后台设置（/admin/settings），解析器自带 60s 进程内
+	// 缓存，计费热路径不触库。与上面的 UA 解析器同一约定：用包级 setter 注入，避免为
+	// 一个运行时开关改动 BillingCacheService 的构造签名（有 ~50 处调用点）。
+	SetInflightReservationBudgetResolver(svc.GetInflightReservationBudgetMultiplier)
 	// enforceCodexIdentityHeaders 是所有 Codex 出站路径共用的纯函数收口点，拿不到 ctx，
 	// 故注入无参解析器；解析器内部自带 60s TTL 缓存，热路径不触库。
 	SetCodexCanonicalUserAgentResolver(func() string {
@@ -977,6 +981,12 @@ func ProvideAPIKeyService(
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	svc.SetConcurrencyService(concurrencyService)
+	// API Key 已用额度共享高水位账本：鉴权缓存里的 quota_used 是快照
+	// （L1 15s / L2 300s），结算只递增 DB。账本把"结算后的 DB 真值"发布出来，
+	// 让准入在快照过期前也能看到最新已用额度（见 service.APIKeyQuotaUsedLedger）。
+	if ledger, ok := cache.(APIKeyQuotaUsedLedger); ok {
+		SetAPIKeyQuotaUsedLedger(ledger)
+	}
 	return svc
 }
 
@@ -1150,9 +1160,12 @@ func ProvidePaymentConfigService(entClient *dbent.Client, settingRepo SettingRep
 }
 
 // ProvideBalanceNotifyService creates BalanceNotifyService
-func ProvideBalanceNotifyService(emailService *EmailService, settingRepo SettingRepository, accountRepo AccountRepository, notificationEmailService *NotificationEmailService) *BalanceNotifyService {
+func ProvideBalanceNotifyService(cfg *config.Config, emailService *EmailService, settingRepo SettingRepository, accountRepo AccountRepository, notificationEmailService *NotificationEmailService) *BalanceNotifyService {
 	svc := NewBalanceNotifyService(emailService, settingRepo, accountRepo)
 	svc.SetNotificationEmailService(notificationEmailService)
+	if cfg != nil && cfg.Billing.MinimumBalanceReserve > 0 {
+		svc.SetMinimumBalanceReserve(cfg.Billing.MinimumBalanceReserve)
+	}
 	return svc
 }
 

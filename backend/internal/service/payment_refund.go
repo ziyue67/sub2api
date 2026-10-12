@@ -700,6 +700,10 @@ func (s *PaymentService) RollbackRefund(ctx context.Context, p *RefundPlan, gErr
 			s.writeAuditLog(ctx, p.OrderID, "REFUND_ROLLBACK_FAILED", "admin", map[string]any{"gatewayError": psErrMsg(gErr), "rollbackError": psErrMsg(err), "balanceDeducted": p.BalanceToDeduct})
 			return false
 		}
+		// 回滚把余额加回去了：必须失效余额缓存并清除"钱包已耗尽"标记，否则用户
+		// 会在标记 TTL 内继续被预检 403（审计 H7）。billingCache 由 redeemService
+		// 注入（同一实例）；未装配时静默 no-op。
+		s.invalidateBalanceCacheAfterRefundCredit(ctx, p.Order.UserID)
 	}
 	if p.DeductionType == payment.DeductionTypeSubscription && p.SubDaysToDeduct > 0 && p.SubscriptionID > 0 {
 		if _, err := s.subscriptionSvc.ExtendSubscription(ctx, p.SubscriptionID, p.SubDaysToDeduct); err != nil {
@@ -717,4 +721,17 @@ func (s *PaymentService) restoreStatus(ctx context.Context, p *RefundPlan) {
 		rs = OrderStatusRefundRequested
 	}
 	_, _ = s.entClient.PaymentOrder.UpdateOneID(p.OrderID).SetStatus(rs).Save(ctx)
+}
+
+// invalidateBalanceCacheAfterRefundCredit 在退款回滚把余额加回后失效缓存并清
+// "钱包已耗尽"标记（审计 H7）。
+func (s *PaymentService) invalidateBalanceCacheAfterRefundCredit(ctx context.Context, userID int64) {
+	if s == nil || s.redeemService == nil || s.redeemService.billingCacheService == nil {
+		return
+	}
+	cacheCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.redeemService.billingCacheService.InvalidateUserBalanceAfterCredit(cacheCtx, userID); err != nil {
+		slog.Warn("invalidate balance cache after refund rollback failed", "user_id", userID, "error", err)
+	}
 }

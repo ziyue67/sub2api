@@ -7,16 +7,29 @@ import (
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type usageBillingRepository struct {
-	db *sql.DB
+	db                    *sql.DB
+	minimumBalanceReserve float64
+	// settlementDebtMode = billing.settlement_debt_mode：结算收不满时是否允许余额
+	// 扣成负数（债务，充值抵扣）而非封底核销（write-off）。
+	settlementDebtMode bool
 }
 
-func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
-	return &usageBillingRepository{db: sqlDB}
+func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB, cfgs ...*config.Config) service.UsageBillingRepository {
+	var reserve float64
+	if len(cfgs) > 0 && cfgs[0] != nil {
+		reserve = cfgs[0].Billing.MinimumBalanceReserve
+	}
+	return &usageBillingRepository{
+		db:                    sqlDB,
+		minimumBalanceReserve: reserve,
+		settlementDebtMode:    len(cfgs) > 0 && cfgs[0] != nil && cfgs[0].Billing.SettlementDebtMode,
+	}
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -110,7 +123,9 @@ func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, t
 }
 
 func (r *usageBillingRepository) ReserveBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
-	return r.applyBatchImageBalanceHold(ctx, cmd, reserveUsageBillingBatchImageBalance)
+	return r.applyBatchImageBalanceHold(ctx, cmd, func(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+		return reserveUsageBillingBatchImageBalance(ctx, tx, cmd, r.minimumBalanceReserve)
+	})
 }
 
 func (r *usageBillingRepository) CaptureBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
@@ -179,21 +194,35 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
+		deduction, err := deductUsageBillingBalanceWithMode(ctx, tx, cmd.UserID, cmd.BalanceCost, r.minimumBalanceReserve, r.settlementDebtMode)
 		if err != nil {
 			return err
 		}
+		newBalance := deduction.NewBalance
 		result.NewBalance = &newBalance
-		result.BalanceOverdrafted = !sufficient
+		result.BalanceCollected = deduction.Collected
+		result.BalanceShortfall = deduction.Shortfall
 	}
 
 	// Key 已不存在时跳过其自身的额度/限速计数，其余结算项不受影响。
+	// 注：API key 配额/限流按**全额**（cmd.APIKeyQuotaCost / APIKeyRateLimitCost）累加，
+	// 与 usage_log.total_cost 的口径一致 —— 它们衡量的是"这笔请求真实消耗了多少"，
+	// 与钱包能否全额收回无关（钱包侧的实收/坏账由 balance_collected/shortfall 表达）。
+	// 这是既有设计，由 TestUsageBillingRepositoryApply_DrainsWalletToReserveFloor 锁定
+	// （"quota reflects the real consumption"）；复审 H10 曾建议改为按实收，评估后
+	// 判定为产品语义选择而非缺陷，保持原样。
 	if cmd.APIKeyQuotaCost > 0 {
-		exhausted, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
+		exhausted, quotaUsed, err := incrementUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, cmd.APIKeyQuotaCost)
 		if err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
 			return err
 		}
 		result.APIKeyQuotaExhausted = exhausted
+		// 提交后的 DB 真值：调用方用它把"已用额度"发布到共享高水位账本，
+		// 使鉴权快照（L1 15s / L2 300s）过期之前预检也能看到最新已用额度
+		// （见 service.APIKeyQuotaUsedLedger 与 reserveAPIKeyQuotaSpend）。
+		if err == nil {
+			result.APIKeyQuotaUsed = &quotaUsed
+		}
 	}
 
 	if cmd.APIKeyRateLimitCost > 0 {
@@ -241,51 +270,267 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 	return service.ErrSubscriptionNotFound
 }
 
-func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64) (float64, bool, error) {
-	var newBalance float64
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if err == nil {
-		return newBalance, true, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, false, err
-	}
-
-	err = tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL
-		RETURNING balance
-	`, amount, userID).Scan(&newBalance)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, service.ErrUserNotFound
-	}
-	if err != nil {
-		return 0, false, err
-	}
-	return newBalance, false, nil
+// balanceSQLQuerier is satisfied by *sql.Tx and by the ent client, so the same
+// floor-guarded deduction SQL serves both the unified billing transaction and the
+// legacy userRepository fallback path.
+type balanceSQLQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+// deductBalanceToFloorSQL takes as much of $1 (amount) as the wallet can cover
+// without dropping below $3 (floor), in one atomic statement:
+//
+//   - The wallet row is locked (FOR UPDATE) and its pre-deduction balance is
+//     captured, so concurrent deductions serialize and each sees the committed
+//     result of the previous one.
+//   - `balance > $3` in the lock predicate means a wallet already at/below the
+//     floor matches no row → the caller reports ErrInsufficientBalance and
+//     nothing is deducted.
+//   - `GREATEST(balance - $1, $3)` clamps the new balance at the floor. When the
+//     wallet cannot cover the full amount it is drained exactly to the floor and
+//     the difference is reported as a shortfall — it is never pushed negative.
+//
+// Why "drain to floor" instead of "reject the whole deduction": billing is
+// post-paid (the upstream call already happened), so an all-or-nothing rejection
+// would leave the wallet untouched in a dust zone (floor < balance < cost) where
+// every request passes preflight and is then never charged — an unbounded free
+// ride. Draining to the floor collects what is available, and the next preflight
+// sees balance <= floor and rejects with 403 INSUFFICIENT_BALANCE. The maximum
+// write-off is bounded by one request per in-flight slot.
+//
+// $3 is compared against the float `balance` column before it reaches GREATEST,
+// so PostgreSQL infers it as double precision (the same pattern as the shipped
+// DeductAvailableBalance refund helper).
+const deductBalanceToFloorSQL = `
+		WITH target AS (
+			SELECT id, balance
+			FROM users
+			WHERE id = $2 AND deleted_at IS NULL AND balance > $3
+			FOR UPDATE
+		), updated AS (
+			UPDATE users AS u
+			SET balance = GREATEST(target.balance - $1, $3),
+				updated_at = NOW()
+			FROM target
+			WHERE u.id = target.id
+			RETURNING target.balance AS previous_balance, u.balance AS new_balance
+		)
+		SELECT previous_balance, new_balance FROM updated
+	`
+
+// deductBalanceToDebtSQL 是 deductBalanceToFloorSQL 在 billing.settlement_debt_mode 下的
+// 对应物：全额入账，不再把本次扣费夹在 floor 之上 —— 余额不足时会被扣成负数（欠款），
+// 下次充值先抵扣欠款。对照 new-api `model/user.go` 的 decreaseUserQuota：那里同样不带
+// 余额下限，负余额是“债务”而非“坏账”。
+//
+//   - 钱包行仍用 FOR UPDATE 锁住，并发结算串行化，每笔都能看到上一笔已提交的结果；
+//   - WHERE 只排除软删用户，所以“无返回行”只可能是用户不存在 → ErrUserNotFound；
+//   - 债务模式下不存在“扣不动”的情形，因此不会返回 ErrInsufficientBalance。
+//
+// $1 与 float 类型的 balance 列比较，PostgreSQL 会推导为 double precision（与
+// deductBalanceToFloorSQL 同一写法）。
+const deductBalanceToDebtSQL = `
+		WITH target AS (
+			SELECT id, balance
+			FROM users
+			WHERE id = $2 AND deleted_at IS NULL
+			FOR UPDATE
+		), updated AS (
+			UPDATE users AS u
+			SET balance = target.balance - $1,
+				updated_at = NOW()
+			FROM target
+			WHERE u.id = target.id
+			RETURNING target.balance AS previous_balance, u.balance AS new_balance
+		)
+		SELECT previous_balance, new_balance FROM updated
+	`
+
+// deductBalanceToFloor runs deductBalanceToFloorSQL and translates the outcome.
+// ok=false means no row matched (user missing or wallet already at/below floor);
+// callers distinguish the two with a follow-up existence check.
+func deductBalanceToFloor(ctx context.Context, q balanceSQLQuerier, userID int64, amount, floor float64) (_ service.BalanceDeduction, ok bool, err error) {
+	if amount < 0 {
+		return service.BalanceDeduction{}, false, errors.New("deduction amount must be nonnegative")
+	}
+	if floor < 0 {
+		floor = 0
+	}
+	rows, err := q.QueryContext(ctx, deductBalanceToFloorSQL, amount, userID, floor)
+	if err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+	if !rows.Next() {
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return service.BalanceDeduction{}, false, rowsErr
+		}
+		return service.BalanceDeduction{}, false, nil
+	}
+	var previous, current float64
+	if err := rows.Scan(&previous, &current); err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	if err := rows.Err(); err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	return settleBalanceDeduction(amount, previous, current), true, nil
+}
+
+// deductBalanceToDebt runs deductBalanceToDebtSQL and translates the outcome.
+// ok=false means no row matched, i.e. the user is missing or soft-deleted (in debt
+// mode a present wallet always pays, so there is no insufficient-balance case).
+func deductBalanceToDebt(ctx context.Context, q balanceSQLQuerier, userID int64, amount float64) (_ service.BalanceDeduction, ok bool, err error) {
+	if amount < 0 {
+		return service.BalanceDeduction{}, false, errors.New("deduction amount must be nonnegative")
+	}
+	rows, err := q.QueryContext(ctx, deductBalanceToDebtSQL, amount, userID)
+	if err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+	if !rows.Next() {
+		if rowsErr := rows.Err(); rowsErr != nil {
+			return service.BalanceDeduction{}, false, rowsErr
+		}
+		return service.BalanceDeduction{}, false, nil
+	}
+	var previous, current float64
+	if err := rows.Scan(&previous, &current); err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	if err := rows.Err(); err != nil {
+		return service.BalanceDeduction{}, false, err
+	}
+	return settleBalanceDeduction(amount, previous, current), true, nil
+}
+
+// settleBalanceDeduction derives collected/shortfall from the pre/post balances,
+// quantized to the billing monetary scale so float noise (0.3-0.1 != 0.2 in
+// binary) never produces a phantom sub-cent shortfall or over-collection.
+func settleBalanceDeduction(amount, previous, current float64) service.BalanceDeduction {
+	collected := service.QuantizeUsageBillingAmount(previous - current)
+	if collected < 0 {
+		collected = 0
+	}
+	if collected > amount {
+		collected = amount
+	}
+	shortfall := service.QuantizeUsageBillingAmount(amount - collected)
+	if shortfall <= 0 {
+		shortfall = 0
+		collected = amount
+	}
+	return service.BalanceDeduction{
+		NewBalance: current,
+		Collected:  collected,
+		Shortfall:  shortfall,
+	}
+}
+
+// deductUsageBillingBalance charges `amount` against the user's wallet inside the
+// unified billing transaction, keeping the wallet at or above the configured
+// reserve floor (billing.minimum_balance_reserve; 0 means the floor is 0).
+//
+// Outcomes:
+//   - wallet covers amount + floor        → full deduction, Shortfall == 0
+//   - floor < wallet < amount + floor     → drained to the floor, Shortfall > 0
+//   - wallet already <= floor             → ErrInsufficientBalance, nothing deducted
+//   - user missing / soft-deleted         → ErrUserNotFound
+//
+// The wallet can never become negative on this path. With
+// billing.settlement_debt_mode=true the unified path branches to
+// deductUsageBillingBalanceWithMode instead, see that function.
+func deductUsageBillingBalance(ctx context.Context, tx *sql.Tx, userID int64, amount float64, minimumReserves ...float64) (service.BalanceDeduction, error) {
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
+	deduction, ok, err := deductBalanceToFloor(ctx, tx, userID, amount, minimumReserve)
+	if err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if ok {
+		return deduction, nil
+	}
+
+	// No row matched: either the wallet is already at/below the floor or the
+	// user does not exist. Distinguish the latter while preserving the
+	// service-level error contract for the former.
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)`, userID).Scan(&exists); err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if !exists {
+		return service.BalanceDeduction{}, service.ErrUserNotFound
+	}
+	return service.BalanceDeduction{}, service.ErrInsufficientBalance
+}
+
+// deductUsageBillingBalanceWithMode 按 billing.settlement_debt_mode 选择余额结算语义：
+//
+//   - debtMode=false（默认）：封底核销，余额永不为负，差额记 write-off（见
+//     deductUsageBillingBalance）。
+//   - debtMode=true：债务模式，全额入账、余额可扣成负数（欠款由下次充值抵扣），
+//     对齐 new-api 的 decreaseUserQuota。除了用户不存在（ErrUserNotFound），不会
+//     因为“余额不够”而拒绝结算 —— 上游成本已经发生，欠款比核销更容易追偿。
+//
+// 两种模式都保留 FOR UPDATE 行锁，并发结算仍然串行化。
+func deductUsageBillingBalanceWithMode(ctx context.Context, tx *sql.Tx, userID int64, amount, minimumReserve float64, debtMode bool) (service.BalanceDeduction, error) {
+	if !debtMode {
+		return deductUsageBillingBalance(ctx, tx, userID, amount, minimumReserve)
+	}
+	deduction, ok, err := deductBalanceToDebt(ctx, tx, userID, amount)
+	if err != nil {
+		return service.BalanceDeduction{}, err
+	}
+	if ok {
+		return deduction, nil
+	}
+	// deductBalanceToDebtSQL 的 WHERE 与“用户存在且未软删”同谓词（没有 floor 条件），
+	// 所以无返回行只可能是用户不存在，不需要再查一次 EXISTS。
+	return service.BalanceDeduction{}, service.ErrUserNotFound
+}
+
+func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand, minimumReserves ...float64) (*service.BatchImageBalanceHoldResult, error) {
 	if cmd.HoldAmount <= 0 {
 		return &service.BatchImageBalanceHoldResult{}, nil
 	}
+	var minimumReserve float64
+	if len(minimumReserves) > 0 {
+		minimumReserve = minimumReserves[0]
+	}
 	var balance, frozen float64
-	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance - $1,
-			frozen_balance = COALESCE(frozen_balance, 0) + $1,
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
-		RETURNING balance, frozen_balance
-	`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
+	var err error
+	if minimumReserve > 0 {
+		// 冻结余额同样要遵守全局保留线：balance >= hold + reserve 才允许冻结，
+		// 避免用户通过 batch image hold 把最后 reserve（默认 $0.10）也花掉。
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				frozen_balance = COALESCE(frozen_balance, 0) + $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= ($1 + $3)
+			RETURNING balance, frozen_balance
+		`, cmd.HoldAmount, cmd.UserID, minimumReserve).Scan(&balance, &frozen)
+	} else {
+		err = tx.QueryRowContext(ctx, `
+			UPDATE users
+			SET balance = balance - $1,
+				frozen_balance = COALESCE(frozen_balance, 0) + $1,
+				updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL AND balance >= $1
+			RETURNING balance, frozen_balance
+		`, cmd.HoldAmount, cmd.UserID).Scan(&balance, &frozen)
+	}
 	if err == nil {
 		return &service.BatchImageBalanceHoldResult{NewBalance: &balance, FrozenBalance: &frozen}, nil
 	}
@@ -306,6 +551,17 @@ func captureUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *
 	}
 	if cmd.ActualAmount-cmd.HoldAmount > 0.00000001 {
 		return nil, service.ErrBatchImageSettlementCostExceedsHold
+	}
+	// 与 release 路径对称：结算前校验该 job 确实预留过 hold（hold request id 已被
+	// claim）。否则一个"从未成功冻结"的 job 也能走到 capture，扣掉**同一用户其它
+	// job** 的冻结额（审计 F10）。未 claim 时按 no-op 返回，交由上层记账。
+	held, heldErr := batchImageHoldClaimExists(ctx, tx, service.BatchImageHoldRequestID(cmd.BatchID), cmd.APIKeyID)
+	if heldErr != nil {
+		return nil, heldErr
+	}
+	if !held {
+		logger.LegacyPrintf("repository.usage_billing", "[BatchImage] capture skipped, hold was never reserved: batch=%s", cmd.BatchID)
+		return &service.BatchImageBalanceHoldResult{}, nil
 	}
 	var balance, frozen float64
 	err := tx.QueryRowContext(ctx, `
@@ -414,8 +670,17 @@ func userExistsForBilling(ctx context.Context, tx *sql.Tx, userID int64) (bool, 
 	return true, nil
 }
 
-func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, error) {
-	var exhausted bool
+// incrementUsageBillingAPIKeyQuota 在计费事务内原子递增 quota_used 并返回
+// (本次是否刚跨过额度上限, 递增后的 quota_used)。
+//
+// 返回递增后的真值是为了让调用方把它发布到 API Key 已用额度的共享高水位账本：
+// 鉴权缓存里的 quota_used 是快照（L1 15s / L2 300s），在快照过期前它是冻结的，
+// 只看快照会让同一份额度被重复放行（见 billing_cache.go 的 apiKeyQuotaUsedLedgerKeyPrefix）。
+func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) (bool, float64, error) {
+	var (
+		exhausted bool
+		quotaUsed float64
+	)
 	err := tx.QueryRowContext(ctx, `
 		UPDATE api_keys
 		SET quota_used = quota_used + $1,
@@ -429,15 +694,15 @@ func incrementUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID 
 			END,
 			updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
-		RETURNING quota > 0 AND quota_used >= quota AND quota_used - $1 < quota
-	`, amount, apiKeyID, service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).Scan(&exhausted)
+		RETURNING quota > 0 AND quota_used >= quota AND quota_used - $1 < quota, quota_used
+	`, amount, apiKeyID, service.StatusAPIKeyActive, service.StatusAPIKeyQuotaExhausted).Scan(&exhausted, &quotaUsed)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, service.ErrAPIKeyNotFound
+		return false, 0, service.ErrAPIKeyNotFound
 	}
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
-	return exhausted, nil
+	return exhausted, quotaUsed, nil
 }
 
 func incrementUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKeyID int64, cost float64) error {

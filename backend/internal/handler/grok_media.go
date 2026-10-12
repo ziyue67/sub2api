@@ -195,7 +195,12 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		defer userReleaseFunc()
 	}
 
-	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+	// 最坏费用闸门 + 在途预留：按张/按秒的计费同口径估算（状态/内容查询估算为 0，不预留）。
+	// 视频结算发生在后续状态轮询请求里，因此生成请求的预留在 handler 结束时归还。
+	var balanceReservation service.BillingReservationSlot
+	mediaInflightReq := grokMediaInflightEstimate(endpoint, routingModel, requestInfo, body)
+	billingOpts := billingAdmissionOptions(c.Request.Context(), h.gatewayService, apiKey, 0, mediaInflightReq, &balanceReservation)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey), billingOpts...); err != nil {
 		reqLog.Info("grok_media.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
 		if retryAfter > 0 {
@@ -205,17 +210,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		return
 	}
 
-	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, grokMediaInflightEstimate(endpoint, routingModel, requestInfo, body))
-	if inflightErr != nil {
-		status, code, message, retryAfter := billingErrorDetails(inflightErr)
-		if retryAfter > 0 {
-			c.Header("Retry-After", strconv.Itoa(retryAfter))
-		}
-		h.errorResponse(c, status, code, message)
-		return
-	}
-	defer inflightDone()
+	// 收尾兜底归还预留：已提交结算任务（HandOff）时由结算任务在扣费完成后归还。
+	defer balanceReservation.ReleaseOnExit(c.Request.Context())
 
 	sessionSeed := body
 	if len(sessionSeed) == 0 && strings.TrimSpace(requestID) != "" {
@@ -318,7 +314,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				} else if switched && apiKey.Group != nil && apiKey.Group.Platform == service.PlatformGrok {
 					subscription, switchErr = selectedGroupRouteSubscription(c, h.apiKeyService, apiKey)
 					if switchErr == nil {
-						switchErr = checkSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription)
+						// 切换后的分组按自己的倍率结算，最坏费用闸门与在途预留都必须用新分组
+						// 重估并替换（与 gateway_handler / openai_gateway_handler 的路由切换路径一致，见审计 R5）。
+						worstSpend := admissionWorstSpend(c.Request.Context(), h.gatewayService, apiKey,
+							h.gatewayService.EstimateRequestSpendUpperBound(c.Request.Context(), apiKey.User, apiKey, requestModel, body), mediaInflightReq)
+						switchErr = recheckSelectedGroupRouteEligibility(c, h.billingCacheService, apiKey, subscription, worstSpend, &balanceReservation)
 					}
 					if switchErr != nil {
 						reqLog.Warn("grok_media.group_route_subscription_load_failed", zap.Error(switchErr))
@@ -557,6 +557,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				OriginalModel:        clientRequestedModel(c, requestModel),
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
 				CreatedAt: videoCreateStartedAt,
+				// 结算发生在后续轮询请求里：把创建请求的在途预留交给待结算记录，
+				// 轮询结算扣费后再归还（而不是本 handler 结束时就归还）。
+				Reservations: balanceReservation.Detach(requestCtx),
 			}
 			if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); err != nil {
 				reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
@@ -572,6 +575,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 						zap.String("request_id", result.ResponseID),
 						zap.Error(err2),
 					)
+					// 凭据没能持久化，轮询结算接不回它：留在 Redis 上随 detach TTL 自愈
+					// （方向保守：额度在 TTL 内多占一份，不会少占）。
 				}
 			}
 		}
@@ -579,15 +584,17 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		// Both paths share the same claim key so the customer is charged once.
 		if endpoint == service.SeedanceEndpointStatus {
 			if billResult := prepareSeedanceCompletionBilling(requestCtx, h, apiKey, subject, requestID, result); billResult != nil {
-				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, requestID)
+				h.adoptVideoCreateReservation(requestCtx, &balanceReservation, apiKey, subject, requestID)
+				recordGrokMediaUsage(c, h, &balanceReservation, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, requestID)
 			}
 		} else if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
 			taskID := strings.TrimSpace(requestID)
 			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
-				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
+				h.adoptVideoCreateReservation(requestCtx, &balanceReservation, apiKey, subject, taskID)
+				recordGrokMediaUsage(c, h, &balanceReservation, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
-			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+			recordGrokMediaUsage(c, h, &balanceReservation, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
 		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
@@ -663,6 +670,19 @@ func shouldRecordGrokMediaUsage(endpoint service.GrokMediaEndpoint, requestModel
 // prepareGrokVideoCompletionBilling claims one-shot billing for official done+video.url
 // observations (status poll or content download). Duration/model prefer status body;
 // resolution uses create-time request (status response does not document resolution).
+// adoptVideoCreateReservation 在轮询请求成功认领视频结算（claim 只成功一次）后，把创建请求
+// 留下的在途预留接回本请求的 slot，由结算任务扣费后归还。
+func (h *OpenAIGatewayHandler) adoptVideoCreateReservation(ctx context.Context, slot *service.BillingReservationSlot, apiKey *service.APIKey, subject middleware2.AuthSubject, taskID string) {
+	if h == nil || h.gatewayService == nil || h.billingCacheService == nil || apiKey == nil {
+		return
+	}
+	pending, err := h.gatewayService.LoadGrokVideoPendingBilling(ctx, strings.TrimSpace(taskID), subject.UserID, apiKey.ID)
+	if err != nil || pending == nil {
+		return
+	}
+	h.billingCacheService.AdoptBillingReservation(slot, pending.Reservations)
+}
+
 func prepareGrokVideoCompletionBilling(
 	ctx context.Context,
 	h *OpenAIGatewayHandler,
@@ -777,6 +797,7 @@ func firstNonEmptyString(values ...string) string {
 func recordGrokMediaUsage(
 	c *gin.Context,
 	h *OpenAIGatewayHandler,
+	slot *service.BillingReservationSlot,
 	reqLog *zap.Logger,
 	apiKey *service.APIKey,
 	subject middleware2.AuthSubject,
@@ -816,8 +837,10 @@ func recordGrokMediaUsage(
 			payloadForHash = []byte(videoTaskID)
 		}
 	}
-	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
-		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+	h.submitOpenAIUsageRecordTaskWithReservation(c.Request.Context(), result, slot, func(ctx context.Context) {
+		// 兜底：panic 时仍归还（Settle 之后再调用为 no-op）。
+		defer slot.Release(ctx)
+		err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 			Result:             result,
 			APIKey:             apiKey,
 			User:               apiKey.User,
@@ -832,7 +855,9 @@ func recordGrokMediaUsage(
 			QuotaPlatform:      quotaPlatform,
 			SessionID:          sessionID,
 			ChannelUsageFields: channelUsageFields,
-		}); err != nil {
+		})
+		slot.Settle(ctx, err)
+		if err != nil {
 			if videoTaskID != "" {
 				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, videoTaskID, subject.UserID, apiKey.ID); releaseErr != nil {
 					reqLog.Warn("grok_media.video_billing_claim_release_failed",

@@ -163,6 +163,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result.UsageUnavailable {
 		return errors.New("upstream usage unavailable; token usage was not recorded and request was not billed")
 	}
+	// 供下一轮 previous_response_id 请求的预检估算服务端拼接上下文（与扣费无关，尽力而为）。
+	s.recordResponseContextTokens(ctx, result)
 	if s.rateLimitService != nil && input.Account != nil && input.Account.Platform == PlatformOpenAI {
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
 	}
@@ -541,6 +543,18 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if billingErr != nil {
 		usageLog.ActualCost = 0
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
+		// 余额不足导致整笔计费被原子拒绝：打上"钱包已耗尽"标记，让下一次请求的
+		// preflight 立刻 fail-closed（403），不再依赖余额缓存失效是否及时。
+		// 用脱离请求生命周期的 ctx：用量记录跑在后台 worker 上，请求 ctx 可能已经
+		// 结束，直接用它会让 Redis 写入静默失败。
+		if errors.Is(billingErr, ErrInsufficientBalance) && user != nil && s.billingCacheService != nil {
+			markCtx, cancel := detachedBillingContext(ctx)
+			s.billingCacheService.MarkBalanceExhausted(markCtx, user.ID)
+			if invalidateErr := s.billingCacheService.InvalidateUserBalance(markCtx, user.ID); invalidateErr != nil {
+				logger.LegacyPrintf("service.openai_gateway", "invalidate balance cache after openai billing rejection failed user=%d: %v", user.ID, invalidateErr)
+			}
+			cancel()
+		}
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")

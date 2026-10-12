@@ -715,6 +715,23 @@ func (s *OpenAIGatewayService) inflightEstimateDeps() inflightEstimateDeps {
 	return d
 }
 
+// UnpricedReservationFallbackUSD 无法为请求定价时的保守预留金额：取
+// billing.inflight_reservation.max_reservation_usd（单请求预留上限，同时作为无价请求的预留额）。
+func (s *GatewayService) UnpricedReservationFallbackUSD() float64 {
+	if s == nil {
+		return 0
+	}
+	return inflightReservationCfg(s.cfg).MaxReservationUSD
+}
+
+// UnpricedReservationFallbackUSD 同 GatewayService.UnpricedReservationFallbackUSD。
+func (s *OpenAIGatewayService) UnpricedReservationFallbackUSD() float64 {
+	if s == nil {
+		return 0
+	}
+	return inflightReservationCfg(s.cfg).MaxReservationUSD
+}
+
 // EstimateInflightReservation 同 GatewayService.EstimateInflightReservation（OpenAI 网关倍率口径）。
 func (s *OpenAIGatewayService) EstimateInflightReservation(ctx context.Context, apiKey *APIKey, req InflightEstimateRequest) (float64, bool) {
 	if s == nil {

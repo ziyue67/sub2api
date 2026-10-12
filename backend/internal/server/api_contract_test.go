@@ -910,6 +910,7 @@ func TestAPIContracts(t *testing.T) {
 						"fallback_model_openai": "gpt-4o",
 						"enable_identity_patch": true,
 						"identity_patch_prompt": "",
+						"inflight_reservation_budget_multiplier": 1,
 						"invitation_code_enabled": false,
 						"home_content": "",
 					"hide_ccs_import_button": false,
@@ -1287,6 +1288,7 @@ func TestAPIContracts(t *testing.T) {
 					"fallback_model_antigravity": "gemini-2.5-pro",
 					"enable_identity_patch": true,
 					"identity_patch_prompt": "",
+					"inflight_reservation_budget_multiplier": 1,
 					"ops_monitoring_enabled": false,
 					"ops_realtime_monitoring_enabled": true,
 					"ops_query_mode_default": "auto",
@@ -1750,7 +1752,7 @@ func (r *stubUserRepo) UpdateBalance(ctx context.Context, id int64, amount float
 	return errors.New("not implemented")
 }
 
-func (r *stubUserRepo) DeductBalance(ctx context.Context, id int64, amount float64) error {
+func (r *stubUserRepo) DeductBalance(ctx context.Context, id int64, amount float64, _ ...float64) error {
 	return errors.New("not implemented")
 }
 

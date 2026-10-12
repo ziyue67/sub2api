@@ -184,13 +184,14 @@ func TestInflightEstimate_HostedWebSearchAddsPerCallCostAtBaseRate(t *testing.T)
 
 type memInflightCache struct {
 	BillingCache
-	mu        sync.Mutex
-	balance   float64
-	res       map[string]float64
-	exp       map[string]time.Time
-	renews    atomic.Int32
-	deducts   atomic.Int32
-	releaseCt atomic.Int32
+	mu            sync.Mutex
+	balance       float64
+	res           map[string]float64
+	exp           map[string]time.Time
+	renews        atomic.Int32
+	deducts       atomic.Int32
+	invalidations atomic.Int32
+	releaseCt     atomic.Int32
 }
 
 func newMemInflightCache(balance float64) *memInflightCache {
@@ -201,6 +202,11 @@ func (m *memInflightCache) GetUserBalance(context.Context, int64) (float64, erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.balance, nil
+}
+
+func (m *memInflightCache) InvalidateUserBalance(context.Context, int64) error {
+	m.invalidations.Add(1)
+	return nil
 }
 
 func (m *memInflightCache) DeductUserBalance(_ context.Context, _ int64, amount float64) error {
@@ -331,14 +337,15 @@ func TestInflightReservation_RenewedWhileHandlerActive(t *testing.T) {
 	done()
 }
 
-func TestSyncBalanceCacheAfterDeduction_SynchronousWhenInflightEnabled(t *testing.T) {
+func TestSyncBalanceCacheAfterDeduction_InvalidatesInsteadOfDeducting(t *testing.T) {
 	cache := newMemInflightCache(1)
 	svc := newInflightSvc(t, cache, 60)
 	p := &postUsageBillingParams{Cost: &CostBreakdown{ActualCost: 0.25}, User: &User{ID: 3}}
+	// 结算提交后统一失效余额缓存（下一次准入回源 DB 真值），不再对缓存做裸扣减：
+	// 并发结算下乱序的扣减/写回会覆盖最新真实余额。
 	syncBalanceCacheAfterDeduction(context.Background(), p, &billingDeps{billingCacheService: svc}, nil)
-	require.Equal(t, int32(1), cache.deducts.Load(), "cache deduction must land before the billing task returns")
-	bal, _ := cache.GetUserBalance(context.Background(), 3)
-	require.InDelta(t, 0.75, bal, 1e-12)
+	require.Equal(t, int32(0), cache.deducts.Load())
+	require.Equal(t, int32(1), cache.invalidations.Load())
 }
 
 // 计费侧：requested 来源下别名本身无价 → billableModelWithFallback 回退到映射模型。

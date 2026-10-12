@@ -165,9 +165,39 @@ type AccountQuotaState struct {
 type UsageBillingApplyResult struct {
 	Applied              bool
 	APIKeyQuotaExhausted bool
-	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
-	BalanceOverdrafted   bool               // true when the sufficient-balance guard missed and debt was still recorded
-	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	// APIKeyQuotaUsed 是本次事务提交后的 api_key.quota_used 真值（nil = 本次没有
+	// 触碰该 key 的额度）。调用方用它把"已用额度"发布到共享高水位账本，
+	// 使鉴权快照过期之前预检也能看到最新已用额度（见 reserveAPIKeyQuotaSpend）。
+	APIKeyQuotaUsed *float64
+	NewBalance      *float64 // post-deduction balance (nil = no balance deduction)
+	// BalanceCollected is the amount actually taken from the wallet for this
+	// request. It equals the requested balance cost unless the wallet was
+	// drained down to the configured floor (billing.minimum_balance_reserve),
+	// in which case BalanceShortfall > 0 and BalanceCollected < cost.
+	BalanceCollected float64
+	// BalanceShortfall is the part of the request cost that could NOT be
+	// collected because the wallet hit the floor. The wallet never goes below
+	// the floor (and never negative); the shortfall is written off and logged so
+	// operators can reconcile. The next preflight sees balance <= floor and
+	// rejects further requests with 403 INSUFFICIENT_BALANCE until a top-up.
+	BalanceShortfall float64
+	QuotaState       *AccountQuotaState // post-increment quota state (nil = no quota increment)
+}
+
+// BalanceDeduction is the outcome of a floor-guarded wallet deduction.
+//
+// Invariants: 0 <= Collected <= requested amount; Shortfall = amount - Collected;
+// NewBalance >= floor (never negative). Shortfall > 0 means the wallet was
+// drained exactly to the floor by this deduction.
+type BalanceDeduction struct {
+	NewBalance float64
+	Collected  float64
+	Shortfall  float64
+}
+
+// PartiallyCollected reports whether the wallet could not cover the full amount.
+func (d BalanceDeduction) PartiallyCollected() bool {
+	return d.Shortfall > 0
 }
 
 // BatchImageBalanceHoldCommand describes an idempotent balance hold operation.

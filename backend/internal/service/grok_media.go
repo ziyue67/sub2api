@@ -386,6 +386,9 @@ type GrokVideoPendingBilling struct {
 	// first official done+video.url observation (status poll or content download),
 	// not the latency of that single discovery request alone.
 	CreatedAt string `json:"created_at,omitempty"`
+	// Reservations 创建请求的在途预留凭据：结算发生在后续轮询请求里，轮询请求接回凭据，
+	// 扣费完成后归还（见 BillingReservationSlot.Detach）。
+	Reservations []BillingReservationReceipt `json:"reservations,omitempty"`
 }
 
 // GrokVideoPendingCreatedAtNow formats a create-accept timestamp for pending billing.
