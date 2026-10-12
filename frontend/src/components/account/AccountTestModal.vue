@@ -17,6 +17,7 @@
           <a v-if="modelAuthError" href="/admin/token-guard-v2" target="_blank" rel="noopener noreferrer" class="underline">{{ t('admin.accounts.openCredentialOperations') }}</a>
         </div>
       </div>
+      <AccountTestEvidence v-if="upstreamEvidence" :evidence="upstreamEvidence" />
       <!-- Account Info Card -->
       <div
         v-if="account"
@@ -257,6 +258,8 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
+import AccountTestEvidence from './AccountTestEvidence.vue'
+import type { AccountTestUpstreamEvidence } from '@/types/accountTestEvidence'
 import TextArea from '@/components/common/TextArea.vue'
 import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
@@ -284,8 +287,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
+  (e: 'tested'): void
 }>()
 
+let reportedTestCompletion = false
+const notifyTestComplete = () => { if (!reportedTestCompletion) { reportedTestCompletion = true; emit('tested') } }
+const upstreamEvidence = ref<AccountTestUpstreamEvidence | null>(null)
 const terminalRef = ref<HTMLElement | null>(null)
 const status = ref<'idle' | 'connecting' | 'success' | 'error'>('idle')
 const outputLines = ref<OutputLine[]>([])
@@ -407,6 +414,8 @@ const loadAvailableModels = async () => {
 }
 
 const resetState = () => {
+  reportedTestCompletion = false
+  upstreamEvidence.value = null
   status.value = 'idle'
   outputLines.value = []
   streamingContent.value = ''
@@ -525,10 +534,14 @@ const handleEvent = (event: {
   error?: string
   image_url?: string
   mime_type?: string
+  upstream_status?: number
+  upstream_model?: string
+  request_id?: string
+  upstream_error_code?: string
 }) => {
   switch (event.type) {
     case 'test_start':
-      addLine(t('admin.accounts.connectedToApi'), 'text-green-400')
+      addLine(t('admin.accounts.testRequestStarted'), 'text-gray-400')
       if (event.model) {
         addLine(t('admin.accounts.usingModel', { model: event.model }), 'text-cyan-400')
       }
@@ -540,6 +553,12 @@ const handleEvent = (event: {
       )
       addLine('', 'text-gray-300')
       addLine(t('admin.accounts.response'), 'text-yellow-400')
+      break
+
+    case 'upstream_response':
+      if (event.upstream_status && event.upstream_status >= 100 && event.upstream_status <= 599) {
+        upstreamEvidence.value = { status: event.upstream_status, model: event.upstream_model, requestId: event.request_id, errorCode: event.upstream_error_code }
+      }
       break
 
     case 'content':
@@ -566,6 +585,7 @@ const handleEvent = (event: {
       break
 
     case 'test_complete':
+      notifyTestComplete()
       // Move streaming content to output lines
       if (streamingContent.value) {
         addLine(streamingContent.value, 'text-green-300')
@@ -580,6 +600,7 @@ const handleEvent = (event: {
       break
 
     case 'error':
+      notifyTestComplete()
       status.value = 'error'
       errorMessage.value = event.error || 'Unknown error'
       if (streamingContent.value) {

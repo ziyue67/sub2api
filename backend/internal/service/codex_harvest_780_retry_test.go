@@ -49,7 +49,7 @@ func TestCodex780RejectedModelDoesNotExhaustOtherModelsBudget(t *testing.T) {
 						sol.Add(1)
 						h["Set-Cookie"] = mint780Pair(time.Now().Add(time.Hour), "unified-88")
 						h.Set(openAICodexTurnStateHeader, mint780State(time.Now()))
-						body = "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"model\":\"gpt-6-sol\"}}\n\n"
+						body = harvestProbeCompleteFixture("gpt-6-sol")
 					}
 					return &http.Response{StatusCode: status, Header: h, Body: io.NopCloser(strings.NewReader(body))}, nil
 				}})

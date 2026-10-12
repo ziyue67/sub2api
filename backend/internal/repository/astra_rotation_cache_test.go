@@ -29,21 +29,12 @@ func TestAstraRotationCacheSurvivesSaveAndSuppressesNetwork(t *testing.T) {
 	require.ErrorContains(t, err, "astra_rotation_exhausted")
 	require.Len(t, *calls, 9)
 	require.Zero(t, *leases)
-	// Any new revision drops Cookies but must keep retry decisions.
+	// Target failure cache is intentionally not persisted; a new revision retries the route.
 	s.cfg.Gateway.CodexGatewayPin.TTLSeconds = 200
-	_, err = s.Do(rotationTarget(t), "target", 300, 1)
-	require.ErrorContains(t, err, "astra_rotation_cooling")
-	require.Len(t, *calls, 9)
-	require.Zero(t, *leases)
-	// Expiry allows retry without deleting durable history or resetting account state.
-	s.rotationCache.mu.Lock()
-	for key := range s.rotationCache.blocked {
-		s.rotationCache.blocked[key] = time.Now().Add(-time.Second)
-	}
-	s.rotationCache.mu.Unlock()
 	_, err = s.Do(rotationTarget(t), "target", 300, 1)
 	require.ErrorContains(t, err, "astra_rotation_exhausted")
 	require.Len(t, *calls, 18)
+	require.Zero(t, *leases)
 }
 func TestAstraRotationCacheFiltersWithoutSpendingAttemptBudget(t *testing.T) {
 	s, calls, leases := rotationFixture(t, 1, "good")
@@ -60,7 +51,7 @@ func TestAstraRotationCacheRejectsMappedHostBeforeTargetProbe(t *testing.T) {
 	s.rotationCache.observe("bad", "blocked-host", now)
 	s.rotationCache.reject(300, "other-node", "blocked-host", now.Add(time.Hour), now)
 	s.listNodes = func() ([]mihomo.AstraNode, error) { return []mihomo.AstraNode{{ID: "bad", Identity: "bad"}}, nil }
-	require.ErrorContains(t, s.PrepareAstraGateway(context.Background()), "astra_rotation_cooling")
+	require.ErrorContains(t, s.PrepareAstraGateway(context.WithValue(context.Background(), astraForceProbeKey{}, true)), "astra_rotation_cooling")
 	require.Empty(t, *calls)
 	require.Zero(t, *leases)
 	rows := s.rotationCache.snapshot([]int64{300}, now)
@@ -127,7 +118,7 @@ func TestRepeatedCoolingHostPausesSourceNetworkAcrossSaves(t *testing.T) {
 		s.current(ctx).recordSource(id, time.Now(), route, true)
 		return nil
 	})
-	ctx := context.WithValue(t.Context(), astraRotationTargetKey{}, int64(300))
+	ctx := context.WithValue(context.WithValue(t.Context(), astraForceProbeKey{}, true), astraRotationTargetKey{}, int64(300))
 	require.ErrorContains(t, s.PrepareAstraGateway(ctx), "astra_rotation_cooling")
 	require.Equal(t, 1, calls, "stop scanning other exits after duplicate cooling host")
 	require.Zero(t, *leases)

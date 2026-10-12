@@ -118,6 +118,24 @@ describe('AccountTestModal', () => {
     localStorage.clear()
   })
 
+  it('only shows upstream status after a response and preserves HTTP 200 on terminal failure', async () => {
+    const wrapper = mount(AccountTestModal, { props: { show: true, account: buildAccount() }, global: { stubs: { BaseDialog: BaseDialogStub, Select: SelectStub, TextArea: TextAreaStub, Icon: true } } })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.handleEvent({ type: 'test_start', model: 'alias' })
+    expect(wrapper.find('[data-testid="upstream-evidence"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('admin.accounts.connectedToApi')
+    vm.handleEvent({ type: 'upstream_response', upstream_status: 200, upstream_model: 'gpt-6-astra', request_id: 'req_example' })
+    vm.handleEvent({ type: 'error', error: 'stream ended early' })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="upstream-evidence"]').text()).toContain('200')
+    expect(wrapper.text()).toContain('req_example')
+    expect(wrapper.emitted('tested')).toHaveLength(1)
+    vm.resetState()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="upstream-evidence"]').exists()).toBe(false)
+  })
+
   it('posts compact mode for OpenAI compact probe', async () => {
     const wrapper = mount(AccountTestModal, {
       props: {

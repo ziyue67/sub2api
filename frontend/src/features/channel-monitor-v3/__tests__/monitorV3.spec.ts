@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatMonitorV3Availability,
   formatMonitorV3Bucket,
+  formatMonitorV3Seconds,
   formatMonitorV3Multiplier,
   formatMonitorV3Offset,
   formatMonitorV3Rate,
@@ -62,6 +63,10 @@ describe('monitor V3 formatting', () => {
     expect(formatMonitorV3Bucket(500)).toBe('≤ 0.5s')
     expect(formatMonitorV3Bucket(2147483647)).toBe('> 600s')
     expect(formatMonitorV3Bucket(undefined)).toBe('—')
+    expect(formatMonitorV3Seconds(1834)).toBe('1.8')
+    expect(formatMonitorV3Seconds(450)).toBe('0.5')
+    expect(formatMonitorV3Seconds(12400)).toBe('12')
+    expect(formatMonitorV3Seconds(35)).toBe('<0.1')
     const start = new Date(2026, 9, 4, 15, 35)
     expect(formatMonitorV3Slot(start.toISOString(), 5)).toBe('10/4 15:35 - 15:40')
     const late = new Date(2026, 9, 4, 23, 30)

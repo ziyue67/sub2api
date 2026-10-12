@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -19,17 +20,24 @@ func NewChannelMonitorV3Repository(db *sql.DB) service.ChannelMonitorV3Repositor
 
 const channelMonitorV3ConfigColumns = `version, interval_minutes, cells, availability_range, down_error_rate::float8,
 	degraded_error_rate::float8, degraded_ttft_ms, min_requests, ignored_error_categories,
-	featured_component_id, footer_note, updated_at, updated_by`
+	featured_component_id, footer_note, updated_at, updated_by, idle_probe`
 
 func scanChannelMonitorV3Config(row interface{ Scan(...any) error }) (*service.ChannelMonitorV3Config, error) {
 	var cfg service.ChannelMonitorV3Config
+	var idleProbe []byte
 	if err := row.Scan(&cfg.Version, &cfg.IntervalMinutes, &cfg.Cells, &cfg.AvailabilityRange, &cfg.DownErrorRate,
 		&cfg.DegradedErrorRate, &cfg.DegradedTTFTMs, &cfg.MinRequests, pq.Array(&cfg.IgnoredErrorCategories),
-		&cfg.FeaturedComponentID, &cfg.FooterNote, &cfg.UpdatedAt, &cfg.UpdatedBy); err != nil {
+		&cfg.FeaturedComponentID, &cfg.FooterNote, &cfg.UpdatedAt, &cfg.UpdatedBy, &idleProbe); err != nil {
 		return nil, err
 	}
 	if cfg.IgnoredErrorCategories == nil {
 		cfg.IgnoredErrorCategories = []string{}
+	}
+	if err := json.Unmarshal(idleProbe, &cfg.IdleProbe); err != nil {
+		return nil, fmt.Errorf("decode channel monitor v3 idle probe: %w", err)
+	}
+	if cfg.IdleProbe.Groups == nil {
+		cfg.IdleProbe.Groups = []service.ChannelMonitorV3IdleProbeGroup{}
 	}
 	return &cfg, nil
 }

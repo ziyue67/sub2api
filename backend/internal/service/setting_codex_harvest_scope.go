@@ -19,7 +19,8 @@ const (
 
 // CodexTicketHarvestScope selects which accounts the background harvester
 // probes. Fail-closed ticket-gated routing also refuses leftover tickets on
-// accounts outside this scope. Selected with no groups harvests nothing and
+// accounts outside the legacy group scope. Selected_accounts uses explicit
+// per-account opt-in; all honors per-account opt-out. Legacy selected with no groups harvests nothing and
 // admits no leftover tickets on gated models. Per-account skip_harvest is
 // not this gate: those accounts are still schedulable.
 type CodexTicketHarvestScope struct {
@@ -32,8 +33,8 @@ func NormalizeCodexTicketHarvestScope(scope CodexTicketHarvestScope) (CodexTicke
 	if scope.Mode == "" {
 		scope.Mode = "all"
 	}
-	if scope.Mode != "all" && scope.Mode != "selected" {
-		return scope, fmt.Errorf("harvest scope mode must be all or selected")
+	if scope.Mode != "all" && scope.Mode != "selected" && scope.Mode != "selected_accounts" {
+		return scope, fmt.Errorf("harvest scope mode must be all, selected_accounts or legacy selected")
 	}
 	if scope.AccountPolicy == "" {
 		scope.AccountPolicy = CodexHarvestSchedulableOnly
@@ -169,6 +170,13 @@ func (s *SettingService) InvalidateOpenAICodexTicketHarvestScopeCache() {
 }
 
 func (scope CodexTicketHarvestScope) includes(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	if scope.Mode == "selected_accounts" {
+		enabled, ok := account.Extra[OpenAICodexSkipHarvestExtraKey].(bool)
+		return ok && !enabled
+	}
 	if scope.Mode == "all" {
 		return true
 	}

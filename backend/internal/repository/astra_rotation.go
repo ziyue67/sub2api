@@ -61,8 +61,9 @@ func (s *astraRoutingUpstream) prepareRotatedSource(ctx context.Context, pool *c
 	if time.Now().Before(retryAfter) {
 		return errors.New("source_probe_cooldown")
 	}
+	force, _ := ctx.Value(astraForceProbeKey{}).(bool)
 	target, _ := ctx.Value(astraRotationTargetKey{}).(int64)
-	if pool.rotationCache != nil && pool.rotationCache.sourceSearchPaused(target, time.Now()) {
+	if force && pool.rotationCache != nil && pool.rotationCache.sourceSearchPaused(target, time.Now()) {
 		return errors.New("astra_rotation_cooling")
 	}
 	nodes, err := s.availableNodes()
@@ -82,7 +83,7 @@ func (s *astraRoutingUpstream) prepareRotatedSource(ctx context.Context, pool *c
 	for scanned := 0; scanned < len(nodes) && budget.remaining > 0; scanned++ {
 		node := nodes[pool.nodeCursor%len(nodes)]
 		pool.nodeCursor++
-		if budget.seen[node.Identity] || pool.nodeCooling(node, "", target, time.Now()) || pool.sourcesCooling(node.Identity, time.Now()) {
+		if budget.seen[node.Identity] || (force && pool.nodeCooling(node, "", target, time.Now())) || pool.sourcesCooling(node.Identity, time.Now()) {
 			continue
 		}
 		eligible = true
@@ -132,7 +133,7 @@ func (s *astraRoutingUpstream) prepareRotatedSource(ctx context.Context, pool *c
 					if pool.rotationCache != nil {
 						pool.rotationCache.observe(route.node.Identity, host, time.Now())
 					}
-					if pool.nodeCooling(route.node, host, target, time.Now()) {
+					if force && pool.nodeCooling(route.node, host, target, time.Now()) {
 						repeatedCoolingHost.Store(true)
 						pool.mu.Lock()
 						delete(pool.routes, source)
@@ -225,6 +226,17 @@ func (s *astraRoutingUpstream) prepareRotatedSource(ctx context.Context, pool *c
 }
 
 func (s *astraRoutingUpstream) targetRoute(req *http.Request, proxy string, id int64, n int, profile *tlsfingerprint.Profile) (*http.Cookie, [32]byte, string, func(), error) {
+	force, _ := req.Context().Value(astraForceProbeKey{}).(bool)
+	if !force {
+		cookie, key, effective, release, err := s.targetRouteOnce(req, proxy, id, n, profile)
+		if err != nil && req.Context().Err() == nil {
+			// No business request has been sent. A missing/stale route or failed
+			// optional exit lease must not gate forwarding on the account's exit.
+			release()
+			return nil, key, proxy, func() {}, nil
+		}
+		return cookie, key, effective, release, err
+	}
 	pool := s.current(req.Context())
 	if pool == nil || !pool.config.RotateNodes {
 		return s.targetRouteOnce(req, proxy, id, n, profile)

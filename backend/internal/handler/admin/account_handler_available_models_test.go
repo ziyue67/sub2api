@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -39,12 +40,18 @@ func setupAvailableModelsRouter(adminSvc service.AdminService) *gin.Engine {
 }
 
 type syncUpstreamHTTPUpstream struct {
-	resp      *http.Response
-	responses []*http.Response
-	err       error
+	resp       *http.Response
+	responses  []*http.Response
+	err        error
+	requests   []*http.Request
+	proxyURLs  []string
+	accountIDs []int64
 }
 
 func (u *syncUpstreamHTTPUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	u.requests = append(u.requests, req)
+	u.proxyURLs = append(u.proxyURLs, proxyURL)
+	u.accountIDs = append(u.accountIDs, accountID)
 	if u.err != nil {
 		return nil, u.err
 	}
@@ -436,6 +443,111 @@ func TestAccountHandlerSyncUpstreamModelsReturnsCapabilityMetadata(t *testing.T)
 	require.True(t, *metadata.Reasoning)
 	require.Equal(t, []string{"low", "high"}, metadata.SupportedReasoningLevels)
 	require.Equal(t, []string{"text", "image"}, metadata.InputModalities)
+}
+
+type previewProxyAdminService struct {
+	*stubAdminService
+	proxyErr error
+}
+
+func (s *previewProxyAdminService) GetProxy(context.Context, int64) (*service.Proxy, error) {
+	return nil, s.proxyErr
+}
+
+func TestAccountHandlerSyncUpstreamModelsPreviewRejectsUnavailableProxy(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		proxyID    int64
+		proxyErr   error
+		observer   bool
+		wantStatus int
+	}{
+		{name: "missing proxy", proxyID: 7, wantStatus: http.StatusBadRequest},
+		{name: "lookup failure", proxyID: 7, proxyErr: errors.New("private lookup detail"), wantStatus: http.StatusBadRequest},
+		{name: "invalid proxy ID", proxyID: -1, wantStatus: http.StatusBadRequest},
+		{name: "observer cannot choose a proxy", proxyID: 7, observer: true, wantStatus: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &previewProxyAdminService{stubAdminService: newStubAdminService(), proxyErr: tc.proxyErr}
+			upstream := &syncUpstreamHTTPUpstream{}
+			router := setupSyncUpstreamModelsRouter(svc, upstream)
+			body, err := json.Marshal(map[string]any{
+				"platform": "openai", "type": "apikey", "api_key": "test-key", "proxy_id": tc.proxyID,
+			})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/models/sync-upstream-preview", strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			if tc.observer {
+				req = req.WithContext(service.WithObserverScope(req.Context(), []int64{1}))
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			require.Equal(t, tc.wantStatus, rec.Code, rec.Body.String())
+			require.Empty(t, upstream.requests, "never silently fall back to a direct connection")
+			require.NotContains(t, rec.Body.String(), "private lookup detail")
+		})
+	}
+}
+
+func TestAccountHandlerSyncUpstreamModelsPreviewReportsUpstreamAuthenticationFailure(t *testing.T) {
+	upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Body:       io.NopCloser(strings.NewReader(`{"error":"private upstream body"}`)),
+	}}
+	router := setupSyncUpstreamModelsRouter(newStubAdminService(), upstream)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/models/sync-upstream-preview", strings.NewReader(`{"platform":"openai","type":"apikey","api_key":"synthetic-test-key"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "Upstream model list request failed with HTTP 401")
+	require.NotContains(t, rec.Body.String(), "private upstream body")
+	require.NotContains(t, rec.Body.String(), "synthetic-test-key")
+}
+
+func TestAccountHandlerSyncUpstreamModelsPreviewUsesUnsavedConnection(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		proxyID   int64
+		wantProxy string
+	}{
+		{name: "direct"},
+		{name: "selected proxy", proxyID: 7, wantProxy: "http://proxy.example:8080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newStubAdminService()
+			svc.proxies = []service.Proxy{{ID: 7, Protocol: "http", Host: "proxy.example", Port: 8080, Status: service.StatusActive}}
+			upstream := &syncUpstreamHTTPUpstream{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"draft-model","reasoning":false,"input_modalities":["text"],"context_window":128000,"max_output_tokens":4096}]}`)),
+			}}
+			router := setupSyncUpstreamModelsRouter(svc, upstream)
+			body, err := json.Marshal(map[string]any{
+				"platform": "openai", "type": "apikey",
+				"base_url": "https://draft.example/v1", "api_key": "unsaved-test-key",
+				"proxy_id": tc.proxyID,
+			})
+			require.NoError(t, err)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/models/sync-upstream-preview", strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Len(t, upstream.requests, 1)
+			require.Equal(t, "https://draft.example/v1/models", upstream.requests[0].URL.String())
+			require.Equal(t, "Bearer unsaved-test-key", upstream.requests[0].Header.Get("Authorization"))
+			require.Equal(t, tc.wantProxy, upstream.proxyURLs[0])
+			require.Zero(t, upstream.accountIDs[0], "preview must not require a saved account")
+			var resp struct {
+				Data service.UpstreamModelCatalog `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+			require.Equal(t, []string{"draft-model"}, resp.Data.Models)
+			require.Empty(t, svc.createdAccounts, "preview must not create an account")
+		})
+	}
 }
 
 // Scenario: 创建账号 preview 将具体 mapping 传给 404/405 配置回退。

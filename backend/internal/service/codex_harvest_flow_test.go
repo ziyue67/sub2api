@@ -41,6 +41,35 @@ func TestCodexHarvestFlowRecordsProbeTicketAndSelect(t *testing.T) {
 	require.Equal(t, "skip", events[3].Kind)
 }
 
+func TestCodexHarvestFlowRecordsAstraScheduling(t *testing.T) {
+	resetCodexHarvestFlow()
+	t.Cleanup(resetCodexHarvestFlow)
+	account := ticketTestAccount(459)
+	account.Name = "pool-target"
+	recordCodexHarvestScheduling(account, "groups", "target_probe_passed", true)
+	recordCodexHarvestScheduling(account, "groups", "route_expired", false)
+
+	events := listCodexHarvestFlowEvents()
+	require.Len(t, events, 2)
+	require.Equal(t, "select", events[0].Stage)
+	require.Equal(t, "schedule_join", events[0].Kind)
+	require.Equal(t, "target_probe_passed", events[0].Reason)
+	require.Equal(t, "groups", events[0].Result)
+	require.Equal(t, "target_probe_passed", events[0].Detail)
+	require.Equal(t, "schedule_leave", events[1].Kind)
+	require.Equal(t, "route_expired", events[1].Reason)
+
+	snapshot := BuildCodexHarvestFlow(t.Context(), &config.Config{}, nil, []Account{*account})
+	require.Len(t, snapshot.Events, 2)
+	require.Equal(t, "schedule_leave", snapshot.Events[0].Kind)
+	require.Equal(t, "schedule_join", snapshot.Events[1].Kind)
+	require.Equal(t, 1, snapshot.Counts.SelectOK)
+	require.Equal(t, 1, snapshot.Counts.SelectSkip)
+	require.Equal(t, "select", snapshot.Stages[4].ID)
+	require.Equal(t, "warn", snapshot.Stages[4].Status)
+	require.Equal(t, "route_expired", snapshot.Stages[4].Detail)
+}
+
 func TestBuildCodexHarvestFlowSnapshotAndStages(t *testing.T) {
 	resetCodexHarvestFlow()
 	t.Cleanup(resetCodexHarvestFlow)
@@ -59,7 +88,7 @@ func TestBuildCodexHarvestFlowSnapshotAndStages(t *testing.T) {
 			Identity:   ticketIdentity(account),
 		},
 	}
-	recordCodexHarvestProbe(account, "gpt-6-astra", "success", "airport-node-2", "", 200, 292, 10, 292, 10)
+	recordCodexHarvestProbe(account, "gpt-6-astra", "success", "airport-node-2", "", 200, 292, 10, 292, 10, true)
 	recordCodexHarvestTicketStore(account, &openAICodexTicket{Model: "gpt-6-astra", Length: 292, Blocks: 10}, false)
 	recordCodexHarvestSelect(account, "gpt-6-astra", "selected", "", "")
 
@@ -229,7 +258,7 @@ func TestCodexHarvestSelectFailedDebounces(t *testing.T) {
 	require.Len(t, listCodexHarvestFlowEvents(), 1)
 }
 
-func TestShapeStageKeeps292AfterUnauthorizedProbe(t *testing.T) {
+func TestProbeStageDoesNotReuseAnEarlierSuccess(t *testing.T) {
 	resetCodexHarvestFlow()
 	t.Cleanup(resetCodexHarvestFlow)
 	account := ticketTestAccount(2)
@@ -249,18 +278,18 @@ func TestShapeStageKeeps292AfterUnauthorizedProbe(t *testing.T) {
 	}, nil, []Account{*account})
 	require.Equal(t, "warn", snapshot.Stages[1].Status)
 	require.Equal(t, "shape", snapshot.Stages[2].ID)
-	require.Equal(t, "ok", snapshot.Stages[2].Status)
-	require.Equal(t, 292, snapshot.Stages[2].Length)
+	require.Equal(t, "warn", snapshot.Stages[2].Status)
+	require.Zero(t, snapshot.Stages[2].Length)
 }
 
-func TestShapeStageFailsOnWrongTicketLength(t *testing.T) {
+func TestProbeStageReportsValidationFailure(t *testing.T) {
 	resetCodexHarvestFlow()
 	t.Cleanup(resetCodexHarvestFlow)
 	account := ticketTestAccount(2)
 	recordCodexHarvestProbe(account, "gpt-6-astra", "invalid_state", "japan-08", "", 200, 312, 11, 292, 10)
 	stages := buildCodexHarvestFlowStages(CodexHarvestFlowSnapshot{Events: listCodexHarvestFlowEvents()})
 	require.Equal(t, "fail", stages[2].Status)
-	require.Contains(t, stages[2].Detail, "312")
+	require.Equal(t, "invalid_state", stages[2].Detail)
 }
 
 func TestRecordCodexHarvestNodeReusesPoolSize(t *testing.T) {
@@ -306,14 +335,16 @@ func TestBuildCodexHarvestFlowAvailabilityWindows(t *testing.T) {
 	require.NotNil(t, snapshot.Accounts[0].RecoverAt)
 }
 
-func TestRecordCodexHarvestProbeHumanizesMiss(t *testing.T) {
+func TestRecordCodexHarvestProbeReportsValidationFailure(t *testing.T) {
 	resetCodexHarvestFlow()
 	t.Cleanup(resetCodexHarvestFlow)
 	account := ticketTestAccount(2)
 	recordCodexHarvestProbe(account, "gpt-6-astra", "invalid_state", "node-a", "", 200, 312, 11, 292, 10)
 	events := listCodexHarvestFlowEvents()
 	require.NotEmpty(t, events)
-	require.Contains(t, events[len(events)-1].Detail, "降智")
+	require.Equal(t, "probe_miss", events[len(events)-1].Kind)
+	require.Equal(t, "invalid_state", events[len(events)-1].Reason)
+	require.Equal(t, "票据未通过校验，未入库", events[len(events)-1].Detail)
 }
 
 type memoryHarvestFlowStore struct {
@@ -415,4 +446,13 @@ func TestExternalHarvestProxyDoesNotQueryOrInheritSidecar(t *testing.T) {
 	require.Equal(t, "mihomo", local.Mode)
 	require.NotEmpty(t, local.Error, "a selected but failing local sidecar still reports its error")
 	require.Positive(t, queries.Load())
+}
+
+func TestHarvestTicketStageDoesNotTreatOldAcceptanceAsReady(t *testing.T) {
+	stages := buildCodexHarvestFlowStages(CodexHarvestFlowSnapshot{Events: []CodexHarvestFlowEvent{
+		{ID: "accepted", At: time.Now().Add(-time.Hour), Stage: "ticket", Kind: "accept", Model: "test-model"},
+	}})
+	require.Equal(t, "warn", stages[3].Status)
+	require.Equal(t, "no valid ticket", stages[3].Detail)
+	require.NotNil(t, stages[3].At)
 }

@@ -8,6 +8,32 @@
 
 import type { HealthScoreBand, HealthState, MonitorHealth } from '@/api/channelMonitorV2'
 import { formatCompactNumber } from '@/utils/format'
+import { platformLabel } from '@/utils/platformColors'
+
+/** Catalog display name, plus factory aliases that are not registered group platforms. */
+export function monitorPlatformLabel(value: string): string {
+  if (value === 'kiro') return 'Kiro'
+  const label = platformLabel(value)
+  if (!value || label === 'API') return value || label
+  return label
+}
+
+/**
+ * Enabled platforms in saved config order.
+ * The card view does not load dimensions, so this must come from the snapshot
+ * config that is fetched together with the matrix.
+ */
+export function monitorCardPlatformOrder(
+  platforms: Array<{ platform?: string; enabled?: boolean }> | null | undefined,
+): string[] {
+  const out: string[] = []
+  for (const item of platforms || []) {
+    const id = item?.platform?.trim().toLowerCase()
+    if (!id || item.enabled === false) continue
+    out.push(id)
+  }
+  return out
+}
 
 export function monitorIntlLocale(): string {
   if (typeof document !== 'undefined') {

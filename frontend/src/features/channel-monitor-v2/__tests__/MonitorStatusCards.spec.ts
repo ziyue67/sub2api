@@ -5,6 +5,20 @@ import MonitorStatusCards from '../MonitorStatusCards.vue'
 import type { MonitorCoverage, MonitorMatrixRow } from '@/api/channelMonitorV2'
 
 vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string, values?: Record<string, unknown>) => key + (values ? ' ' + Object.values(values).join(' ') : ''), locale: ref('zh-CN') }) }))
+it('orders platform sections by the configured display order', () => {
+  const row = (platform: string) => ({
+    platform, group_id: 1, group_name: platform,
+    metrics: { has_samples: false, request_count: 0, cache_rate: 0, error_rate: 0, ttft: { p50_ms: null } },
+    health: { overall: 'unknown' }, buckets: [],
+  }) as MonitorMatrixRow
+  const wrapper = mount(MonitorStatusCards, {
+    props: { items: [row('openai'), row('deepseek'), row('kimi')], platformOrder: ['kimi', 'deepseek', 'openai'], countdown: 1, loading: false, now: Date.now() },
+    global: { stubs: { ProviderIcon: true } },
+  })
+  expect(wrapper.findAll('[data-platform]').map((section) => section.attributes('data-platform'))).toEqual(['kimi', 'deepseek', 'openai'])
+  wrapper.unmount()
+})
+
 it('renders platform groups, three passive metrics and observed-only candy bars', () => {
   const now = Date.parse('2026-09-28T01:00:00Z')
   const row = { platform: 'openai', group_id: 7, group_name: 'Group One', group_rate_multiplier: 0.2,
@@ -189,4 +203,20 @@ it.each([0, 1, 99, 100, 120])('renders exactly 100 enabled-check slots for %i ac
     await bars.at(-1)!.trigger('mouseenter')
     expect(tooltip()?.textContent).toContain('channelMonitorV2.candy.states.error')
   }
+})
+
+it('shows each configured model with its own history limit', async () => {
+  const { wrapper, row } = hoverFixture()
+  const base = row.candy!.results[0]
+  await wrapper.setProps({ now: Date.parse('2026-09-28T01:00:00Z'), items: [{ ...row, candy_checks: [
+    { model: 'gpt-a', reasoning_effort: 'medium', interval_minutes: 1, history_limit: 30, results: [{ ...base, verdict: 'incorrect' }] },
+    { model: 'gpt-b', reasoning_effort: 'high', interval_minutes: 5, history_limit: 30, results: [{ ...base, verdict: 'correct', checked_at: '2026-09-28T00:58:00Z' }] },
+  ] }] })
+  const models = wrapper.findAll('[data-testid="candy-model-history"]')
+  expect(models).toHaveLength(2)
+  expect(models[0].text()).toContain('gpt-a')
+  expect(models[0].text()).toContain('channelMonitorV2.candy.states.incorrect')
+  expect(models[1].text()).toContain('gpt-b')
+  expect(models[1].find('[data-testid="candy-history-slots"]').element.children).toHaveLength(30)
+  expect(wrapper.findAll('[data-testid="candy-history-bar"]')).toHaveLength(2)
 })

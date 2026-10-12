@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CANDY_HISTORY_LIMIT, candyDisplayState, candyHistorySlots, hasMonitorSamples, monitorCardTimeline, monitorRefreshSeconds } from '../monitorCards'
+import { CANDY_HISTORY_LIMIT, candyDisplayState, candyHistoryLimit, candyHistorySlots, hasMonitorSamples, monitorCandyHistories, monitorCardTimeline, monitorRefreshSeconds } from '../monitorCards'
 import type { MonitorCandyHistory, MonitorCoverage, MonitorMatrixRow, MonitorMetric } from '@/api/channelMonitorV2'
 
 describe('monitor card data semantics', () => {
@@ -28,6 +28,21 @@ describe('monitor card data semantics', () => {
     expect(monitorRefreshSeconds(300, [row(0), row(Number.NaN)], false)).toBe(300)
     expect(monitorRefreshSeconds(30, [row(0.5)], false)).toBe(60)
     expect(monitorRefreshSeconds(300, [row(1)], true)).toBe(10)
+    const multi = { candy_checks: [{ interval_minutes: 5 }, { interval_minutes: 1 }] } as MonitorMatrixRow
+    expect(monitorRefreshSeconds(300, [multi], false)).toBe(60)
+    expect(monitorCandyHistories(multi)).toHaveLength(2)
+    expect(monitorCandyHistories({ candy: { interval_minutes: 2 } } as MonitorMatrixRow)).toHaveLength(1)
+  })
+  it('uses a configured history limit and falls back to 100', () => {
+    const results: MonitorCandyHistory['results'] = Array.from({ length: 40 }, (_, index) => ({ checked_at: new Date(Date.UTC(2026, 8, 29, 0, index)).toISOString(), verdict: 'correct', latency_ms: index }))
+    const history: MonitorCandyHistory = { model: 'demo', reasoning_effort: 'medium', interval_minutes: 1, history_limit: 30, results }
+    expect(candyHistoryLimit(history)).toBe(30)
+    expect(candyHistorySlots(history)).toHaveLength(30)
+    expect(candyHistorySlots(history).at(-1)).toBe(results.at(-1))
+    expect(candyHistoryLimit({ history_limit: 12 })).toBe(CANDY_HISTORY_LIMIT)
+    expect(candyHistoryLimit({ history_limit: 101 })).toBe(CANDY_HISTORY_LIMIT)
+    expect(candyHistoryLimit({ history_limit: 100 })).toBe(100)
+    expect(candyHistorySlots({ ...history, history_limit: undefined })).toHaveLength(100)
   })
   it('does not infer successful traffic from redacted zero counters', () => {
     expect(hasMonitorSamples({ request_count: 0, has_samples: false } as MonitorMetric)).toBe(false)

@@ -20,10 +20,19 @@ export interface MonitorV3Cell {
   success_rate: number
   ttft_p50_ms?: number | null
   top_error?: string
+  /**
+   * The slot had too little real traffic and was judged by idle probes;
+   * success_rate and top_error then describe the probes.
+   */
+  probed?: boolean
+  /** Median latency of the slot's successful probes. */
+  probe_latency_ms?: number | null
   /** Admin-only volumes. */
   requests?: number
   errors?: number
   ignored_errors?: number
+  probes?: number
+  probe_errors?: number
 }
 
 export interface MonitorV3ComponentStatus {
@@ -37,6 +46,8 @@ export interface MonitorV3ComponentStatus {
   availability: number | null
   /** Admin-only request count over the range. */
   requests?: number
+  /** Admin-only number of counted idle probes over the range. */
+  probes?: number
   last_data_at: string | null
   /** One entry per slot of the window, oldest first; null without traffic. */
   cells: Array<MonitorV3Cell | null>
@@ -74,6 +85,8 @@ export interface MonitorV3StatusPage {
   featured: MonitorV3ComponentStatus | null
   categories: MonitorV3CategoryStatus[]
   open_incidents: number
+  /** Quiet slots of some shown components are filled in by idle probes. */
+  idle_probe?: boolean
 }
 
 export interface MonitorV3Incident {
@@ -85,6 +98,8 @@ export interface MonitorV3Incident {
   top_error?: string
   requests?: number
   errors?: number
+  /** Admin-only: idle probes behind down slots real traffic could not judge. */
+  probes?: number
 }
 
 export interface MonitorV3IncidentPage {
@@ -150,12 +165,46 @@ export interface MonitorV3Component extends MonitorV3ComponentInput {
   updated_at: string
 }
 
+export interface MonitorV3IdleProbeGroup {
+  group_id: number
+  /** Asked for components covering every model; others probe their own model. */
+  model: string
+  /** Empty keeps the model's default. */
+  reasoning_effort: string
+}
+
+export interface MonitorV3IdleProbe {
+  enabled: boolean
+  groups: MonitorV3IdleProbeGroup[]
+}
+
+export type MonitorV3ProbeOutcome = 'success' | 'failure'
+
+/** One group's probes of the last day; last_* describe the newest probe. */
+export interface MonitorV3IdleProbeStat {
+  group_id: number
+  probes: number
+  failures: number
+  cost_usd: number
+  last_at: string | null
+  last_model?: string
+  last_outcome?: MonitorV3ProbeOutcome
+  last_latency_ms?: number | null
+  last_category?: string
+  last_error?: string
+}
+
+/** Reasoning efforts offered for idle probes; '' keeps the model default. */
+export const MONITOR_V3_PROBE_EFFORTS = ['', 'low', 'medium', 'high'] as const
+
 export interface MonitorV3Settings {
   config: MonitorV3Config
   categories: MonitorV3Category[]
   components: MonitorV3Component[]
   error_categories: string[]
   data_through: string | null
+  idle_probe: MonitorV3IdleProbe
+  idle_probe_stats: MonitorV3IdleProbeStat[]
 }
 
 const base = (admin: boolean) => (admin ? '/admin/channel-monitor-v3' : '/channel-monitor-v3')
@@ -184,6 +233,12 @@ export async function getSettings() {
 
 export async function updateConfig(config: MonitorV3Config) {
   const { data } = await apiClient.put<MonitorV3Config>('/admin/channel-monitor-v3/config', config)
+  return data
+}
+
+/** Saves which groups get idle probes; the page config is left alone. */
+export async function updateIdleProbe(probe: MonitorV3IdleProbe) {
+  const { data } = await apiClient.put<MonitorV3IdleProbe>('/admin/channel-monitor-v3/idle-probe', probe)
   return data
 }
 

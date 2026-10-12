@@ -34,7 +34,7 @@ func TestCodex780Validation(t *testing.T) {
 		_, _, err = codex780Route(cookies, "unified-95", now)
 		require.Error(t, err)
 	}
-	r := codexHarvestProbeResult{State: mint780State(now.Add(-20 * time.Second)), Status: 200, Sent: true, Cookies: pair, Gateway: "unified-95"}
+	r := codexHarvestProbeResult{ProbeVerified: true, State: mint780State(now.Add(-20 * time.Second)), Status: 200, Sent: true, Cookies: pair, Gateway: "unified-95"}
 	cfg := config.OpenAICodexTicketConfig{TargetLength: 780, TTLSeconds: 3600}
 	shape, kind := classifyCodexHarvestProbe(context.Background(), ticketTestAccount(1), cfg, r)
 	require.Equal(t, "success", kind)
@@ -47,16 +47,18 @@ func TestCodex780Validation(t *testing.T) {
 	ticket.Transport = "unknown"
 	require.False(t, ticket.valid(now, 780))
 }
-func TestCodex780CreatedBoundedAndStrict(t *testing.T) {
-	good := `{"type":"response.created","response":{"id":"r1","model":"gpt-6-astra"}}`
-	require.NoError(t, readCodex780Created(strings.NewReader("data: "+good+"\n\n"), "gpt-6-astra"))
-	require.NoError(t, readCodex780Created(strings.NewReader("\ufeffdata: "+good+"\r\r"), "gpt-6-astra"))
-	for _, body := range []string{"data: " + good + "\n", "data: " + good + "\n\n", "event: response.completed\ndata: " + good + "\n\n", "data: {\"type\":\"response.failed\"}\n\n", strings.Repeat(":x\n", 9000) + "data: " + good + "\n\n"} {
-		model := "gpt-6-astra"
-		if body == "data: "+good+"\n\n" {
-			model = "gpt-6-sol"
-		}
-		require.Error(t, readCodex780Created(strings.NewReader(body), model))
+func TestCodex780CompleteProbeBoundedAndStrict(t *testing.T) {
+	require.NoError(t, readCodexHarvestComplete(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra"))))
+	for _, newline := range []string{"\r", "\r\n"} {
+		require.NoError(t, readCodexHarvestComplete(strings.NewReader("\ufeff"+strings.ReplaceAll(harvestProbeCompleteFixture("gpt-6-astra"), "\n", newline))))
+	}
+	for _, body := range []string{
+		"data: {\"type\":\"response.created\"}\n\n",
+		"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n",
+		"data: {\"type\":\"response.failed\"}\n\n",
+		strings.Repeat(":x\n", 1<<19),
+	} {
+		require.Error(t, readCodexHarvestComplete(strings.NewReader(body)))
 	}
 }
 func TestCodex780NativeProbe(t *testing.T) {
@@ -71,7 +73,7 @@ func TestCodex780NativeProbe(t *testing.T) {
 		require.NotContains(t, string(body), "additional_tools")
 		h := http.Header{"Set-Cookie": pair}
 		h.Set(openAICodexTurnStateHeader, mint780State(time.Now()))
-		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"model\":\"gpt-6-astra\"}}\n\n"))}, nil
+		return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(harvestProbeCompleteFixture("gpt-6-astra")))}, nil
 	}}
 	out := s.requestCodex780Probe(context.Background(), account, "token", "gpt-6-astra", "socks5://127.0.0.1:1080", func() bool { return true }, "session")
 	require.NoError(t, out.Err)
@@ -85,7 +87,7 @@ func TestCodex780ProtocolIsolationAndRouteDeletion(t *testing.T) {
 	s := ticketTestService(t, cfg, nil)
 	now := time.Now()
 	state := mint780State(now)
-	ticket := &openAICodexTicket{AccountID: 1, Model: "gpt-6-astra", State: state, Length: 780, Transport: "sse", Gateway: "unified-88", IssuedAt: now, ExpiresAt: now.Add(240 * time.Second), HarvestCookies: mint780Pair(now.Add(time.Hour), "unified-88"), HarvestSessionID: "mint-session"}
+	ticket := &openAICodexTicket{ProbeVerified: true, AccountID: 1, Model: "gpt-6-astra", State: state, Length: 780, Transport: "sse", Gateway: "unified-88", IssuedAt: now, ExpiresAt: now.Add(240 * time.Second), HarvestCookies: mint780Pair(now.Add(time.Hour), "unified-88"), HarvestSessionID: "mint-session"}
 	s.openaiCodexTickets.Store(openAICodexTicketKey(1, "gpt-6-astra"), ticket)
 	h := http.Header{}
 	require.NoError(t, s.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", h))

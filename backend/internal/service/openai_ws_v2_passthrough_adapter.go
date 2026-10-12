@@ -812,7 +812,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	if scopeErr != nil {
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
 	}
-	firstClientMessage = accountScopedFirst
+	firstClientMessage = s.normalizeRequestTimezone(ctx, account, accountScopedFirst, "ws")
 	usageMeta := newOpenAIWSPassthroughUsageMeta(initialRequestModel, firstClientMessage)
 	updatedFirst, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, capturedSessionModel, firstClientMessage)
 	if policyErr != nil {
@@ -1101,7 +1101,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 				if scopeErr != nil {
 					return payload, nil, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
 				}
-				payload = accountScopedPayload
+				payload = s.normalizeRequestTimezone(ctx, account, accountScopedPayload, "ws")
 			}
 			if isResponseCreate {
 				if responsesLite {

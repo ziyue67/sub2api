@@ -1004,6 +1004,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	} else {
 		result.OpenAICodexVersionAutoSyncEnabled = true
 	}
+	result.OpenAIRequestTimezoneEnabled = settings[SettingKeyOpenAIRequestTimezoneEnabled] == "true"
 	if v, ok := settings[SettingKeyOpenAICodexTicketEnabled]; ok && v != "" {
 		result.OpenAICodexTicketEnabled = v == "true"
 	} else if s != nil && s.cfg != nil {
@@ -1020,6 +1021,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	result.OpenAICodexTicketStrategy = NormalizeCodexTicketStrategy(settings[SettingKeyOpenAICodexTicketStrategy])
 	result.OpenAICodexTicketStrictResponse = settings[SettingKeyOpenAICodexTicketStrict] == "true"
+	result.OpenAICodexTicketCandyObservation = settings[SettingKeyOpenAICodexTicketCandyObservation] == "true"
 	result.OpenAICodexTicketStaticProxyURL = strings.TrimSpace(settings[SettingKeyOpenAICodexTicketStaticProxyURL])
 	if raw, ok := settings[SettingKeyOpenAICodexTicketModels]; ok && strings.TrimSpace(raw) != "" {
 		var models []string

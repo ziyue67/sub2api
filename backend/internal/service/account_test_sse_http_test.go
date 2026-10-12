@@ -70,6 +70,16 @@ func TestPelicanKeepaliveHTTP(t *testing.T) {
 					_, _ = io.WriteString(w, "data: {\"type\":\"response.created\"}\n\n")
 					w.(http.Flusher).Flush()
 				}
+				if tc.abort {
+					// Disconnect tests must not race a successful 50ms response.
+					// Keep a bounded watchdog so a cancellation regression cannot
+					// leave httptest.Server.Close waiting forever.
+					select {
+					case <-r.Context().Done():
+					case <-time.After(5 * time.Second):
+					}
+					return
+				}
 				timer := time.NewTimer(wait)
 				defer timer.Stop()
 				select {

@@ -395,6 +395,7 @@ func registerGroupRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	accounts := admin.Group("/accounts")
 	{
+		accounts.GET("/openai-request-timezones", h.Admin.Account.GetOpenAIRequestTimezones)
 		accounts.GET("", h.Admin.Account.List)
 		accounts.GET("/management-capabilities", h.Admin.Setting.GetAccountManagementCapabilities)
 		accounts.GET("/upstream-billing-rates", h.Admin.Account.GetUpstreamBillingRates)
@@ -792,6 +793,7 @@ func registerSystemRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		system.PUT("/mihomo/download-mode", h.Admin.System.SetMihomoDownloadMode)
 		system.POST("/mihomo/nodes/:name/test", h.Admin.System.TestMihomoNode)
 		system.POST("/mihomo/nodes/:name/quality-check", h.Admin.System.CheckMihomoNodeQuality)
+		system.POST("/mihomo/nodes/static-proxies", h.Admin.System.AddMihomoNodesAsStaticProxies)
 		system.GET("/check-updates", h.Admin.System.CheckUpdates)
 		system.GET("/rollback-versions", h.Admin.System.GetRollbackVersions)
 		system.POST("/update", h.Admin.System.PerformUpdate)
@@ -867,6 +869,8 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/account-ops/alerts", h.Admin.AccountOps.List)
 	admin.GET("/account-ops/balance-accounts", h.Admin.AccountOps.BalanceAccounts)
 	admin.GET("/account-ops/threshold-accounts", h.Admin.AccountOps.ThresholdAccounts)
+	admin.GET("/account-ops/groups", h.Admin.AccountOps.Groups)
+	admin.PUT("/account-ops/groups", h.Admin.AccountOps.SaveGroups)
 	admin.POST("/account-ops/webhooks/:id/test", h.Admin.AccountOps.TestWebhook)
 	// 智能运维 → 凭证守护：账号令牌巡检 / 自动重登 / 错误态自愈
 	admin.GET("/account-ops/token-guard/status", h.Admin.AccountTokenGuard.Status)
@@ -1086,6 +1090,7 @@ func registerChannelMonitorV3Routes(admin *gin.RouterGroup, h *handler.Handlers,
 	{
 		monitor.GET("/settings", h.ChannelMonitorV3.GetSettings)
 		monitor.PUT("/config", h.ChannelMonitorV3.UpdateConfig)
+		monitor.PUT("/idle-probe", h.ChannelMonitorV3.UpdateIdleProbe)
 		monitor.POST("/categories", h.ChannelMonitorV3.CreateCategory)
 		monitor.PUT("/categories/:id", h.ChannelMonitorV3.UpdateCategory)
 		monitor.DELETE("/categories/:id", h.ChannelMonitorV3.DeleteCategory)

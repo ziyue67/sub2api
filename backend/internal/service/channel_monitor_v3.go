@@ -15,7 +15,9 @@ import (
 // Channel monitor V3 is an admin-curated status page over the same passive
 // facts V2 aggregates from real user requests. Components map groups to rows;
 // every bar is cut into the same time slots, so columns line up across bars.
-// V3 sends no requests of its own.
+// V3 sends no requests of its own, except the opt-in idle probes that fill
+// slots without enough real traffic for the groups an admin checks
+// (channel_monitor_v3_probe.go).
 
 const (
 	ChannelMonitorV3StatusOperational = "operational"
@@ -81,6 +83,9 @@ type ChannelMonitorV3Config struct {
 	FooterNote             string    `json:"footer_note"`
 	UpdatedAt              time.Time `json:"updated_at"`
 	UpdatedBy              *int64    `json:"updated_by,omitempty"`
+	// IdleProbe is read with the config but saved on its own (UpdateIdleProbe),
+	// so the page settings form never carries or overwrites it.
+	IdleProbe ChannelMonitorV3IdleProbe `json:"-"`
 }
 
 type ChannelMonitorV3Category struct {
@@ -139,6 +144,9 @@ type ChannelMonitorV3Settings struct {
 	Components      []ChannelMonitorV3Component `json:"components"`
 	ErrorCategories []string                    `json:"error_categories"`
 	DataThrough     *time.Time                  `json:"data_through"`
+	IdleProbe       ChannelMonitorV3IdleProbe   `json:"idle_probe"`
+	// IdleProbeStats covers every group probed in the last day, checked or not.
+	IdleProbeStats []ChannelMonitorV3IdleProbeStat `json:"idle_probe_stats"`
 }
 
 // Passive facts read from the V2 aggregates. Slot is zero for range totals.
@@ -170,6 +178,8 @@ type ChannelMonitorV3Facts struct {
 	Metrics []ChannelMonitorV3Fact
 	Errors  []ChannelMonitorV3ErrorFact
 	Latency []ChannelMonitorV3LatencyFact
+	// Probes are the idle probes of the checked groups; empty while probing is off.
+	Probes []ChannelMonitorV3ProbeFact
 }
 
 type ChannelMonitorV3Cell struct {
@@ -178,10 +188,16 @@ type ChannelMonitorV3Cell struct {
 	SuccessRate float64   `json:"success_rate"`
 	TTFTP50Ms   *int64    `json:"ttft_p50_ms,omitempty"`
 	TopError    string    `json:"top_error,omitempty"`
+	// Probed marks a slot judged by idle probes because real traffic was too
+	// thin; SuccessRate, TopError and ProbeLatencyMs then describe the probes.
+	Probed         bool   `json:"probed,omitempty"`
+	ProbeLatencyMs *int64 `json:"probe_latency_ms,omitempty"`
 	// Volumes are admin-only so the page cannot be used to size the fleet.
 	Requests      int64 `json:"requests,omitempty"`
 	Errors        int64 `json:"errors,omitempty"`
 	IgnoredErrors int64 `json:"ignored_errors,omitempty"`
+	Probes        int64 `json:"probes,omitempty"`
+	ProbeErrors   int64 `json:"probe_errors,omitempty"`
 }
 
 type ChannelMonitorV3ComponentStatus struct {
@@ -192,13 +208,15 @@ type ChannelMonitorV3ComponentStatus struct {
 	Multiplier  *float64 `json:"multiplier,omitempty"`
 	// Status is the latest sufficiently sampled slot, while it is still fresh.
 	Status string `json:"status"`
-	// Availability is the 0–100 share of answered requests over the
-	// configured range; nil without traffic.
-	Availability *float64                `json:"availability"`
-	Requests     int64                   `json:"requests,omitempty"`
-	LastDataAt   *time.Time              `json:"last_data_at"`
-	Cells        []*ChannelMonitorV3Cell `json:"cells"`
-	GroupID      int64                   `json:"group_id,omitempty"`
+	// Availability is the 0–100 share of answered requests (and counted idle
+	// probes) over the configured range; nil without either.
+	Availability *float64 `json:"availability"`
+	Requests     int64    `json:"requests,omitempty"`
+	// Probes is the admin-only number of counted idle probes over the range.
+	Probes     int64                   `json:"probes,omitempty"`
+	LastDataAt *time.Time              `json:"last_data_at"`
+	Cells      []*ChannelMonitorV3Cell `json:"cells"`
+	GroupID    int64                   `json:"group_id,omitempty"`
 }
 
 type ChannelMonitorV3CategoryStatus struct {
@@ -233,6 +251,9 @@ type ChannelMonitorV3Status struct {
 	Featured          *ChannelMonitorV3ComponentStatus `json:"featured"`
 	Categories        []ChannelMonitorV3CategoryStatus `json:"categories"`
 	OpenIncidents     int                              `json:"open_incidents"`
+	// IdleProbe tells the page that quiet slots of some shown components are
+	// filled in by idle probes.
+	IdleProbe bool `json:"idle_probe"`
 }
 
 // ChannelMonitorV3Incident is a run of consecutive down slots of one component.
@@ -245,6 +266,8 @@ type ChannelMonitorV3Incident struct {
 	TopError      string     `json:"top_error,omitempty"`
 	Requests      int64      `json:"requests,omitempty"`
 	Errors        int64      `json:"errors,omitempty"`
+	// Probes counts the idle probes behind down slots that real traffic was too thin to judge.
+	Probes int64 `json:"probes,omitempty"`
 }
 
 type ChannelMonitorV3IncidentPage struct {
@@ -302,6 +325,24 @@ type ChannelMonitorV3Repository interface {
 	RangeFacts(ctx context.Context, groupIDs []int64, from, to time.Time) (*ChannelMonitorV3Facts, error)
 	// DataThrough is how far the passive aggregation has processed; nil before its first run.
 	DataThrough(ctx context.Context) (*time.Time, error)
+
+	// UpdateIdleProbe saves the idle probe settings without touching the
+	// versioned page config.
+	UpdateIdleProbe(ctx context.Context, probe ChannelMonitorV3IdleProbe) error
+	// SuccessCounts counts the successful real requests of the groups in
+	// [from, to) per group and model, the way V2 counts successes.
+	SuccessCounts(ctx context.Context, groupIDs []int64, from, to time.Time) ([]ChannelMonitorV3Fact, error)
+	// ClaimProbe reserves the probe of a group and model for one slot; it
+	// returns 0 when the slot is already taken.
+	ClaimProbe(ctx context.Context, groupID int64, model string, slot time.Time, slotMinutes int) (int64, error)
+	FinishProbe(ctx context.Context, result ChannelMonitorV3ProbeResult) error
+	// ProbeFacts sums the finished probes of the groups taken in [from, to),
+	// binned into interval slots by when they were taken; interval 0 folds
+	// them into one total per group and model.
+	ProbeFacts(ctx context.Context, groupIDs []int64, from, to time.Time, interval time.Duration) ([]ChannelMonitorV3ProbeFact, error)
+	// ProbeStats summarises each group's finished probes started since then.
+	ProbeStats(ctx context.Context, since time.Time) ([]ChannelMonitorV3IdleProbeStat, error)
+	PruneProbes(ctx context.Context, before time.Time) error
 }
 
 type channelMonitorV3Groups interface {
@@ -335,8 +376,16 @@ func (s *ChannelMonitorV3Service) Settings(ctx context.Context) (*ChannelMonitor
 	if err != nil {
 		return nil, err
 	}
+	stats, err := s.repo.ProbeStats(ctx, s.now().UTC().Add(-24*time.Hour))
+	if err != nil {
+		return nil, err
+	}
+	if stats == nil {
+		stats = []ChannelMonitorV3IdleProbeStat{}
+	}
 	return &ChannelMonitorV3Settings{Config: *cfg, Categories: categories, Components: components,
-		ErrorCategories: ChannelMonitorV2ErrorCategories, DataThrough: through}, nil
+		ErrorCategories: ChannelMonitorV2ErrorCategories, DataThrough: through,
+		IdleProbe: cfg.IdleProbe, IdleProbeStats: stats}, nil
 }
 
 func (s *ChannelMonitorV3Service) UpdateConfig(ctx context.Context, input ChannelMonitorV3Config, updatedBy int64) (*ChannelMonitorV3Config, error) {
@@ -629,6 +678,14 @@ func (s *ChannelMonitorV3Service) Status(ctx context.Context, viewer ChannelMoni
 	if err != nil {
 		return nil, err
 	}
+	probed := cfg.IdleProbe.probedGroups(groupIDs)
+	status.IdleProbe = len(probed) > 0
+	if err := s.attachProbes(ctx, facts, probed, first, window.End, interval); err != nil {
+		return nil, err
+	}
+	if err := s.attachProbes(ctx, totals, probed, rangeFrom, now, 0); err != nil {
+		return nil, err
+	}
 	var latestFacts *ChannelMonitorV3Facts
 	latestFirst := current.Add(-time.Duration(cfg.Cells-1) * interval)
 
@@ -641,6 +698,9 @@ func (s *ChannelMonitorV3Service) Status(ctx context.Context, viewer ChannelMoni
 				// The featured card always shows the current window.
 				if latestFacts == nil {
 					if latestFacts, err = s.repo.SlotFacts(ctx, []int64{component.GroupID}, latestFirst, current.Add(interval), interval, true); err != nil {
+						return nil, err
+					}
+					if err := s.attachProbes(ctx, latestFacts, cfg.IdleProbe.probedGroups([]int64{component.GroupID}), latestFirst, current.Add(interval), interval); err != nil {
 						return nil, err
 					}
 				}
@@ -703,11 +763,11 @@ func (s *ChannelMonitorV3Service) componentStatus(cfg ChannelMonitorV3Config, co
 		}
 	}
 	total := channelMonitorV3Accumulate(cfg, component, totals, time.Time{}, 0)[0]
-	if counted := total.counted(); counted > 0 {
-		availability := float64(total.success) * 100 / float64(counted)
+	if counted, probes := total.counted(), total.probeCounted(); counted+probes > 0 {
+		availability := float64(total.success+total.probeOK) * 100 / float64(counted+probes)
 		item.Availability = &availability
 		if viewer.Admin {
-			item.Requests = counted
+			item.Requests, item.Probes = counted, probes
 		}
 	}
 	if component.ShowMultiplier {
@@ -729,9 +789,16 @@ type channelMonitorV3Acc struct {
 	ignored    int64
 	categories map[string]int64
 	ttft       map[int64]int64
+
+	probeOK         int64
+	probeErrors     int64
+	probeCategories map[string]int64
+	// probeLatency maps a median probe latency to the number of probes behind it.
+	probeLatency map[int64]int64
 }
 
-func (a *channelMonitorV3Acc) counted() int64 { return a.success + a.errors }
+func (a *channelMonitorV3Acc) counted() int64      { return a.success + a.errors }
+func (a *channelMonitorV3Acc) probeCounted() int64 { return a.probeOK + a.probeErrors }
 
 // channelMonitorV3Accumulate folds the facts of one component into count
 // slots starting at first; count 0 folds everything into a single total.
@@ -789,6 +856,24 @@ func channelMonitorV3Accumulate(cfg ChannelMonitorV3Config, component ChannelMon
 	for i := range accs {
 		accs[i].errors -= min(accs[i].ignored, accs[i].errors)
 	}
+	for _, f := range facts.Probes {
+		i := index(f.GroupID, f.Model, f.Slot)
+		switch {
+		case i < 0 || channelMonitorV3ProbeIgnored(f.Category):
+		case f.Category == "":
+			accs[i].probeOK += f.Count
+			if accs[i].probeLatency == nil {
+				accs[i].probeLatency = map[int64]int64{}
+			}
+			accs[i].probeLatency[f.LatencyP50Ms] += f.Count
+		default:
+			accs[i].probeErrors += f.Count
+			if accs[i].probeCategories == nil {
+				accs[i].probeCategories = map[string]int64{}
+			}
+			accs[i].probeCategories[f.Category] += f.Count
+		}
+	}
 	return accs
 }
 
@@ -800,30 +885,46 @@ func channelMonitorV3Cells(cfg ChannelMonitorV3Config, component ChannelMonitorV
 	}
 	cells := make([]*ChannelMonitorV3Cell, count)
 	for i, acc := range accs {
-		counted := acc.counted()
-		if counted == 0 {
+		counted, probes := acc.counted(), acc.probeCounted()
+		if counted == 0 && probes == 0 {
 			continue
 		}
-		cell := &ChannelMonitorV3Cell{Start: first.Add(time.Duration(i) * interval), SuccessRate: float64(acc.success) / float64(counted)}
-		cell.TTFTP50Ms = channelMonitorV3P50(acc.ttft)
-		cell.TopError = channelMonitorV3TopError(acc.categories)
-		errorRate := float64(acc.errors) / float64(counted)
-		switch {
-		case counted < int64(cfg.MinRequests):
+		cell := &ChannelMonitorV3Cell{Start: first.Add(time.Duration(i) * interval)}
+		if counted < int64(cfg.MinRequests) && probes > 0 {
+			// Real traffic is too thin to judge, so the slot's idle probes speak for it.
+			cell.Probed = true
+			cell.SuccessRate = float64(acc.probeOK) / float64(probes)
+			cell.ProbeLatencyMs = channelMonitorV3P50(acc.probeLatency)
+			cell.TopError = channelMonitorV3TopError(acc.probeCategories)
+			cell.Status = channelMonitorV3Judge(cfg, float64(acc.probeErrors)/float64(probes), cell.ProbeLatencyMs, threshold)
+		} else {
+			cell.SuccessRate = float64(acc.success) / float64(counted)
+			cell.TTFTP50Ms = channelMonitorV3P50(acc.ttft)
+			cell.TopError = channelMonitorV3TopError(acc.categories)
 			cell.Status = ChannelMonitorV3StatusInsufficient
-		case errorRate >= cfg.DownErrorRate:
-			cell.Status = ChannelMonitorV3StatusDown
-		case errorRate >= cfg.DegradedErrorRate || (cell.TTFTP50Ms != nil && *cell.TTFTP50Ms > int64(threshold)):
-			cell.Status = ChannelMonitorV3StatusDegraded
-		default:
-			cell.Status = ChannelMonitorV3StatusOperational
+			if counted >= int64(cfg.MinRequests) {
+				cell.Status = channelMonitorV3Judge(cfg, float64(acc.errors)/float64(counted), cell.TTFTP50Ms, threshold)
+			}
 		}
 		if admin {
 			cell.Requests, cell.Errors, cell.IgnoredErrors = counted, acc.errors, acc.ignored
+			cell.Probes, cell.ProbeErrors = probes, acc.probeErrors
 		}
 		cells[i] = cell
 	}
 	return cells
+}
+
+// channelMonitorV3Judge colours a slot from its error rate and median latency.
+func channelMonitorV3Judge(cfg ChannelMonitorV3Config, errorRate float64, latencyMs *int64, thresholdMs int) string {
+	switch {
+	case errorRate >= cfg.DownErrorRate:
+		return ChannelMonitorV3StatusDown
+	case errorRate >= cfg.DegradedErrorRate || (latencyMs != nil && *latencyMs > int64(thresholdMs)):
+		return ChannelMonitorV3StatusDegraded
+	default:
+		return ChannelMonitorV3StatusOperational
+	}
 }
 
 // channelMonitorV3P50 returns the histogram bucket holding the median, the
@@ -904,8 +1005,12 @@ func (s *ChannelMonitorV3Service) Incidents(ctx context.Context, viewer ChannelM
 		return result, nil
 	}
 	// Down depends on error rates only, so the history skips latency histograms.
-	facts, err := s.repo.SlotFacts(ctx, groupIDs, first, first.Add(time.Duration(count)*interval), interval, false)
+	end := first.Add(time.Duration(count) * interval)
+	facts, err := s.repo.SlotFacts(ctx, groupIDs, first, end, interval, false)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.attachProbes(ctx, facts, cfg.IdleProbe.probedGroups(groupIDs), first, end, interval); err != nil {
 		return nil, err
 	}
 	all := []ChannelMonitorV3Incident{}
@@ -955,7 +1060,7 @@ func channelMonitorV3RunsFromCells(component ChannelMonitorV3Component, cells []
 			}
 			run.TopError = channelMonitorV3TopError(channelMonitorV3Counts(categories))
 			if !admin {
-				run.Requests, run.Errors = 0, 0
+				run.Requests, run.Errors, run.Probes = 0, 0, 0
 			}
 			runs = append(runs, *run)
 		}
@@ -979,6 +1084,9 @@ func channelMonitorV3RunsFromCells(component ChannelMonitorV3Component, cells []
 		redUntil = cell.Start.Add(interval)
 		run.Requests += cell.Requests
 		run.Errors += cell.Errors
+		if cell.Probed {
+			run.Probes += cell.Probes
+		}
 		if cell.TopError != "" {
 			categories[cell.TopError]++
 		}

@@ -1,5 +1,5 @@
 <template>
-  <section class="card overflow-visible p-5" aria-labelledby="harvest-console-title">
+  <section :class="embedded ? 'border-t border-gray-100 pt-5 dark:border-dark-700' : 'card overflow-visible p-5'" aria-labelledby="harvest-console-title">
     <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 id="harvest-console-title" class="text-sm font-semibold text-gray-900 dark:text-white">{{ t(`${prefix}.title`) }}</h2>
@@ -156,11 +156,12 @@ import {
   resolveHarvestAvailability
 } from '@/utils/harvestAvailability'
 
-const props = defineProps<{ accounts: CodexHarvestFlowAccount[]; models: string[] }>()
+const props = defineProps<{ accounts: CodexHarvestFlowAccount[]; models: string[]; embedded?: boolean }>()
+const embedded = computed(() => props.embedded === true)
 const emit = defineEmits<{ running: [boolean]; finished: [] }>()
 const { t } = useI18n()
 const prefix = 'admin.harvestFlow.console'
-const nodeSwitchRules = ['312_or_2fail', 'every_request', '312_only', 'never'] as const
+const nodeSwitchRules = ['rejected_or_2fail', 'every_request', 'rejected_only', 'never'] as const
 const accountRoot = ref<HTMLElement | null>(null)
 const keyword = ref('')
 const open = ref(false)
@@ -178,7 +179,7 @@ const form = ref({
   probe_interval_seconds: 10,
   rate_limit_cooldown_seconds: 30,
   max_attempts: 20,
-  node_switch_rule: '312_or_2fail',
+  node_switch_rule: 'rejected_or_2fail',
   stop_on_success: true
 })
 let abort: AbortController | null = null

@@ -87,24 +87,10 @@ func (s *AccountTestService) runAstraAutomaticSetup(ctx context.Context, cancel 
 		set("failed", "source", 0, astraSetupError(err))
 		return
 	}
-	for _, id := range settings.CookiePool.TargetAccountIDs {
-		if ctx.Err() != nil || s.cfg.AstraRouting(ctx).Revision != settings.Revision {
-			set("failed", "target", id, "configuration_changed")
-			return
-		}
-		set("running", "target", id, "")
-		// The shared state probe verifies target credentials on the borrowed route.
-		err := s.verifyAstraGatewayTarget(ctx, id)
-		if err != nil {
-			set("failed", "target", id, astraSetupError(err))
-			return
-		}
-	}
-	if settings.CookiePool.Enabled {
-		if id, ready := astraTargetsReady(ctx, provider, settings.CookiePool.TargetAccountIDs); !ready {
-			set("failed", "target", id, "target_not_verified")
-			return
-		}
+	// Saving acquires a source route only. Quality probes are explicit diagnostics.
+	if ctx.Err() != nil || s.cfg.AstraRouting(ctx).Revision != settings.Revision {
+		set("failed", "source", 0, "configuration_changed")
+		return
 	}
 	set("ready", "complete", 0, "")
 }

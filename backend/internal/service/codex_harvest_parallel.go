@@ -33,7 +33,11 @@ func (s *OpenAIGatewayService) executeParallelHarvest(ctx context.Context, req M
 	if s.openAICodexTicketHarvestIPPoolEnabled(ctx) {
 		return errors.New("parallel collection requires the managed Mihomo proxy; the IP pool harvests on a single lane")
 	}
-	collection, err := mihomo.BeginCollection(ctx, s.openAICodexTicketHarvestProxyURLContext(ctx), min(req.CollectLanes, req.MaxAttempts))
+	lanes := min(req.CollectLanes, req.MaxAttempts)
+	if openAICodexTicketTargetLength(account, s.openAICodexTicketConfig()) == 780 {
+		lanes = min(lanes, max(1, req.MaxAttempts/2))
+	}
+	collection, err := mihomo.BeginCollection(ctx, s.openAICodexTicketHarvestProxyURLContext(ctx), lanes)
 	if err != nil {
 		return err
 	}
@@ -68,9 +72,13 @@ func (s *OpenAIGatewayService) runParallelHarvest(ctx context.Context, req Manua
 			continue
 		}
 		round, cancel := context.WithCancel(ctx)
-		results := make(chan parallelHarvestOutcome, req.CollectLanes)
+		lanes := req.CollectLanes
+		if openAICodexTicketTargetLength(account, cfg) == 780 {
+			lanes = min(lanes, max(1, (req.MaxAttempts-int(used.Load()))/2))
+		}
+		results := make(chan parallelHarvestOutcome, lanes)
 		var wg sync.WaitGroup
-		for lane := 0; lane < req.CollectLanes; lane++ {
+		for lane := 0; lane < lanes; lane++ {
 			wg.Add(1)
 			go func(lane int) {
 				defer wg.Done()
@@ -92,7 +100,22 @@ func (s *OpenAIGatewayService) runParallelHarvest(ctx context.Context, req Manua
 						return
 					}
 					session := uuid.NewString()
-					result := s.executeCodexHarvestProbe(round, account, token, model, proxy, timeout, func() bool { return round.Err() == nil && !s.codexTicketChatHeld(account.ID) }, session)
+					first := true
+					result := s.executeCodexHarvestProbe(round, account, token, model, proxy, timeout, func() bool {
+						if round.Err() != nil || s.codexTicketChatHeld(account.ID) {
+							return false
+						}
+						if first {
+							first = false
+							return true
+						}
+						reserved := reserveParallelProbe(&used, req.MaxAttempts)
+						if reserved == 0 {
+							return false
+						}
+						n = reserved
+						return true
+					}, session)
 					outcome := parallelHarvestOutcome{result: result, node: node, session: session, attempt: int(n)}
 					select {
 					case results <- outcome:
@@ -118,9 +141,9 @@ func (s *OpenAIGatewayService) runParallelHarvest(ctx context.Context, req Manua
 			}
 			r := out.result
 			raw := safeCodexHarvestError(r.Err)
-			message, level, detail := describeCodexHarvestOutcome(r.Kind, raw, r.Status, len(r.State), r.Shape.Blocks, openAICodexTicketTargetLength(account, cfg), codexHarvestExpectedBlocks(account, cfg), model, mihomo.NodeDisplayName(out.node))
+			message, level, detail := describeCodexHarvestOutcome(r.Kind, raw, r.Status, model, mihomo.NodeDisplayName(out.node), r.ProbeVerified)
 			event := ManualHarvestProgress{Attempt: out.attempt, MaxAttempts: req.MaxAttempts, Model: model, Node: mihomo.NodeDisplayName(out.node), HTTPStatus: r.Status, Length: len(r.State), Blocks: r.Shape.Blocks, Result: r.Kind, Level: level, Message: message, Detail: detail, TicketsStored: stored}
-			recordCodexHarvestProbe(account, model, r.Kind, mihomo.NodeDisplayName(out.node), raw, r.Status, len(r.State), r.Shape.Blocks, openAICodexTicketTargetLength(account, cfg), codexHarvestExpectedBlocks(account, cfg))
+			recordCodexHarvestProbe(account, model, r.Kind, mihomo.NodeDisplayName(out.node), raw, r.Status, len(r.State), r.Shape.Blocks, openAICodexTicketTargetLength(account, cfg), codexHarvestExpectedBlocks(account, cfg), r.ProbeVerified)
 			if r.Kind == "success" {
 				fresh, e := s.accountRepo.GetByID(ctx, account.ID)
 				if e != nil || fresh == nil || ticketIdentity(fresh) != ticketIdentity(account) {

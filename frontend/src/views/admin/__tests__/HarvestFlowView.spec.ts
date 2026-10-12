@@ -8,7 +8,7 @@ vi.mock('@/api/admin/accounts', () => ({
   getCodexHarvestFlow: getFlow,
   updateCodexSkipHarvest: updateSkip
 }))
-vi.mock('@/components/admin/HarvestGatewayBorrowPanel.vue', () => ({ default: { template: '<section data-testid="gateway-borrow-panel" />' } }))
+vi.mock('@/components/admin/HarvestPolicyPanel.vue', () => ({ default: { template: '<section />' } }))
 vi.mock('@/components/admin/HarvestControlsPanel.vue', () => ({ default: { template: '<section />' } }))
 vi.mock('@/components/admin/HarvestManualConsole.vue', () => ({ default: { template: '<section />' } }))
 vi.mock('@/components/admin/HarvestNodeRecords.vue', () => ({ default: { template: '<section />' } }))
@@ -49,6 +49,74 @@ function response() {
 }
 
 describe('HarvestFlowView nullable API lists', () => {
+  it('shows beta candy outcomes without marking the account unschedulable', async () => {
+    getFlow.mockResolvedValue({ ...response(),
+      stages: [{ id: 'select', status: 'fail', detail: 'candy_incorrect' }],
+      events: [
+        { id: 'candy-fail', stage: 'select', kind: 'candy_fail', reason: 'candy_incorrect', account_id: 1 },
+        { id: 'candy-pass', stage: 'select', kind: 'candy_pass', reason: 'candy_passed', account_id: 1 }
+      ]
+    })
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain('candy_incorrect')
+      expect(wrapper.text()).toContain('candy_passed')
+      expect(wrapper.text()).toContain('admin.harvestFlow.schedulable')
+      expect(wrapper.text()).not.toContain('admin.harvestFlow.unschedulable')
+      expect(wrapper.findAll('.bg-emerald-500').length).toBeGreaterThan(0)
+    } finally { wrapper.unmount() }
+  })
+
+  it('shows Astra pool scheduling changes in the selection flow filter', async () => {
+    const data = response()
+    getFlow.mockResolvedValue({ ...data,
+      stages: [{ id: 'select', status: 'warn', detail: 'route_expired', at: '2026-10-12T01:40:39Z' }],
+      events: [
+        { id: 'leave', stage: 'select', kind: 'schedule_leave', result: 'groups', reason: 'route_expired', detail: 'route_expired', account_id: 459, account_name: 'pool-target', at: '2026-10-12T01:40:39Z' },
+        { id: 'join', stage: 'select', kind: 'schedule_join', result: 'groups', reason: 'target_probe_passed', detail: 'target_probe_passed', account_id: 459, account_name: 'pool-target', at: '2026-10-12T01:40:30Z' }
+      ],
+      counts: { ...data.counts, select_ok: 1, select_skip: 1 }
+    })
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain('schedule_leave')
+      expect(wrapper.text()).toContain('schedule_join')
+      expect(wrapper.text()).toContain('route_expired')
+      expect(wrapper.text()).toContain('modeGroups')
+      await wrapper.findAll('button').find(button => button.text() === 'admin.harvestFlow.stages.select')?.trigger('click')
+      expect(wrapper.findAll('ol li').length).toBeGreaterThan(0)
+    } finally { wrapper.unmount() }
+  })
+
+  it('renders stored legacy events without numeric ticket heuristics', async () => {
+    getFlow.mockResolvedValue({ ...response(),
+      harvest: { ...response().harvest, target_length: 780 },
+      stages: [{ id: 'ticket', status: 'warn', detail: 'no valid ticket', at: '2026-10-11T15:23:11Z' }],
+      events: [{ id: 'legacy', stage: 'probe', kind: 'probe_miss', result: 'invalid_state', detail: '拿到的是降智票据（312 字节 / 11 块），合规应为 292/10', length: 312, expected_length: 292 }]
+    })
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      expect(wrapper.text()).not.toMatch(/780|312|292|降智/)
+      expect(wrapper.text()).toContain('admin.harvestFlow.latestTicketEvent')
+      expect(wrapper.text()).toContain('admin.harvestFlow.idleTicket')
+    } finally { wrapper.unmount() }
+  })
+  it.each([
+    ['probe_verified', 'ok', 'admin.harvestFlow.probeVerified'],
+    ['780 / 33 blk', 'ok', 'admin.harvestFlow.probeIncomplete'],
+    ['probe_reissued', 'fail', 'probe_reissued']
+  ])('renders probe evidence for %s without treating shape as success', async (detail, status, expected) => {
+    getFlow.mockResolvedValue({ ...response(), stages: [{ id: 'shape', status, detail, length: 780, blocks: 33, expected_length: 780 }] })
+    const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain(expected)
+      expect(wrapper.text()).not.toContain('admin.harvestFlow.shapeOk')
+    } finally { wrapper.unmount() }
+  })
   it('shows a route failure without claiming the 780 body is missing or malformed', async () => {
     getFlow.mockResolvedValue({
       ...response(),
@@ -58,8 +126,8 @@ describe('HarvestFlowView nullable API lists', () => {
     const wrapper = mount(HarvestFlowView, { global: { stubs: { Icon: true, LoadingSpinner: true } } })
     try {
       await flushPromises()
-      expect(wrapper.text()).toContain('admin.harvestFlow.shapeValidationIncomplete 780 33')
-      expect(wrapper.text()).toContain('route_cflb_missing')
+      expect(wrapper.text()).toContain('admin.harvestFlow.probeIncomplete')
+      expect(wrapper.text()).toContain('invalid_route')
       expect(wrapper.text()).not.toContain('admin.harvestFlow.shapeNoBody')
       expect(wrapper.text()).not.toContain('admin.harvestFlow.shapeBad')
     } finally { wrapper.unmount() }
@@ -112,7 +180,6 @@ describe('HarvestFlowView nullable API lists', () => {
     try {
       await flushPromises()
       expect(errors).toEqual([])
-      expect(wrapper.find('[data-testid="gateway-borrow-panel"]').exists()).toBe(true)
       expect(wrapper.text()).toContain('admin.harvestFlow.title')
       expect(wrapper.text()).toContain(text)
     } finally {
@@ -194,6 +261,17 @@ describe('HarvestFlowView request ordering', () => {
     await flushPromises()
     await vi.advanceTimersByTimeAsync(5000)
     expect(getFlow).toHaveBeenCalledTimes(2)
+  })
+
+  it('enables an unselected OAuth account without toggling it off', async () => {
+    const data = response()
+    getFlow.mockResolvedValue({ ...data, accounts: [{ ...data.accounts[0], harvest_selected: false, in_scope: false }] })
+    updateSkip.mockResolvedValue({ account_id: 1, skip_harvest: false })
+    wrapper = mountFlow()
+    await flushPromises()
+    await button(wrapper, 'admin.harvestFlow.enableHarvest').trigger('click')
+    await flushPromises()
+    expect(updateSkip).toHaveBeenCalledWith(1, false)
   })
 
   it('isolates reads during a save and preserves the saved toggle when refresh fails', async () => {
@@ -367,8 +445,7 @@ describe('HarvestFlowView account cards', () => {
     expect(cards[0]!.text()).toContain('success · HTTP 200')
     expect(cards[1]!.text()).toContain('admin.harvestFlow.lastProbe')
     expect(cards[1]!.text()).not.toContain('success · HTTP 200')
-    expect(cards[0]!.text()).toContain('292B')
-    expect(cards[1]!.text()).toContain('—')
+    expect(cards[0]!.text()).not.toContain('292B')
     expect(cards[1]!.text()).toContain('admin.harvestFlow.skipHarvestHint')
     expect(cards[0]!.text()).not.toContain('admin.harvestFlow.skipHarvestHint')
     expect(cards[0]!.text()).toContain('admin.harvestFlow.availability.available')

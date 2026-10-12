@@ -29,7 +29,12 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string, params?: Record<string, string>) => key === 'common.copy' ? '复制' : key === 'admin.accounts.modelMappingConflict' ? `Model mapping conflict: ${params?.from} → ${params?.to}` : key
+      t: (key: string, params?: Record<string, string>) => {
+        if (key === 'common.copy') return '复制'
+        if (key === 'admin.accounts.modelMappingConflict') return `Model mapping conflict: ${params?.from} → ${params?.to}`
+        if (key === 'admin.accounts.syncUpstreamModelsError') return `Sync failed: ${params?.message}`
+        return key
+      }
     })
   }
 })
@@ -309,6 +314,34 @@ describe('ModelWhitelistSelector', () => {
     expect(syncUpstreamModelsPreview).toHaveBeenCalledOnce()
     expect(wrapper.emitted('upstream-synced')).toEqual([[]])
     expect(wrapper.emitted('update:modelValue')).toEqual([[['x-preview-f-free']]])
+  })
+
+  it('shows structured API errors and retries with the latest unsaved credentials', async () => {
+    syncUpstreamModelsPreview.mockRejectedValueOnce({
+      status: 502,
+      message: 'Upstream model list request failed with HTTP 401',
+    }).mockResolvedValueOnce({ models: ['draft-model'] })
+    const wrapper = mountSelector({
+      syncCredentials: { platform: 'openai', type: 'apikey', base_url: 'https://first.example/v1', api_key: 'first-test-key' },
+    })
+    const syncButton = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.syncUpstreamModels')!
+    await syncButton.trigger('click')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('Sync failed: Upstream model list request failed with HTTP 401')
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.emitted('upstream-synced')).toBeUndefined()
+    expect(syncButton.attributes('disabled')).toBeUndefined()
+
+    const editedCredentials = { platform: 'openai', type: 'apikey', base_url: 'https://second.example/v1', api_key: 'second-test-key', proxy_id: 7 }
+    await wrapper.setProps({ syncCredentials: editedCredentials })
+    await syncButton.trigger('click')
+    await flushPromises()
+
+    expect(syncUpstreamModelsPreview).toHaveBeenLastCalledWith(editedCredentials)
+    expect(syncUpstreamModels).not.toHaveBeenCalled()
+    expect(wrapper.emitted('update:modelValue')).toEqual([[['draft-model']]])
+    expect(wrapper.emitted('upstream-synced')).toEqual([[]])
   })
 
   it('shows the upstream sync button for OpenCode Go create-account credentials', () => {

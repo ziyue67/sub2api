@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatLatencyKpiSecondary,
+  monitorCardPlatformOrder,
   formatLatencyPrivacy,
   formatMonitorMs,
   formatMonitorNumber,
@@ -17,6 +18,18 @@ import {
   ttftDisplayState,
 } from '../monitorFormat'
 import type { MonitorHealth } from '@/api/channelMonitorV2'
+
+describe('monitorCardPlatformOrder', () => {
+  it('keeps enabled snapshot platforms in saved order and skips disabled ones', () => {
+    expect(monitorCardPlatformOrder([
+      { platform: ' DeepSeek ', enabled: true },
+      { platform: 'openai', enabled: false },
+      { platform: 'kimi', enabled: true },
+      { platform: ' ', enabled: true },
+    ])).toEqual(['deepseek', 'kimi'])
+    expect(monitorCardPlatformOrder(undefined)).toEqual([])
+  })
+})
 
 describe('monitorFormat accuracy', () => {
   it('converts backend TPM (per minute) to tokens/sec for display', () => {

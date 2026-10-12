@@ -31,3 +31,14 @@ func (s *SettingService) GetCodexTicketStrategy(ctx context.Context) string {
 	}
 	return NormalizeCodexTicketStrategy(value)
 }
+
+// Missing, malformed or unreadable settings leave the beta observer disabled.
+const SettingKeyOpenAICodexTicketCandyObservation = "openai_codex_ticket_candy_observation"
+
+func (s *SettingService) CodexTicketCandyObservation(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyOpenAICodexTicketCandyObservation)
+	return err == nil && value == "true"
+}

@@ -3364,7 +3364,7 @@ func (h *AccountHandler) SyncUpstreamModels(c *gin.Context) {
 			case service.UpstreamModelSyncErrorInternal:
 				response.InternalError(c, syncErr.SafeMessage())
 			default:
-				slog.Warn("sync_upstream_models_failed", "account_id", accountID, "kind", syncErr.Kind)
+				slog.Warn("sync_upstream_models_failed", "account_id", accountID, "kind", syncErr.Kind, "upstream_status", syncErr.StatusCode)
 				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
 			}
 			return
@@ -3386,6 +3386,7 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 		Type         string            `json:"type" binding:"required"`
 		BaseURL      string            `json:"base_url"`
 		APIKey       string            `json:"api_key" binding:"required"`
+		ProxyID      *int64            `json:"proxy_id" binding:"omitempty,gte=0"`
 		ModelMapping map[string]string `json:"model_mapping"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -3412,6 +3413,22 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 		return
 	}
 
+	// Preview uses the draft connection without creating or updating an account.
+	// Resolve the selected proxy just as the saved-account path loads it.
+	if req.ProxyID != nil && *req.ProxyID > 0 {
+		if _, observer := service.ObserverGroupIDs(c.Request.Context()); observer {
+			response.ErrorFrom(c, service.ErrObserverScope)
+			return
+		}
+		proxy, err := h.adminService.GetProxy(c.Request.Context(), *req.ProxyID)
+		if err != nil || proxy == nil {
+			response.BadRequest(c, "Selected proxy is unavailable")
+			return
+		}
+		tempAccount.ProxyID = req.ProxyID
+		tempAccount.Proxy = proxy
+	}
+
 	catalog, err := h.accountTestService.SyncUpstreamModelCatalog(c.Request.Context(), tempAccount)
 	if err != nil {
 		var syncErr *service.UpstreamModelSyncError
@@ -3422,7 +3439,7 @@ func (h *AccountHandler) SyncUpstreamModelsPreview(c *gin.Context) {
 			case service.UpstreamModelSyncErrorInternal:
 				response.InternalError(c, syncErr.SafeMessage())
 			default:
-				slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform, "kind", syncErr.Kind)
+				slog.Warn("sync_upstream_models_preview_failed", "platform", req.Platform, "kind", syncErr.Kind, "upstream_status", syncErr.StatusCode)
 				response.Error(c, http.StatusBadGateway, syncErr.SafeMessage())
 			}
 			return
@@ -3665,4 +3682,9 @@ func sanitizeExtraBaseRPM(extra map[string]any) {
 		v = 10000
 	}
 	extra["base_rpm"] = v
+}
+
+// GetOpenAIRequestTimezones returns the supported account request timezone catalog.
+func (h *AccountHandler) GetOpenAIRequestTimezones(c *gin.Context) {
+	response.Success(c, gin.H{"default": service.DefaultOpenAIRequestTimezone, "timezones": service.OpenAIRequestTimezoneOptions()})
 }

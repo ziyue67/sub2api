@@ -46,7 +46,7 @@ func (r *accountRepository) ApplyAstraScheduling(ctx context.Context, id int64, 
 	if err = json.Unmarshal(raw, &actual); err != nil {
 		return result, err
 	}
-	if !actual.AccountScheduling || !reflect.DeepEqual(actual, s) || !slices.Contains(s.CookiePool.TargetAccountIDs, id) {
+	if !actual.AccountScheduling && !actual.TicketPoolScheduling || !reflect.DeepEqual(actual, s) || (!s.TicketPoolScheduling && !slices.Contains(s.CookiePool.TargetAccountIDs, id)) {
 		return result, errors.New("configuration_changed")
 	}
 	var mapping, extraRaw []byte

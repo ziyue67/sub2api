@@ -555,6 +555,9 @@ gateway:
   # BPS 原始响应读取无进展超时；默认 120 秒，0 禁用，启用时允许 30–300 秒。
   # 上游 SSE 注释和下游 keepalive 不续期；不重放已接受的生成。
   excel_bps_stream_data_interval_timeout: 120
+  # 可选 Redis 工具回放/目录共享；默认关闭。稳定 session_id 下按账号/API Key 隔离。
+  # 启用后 Redis 故障明确失败，不回退到本地历史。
+  excel_bps_state_redis_enabled: false
   # Stream keepalive interval (seconds), 0=disable
   # 流式 keepalive 间隔（秒），0=禁用
   stream_keepalive_interval: 10

@@ -184,7 +184,7 @@
         </button>
         <p class="text-xs text-gray-500 dark:text-gray-400">Powered by <strong class="font-semibold text-gray-700 dark:text-gray-200">{{ siteName }}</strong></p>
         <p class="max-w-3xl whitespace-pre-line text-xs leading-relaxed text-gray-500 dark:text-gray-400" data-testid="monitor-v3-footer-note">
-          {{ status.footer_note || t('channelMonitorV3.page.defaultFooter') }}
+          {{ footer }}
         </p>
       </footer>
     </template>
@@ -208,11 +208,12 @@
               <StatusDot :status="detail.cell.status" />
               {{ t(`channelMonitorV3.status.${detail.cell.status}`) }}
             </span>
-            <span class="font-mono text-[11px] text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.tooltip.successRate', { value: formatMonitorV3Rate(detail.cell.success_rate) }) }}</span>
+            <span v-if="detail.cell.probed" class="rounded bg-gray-100 px-1.5 py-px text-[10px] text-gray-600 dark:bg-dark-700 dark:text-gray-300" data-testid="monitor-v3-tooltip-probe">{{ t('channelMonitorV3.tooltip.probe') }}</span>
+            <span v-else class="font-mono text-[11px] text-gray-500 dark:text-gray-400">{{ t('channelMonitorV3.tooltip.successRate', { value: formatMonitorV3Rate(detail.cell.success_rate) }) }}</span>
           </div>
           <p class="mt-1 flex items-center justify-between gap-3 text-[11px] text-gray-500 dark:text-gray-400">
-            <span>{{ t('channelMonitorV3.tooltip.ttft') }}</span>
-            <span class="font-mono">{{ formatMonitorV3Bucket(detail.cell.ttft_p50_ms) }}</span>
+            <span>{{ t(detail.cell.probed ? 'channelMonitorV3.tooltip.probeLatency' : 'channelMonitorV3.tooltip.ttft') }}</span>
+            <span class="font-mono">{{ detail.cell.probed ? probeSeconds(detail.cell.probe_latency_ms) : formatMonitorV3Bucket(detail.cell.ttft_p50_ms) }}</span>
           </p>
         </div>
         <div v-if="note(detail)" class="border-t border-gray-100 px-3 py-2 dark:border-dark-700" data-testid="monitor-v3-tooltip-note">
@@ -220,10 +221,14 @@
             {{ t(detail.cell.status === 'down' ? 'channelMonitorV3.tooltip.error' : 'channelMonitorV3.tooltip.note') }}
           </p>
           <p class="mt-0.5 text-gray-700 dark:text-gray-200">{{ note(detail) }}</p>
+          <p v-if="detail.cell.probed && detail.cell.status !== 'operational'" class="mt-1 text-[11px] text-gray-500 dark:text-gray-400" data-testid="monitor-v3-tooltip-probe-note">
+            {{ t('channelMonitorV3.tooltip.probeNote') }}
+          </p>
         </div>
         <div class="flex items-center justify-between gap-2 border-t border-gray-100 px-3 py-1.5 text-[10px] text-gray-400 dark:border-dark-700 dark:text-gray-500">
           <span class="truncate">{{ detail.component.name }}<template v-if="detail.component.model"> · {{ detail.component.model }}</template></span>
-          <span v-if="detail.cell.requests" class="shrink-0" data-testid="monitor-v3-tooltip-volume">{{ t('channelMonitorV3.tooltip.volume', { requests: detail.cell.requests, errors: detail.cell.errors || 0, ignored: detail.cell.ignored_errors || 0 }) }}</span>
+          <span v-if="detail.cell.probed && detail.cell.probes" class="shrink-0" data-testid="monitor-v3-tooltip-volume">{{ t('channelMonitorV3.tooltip.probeVolume', { probes: detail.cell.probes, requests: detail.cell.requests || 0 }) }}</span>
+          <span v-else-if="detail.cell.requests" class="shrink-0" data-testid="monitor-v3-tooltip-volume">{{ t('channelMonitorV3.tooltip.volume', { requests: detail.cell.requests, errors: detail.cell.errors || 0, ignored: detail.cell.ignored_errors || 0 }) }}</span>
         </div>
       </div>
     </Teleport>
@@ -247,6 +252,7 @@ import {
   formatMonitorV3Multiplier,
   formatMonitorV3Offset,
   formatMonitorV3Rate,
+  formatMonitorV3Seconds,
   formatMonitorV3Slot,
   monitorV3CategoryLayout,
   monitorV3TimezoneOffsetHours,
@@ -275,14 +281,23 @@ const timezoneLabel = computed(() => {
 const freshness = computed(() => (props.status?.data_through
   ? t('channelMonitorV3.page.dataThrough', { time: formatMonitorV3Full(props.status.data_through) })
   : t('channelMonitorV3.page.noData')))
-const rules = computed(() => (props.status
-  ? t('channelMonitorV3.page.rules', {
+const rules = computed(() => {
+  if (!props.status) return ''
+  const text = t('channelMonitorV3.page.rules', {
     down: formatMonitorV3Rate(props.status.down_error_rate),
     degraded: formatMonitorV3Rate(props.status.degraded_error_rate),
     ttft: props.status.degraded_ttft_ms / 1000,
     min: props.status.min_requests,
   })
-  : ''))
+  return props.status.idle_probe ? `${text}${t('channelMonitorV3.page.probeRules')}` : text
+})
+/** An admin's own footer is shown as written; the default one mentions idle probes when they fill slots. */
+const footer = computed(() => {
+  if (!props.status) return ''
+  if (props.status.footer_note) return props.status.footer_note
+  const text = t('channelMonitorV3.page.defaultFooter')
+  return props.status.idle_probe ? `${text}${t('channelMonitorV3.page.probeFooter')}` : text
+})
 
 const intervalSeconds = computed(() => (props.status?.interval_minutes || 1) * 60)
 /** The older window ends one slot before the current one starts. */
@@ -303,18 +318,28 @@ function multiplier(component: MonitorV3ComponentStatus) {
   return formatMonitorV3Multiplier(component.multiplier)
 }
 
+function probeSeconds(ms: number | null | undefined) {
+  return ms == null ? '—' : t('channelMonitorV3.tooltip.seconds', { value: formatMonitorV3Seconds(ms) })
+}
+
+function errorText(category: string | undefined) {
+  const key = `channelMonitorV3.errors.${category}`
+  return category && te(key) ? t(key) : t('channelMonitorV3.errors.other')
+}
+
 /** What the tooltip explains below the numbers, if anything. */
 function note({ component, cell, index }: Detail) {
+  if (cell.probed) {
+    if (cell.status === 'down') return errorText(cell.top_error)
+    return t(cell.status === 'degraded' ? 'channelMonitorV3.tooltip.probeSlow' : 'channelMonitorV3.tooltip.probeNote')
+  }
   if (cell.status === 'insufficient') {
     const live = component === props.status?.featured || props.status?.window.latest
     if (live && index === component.cells.length - 1) return t('channelMonitorV3.page.collecting')
     return t('channelMonitorV3.tooltip.insufficient', { min: props.status?.min_requests ?? 1 })
   }
   if (cell.status === 'operational') return ''
-  if (cell.top_error) {
-    const key = `channelMonitorV3.errors.${cell.top_error}`
-    return te(key) ? t(key) : t('channelMonitorV3.errors.other')
-  }
+  if (cell.top_error) return errorText(cell.top_error)
   return cell.status === 'degraded' ? t('channelMonitorV3.tooltip.slow') : ''
 }
 

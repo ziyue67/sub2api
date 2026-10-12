@@ -2,6 +2,7 @@ package basispoints
 
 import (
 	"container/list"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -14,12 +15,15 @@ import (
 // Explicit tools replace the catalog (including []); omitted tools inherit it.
 // Additional tools merge through Prepare's duplicate/schema validation.
 type CatalogCache struct {
-	mu      sync.Mutex
-	entries map[string]*list.Element
-	order   list.List
-	bytes   int
-	version uint64
-	now     func() time.Time
+	ctx      context.Context
+	store    StateStore
+	storeErr error
+	mu       sync.Mutex
+	entries  map[string]*list.Element
+	order    list.List
+	bytes    int
+	version  uint64
+	now      func() time.Time
 }
 type catalogEntry struct {
 	scope   string
@@ -50,6 +54,11 @@ func (c *CatalogCache) prune(now time.Time) {
 	}
 }
 func (c *CatalogCache) snapshot(scope string) ([]byte, uint64) {
+	if c.store != nil {
+		raw, version, err := c.store.LoadBPSState(c.ctx, scope, "catalog")
+		c.stateError(err)
+		return raw, version
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.clock()
@@ -65,6 +74,11 @@ func (c *CatalogCache) snapshot(scope string) ([]byte, uint64) {
 	return v.raw, v.version
 }
 func (c *CatalogCache) commit(scope string, expected uint64, raw []byte) bool {
+	if c.store != nil {
+		changed, err := c.store.SaveBPSState(c.ctx, scope, "catalog", &expected, raw)
+		c.stateError(err)
+		return changed
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.clock()
@@ -111,6 +125,9 @@ func prepareWithCatalog(raw []byte, scope string, replay *ReplayCache, cache *Ca
 	_, explicit := source["tools"]
 	for attempt := 0; attempt < 8; attempt++ {
 		previous, version := cache.snapshot(scope)
+		if err := cache.Err(); err != nil {
+			return nil, nil, err
+		}
 		var candidate object
 		if err := decode(raw, &candidate); err != nil {
 			return nil, nil, err
@@ -153,6 +170,9 @@ func prepareWithCatalog(raw []byte, scope string, replay *ReplayCache, cache *Ca
 		}
 		if cache.commit(scope, version, saved) {
 			return body, b, nil
+		}
+		if err := cache.Err(); err != nil {
+			return nil, nil, err
 		}
 		// A concurrent explicit replacement is authoritative. This request keeps
 		// its own validated catalog, but cannot overwrite the newer snapshot.

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -25,26 +26,35 @@ func (r *channelMonitorV2Repository) FinishCandyProbe(ctx context.Context, resul
 	return err
 }
 
-func (r *channelMonitorV2Repository) CandyHistory(ctx context.Context, configs map[int64]string, since time.Time) ([]service.ChannelMonitorV2CandyResult, error) {
+func (r *channelMonitorV2Repository) CandyHistory(ctx context.Context, scopes []service.ChannelMonitorV2CandyScope, since time.Time, limit int) ([]service.ChannelMonitorV2CandyResult, error) {
 	out := []service.ChannelMonitorV2CandyResult{}
-	if len(configs) == 0 {
+	if len(scopes) == 0 {
 		return out, nil
 	}
-	ids := make([]int64, 0, len(configs))
-	keys := make([]string, 0, len(configs))
-	for id, key := range configs {
-		ids = append(ids, id)
-		keys = append(keys, key)
+	ids := make([]int64, 0, len(scopes))
+	keys := make([]string, 0, len(scopes))
+	seen := map[string]struct{}{}
+	for _, scope := range scopes {
+		key := fmt.Sprintf("%d\x00%s", scope.GroupID, scope.ConfigKey)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		ids = append(ids, scope.GroupID)
+		keys = append(keys, scope.ConfigKey)
 	}
-	// Filter each group's active configuration before ranking, so obsolete
-	// samples cannot consume its 100-record history allowance.
+	if limit < service.ChannelMonitorV2CandyHistoryMin || limit > service.ChannelMonitorV2CandyHistoryMax {
+		limit = service.ChannelMonitorV2CandyHistoryDefault
+	}
+	// Rank inside each active group/config key. A second model, or an obsolete
+	// configuration, must not consume this probe's history allowance.
 	rows, err := r.db.QueryContext(ctx, `SELECT id,group_id,config_key,checked_at,verdict,latency_ms,answer_preview,reason
- FROM (SELECT r.*,ROW_NUMBER() OVER (PARTITION BY r.group_id ORDER BY r.checked_at DESC,r.id DESC) AS rn
+ FROM (SELECT r.*,ROW_NUMBER() OVER (PARTITION BY r.group_id, r.config_key ORDER BY r.checked_at DESC,r.id DESC) AS rn
  FROM channel_monitor_v2_candy_results r
  JOIN unnest($1::bigint[], $2::text[]) AS wanted(group_id,config_key)
  ON r.group_id=wanted.group_id AND r.config_key=wanted.config_key
  WHERE r.checked_at >= $3 AND r.verdict<>'running') recent
- WHERE rn<=$4 ORDER BY checked_at,id`, pq.Array(ids), pq.Array(keys), since, service.ChannelMonitorV2CandyHistoryLimit)
+ WHERE rn<=$4 ORDER BY checked_at,id`, pq.Array(ids), pq.Array(keys), since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +70,7 @@ func (r *channelMonitorV2Repository) CandyHistory(ctx context.Context, configs m
 }
 
 func (r *channelMonitorV2Repository) PruneCandyHistory(ctx context.Context, now time.Time) error {
-	// A crashed worker's claim must never block a group indefinitely. The lease
+	// A crashed worker's claim must never block that probe indefinitely. The lease
 	// is longer than the 90-second probe timeout; old workers cannot overwrite it.
 	if _, err := r.db.ExecContext(ctx, `UPDATE channel_monitor_v2_candy_results SET verdict='error',reason='interrupted',finished_at=NOW() WHERE verdict='running' AND checked_at<$1`, now.Add(-3*time.Minute)); err != nil {
 		return err

@@ -267,6 +267,43 @@ func TestCCBufferedFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	}
 }
 
+func substitutedAnthropicSSEStream() string {
+	return strings.Replace(miniAnthropicSSEStream(), `"model":"glm-4.7"`, `"model":"gemini-3.8-flash-exp-a"`, 1)
+}
+
+func TestResponsesStreamingFromNativeAnthropic_RecordsSubstitutedResponseModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newNativeAnthropicHangTestService(5)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	resp, pr, pw := newHangingUpstreamResponse()
+	go func() {
+		_, _ = pw.Write([]byte(substitutedAnthropicSSEStream()))
+		_ = pw.Close()
+	}()
+	defer func() { _ = pr.Close() }()
+
+	res, err := svc.handleResponsesStreamingFromNativeAnthropic(resp, c, "gemini-3.8-flash-high", "gemini-3.8-flash-high", "gemini-3.8-flash-high", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected result")
+	}
+	if res.Model != "gemini-3.8-flash-high" {
+		t.Fatalf("client model = %q", res.Model)
+	}
+	if res.UpstreamResponseModel != "gemini-3.8-flash-exp-a" {
+		t.Fatalf("upstream response model = %q", res.UpstreamResponseModel)
+	}
+	if !strings.Contains(rec.Body.String(), "gemini-3.8-flash-high") {
+		t.Fatalf("client stream should keep the requested model, got %q", rec.Body.String())
+	}
+}
+
 func TestCCBufferedFromNativeAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := newNativeAnthropicHangTestService(5)

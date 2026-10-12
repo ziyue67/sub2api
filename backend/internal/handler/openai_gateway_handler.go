@@ -4315,6 +4315,16 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		return
 	}
 	copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
+	// Local BPS image admission rejection: nothing reached the upstream, so
+	// keep the fixed code and message of the image relay limit.
+	if failoverErr.IsExcelBPSImageAdmissionRejection() {
+		errType := "server_error"
+		if failoverErr.ClientStatusCode == http.StatusRequestEntityTooLarge {
+			errType = "invalid_request_error"
+		}
+		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, errType, string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
+		return
+	}
 	if failoverErr.IsOpenAIRequestBodyTooLarge() {
 		service.SetOpsUpstreamError(c, http.StatusRequestEntityTooLarge, service.OpenAIRequestBodyTooLargeClientMessage, "")
 		h.handleStreamingAwareError(

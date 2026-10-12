@@ -160,6 +160,7 @@ import type {
 } from '@/api/channelMonitorV2'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { useChannelMonitorFormat } from '@/composables/useChannelMonitorFormat'
 import {
   formatLatencyPrivacy,
   formatMonitorMs,
@@ -182,6 +183,7 @@ import {
 
 type HealthMode = 'overall' | 'success' | 'ttft' | 'cache'
 const { t, locale } = useI18n()
+const { providerLabel } = useChannelMonitorFormat()
 
 const props = withDefaults(
   defineProps<{
@@ -404,7 +406,7 @@ function cellClass(health: MonitorHealth, requestCount: number): string {
 }
 
 function rowLabel(row: MonitorMatrixRow): string {
-  const parts = [row.platform]
+  const parts = [providerLabel(row.platform) || row.platform]
   if (row.group_name || row.group_id) parts.push(row.group_name || `#${row.group_id}`)
   if (row.model) parts.push(row.model === '__other__' ? t('channelMonitorV2.otherModels') : row.model)
   return parts.join(' / ')

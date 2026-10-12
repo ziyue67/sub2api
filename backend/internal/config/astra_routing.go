@@ -7,12 +7,13 @@ import (
 )
 
 type AstraRoutingSettings struct {
-	SchedulingMode     string                `json:"scheduling_mode"`
-	SchedulingGroupIDs []int64               `json:"scheduling_group_ids"`
-	AccountScheduling  bool                  `json:"account_scheduling"`
-	CookiePool         CodexGatewayPinConfig `json:"cookie_pool"`
-	WSSession          CodexWSAnchorConfig   `json:"ws_session"`
-	Revision           string                `json:"revision"`
+	TicketPoolScheduling bool                  `json:"ticket_pool_scheduling,omitempty"`
+	SchedulingMode       string                `json:"scheduling_mode"`
+	SchedulingGroupIDs   []int64               `json:"scheduling_group_ids"`
+	AccountScheduling    bool                  `json:"account_scheduling"`
+	CookiePool           CodexGatewayPinConfig `json:"cookie_pool"`
+	WSSession            CodexWSAnchorConfig   `json:"ws_session"`
+	Revision             string                `json:"revision"`
 }
 type astraRoutingLoader struct {
 	load func(context.Context) AstraRoutingSettings
@@ -65,6 +66,7 @@ func (s AstraRoutingSettings) EffectiveSchedulingMode() string {
 }
 func AstraRouteSettingsEqual(a, b AstraRoutingSettings) bool {
 	a.AccountScheduling, b.AccountScheduling = false, false
+	a.TicketPoolScheduling, b.TicketPoolScheduling = false, false
 	a.SchedulingMode, b.SchedulingMode = "", ""
 	a.SchedulingGroupIDs, b.SchedulingGroupIDs = nil, nil
 	a.Revision, b.Revision = "", ""

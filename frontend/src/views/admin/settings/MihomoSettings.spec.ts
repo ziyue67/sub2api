@@ -181,6 +181,69 @@ const checkedAt = 1790000000
 const recorded = (check: Record<string, unknown>) => ({ ...base, node_states: [{ ...base.node_states[0], check: { checked_at: checkedAt, ...check } }] })
 const nodeCheckCalls = (suffix: string) => post.mock.calls.map(([url]) => url as string).filter(url => url.endsWith(suffix))
 
+describe('Mihomo nodes as static account proxies', () => {
+  const staticPath = '/admin/system/mihomo/nodes/static-proxies'
+  const mockStaticImport = (nodeStates: Record<string, unknown>[], failed: Array<{ name: string; reason: string }> = []) => {
+    get.mockResolvedValue({ data: { ...base, node_states: nodeStates } })
+    post.mockImplementation(async (url: string, payload?: { names: string[] }) => ({ data: url === staticPath
+      ? { created: payload?.names.filter(name => !failed.some(item => item.name === name)).map(name => ({ id: name, mihomo_node_id: name })) || [], existing: [], failed }
+      : { ...base, node_states: nodeStates } }))
+  }
+
+  it('adds one subscription node and refreshes its static badge', async () => {
+    const nodes = [{ ...base.node_states[0], static_proxy: false }]
+    mockStaticImport(nodes)
+    wrapper = mountPanel('nodes'); await flushPromises()
+    await rowButton('添加为静态代理').trigger('click')
+    expect(post).not.toHaveBeenCalled()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('不会自动切换到其他节点')
+    await click('确认添加')
+    expect(post).toHaveBeenCalledWith(staticPath, { names: ['node-one'] }, expect.objectContaining({ timeout: expect.any(Number) }))
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.emitted('static-proxies-added')).toHaveLength(1)
+  })
+
+  it('adds dynamic nodes while warning that the provider can change the public IP', async () => {
+    mockStaticImport([{ name: 'DYNAMIC-one', display_name: 'dynamic-01', dynamic: true, state: 'enabled' }])
+    wrapper = mountPanel('dynamic'); await flushPromises()
+    await rowButton('添加为静态代理').trigger('click')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('实际公网 IP 仍由供应商控制')
+    await click('确认添加')
+    expect(post).toHaveBeenCalledWith(staticPath, { names: ['DYNAMIC-one'] }, expect.any(Object))
+  })
+
+  it('bulk-adds only selected nodes, including through batch edit', async () => {
+    const nodes = Array.from({ length: 3 }, (_, i) => ({ name: 'node-' + i, display_name: '节点 ' + i, state: 'enabled' }))
+    mockStaticImport(nodes)
+    wrapper = mountPanel('nodes'); await flushPromises()
+    expect(wrapper.findAll('button').find(button => button.text() === '批量添加为静态代理')?.attributes('disabled')).toBeDefined()
+    await click('选择首行')
+    await click('批量添加为静态代理')
+    await click('确认添加')
+    expect(post).toHaveBeenCalledWith(staticPath, { names: ['node-0'] }, expect.any(Object))
+    post.mockClear()
+    await click('全选')
+    await click('批量编辑')
+    await wrapper.get('[data-testid="node-batch-action"]').setValue('static')
+    await click('应用所选')
+    await click('确认添加')
+    expect(post).toHaveBeenCalledWith(staticPath, { names: nodes.map(node => node.name) }, expect.any(Object))
+  })
+
+  it('keeps failed nodes in the retry dialog and blocks disabled nodes', async () => {
+    const nodes = [{ name: 'node-good', state: 'enabled' }, { name: 'node-failed', state: 'enabled' }]
+    mockStaticImport(nodes, [{ name: 'node-failed', reason: 'fixture failure' }])
+    wrapper = mountPanel('nodes'); await flushPromises()
+    await click('全选'); await click('批量添加为静态代理'); await click('确认添加')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('node-failed')
+    expect(wrapper.get('[role="dialog"]').text()).not.toContain('node-good')
+    expect(toast.showWarning).toHaveBeenCalled()
+    get.mockResolvedValue({ data: { ...base, node_states: [{ name: 'node-failed', state: 'disabled' }] } })
+    await click('检测状态')
+    expect(rowButton('添加为静态代理').attributes('disabled')).toBeDefined()
+  })
+})
+
 describe('Mihomo node connection and quality checks', () => {
   it('tests a node through its isolated check without changing configuration', async () => {
     wrapper = mountPanel('nodes'); await flushPromises()

@@ -23,12 +23,13 @@
         {{ errorMessage }}
       </div>
 
-      <HarvestControlsPanel :refresh-key="snapshot?.generated_at" :runtime="snapshot?.runtime" @saved="fetchFlow" />
-      <HarvestGatewayBorrowPanel />
-      <HarvestManualConsole
-        v-if="snapshot"
-        :accounts="snapshot.accounts || []"
-        :models="snapshot.harvest.models || []"
+      <HarvestPolicyPanel @saved="fetchFlow" />
+      <HarvestControlsPanel
+        :refresh-key="snapshot?.generated_at"
+        :runtime="snapshot?.runtime"
+        :accounts="snapshot?.accounts || []"
+        :models="snapshot?.harvest.models || []"
+        @saved="fetchFlow"
         @running="harvesting = $event"
         @finished="fetchFlow"
       />
@@ -51,7 +52,6 @@
               <span>{{ t('admin.harvestFlow.scope') }} {{ scopeLabel(snapshot.harvest.scope_mode, snapshot.harvest.account_policy, snapshot.harvest.group_ids) }}</span>
               <span>{{ t('admin.harvestFlow.interval') }} {{ t('admin.harvestFlow.seconds', { n: snapshot.harvest.probe_interval_seconds }) }}</span>
               <span>{{ t('admin.harvestFlow.cooldown') }} {{ t('admin.harvestFlow.seconds', { n: snapshot.harvest.cooldown_seconds }) }}</span>
-              <span>{{ t('admin.harvestFlow.targetLength', { n: snapshot.harvest.target_length }) }}</span>
               <span v-if="snapshot.harvest.models?.length">{{ t('admin.harvestFlow.models') }} {{ snapshot.harvest.models.join(' / ') }}</span>
             </div>
             <p v-if="lastUpdated" class="text-xs text-gray-400">{{ t('admin.harvestFlow.lastUpdated', { time: lastUpdated }) }}</p>
@@ -74,7 +74,7 @@
                   <span v-if="stage.model">{{ stage.model }}</span>
                   <span v-if="stage.http_status"> · HTTP {{ stage.http_status }}</span>
                   <span v-if="(stage.model || stage.http_status) && stage.at"> · </span>
-                  <span v-if="stage.at">{{ formatClock(stage.at) }}</span>
+                  <span v-if="stage.at">{{ stage.id === 'ticket' ? t('admin.harvestFlow.latestTicketEvent', { time: formatClock(stage.at) }) : formatClock(stage.at) }}</span>
                 </p>
               </div>
               <div v-if="index < snapshot.stages.length - 1" class="pointer-events-none absolute right-[-10px] top-1/2 hidden h-px w-5 bg-gradient-to-r from-gray-300 to-transparent md:block dark:from-dark-600" />
@@ -82,7 +82,7 @@
           </ol>
         </div>
 
-        <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <div class="card p-4">
             <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.harvestFlow.sidecar') }}</p>
             <p v-if="snapshot.sidecar.mode === 'external'" class="mt-1 text-sm font-semibold text-gray-600 dark:text-gray-300">
@@ -112,11 +112,12 @@
             <p class="text-xs text-gray-400">{{ t('admin.harvestFlow.ticketAccept') }} {{ snapshot.counts.ticket_accept }} · {{ t('admin.harvestFlow.ticketReject') }} {{ snapshot.counts.ticket_reject }}</p>
           </div>
           <div class="card p-4">
-            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.harvestFlow.selectOk') }}</p>
-            <p class="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{{ snapshot.counts.select_ok }}</p>
-            <p class="text-xs text-gray-400">{{ t('admin.harvestFlow.selectSkip') }} {{ snapshot.counts.select_skip }} · {{ t('admin.harvestFlow.selectFail') }} {{ snapshot.counts.select_fail }}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.harvestFlow.stages.select') }}</p>
+            <p class="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{{ snapshot.counts.select_ok }} / {{ snapshot.counts.select_skip }}</p>
+            <p class="text-xs text-gray-400">{{ t('admin.harvestFlow.selectOk') }} / {{ t('admin.harvestFlow.selectSkip') }}</p>
             <p v-if="snapshot.harvest.harvest_proxy" class="mt-2 truncate font-mono text-[11px] text-gray-400">{{ snapshot.harvest.harvest_proxy }}</p>
           </div>
+          <HarvestCoverageCard :coverage="snapshot.coverage" :generated-at="snapshot.generated_at" />
         </div>
 
         <div class="grid grid-cols-1 gap-6 xl:grid-cols-5">
@@ -150,7 +151,7 @@
                       :disabled="saving"
                       @click="toggleSkipHarvest(account)"
                     >
-                      {{ account.skip_harvest ? t('admin.harvestFlow.enableHarvest') : t('admin.harvestFlow.skipHarvest') }}
+                      {{ isHarvestSelected(account) ? t('admin.harvestFlow.skipHarvest') : t('admin.harvestFlow.enableHarvest') }}
                     </button>
                     <span class="w-8 text-right text-xs text-gray-400">{{ account.ready_count }}/{{ account.tickets?.length ?? 0 }}</span>
                   </div>
@@ -159,6 +160,7 @@
                   <span v-if="account.skip_harvest">{{ t('admin.harvestFlow.skipHarvestHint') }}</span>
                   <span v-else-if="recoverText(account)">{{ recoverText(account) }}</span>
                 </p>
+                <HarvestAccountCoverage :coverage="account.coverage" :generated-at="snapshot.generated_at" />
                 <div class="mt-auto grid grid-cols-2 gap-2">
                   <span
                     v-for="ticket in account.tickets"
@@ -168,7 +170,6 @@
                     :class="ticket.blocked ? 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300' : ticket.ready ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-300'"
                   >
                     <span class="font-medium">{{ ticket.model }} · {{ ticketStatusLine(account, ticket) }}</span>
-                    <span class="mt-auto block min-h-[1rem] font-mono text-[11px] opacity-80">{{ ticket.length ? `${ticket.length}B` : '—' }}</span>
                     <span class="block min-h-[1rem] text-[11px] opacity-80">{{ ticketCookieLine(ticket) }}</span>
                     <span class="block min-h-[1rem] text-[11px] opacity-80">{{ ticketProbeLine(ticket) }}</span>
                   </span>
@@ -209,7 +210,7 @@
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center justify-between gap-2">
                     <p class="text-sm font-medium text-gray-900 dark:text-white">
-                      {{ kindLabel(event.kind) }}
+                      {{ kindLabel(event.kind, event.result) }}
                       <span v-if="event.model" class="ml-1 font-mono text-xs text-gray-500">{{ event.model }}</span>
                     </p>
                     <span class="text-[11px] text-gray-400">{{ formatClock(event.at) }}</span>
@@ -217,15 +218,11 @@
                   <p class="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
                     <span v-if="event.account_name">{{ event.account_name }}</span>
                     <span v-if="event.node"> · {{ event.node }}</span>
-                    <span v-if="event.length"> · {{ event.length }}/{{ event.blocks || '-' }}</span>
-                    <span v-if="event.expected_length && event.length && event.length !== event.expected_length">
-                      · {{ t('admin.harvestFlow.wantShape', { length: event.expected_length, blocks: event.expected_blocks || '-' }) }}
-                    </span>
                     <span v-if="event.http_status"> · HTTP {{ event.http_status }}</span>
                     <span v-if="event.standby"> · {{ t('admin.harvestFlow.standby') }}</span>
                   </p>
                   <p v-if="event.reason || event.detail || event.result" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    {{ event.detail || reasonLabel(event.reason) || resultLabel(event.result) || event.result }}
+                    {{ eventDetail(event) }}
                   </p>
                 </div>
               </li>
@@ -238,7 +235,9 @@
 </template>
 
 <script setup lang="ts">
-import HarvestGatewayBorrowPanel from '@/components/admin/HarvestGatewayBorrowPanel.vue'
+import HarvestCoverageCard from '@/components/admin/HarvestCoverageCard.vue'
+import HarvestAccountCoverage from '@/components/admin/HarvestAccountCoverage.vue'
+import HarvestPolicyPanel from '@/components/admin/HarvestPolicyPanel.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -246,7 +245,6 @@ import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
 import HarvestControlsPanel from '@/components/admin/HarvestControlsPanel.vue'
-import HarvestManualConsole from '@/components/admin/HarvestManualConsole.vue'
 import HarvestNodeRecords from '@/components/admin/HarvestNodeRecords.vue'
 import { getCodexHarvestFlow, updateCodexSkipHarvest, type CodexHarvestFlowAccount, type CodexHarvestFlowEvent, type CodexHarvestFlowSnapshot, type CodexHarvestFlowStage, type CodexHarvestFlowTicket } from '@/api/admin/accounts'
 import { harvestAvailabilityClass, harvestAvailabilityRecoverClock, resolveHarvestAvailability } from '@/utils/harvestAvailability'
@@ -336,10 +334,10 @@ function stageTextClass(status: string) {
 }
 
 function eventDotClass(kind: string) {
-  if (kind === 'probe_hit' || kind === 'accept' || kind === 'selected' || kind === 'rotate') {
+  if (kind === 'candy_pass' || kind === 'probe_hit' || kind === 'accept' || kind === 'schedule_join' || kind === 'rotate') {
     return 'bg-emerald-500'
   }
-  if (kind === 'skip' || kind === 'probe_miss') {
+  if (kind === 'schedule_leave' || kind === 'probe_miss') {
     return 'bg-amber-500'
   }
   return 'bg-rose-500'
@@ -356,20 +354,44 @@ function statusLabel(status: string) {
   return lookupLabel('admin.harvestFlow.status', status)
 }
 
-function kindLabel(kind: string) {
+function kindLabel(kind: string, mode?: string) {
+  if (mode && mode !== 'groups' && kind === 'schedule_join') return lookupLabel('admin.harvestFlow.kinds', 'schedule_enable')
+  if (mode && mode !== 'groups' && kind === 'schedule_leave') return lookupLabel('admin.harvestFlow.kinds', 'schedule_disable')
   return lookupLabel('admin.harvestFlow.kinds', kind)
 }
 
 function reasonLabel(reason?: string) {
-  return lookupLabel('admin.harvestFlow.reasons', reason)
+  if (!reason) return ''
+  const harvest = lookupLabel('admin.harvestFlow.reasons', reason)
+  return harvest === reason ? lookupLabel('admin.astraGateway.reasons', reason) : harvest
 }
 
 function resultLabel(result?: string) {
   return lookupLabel('admin.harvestFlow.results', result)
 }
 
+function eventDetail(event: CodexHarvestFlowEvent) {
+  if (event.kind === 'reject') return t('admin.harvestFlow.ticketRejected')
+  if (event.kind === 'probe_hit') {
+    return event.reason === 'probe_verified' ? t('admin.harvestFlow.probeVerified') : t('admin.harvestFlow.probeIncomplete')
+  }
+  // Stored history may predate probe validation. Render the stable outcome,
+  // not old free-text claims about ticket length or model quality.
+  if (event.stage === 'probe' && ['invalid_state', 'invalid_route', 'probe_reissued', 'probe_route_changed', 'probe_inconclusive'].includes(event.result || '')) {
+    return resultLabel(event.result)
+  }
+  if (event.stage === 'select') {
+    const mode = event.result || ''
+    const modeKey = mode === 'groups' ? 'modeGroups' : mode === 'model' ? 'modeModel' : mode === 'account' ? 'modeAccount' : ''
+    const modeLabel = modeKey ? lookupLabel('admin.astraGateway', modeKey) : ''
+    return [reasonLabel(event.reason), modeLabel].filter(Boolean).join(' · ') || event.detail || resultLabel(event.result)
+  }
+  return event.detail || reasonLabel(event.reason) || resultLabel(event.result)
+}
+
 function scopeLabel(mode?: string, policy?: string, groupIds?: number[]) {
   if (snapshot.value?.harvest.scope_error) return t('admin.harvestFlow.scopeUnavailable')
+  if (mode === 'selected_accounts') return t('admin.harvestFlow.scopeSelectedAccounts')
   const scope = mode === 'selected'
     ? t('admin.harvestFlow.scopeSelected', { n: groupIds?.length || 0 })
     : t('admin.harvestFlow.scopeAll')
@@ -395,21 +417,9 @@ function stageDetail(stage: CodexHarvestFlowStage) {
       return resultLabel(stage.detail) || stage.node || stage.detail || t('admin.harvestFlow.idleProbe')
     case 'shape':
       if (stage.status === 'idle') return t('admin.harvestFlow.idleShape')
-      if (stage.detail === 'ticket shape matches; validation incomplete') {
-        return t('admin.harvestFlow.shapeValidationIncomplete', { length: stage.length || 0, blocks: stage.blocks || 0 })
-      }
-      if (stage.status === 'ok') {
-        return t('admin.harvestFlow.shapeOk', { length: stage.length || 0, blocks: stage.blocks || 0 })
-      }
-      if (stage.status === 'warn' || stage.detail === 'no ticket body') {
-        return t('admin.harvestFlow.shapeNoBody')
-      }
-      return t('admin.harvestFlow.shapeBad', {
-        length: stage.length || 0,
-        blocks: stage.blocks || 0,
-        expected_length: stage.expected_length || 292,
-        expected_blocks: stage.expected_blocks || 10
-      })
+      if (stage.detail === 'probe_verified') return t('admin.harvestFlow.probeVerified')
+      if (['probe_reissued', 'probe_route_changed', 'invalid_state', 'invalid_route', 'network_error', 'account_error', 'rate_limited'].includes(stage.detail || '')) return resultLabel(stage.detail)
+      return t('admin.harvestFlow.probeIncomplete')
     case 'ticket':
       if (stage.status === 'idle') return t('admin.harvestFlow.idleTicket')
       if (stage.status === 'fail') {
@@ -417,7 +427,7 @@ function stageDetail(stage: CodexHarvestFlowStage) {
           ? t('admin.harvestFlow.ticketsPausedCount', { n: snapshot.value.counts.tickets_blocked })
           : t('admin.harvestFlow.ticketRejected')
       }
-      if (stage.detail === 'standby stored') return t('admin.harvestFlow.ticketStandby')
+      if (!snapshot.value?.counts.tickets_ready) return t('admin.harvestFlow.idleTicket')
       return t('admin.harvestFlow.ticketsReadyCount', { n: snapshot.value?.counts.tickets_ready ?? 0 })
     case 'select':
       if (stage.status === 'idle') return t('admin.harvestFlow.idleSelect')
@@ -524,6 +534,10 @@ async function fetchFlow() {
   }
 }
 
+function isHarvestSelected(account: CodexHarvestFlowAccount) {
+  return account.harvest_selected ?? !account.skip_harvest
+}
+
 async function toggleSkipHarvest(account: CodexHarvestFlowAccount) {
   if (disposed || saving.value) return
   saving.value = true
@@ -534,10 +548,13 @@ async function toggleSkipHarvest(account: CodexHarvestFlowAccount) {
   errorMessage.value = ''
   let saved = false
   try {
-    const result = await updateCodexSkipHarvest(account.id, !account.skip_harvest)
+    const result = await updateCodexSkipHarvest(account.id, isHarvestSelected(account))
     if (disposed) return
     const current = snapshot.value?.accounts?.find(item => item.id === account.id)
-    if (current) current.skip_harvest = result.skip_harvest
+    if (current) {
+      current.skip_harvest = result.skip_harvest
+      current.harvest_selected = !result.skip_harvest
+    }
     saved = true
   } catch (error) {
     if (disposed) return

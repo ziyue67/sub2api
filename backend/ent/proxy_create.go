@@ -89,6 +89,20 @@ func (_c *ProxyCreate) SetPort(v int) *ProxyCreate {
 	return _c
 }
 
+// SetMihomoNodeID sets the "mihomo_node_id" field.
+func (_c *ProxyCreate) SetMihomoNodeID(v string) *ProxyCreate {
+	_c.mutation.SetMihomoNodeID(v)
+	return _c
+}
+
+// SetNillableMihomoNodeID sets the "mihomo_node_id" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillableMihomoNodeID(v *string) *ProxyCreate {
+	if v != nil {
+		_c.SetMihomoNodeID(*v)
+	}
+	return _c
+}
+
 // SetUsername sets the "username" field.
 func (_c *ProxyCreate) SetUsername(v string) *ProxyCreate {
 	_c.mutation.SetUsername(v)
@@ -323,6 +337,11 @@ func (_c *ProxyCreate) check() error {
 	if _, ok := _c.mutation.Port(); !ok {
 		return &ValidationError{Name: "port", err: errors.New(`ent: missing required field "Proxy.port"`)}
 	}
+	if v, ok := _c.mutation.MihomoNodeID(); ok {
+		if err := proxy.MihomoNodeIDValidator(v); err != nil {
+			return &ValidationError{Name: "mihomo_node_id", err: fmt.Errorf(`ent: validator failed for field "Proxy.mihomo_node_id": %w`, err)}
+		}
+	}
 	if v, ok := _c.mutation.Username(); ok {
 		if err := proxy.UsernameValidator(v); err != nil {
 			return &ValidationError{Name: "username", err: fmt.Errorf(`ent: validator failed for field "Proxy.username": %w`, err)}
@@ -406,6 +425,10 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Port(); ok {
 		_spec.SetField(proxy.FieldPort, field.TypeInt, value)
 		_node.Port = value
+	}
+	if value, ok := _c.mutation.MihomoNodeID(); ok {
+		_spec.SetField(proxy.FieldMihomoNodeID, field.TypeString, value)
+		_node.MihomoNodeID = &value
 	}
 	if value, ok := _c.mutation.Username(); ok {
 		_spec.SetField(proxy.FieldUsername, field.TypeString, value)
@@ -613,6 +636,24 @@ func (u *ProxyUpsert) UpdatePort() *ProxyUpsert {
 // AddPort adds v to the "port" field.
 func (u *ProxyUpsert) AddPort(v int) *ProxyUpsert {
 	u.Add(proxy.FieldPort, v)
+	return u
+}
+
+// SetMihomoNodeID sets the "mihomo_node_id" field.
+func (u *ProxyUpsert) SetMihomoNodeID(v string) *ProxyUpsert {
+	u.Set(proxy.FieldMihomoNodeID, v)
+	return u
+}
+
+// UpdateMihomoNodeID sets the "mihomo_node_id" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateMihomoNodeID() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldMihomoNodeID)
+	return u
+}
+
+// ClearMihomoNodeID clears the value of the "mihomo_node_id" field.
+func (u *ProxyUpsert) ClearMihomoNodeID() *ProxyUpsert {
+	u.SetNull(proxy.FieldMihomoNodeID)
 	return u
 }
 
@@ -870,6 +911,27 @@ func (u *ProxyUpsertOne) AddPort(v int) *ProxyUpsertOne {
 func (u *ProxyUpsertOne) UpdatePort() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdatePort()
+	})
+}
+
+// SetMihomoNodeID sets the "mihomo_node_id" field.
+func (u *ProxyUpsertOne) SetMihomoNodeID(v string) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetMihomoNodeID(v)
+	})
+}
+
+// UpdateMihomoNodeID sets the "mihomo_node_id" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateMihomoNodeID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateMihomoNodeID()
+	})
+}
+
+// ClearMihomoNodeID clears the value of the "mihomo_node_id" field.
+func (u *ProxyUpsertOne) ClearMihomoNodeID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearMihomoNodeID()
 	})
 }
 
@@ -1312,6 +1374,27 @@ func (u *ProxyUpsertBulk) AddPort(v int) *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) UpdatePort() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdatePort()
+	})
+}
+
+// SetMihomoNodeID sets the "mihomo_node_id" field.
+func (u *ProxyUpsertBulk) SetMihomoNodeID(v string) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetMihomoNodeID(v)
+	})
+}
+
+// UpdateMihomoNodeID sets the "mihomo_node_id" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateMihomoNodeID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateMihomoNodeID()
+	})
+}
+
+// ClearMihomoNodeID clears the value of the "mihomo_node_id" field.
+func (u *ProxyUpsertBulk) ClearMihomoNodeID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearMihomoNodeID()
 	})
 }
 

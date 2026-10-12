@@ -224,7 +224,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		return nil, wrapOpenAIWSFallback("codex_ticket_unavailable", pinErr)
 	}
 	defer releaseHarvest()
-	if anchor != nil && anchor.connID == "" {
+	// A bound ticket already supplied the complete Cookie pair and pinned exit.
+	// Do not acquire a second lease or overlay a gateway cookie on that bundle.
+	if anchor != nil && anchor.connID == "" && (!s.UnifiedAstraTicketsEnabled(ctx) || s.boundCodexTicketFromHeader(ctx, wsHeaders, account) == nil) {
 		if pool, ok := s.httpUpstream.(interface {
 			CodexGatewayPinWSRequest(context.Context, http.Header, string, int64, int) (string, string, func(), error)
 		}); ok {

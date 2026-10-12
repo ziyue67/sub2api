@@ -373,6 +373,10 @@ func intelligenceTestPrompt(cfg *PelicanTestConfig) string {
 	if cfg.Quality != nil {
 		return cfg.Prompt + "\n\n只输出最终答案，不要解释。"
 	}
+	if cfg.QuestionKind == ChannelMonitorV3ProbeQuestionKind {
+		// The V1 challenge already asks for the bare number.
+		return cfg.Prompt
+	}
 	contract := PelicanDeliveryContract
 	if cfg.QuestionKind == "candy" || isBuiltinCandyPlan(cfg) {
 		contract = "只输出最终整数，不要解释。"
@@ -389,6 +393,10 @@ func intelligenceTestOutputError(cfg *PelicanTestConfig, output string) string {
 	}
 	if strings.TrimSpace(output) == "" {
 		return pelicanErrEmptyOutput
+	}
+	if cfg.QuestionKind == ChannelMonitorV3ProbeQuestionKind {
+		// The V3 prober checks the arithmetic answer itself.
+		return ""
 	}
 	if isBuiltinCandyPlan(cfg) && !CandyAnswerCorrect(output) {
 		return "answer_mismatch: expected 21"

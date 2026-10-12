@@ -1,6 +1,9 @@
 package service
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
@@ -16,6 +19,8 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 	}
 	request = s.stickBoundCodexTicketRequest(request, account)
 	boundTicket := s.codexTicketRequestBound(request, account)
+	observationTicket := s.boundCodexTicket(request, account)
+	observationHeaders := request.Header.Clone()
 	releaseChat := func() {}
 	if boundTicket {
 		releaseChat = s.holdCodexTicketChat(account)
@@ -26,15 +31,32 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		return nil, err
 	}
 	defer func() {
+		observe := resultErr == nil && result != nil && result.StatusCode == http.StatusOK
 		result, resultErr = attachCodexTicketEgressRelease(result, resultErr, func() {
 			release()
 			releaseChat()
+			if observe {
+				s.observeScheduledAstraCandy(request.Context(), observationHeaders, account, observationTicket)
+			}
 		})
 	}()
 	defer func() {
 		if resultErr == nil {
-			s.observeCodexTicketResponse(request, result, account)
-			if boundTicket && codexResponseMismatches(request, result, account) && s.settingService.CodexTicketStrictResponse(request.Context()) {
+			// Fast admission may have installed the ticket inside the upstream
+			// adapter. Capture the binding before observation can revoke it.
+			observedRequest := request
+			if result != nil && result.Request != nil && s.UnifiedAstraTicketsEnabled(request.Context()) && s.codexTicketRequestBound(result.Request, account) {
+				// Timing/fallback layers clone request headers before the routing
+				// adapter installs a newly acquired bundle. Observe the sent copy.
+				observedRequest = result.Request
+			}
+			if ticket := s.boundCodexTicket(observedRequest, account); ticket != nil {
+				observationTicket = ticket
+				observationHeaders = observedRequest.Header.Clone()
+			}
+			responseBound := boundTicket || s.codexTicketRequestBound(observedRequest, account)
+			s.observeCodexTicketResponse(observedRequest, result, account)
+			if responseBound && codexResponseMismatches(observedRequest, result, account) && s.settingService.CodexTicketStrictResponse(request.Context()) {
 				if result.Body != nil {
 					_ = result.Body.Close()
 				}
@@ -48,16 +70,31 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 	return s.doUpstreamWithProxyFallback(request.Context(), request, account, proxyURL)
 }
 
-// doOpenAIAccountTestUpstream 让 OpenAI OAuth 账号测试与真实转发使用同一插件路径。
-// API Key 和未命中插件的账号保持各自原有的 HTTPUpstream 行为。
+// doOpenAIAccountTestUpstream applies the same stored ticket and transport lifecycle
+// as production forwarding. Use the final payload model, after mapping/normalization;
+// a self-harvested ticket must not depend on membership in the gateway-reuse target list.
 func (s *AccountTestService) doOpenAIAccountTestUpstream(
 	request *http.Request,
 	proxyURL string,
 	account *Account,
 	useTLSFallback bool,
+	body []byte,
 ) (*http.Response, error) {
 	if request != nil {
 		request = request.WithContext(WithSelectedAccountProxyLane(request.Context(), account))
+	}
+	gateway := s.openaiGatewayService
+	model := extractOpenAICodexTicketModel(body)
+	if gateway != nil && !IsAstraSourceAcquisition(request.Context()) && request.URL != nil && request.URL.String() == chatgptCodexAPIURL &&
+		isOpenAICodexTicketAccount(account, model) && gateway.openAICodexTicketEnabledContext(request.Context()) &&
+		gateway.openAICodexTicketGatedModel(model) {
+		if err := gateway.applyOpenAICodexTicket(request.Context(), account, model, request.Header, "sse"); err != nil {
+			return nil, err
+		}
+		// This restores the complete cookie/egress bundle, holds it until body close,
+		// observes replacements and enforces the configured strict response policy.
+		request = request.WithContext(context.WithValue(request.Context(), astraCandySkipObservationKey{}, true))
+		return gateway.doOpenAIUpstream(request, proxyURL, account)
 	}
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)

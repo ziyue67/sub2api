@@ -42,7 +42,7 @@ func requestCodex780WS(req *http.Request, proxy, edge string, payload []byte, se
 		return
 	}
 	defer func() { _ = conn.CloseNow() }()
-	conn.SetReadLimit(16 * 1024)
+	conn.SetReadLimit(openAICodexStateProbeMaxBody)
 	out.State = extractOpenAICodexTurnState(resp.Header)
 	var routeErr error
 	out.Cookies, routeErr = codex780ResponseRoute(resp, seed, target, time.Now())
@@ -57,6 +57,9 @@ func requestCodex780WS(req *http.Request, proxy, edge string, payload []byte, se
 		out.Err = routeErr
 	}()
 	out.Gateway = codex780CookieGateway(out.Cookies)
+	if out.Gateway == "" {
+		out.Gateway = "any"
+	}
 	var body map[string]any
 	if json.Unmarshal(payload, &body) != nil {
 		out.Err = errors.New("mint payload invalid")
@@ -64,20 +67,23 @@ func requestCodex780WS(req *http.Request, proxy, edge string, payload []byte, se
 	}
 	delete(body, "stream")
 	body["type"] = "response.create"
+	if state := req.Header.Get(openAICodexTurnStateHeader); state != "" {
+		body["client_metadata"] = map[string]string{openAICodexTurnStateHeader: state}
+	}
 	raw, _ := json.Marshal(body)
 	if err := conn.Write(req.Context(), coderws.MessageText, raw); err != nil {
 		out.Err = mintTransportError(err)
 		return
 	}
-	created := false
-	for total := 0; total < 64*1024; {
+	var transcript strings.Builder
+	for total := 0; total < openAICodexStateProbeMaxBody; {
 		kind, message, err := conn.Read(req.Context())
 		total += len(message)
 		if err != nil {
 			out.Err = mintTransportError(err)
 			return
 		}
-		if kind != coderws.MessageText || total > 64*1024 {
+		if kind != coderws.MessageText || total > openAICodexStateProbeMaxBody {
 			out.Err = errors.New("mint websocket response incomplete")
 			return
 		}
@@ -85,6 +91,9 @@ func requestCodex780WS(req *http.Request, proxy, edge string, payload []byte, se
 			out.Err = err
 			return
 		}
+		_, _ = transcript.WriteString("data: ")
+		_, _ = transcript.Write(message)
+		_, _ = transcript.WriteString("\n\n")
 		var event struct {
 			Type     string            `json:"type"`
 			Headers  map[string]string `json:"headers"`
@@ -102,21 +111,11 @@ func requestCodex780WS(req *http.Request, proxy, edge string, payload []byte, se
 			if ticket := event.Headers["x-codex-turn-state"]; ticket != "" {
 				out.State = ticket
 			}
-		case "response.created":
-			if routeErr != nil {
-				out.Err = routeErr
-				return
-			}
-			if strings.TrimSpace(event.Response.ID) == "" || event.Response.Model != model {
-				out.Err = &codexMintError{kind: "model_mismatch", detail: "mint model declaration mismatch"}
-				return
-			}
-			created = true
+		case "response.completed":
+			out.Err = readCodexHarvestComplete(strings.NewReader(transcript.String()))
+			return
 		case "error", "response.failed":
 			out.Err = errors.New("mint websocket error event")
-			return
-		}
-		if created && out.State != "" {
 			return
 		}
 	}

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/mihomo"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -77,6 +79,7 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 		Protocol:       input.Protocol,
 		Host:           input.Host,
 		Port:           input.Port,
+		MihomoNodeID:   input.MihomoNodeID,
 		Username:       input.Username,
 		Password:       input.Password,
 		Status:         StatusActive,
@@ -104,6 +107,12 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if proxy.MihomoNodeID != "" && ((input.Protocol != "" && input.Protocol != proxy.Protocol) ||
+		(input.Host != "" && input.Host != proxy.Host) || (input.Port != 0 && input.Port != proxy.Port) ||
+		(input.Username != nil && *input.Username != proxy.Username) ||
+		(input.Password != nil && *input.Password != proxy.Password)) {
+		return nil, infraerrors.Conflict("MIHOMO_STATIC_PROXY_ENDPOINT_FIXED", "Mihomo static proxy endpoint is managed by the node")
 	}
 
 	// Merge only supplied fields, then validate the resulting fallback configuration.
@@ -159,6 +168,8 @@ func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *Upd
 }
 
 func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
+	s.mihomoProxyMu.Lock()
+	defer s.mihomoProxyMu.Unlock()
 	count, err := s.proxyRepo.CountAccountsByProxyID(ctx, id)
 	if err != nil {
 		return err
@@ -166,10 +177,33 @@ func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
 	if count > 0 {
 		return ErrProxyInUse
 	}
-	return s.proxyRepo.Delete(ctx, id)
+	return s.deleteProxyWithStaticBinding(ctx, id)
+}
+
+func (s *adminServiceImpl) deleteProxyWithStaticBinding(ctx context.Context, id int64) error {
+	proxy, err := s.proxyRepo.GetByID(ctx, id)
+	if err != nil && !errors.Is(err, ErrProxyNotFound) {
+		return err
+	}
+	if proxy != nil && proxy.MihomoNodeID != "" {
+		if err := mihomo.DeactivateStaticNode(ctx, proxy.MihomoNodeID); err != nil {
+			return err
+		}
+	}
+	if err := s.proxyRepo.Delete(ctx, id); err != nil {
+		if proxy != nil && proxy.MihomoNodeID != "" {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			mihomo.RestoreStaticNode(cleanup, proxy.MihomoNodeID)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) (*ProxyBatchDeleteResult, error) {
+	s.mihomoProxyMu.Lock()
+	defer s.mihomoProxyMu.Unlock()
 	result := &ProxyBatchDeleteResult{}
 	if len(ids) == 0 {
 		return result, nil
@@ -191,7 +225,7 @@ func (s *adminServiceImpl) BatchDeleteProxies(ctx context.Context, ids []int64) 
 			})
 			continue
 		}
-		if err := s.proxyRepo.Delete(ctx, id); err != nil {
+		if err := s.deleteProxyWithStaticBinding(ctx, id); err != nil {
 			result.Skipped = append(result.Skipped, ProxyBatchDeleteSkipped{
 				ID:     id,
 				Reason: err.Error(),

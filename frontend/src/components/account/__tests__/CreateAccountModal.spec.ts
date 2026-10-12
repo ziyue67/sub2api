@@ -684,6 +684,26 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(syncUpstreamModelsMock).toHaveBeenCalledWith(42)
   })
 
+  it('previews the current unsaved OpenAI connection including its selected proxy', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('input[placeholder="https://api.openai.com"]').setValue('https://draft.example/v1')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('unsaved-test-key')
+    wrapper.getComponent({ name: 'ProxySelector' }).vm.$emit('update:modelValue', 7)
+    await flushPromises()
+
+    expect(wrapper.getComponent(ModelWhitelistSelectorStub).props('syncCredentials')).toMatchObject({
+      platform: 'openai',
+      type: 'apikey',
+      base_url: 'https://draft.example/v1',
+      api_key: 'unsaved-test-key',
+      proxy_id: 7,
+    })
+    expect(createAccountMock).not.toHaveBeenCalled()
+    expect(syncUpstreamModelsMock).not.toHaveBeenCalled()
+  })
+
   it('includes the current concrete model mapping in preview credentials', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')

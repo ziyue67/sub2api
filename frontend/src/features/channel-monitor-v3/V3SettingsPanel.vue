@@ -181,6 +181,13 @@
         </div>
       </div>
 
+      <IdleProbeSettings
+        :probe="settings.idle_probe || NO_IDLE_PROBE"
+        :stats="settings.idle_probe_stats || []"
+        :components="settings.components"
+        @saved="onIdleProbeSaved"
+      />
+
       <!-- Live preview through the admin endpoint, available in any mode -->
       <div class="card !rounded-2xl" data-testid="monitor-v3-preview">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-dark-700">
@@ -272,6 +279,7 @@ import {
   type MonitorV3Category,
   type MonitorV3Component,
   type MonitorV3Config,
+  type MonitorV3IdleProbe,
   type MonitorV3Settings,
   type MonitorV3StatusPage,
 } from '@/api/channelMonitorV3'
@@ -281,12 +289,15 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { getChannelMonitorMode } from '@/utils/featureFlags'
 import { platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
 import ComponentEditorDialog from './ComponentEditorDialog.vue'
+import IdleProbeSettings from './IdleProbeSettings.vue'
 import IncidentsDialog from './IncidentsDialog.vue'
 import StatusPage from './StatusPage.vue'
 import { formatMonitorV3Full, formatMonitorV3Multiplier } from './monitorV3'
 
 /** Facts older than this mean the passive aggregation is not keeping up. */
 const STALE_MS = 10 * 60_000
+/** What a server without idle probes reports. */
+const NO_IDLE_PROBE: MonitorV3IdleProbe = { enabled: false, groups: [] }
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -406,6 +417,11 @@ async function saveConfig() {
   } finally {
     savingConfig.value = false
   }
+}
+
+function onIdleProbeSaved(probe: MonitorV3IdleProbe) {
+  if (settings.value) settings.value.idle_probe = probe
+  void loadPreview(previewEnd.value)
 }
 
 function openCategory(category: MonitorV3Category | null) {

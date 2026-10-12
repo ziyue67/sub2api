@@ -12,6 +12,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestChannelMonitorV2PlatformOrderFollowsConfig(t *testing.T) {
+	cfg := service.ChannelMonitorV2Config{Platforms: []service.ChannelMonitorV2PlatformConfig{
+		{Platform: "deepseek", Enabled: true},
+		{Platform: "openai", Enabled: true},
+		{Platform: "anthropic", Enabled: true},
+	}}
+	require.True(t, channelMonitorV2PlatformLess(cfg, "deepseek", "openai"))
+	require.True(t, channelMonitorV2PlatformLess(cfg, "openai", "anthropic"))
+	require.False(t, channelMonitorV2PlatformLess(cfg, "anthropic", "deepseek"))
+	require.True(t, channelMonitorV2PlatformLess(cfg, "anthropic", "unlisted"))
+	require.Equal(t, "DeepSeek", service.ChannelMonitorV2PlatformLabel("deepseek"))
+}
+
 func TestChannelMonitorV2DateBinOriginIsUTC(t *testing.T) {
 	require.Equal(t, "TIMESTAMPTZ '1970-01-01 00:00:00+00'", channelMonitorV2DateBinOrigin)
 	require.Equal(t, "date_bin($1::interval,m.bucket_start,TIMESTAMPTZ '1970-01-01 00:00:00+00')", channelMonitorV2DateBinExpr("m.bucket_start"))

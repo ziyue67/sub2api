@@ -130,6 +130,21 @@ func (h *ChannelMonitorV3Handler) UpdateConfig(c *gin.Context) {
 	response.Success(c, updated)
 }
 
+// UpdateIdleProbe saves which groups get idle probes; it leaves the page config alone.
+func (h *ChannelMonitorV3Handler) UpdateIdleProbe(c *gin.Context) {
+	var input service.ChannelMonitorV3IdleProbe
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BadRequest(c, "invalid idle probe settings")
+		return
+	}
+	updated, err := h.service.UpdateIdleProbe(c.Request.Context(), input)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, updated)
+}
+
 func (h *ChannelMonitorV3Handler) CreateCategory(c *gin.Context) {
 	var input service.ChannelMonitorV3CategoryInput
 	if err := c.ShouldBindJSON(&input); err != nil {

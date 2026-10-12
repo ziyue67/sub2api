@@ -27,6 +27,7 @@
           <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">
             {{ reason(item.top_error) }} · {{ t('channelMonitorV3.incidents.downSlots', { count: item.down_slots }) }}
             <template v-if="item.requests"> · {{ t('channelMonitorV3.incidents.volume', { requests: item.requests, errors: item.errors || 0 }) }}</template>
+            <template v-if="item.probes"> · {{ t('channelMonitorV3.incidents.probes', { count: item.probes }) }}</template>
           </p>
           <p class="mt-0.5 text-[11px] text-gray-400 dark:text-gray-500">
             {{ formatMonitorV3Full(item.started_at) }} → {{ item.ended_at ? formatMonitorV3Full(item.ended_at) : t('channelMonitorV3.incidents.now') }}
