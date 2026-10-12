@@ -201,7 +201,7 @@ func TestModelBillingUsesPricedFallbackAndPreservesSearchSurcharge(t *testing.T)
 	require.NoError(t, err)
 	search := svc.billingService.CalculateSearchCost(2, nil, .2)
 	cost, err := svc.calculateOpenAIRecordUsageCost(t.Context(), result, key,
-		[]string{"no-price-test-model", "gpt-6-luna"}, .2, .2, .2, .2, tokens, "", nil, time.Time{})
+		[]string{"no-price-test-model", "gpt-6-luna"}, .2, .2, .2, .2, tokens, "", nil, false, time.Time{})
 	require.NoError(t, err)
 	require.InDelta(t, base.ActualCost*10+search.ActualCost, cost.ActualCost, 1e-12)
 	require.InDelta(t, base.TotalCost+search.TotalCost, cost.TotalCost, 1e-12)
