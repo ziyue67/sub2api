@@ -230,7 +230,10 @@ func TestChannelMonitorV2UpdateKeepsOmittedCandyHistoryLimit(t *testing.T) {
 	updated, err := NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60}, 2, 9)
 	require.NoError(t, err)
 	require.Equal(t, 80, updated.CandyHistoryLimit)
-	_, err = NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60, CandyHistoryLimit: 29}, 2, 9)
+	updated, err = NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60, CandyHistoryLimit: 15}, 2, 9)
+	require.NoError(t, err)
+	require.Equal(t, 15, updated.CandyHistoryLimit)
+	_, err = NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60, CandyHistoryLimit: 14}, 2, 9)
 	require.ErrorIs(t, err, ErrChannelMonitorV2InvalidConfig)
 }
 

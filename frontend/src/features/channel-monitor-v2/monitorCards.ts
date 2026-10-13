@@ -1,8 +1,10 @@
 import type { HealthState, MonitorCandyHistory, MonitorCandyResult, MonitorCoverage, MonitorMatrixBucket, MonitorMatrixRow, MonitorMetric } from '@/api/channelMonitorV2'
 
 export const CANDY_HISTORY_LIMIT = 100
-export const CANDY_HISTORY_LIMIT_MIN = 30
+export const CANDY_HISTORY_LIMIT_MIN = 15
 export const CANDY_HISTORY_LIMIT_MAX = 100
+export const MONITOR_CARD_SLOT_COUNT = 18
+export type MonitorCardTimelineMode = 'windows' | 'samples'
 
 export function candyHistoryLimit(history: { history_limit?: number } | null | undefined): number {
   const limit = history?.history_limit
@@ -40,14 +42,48 @@ export function monitorRefreshSeconds(configSeconds: number | undefined, rows: r
   return Math.max(60, seconds)
 }
 
-// Keep real time gaps. Each bar summarizes observed health in one of 18 equal
-// time windows, never interpolating a successful request into missing history.
-export function monitorCardTimeline(row: MonitorMatrixRow, coverage: MonitorCoverage | undefined) {
+export interface MonitorCardBar {
+  start: number
+  end: number
+  state: HealthState
+  observed: boolean
+  buckets: MonitorMatrixBucket[]
+}
+
+function coverageBounds(coverage: MonitorCoverage | undefined) {
   const start = Date.parse(coverage?.requested_start || '')
   const end = Date.parse(coverage?.requested_end || coverage?.data_through || '')
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return []
-  const width = (end - start) / 18
-  const bars = Array.from({ length: 18 }, (_, index) => ({ start: start + index * width, end: start + (index + 1) * width, state: 'unknown' as HealthState, observed: false, buckets: [] as MonitorMatrixBucket[] }))
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+  return { start, end }
+}
+
+// Latest buckets that actually have samples. Empty time gaps are omitted, and
+// only the newest MONITOR_CARD_SLOT_COUNT observed buckets are kept.
+export function monitorCardSampleTimeline(row: MonitorMatrixRow, coverage: MonitorCoverage | undefined): MonitorCardBar[] {
+  const bounds = coverageBounds(coverage)
+  const widthMs = coverage?.bucket_seconds && coverage.bucket_seconds > 0 ? coverage.bucket_seconds * 1000 : 0
+  return row.buckets
+    .map(bucket => ({ bucket, at: Date.parse(bucket.bucket_start) }))
+    .filter(item => Number.isFinite(item.at) && hasMonitorSamples(item.bucket.metrics) && (!bounds || (item.at >= bounds.start && item.at < bounds.end)))
+    .sort((a, b) => a.at - b.at)
+    .slice(-MONITOR_CARD_SLOT_COUNT)
+    .map(item => ({
+      start: item.at,
+      end: widthMs > 0 ? item.at + widthMs : item.at,
+      state: item.bucket.health.overall,
+      observed: true,
+      buckets: [item.bucket],
+    }))
+}
+
+// Keep real time gaps. Each bar summarizes observed health in one of 18 equal
+// time windows, never interpolating a successful request into missing history.
+export function monitorCardWindowTimeline(row: MonitorMatrixRow, coverage: MonitorCoverage | undefined): MonitorCardBar[] {
+  const bounds = coverageBounds(coverage)
+  if (!bounds) return []
+  const { start, end } = bounds
+  const width = (end - start) / MONITOR_CARD_SLOT_COUNT
+  const bars: MonitorCardBar[] = Array.from({ length: MONITOR_CARD_SLOT_COUNT }, (_, index) => ({ start: start + index * width, end: start + (index + 1) * width, state: 'unknown', observed: false, buckets: [] }))
   const severity: Record<HealthState, number> = { unknown: 0, healthy: 1, warning: 2, critical: 3 }
   for (const bucket of row.buckets) {
     const at = Date.parse(bucket.bucket_start)
@@ -62,6 +98,10 @@ export function monitorCardTimeline(row: MonitorMatrixRow, coverage: MonitorCove
   }
   for (const bar of bars) bar.buckets.sort((a, b) => Date.parse(a.bucket_start) - Date.parse(b.bucket_start))
   return bars
+}
+
+export function monitorCardTimeline(row: MonitorMatrixRow, coverage: MonitorCoverage | undefined, mode: MonitorCardTimelineMode = 'windows') {
+  return mode === 'samples' ? monitorCardSampleTimeline(row, coverage) : monitorCardWindowTimeline(row, coverage)
 }
 
 export function candyDisplayState(history: MonitorCandyHistory, now: number): 'correct' | 'incorrect' | 'error' | 'unknown' | 'stale' {

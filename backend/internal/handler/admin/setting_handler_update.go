@@ -420,6 +420,8 @@ type UpdateSettingsRequest struct {
 
 	AllowUserViewErrorRequests    *bool   `json:"allow_user_view_error_requests"`
 	UsageShowLongContextBadge     *bool   `json:"usage_show_long_context_badge"`
+	UsageShowCacheRate            *bool   `json:"usage_show_cache_rate"`
+	UsageShowCacheRateToUsers     *bool   `json:"usage_show_cache_rate_to_users"`
 	RequestCaptureEnabled         *bool   `json:"request_capture_enabled"`
 	RequestCaptureQuotaMiB        *int64  `json:"request_capture_quota_mib"`
 	RequestCaptureRetentionDays   *int    `json:"request_capture_retention_days"`
@@ -1921,6 +1923,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.UsageShowLongContextBadge
 		}(),
+		UsageShowCacheRate: func() bool {
+			if req.UsageShowCacheRate != nil {
+				return *req.UsageShowCacheRate
+			}
+			return previousSettings.UsageShowCacheRate
+		}(),
+		UsageShowCacheRateToUsers: func() bool {
+			if req.UsageShowCacheRateToUsers != nil {
+				return *req.UsageShowCacheRateToUsers
+			}
+			return previousSettings.UsageShowCacheRateToUsers
+		}(),
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
 				return *req.OpsMonitoringEnabled
@@ -2834,6 +2848,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AccountSchedulingThresholds:       updatedSettings.AccountSchedulingThresholds,
 		AllowUserViewErrorRequests:        updatedSettings.AllowUserViewErrorRequests,
 		UsageShowLongContextBadge:         updatedSettings.UsageShowLongContextBadge,
+		UsageShowCacheRate:                updatedSettings.UsageShowCacheRate,
+		UsageShowCacheRateToUsers:         updatedSettings.UsageShowCacheRateToUsers,
 		RequestCaptureEnabled:             updatedSettings.RequestCaptureEnabled,
 		RequestCaptureQuotaMiB:            updatedSettings.RequestCaptureQuotaMiB,
 		RequestCaptureRetentionDays:       updatedSettings.RequestCaptureRetentionDays,

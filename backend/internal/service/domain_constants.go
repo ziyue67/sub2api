@@ -819,3 +819,9 @@ const SettingKeyAllowUserViewErrorRequests = "allow_user_view_error_requests"
 // billing "x2" badge is shown next to the cost in usage tables. Default
 // true (opt-out).
 const SettingKeyUsageShowLongContextBadge = "usage_show_long_context_badge"
+
+// SettingKeyUsageShowCacheRate controls the per-request cache-rate row in
+// usage records. Default true. SettingKeyUsageShowCacheRateToUsers controls
+// whether end users see that row; default false (admin only).
+const SettingKeyUsageShowCacheRate = "usage_show_cache_rate"
+const SettingKeyUsageShowCacheRateToUsers = "usage_show_cache_rate_to_users"

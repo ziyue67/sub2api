@@ -245,7 +245,15 @@ func newSchedulerCacheWithChunkSizes(rdb *redis.Client, mgetChunkSize, writeChun
 
 func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.SchedulerBucket) ([]*service.Account, bool, error) {
 	readyKey := schedulerBucketKey(schedulerReadyPrefix, bucket)
-	readyVal, err := c.rdb.Get(ctx, readyKey).Result()
+	activeKey := schedulerBucketKey(schedulerActivePrefix, bucket)
+	// Preserve GET's type/error semantics while fetching independent control
+	// keys in one round trip. A reader that captured an active generation may
+	// finish against its grace-period snapshot, as before.
+	pipe := c.rdb.Pipeline()
+	readyCmd := pipe.Get(ctx, readyKey)
+	activeCmd := pipe.Get(ctx, activeKey)
+	_, _ = pipe.Exec(ctx)
+	readyVal, err := readyCmd.Result()
 	if err == redis.Nil {
 		return nil, false, nil
 	}
@@ -255,9 +263,7 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 	if readyVal != "1" {
 		return nil, false, nil
 	}
-
-	activeKey := schedulerBucketKey(schedulerActivePrefix, bucket)
-	activeVal, err := c.rdb.Get(ctx, activeKey).Result()
+	activeVal, err := activeCmd.Result()
 	if err == redis.Nil {
 		return nil, false, nil
 	}
@@ -282,11 +288,7 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 		keys = append(keys, schedulerAccountMetaKey(id))
 		lastUsedKeys = append(lastUsedKeys, schedulerLastUsedKey(id))
 	}
-	values, err := c.mgetChunked(ctx, keys)
-	if err != nil {
-		return nil, false, err
-	}
-	lastUsedValues, err := c.mgetChunked(ctx, lastUsedKeys)
+	values, lastUsedValues, err := c.mgetSnapshotFields(ctx, keys, lastUsedKeys)
 	if err != nil {
 		return nil, false, err
 	}
@@ -878,6 +880,33 @@ func marshalSchedulerCacheAccount(account service.Account) ([]byte, []byte, erro
 		return nil, nil, fmt.Errorf("marshal account metadata: %w", err)
 	}
 	return fullPayload, metaPayload, nil
+}
+
+// mgetSnapshotFields pipelines metadata and the independently updated LRU
+// side keys. Each command retains the configured key limit; only one pair
+// is in flight at a time to bound the queued reply size.
+func (c *schedulerCache) mgetSnapshotFields(ctx context.Context, keys, lastUsedKeys []string) ([]any, []any, error) {
+	if len(keys) != len(lastUsedKeys) {
+		return nil, nil, fmt.Errorf("scheduler snapshot field count mismatch")
+	}
+	values := make([]any, 0, len(keys))
+	lastUsed := make([]any, 0, len(keys))
+	chunkSize := c.mgetChunkSize
+	if chunkSize <= 0 {
+		chunkSize = defaultSchedulerSnapshotMGetChunkSize
+	}
+	for start := 0; start < len(keys); start += chunkSize {
+		end := min(start+chunkSize, len(keys))
+		pipe := c.rdb.Pipeline()
+		metaCmd := pipe.MGet(ctx, keys[start:end]...)
+		lastUsedCmd := pipe.MGet(ctx, lastUsedKeys[start:end]...)
+		if _, err := pipe.Exec(ctx); err != nil {
+			return nil, nil, err
+		}
+		values = append(values, metaCmd.Val()...)
+		lastUsed = append(lastUsed, lastUsedCmd.Val()...)
+	}
+	return values, lastUsed, nil
 }
 
 func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any, error) {

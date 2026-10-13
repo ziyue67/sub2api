@@ -298,6 +298,10 @@ export interface PublicSettings {
   allow_user_view_error_requests?: boolean
   /** Usage 表中长上下文计费 x2 徽标的展示开关（后端默认开启，缺失时按开启处理） */
   usage_show_long_context_badge?: boolean
+  /** 使用记录单条缓存率。缺失时按开启处理。 */
+  usage_show_cache_rate?: boolean
+  /** 是否向终端用户展示单条缓存率。缺失时按关闭处理。 */
+  usage_show_cache_rate_to_users?: boolean
 }
 
 export interface AuthResponse {

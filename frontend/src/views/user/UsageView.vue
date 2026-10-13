@@ -185,6 +185,7 @@
           :show-account-billing="false"
           :show-upstream-endpoint="false"
           :mobile-horizontal-scroll="true"
+          cache-rate-audience="user"
           default-sort-key="created_at"
           default-sort-order="desc"
           @sort="handleSort"
@@ -240,6 +241,7 @@ import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { getGranularityForRange, getLast24HourRange, toDateInputValue } from '@/utils/dateRange'
+import { formatUsageCacheRate, showUsageCacheRate } from '@/utils/usageCacheRate'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
@@ -345,6 +347,7 @@ const endpointDistributionMetric = ref<DistributionMetric>('tokens')
 const endpointDistributionSource = ref<EndpointSource>('inbound')
 const activeTab = ref<'usage' | 'errors'>('usage')
 const errorViewEnabled = computed(() => appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false)
+const includeCacheRate = computed(() => showUsageCacheRate(appStore.cachedPublicSettings, 'user'))
 
 const filters = ref<UsageQueryParams>({
   start_date: startDate.value,
@@ -667,6 +670,7 @@ const exportToCSV = async () => {
       'Output Tokens',
       'Cache Read Tokens',
       'Cache Creation Tokens',
+      ...(includeCacheRate.value ? ['Cache Rate'] : []),
       'Rate Multiplier',
       'Billed Cost',
       'Original Cost',
@@ -686,6 +690,7 @@ const exportToCSV = async () => {
       log.output_tokens,
       log.cache_read_tokens,
       log.cache_creation_tokens,
+      ...(includeCacheRate.value ? [formatUsageCacheRate(log) ?? ''] : []),
       log.rate_multiplier,
       log.actual_cost.toFixed(8),
       log.total_cost.toFixed(8),

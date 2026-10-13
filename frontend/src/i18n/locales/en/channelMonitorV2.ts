@@ -12,6 +12,13 @@ export default {
         "availability": "Availability",
         "ttft": "First token",
         "windows": "Last {count} time windows",
+        "sampledWindows": "Latest {count} samples",
+        "noSamples": "No samples in this range",
+        "timelineMode": {
+            "label": "Card sample display",
+            "windows": "Time windows",
+            "samples": "Latest 18 samples"
+        },
         "refreshIn": "Refresh in {seconds}s",
         "trafficHistory": "Observed request health timeline",
         "health": {
@@ -28,8 +35,8 @@ export default {
         "disabledHint": "Intelligence checks are not enabled for this group. An administrator can configure them in Channel Monitor.",
         "invalid": 'Enter a model and an integer interval from 1 to 1440 minutes.',
         "historyLimit": "Recent checks to show",
-        "historyLimitHint": "How many recent checks each model shows on a card. 30–100, default 100. Missing checks stay gray.",
-        "historyLimitInvalid": "Recent checks must be an integer from 30 to 100.",
+        "historyLimitHint": "How many recent checks each model shows on a card. 15–100, default 100. Missing checks stay gray.",
+        "historyLimitInvalid": "Recent checks must be an integer from 15 to 100.",
         "duplicateModel": "The same group cannot repeat a model and reasoning effort.",
         "title": "Reasoning check",
         "cadence": "Every {minutes} min",

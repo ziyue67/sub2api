@@ -40,7 +40,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { tab: 'gateway', id: 'scheduling', titleKey: 'admin.settings.scheduling.title' },
   { tab: 'gateway', id: 'gateway-forwarding', titleKey: 'admin.settings.gatewayForwarding.title' },
   { tab: 'gateway', id: 'web-search-emulation', titleKey: 'admin.settings.webSearchEmulation.title' },
-  { tab: 'gateway', id: 'usage-records', titleKey: 'admin.settings.usageRecords.title' },
+  { tab: 'gateway', id: 'usage-records', titleKey: 'admin.settings.usageRecords.title', keywordKeys: ['admin.settings.cache_rate.label', 'admin.settings.cache_rate_to_users.label'] },
   { tab: 'general', id: 'site', titleKey: 'admin.settings.site.title' },
   { tab: 'general', id: 'custom-menu', titleKey: 'admin.settings.customMenu.title' },
   { tab: 'agreement', id: 'login-agreement', title: ['登录条款确认', 'Login agreement'] },

@@ -135,11 +135,14 @@ func TestChannelMonitorV2CandyGatesAndValidation(t *testing.T) {
 	sameEffort := second
 	sameEffort.IntervalMinutes = 5
 	require.Error(t, normalizeChannelMonitorV2CandyProbes([]ChannelMonitorV2CandyProbe{second, sameEffort}))
-	for _, limit := range []int{29, 101} {
+	for _, limit := range []int{14, 101} {
 		cfg := ChannelMonitorV2Config{RefreshIntervalSeconds: 60, CandyHistoryLimit: limit}
 		require.ErrorIs(t, normalizeChannelMonitorV2Config(&cfg), ErrChannelMonitorV2InvalidConfig)
 	}
-	cfg := ChannelMonitorV2Config{RefreshIntervalSeconds: 60, CandyHistoryLimit: 30}
+	cfg := ChannelMonitorV2Config{RefreshIntervalSeconds: 60, CandyHistoryLimit: 15}
+	require.NoError(t, normalizeChannelMonitorV2Config(&cfg))
+	require.Equal(t, 15, cfg.CandyHistoryLimit)
+	cfg.CandyHistoryLimit = 30
 	require.NoError(t, normalizeChannelMonitorV2Config(&cfg))
 	require.Equal(t, 30, cfg.CandyHistoryLimit)
 	cfg.CandyHistoryLimit = ChannelMonitorV2CandyHistoryMax

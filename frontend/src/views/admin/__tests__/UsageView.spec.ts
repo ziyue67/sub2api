@@ -625,6 +625,9 @@ describe('admin UsageView model audit export', () => {
 		])
 		const row = sheetAddAoa.mock.calls[0][1][0]
 		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
+		const cacheRateIndex = headers.indexOf('usage.latencyCacheRate')
+		expect(cacheRateIndex).toBe(headers.indexOf('admin.usage.cacheCreationTokens') + 1)
+		expect(row[cacheRateIndex]).toBe('0%')
 		expect(saveAs).toHaveBeenCalledTimes(1)
 	})
 })

@@ -15,7 +15,7 @@ import (
 const (
 	channelCandyMaxProbes               = 64
 	ChannelMonitorV2CandyHistoryDefault = 100
-	ChannelMonitorV2CandyHistoryMin     = 30
+	ChannelMonitorV2CandyHistoryMin     = 15
 	ChannelMonitorV2CandyHistoryMax     = 100
 	ChannelMonitorV2CandyRetention      = 24 * time.Hour
 )
