@@ -281,14 +281,14 @@ func (h *UsageHandler) List(c *gin.Context) {
 	if isObserverUsageRequest(c) {
 		out := make([]dto.AdminUsageLog, 0, len(records))
 		for i := range records {
-			out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]))
+			out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]).Localized(c.GetHeader("Accept-Language")))
 		}
 		response.Paginated(c, out, result.Total, page, pageSize)
 		return
 	}
 	out := make([]dto.UsageLog, 0, len(records))
 	for i := range records {
-		out = append(out, *dto.UsageLogFromService(&records[i]))
+		out = append(out, *dto.UsageLogFromService(&records[i]).Localized(c.GetHeader("Accept-Language")))
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
@@ -464,10 +464,10 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 	}
 
 	if isObserverUsageRequest(c) {
-		response.Success(c, dto.UsageLogFromServiceAdmin(record))
+		response.Success(c, dto.UsageLogFromServiceAdmin(record).Localized(c.GetHeader("Accept-Language")))
 		return
 	}
-	response.Success(c, dto.UsageLogFromService(record))
+	response.Success(c, dto.UsageLogFromService(record).Localized(c.GetHeader("Accept-Language")))
 }
 
 // Stats handles getting usage statistics

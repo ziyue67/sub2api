@@ -202,7 +202,7 @@ func TestGeminiSelectAccountForModelWithoutStickyCacheDoesNotPanic(t *testing.T)
 	require.Equal(t, proxy.URL(), AccountProxyURL(got))
 }
 
-func TestGeminiSelectAccountForAIStudioEndpointsProjectsLane(t *testing.T) {
+func TestGeminiSelectAccountForModelsEndpointsProjectsLane(t *testing.T) {
 	proxyID := int64(7701)
 	laneID := int64(77001)
 	proxy := &Proxy{ID: proxyID, Protocol: "http", Host: "lane.example", Port: 8770, Status: StatusActive}
@@ -215,7 +215,7 @@ func TestGeminiSelectAccountForAIStudioEndpointsProjectsLane(t *testing.T) {
 	repo := &proxyLaneHydrationRepoStub{AccountRepository: baseRepo, account: &authoritative}
 	svc := &GeminiMessagesCompatService{accountRepo: repo}
 
-	got, err := svc.SelectAccountForAIStudioEndpoints(context.Background(), nil)
+	got, err := svc.SelectAccountForModelsEndpoints(context.Background(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, proxy.URL(), AccountProxyURL(got))

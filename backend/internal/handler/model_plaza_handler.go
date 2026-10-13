@@ -158,10 +158,10 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 
 	visible := filterPlazaVisibleGroups(groups, allowedGroups, restrictPublicGroups)
 
-	out := make([]modelPlazaGroup, 0, len(visible))
-	for i := range visible {
-		out = append(out, toModelPlazaGroupDTO(&visible[i], userRates, deniedModels[visible[i].ID]))
-	}
+	// 广场可匿名访问，分组文案随请求语言变化，提示中间缓存按语言区分。
+	// 追加而非覆盖：CORS 中间件已为具体来源写入 Vary: Origin。
+	c.Writer.Header().Add("Vary", "Accept-Language")
+	out := toLocalizedModelPlazaGroups(visible, userRates, c.GetHeader("Accept-Language"), deniedModels)
 	response.Success(c, modelPlazaResponse{
 		Description: rt.Description,
 		Groups:      out,
@@ -190,6 +190,17 @@ func filterPlazaVisibleGroups(
 		visible = append(visible, g)
 	}
 	return visible
+}
+
+// toLocalizedModelPlazaGroups 转换可见分组，按请求语言本地化名称与描述，并隐藏该用户被禁用的模型。
+func toLocalizedModelPlazaGroups(visible []service.PlazaGroup, userRates map[int64]float64, acceptLanguage string, deniedModels map[int64][]string) []modelPlazaGroup {
+	out := make([]modelPlazaGroup, 0, len(visible))
+	for i := range visible {
+		group := toModelPlazaGroupDTO(&visible[i], userRates, deniedModels[visible[i].ID])
+		group.Name, group.Description = visible[i].I18n.Localize(acceptLanguage, group.Name, group.Description)
+		out = append(out, group)
+	}
+	return out
 }
 
 // toModelPlazaGroupDTO 将 service 层广场分组映射为白名单 DTO,合并用户专属倍率并隐藏该用户被禁用的模型。

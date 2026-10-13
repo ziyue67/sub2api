@@ -28,9 +28,8 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	c *gin.Context,
 	account *Account,
 	body []byte,
+	startTime time.Time,
 ) (*OpenAIForwardResult, error) {
-	startTime := time.Now()
-
 	// DeepSeek 原生 /responses 不认识 compaction_trigger：remote compaction v2 会得到
 	// reasoning+message 而非 compaction item，Codex 判 fatal。这里改写成普通总结回合
 	// （剥 trigger + 注入总结指令 + 强制非流式），回程再合成 compaction item。
