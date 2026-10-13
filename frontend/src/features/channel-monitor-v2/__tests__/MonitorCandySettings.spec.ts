@@ -73,7 +73,7 @@ it('saves a per-model history limit and rejects a duplicate model on the same gr
   await wrapper.get('header button.btn-primary').trigger('click')
   expect(mocks.error).toHaveBeenCalledWith('channelMonitorV2.candy.duplicateModel')
   mocks.update.mockClear()
-  wrapper.findComponent(MonitorCandySettings).vm.$emit('update:historyLimit', 12)
+  wrapper.findComponent(MonitorCandySettings).vm.$emit('update:historyLimit', 14)
   wrapper.findComponent(MonitorCandySettings).vm.$emit('update:modelValue', [probe])
   await flushPromises()
   await wrapper.get('header button.btn-primary').trigger('click')

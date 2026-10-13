@@ -12,6 +12,13 @@ export default {
         "availability": "可用率",
         "ttft": "首 TOKEN",
         "windows": "近 {count} 个时间段",
+        "sampledWindows": "近 {count} 次有采样",
+        "noSamples": "当前范围没有采样数据",
+        "timelineMode": {
+            "label": "卡片采样显示",
+            "windows": "时间段采样",
+            "samples": "近18次有采样"
+        },
         "refreshIn": "{seconds}s 后刷新",
         "trafficHistory": "真实请求健康状态时间线",
         "health": {
@@ -28,8 +35,8 @@ export default {
         "disabledHint": "该分组尚未开启降智检测, 可由管理员在渠道监控中配置.",
         "invalid": '请填写检测模型, 间隔必须是 1-1440 的整数分钟.',
         "historyLimit": "最近检测次数",
-        "historyLimitHint": "每个模型在卡片上显示最近多少次检测，30-100，默认 100。还没有那么多次检测时，空位显示为未检测。",
-        "historyLimitInvalid": "最近检测次数必须是 30-100 的整数。",
+        "historyLimitHint": "每个模型在卡片上显示最近多少次检测，15-100，默认 100。还没有那么多次检测时，空位显示为未检测。",
+        "historyLimitInvalid": "最近检测次数必须是 15-100 的整数。",
         "duplicateModel": "同一分组里，相同模型和推理强度不能重复配置。",
         "title": "降智状态",
         "cadence": "每 {minutes} 分钟检测",

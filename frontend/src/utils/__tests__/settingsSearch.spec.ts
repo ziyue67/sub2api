@@ -49,6 +49,18 @@ describe('settings feature search', () => {
     for (const section of SETTINGS_SECTIONS) expect(anchors.get(`settings-section-${section.id}`), section.id).toBe(section.tab)
   })
 
+  it('finds the usage cache rate switches from the usage records card', () => {
+    for (const [locale, messages, query] of [
+      ['zh', zh, '缓存率'],
+      ['en', en, 'cache rate'],
+    ] as const) {
+      const entries = buildFeatureSearchEntries(withSettingsSearch([
+        { path: '/admin/settings', label: 'Settings' }
+      ], key => translate(messages, key), locale))
+      expect(searchFeatures(entries, query).some(item => item.path === '/admin/settings?tab=gateway#settings-section-usage-records'), query).toBe(true)
+    }
+  })
+
   it('validates locations and prefers the target card tab over a conflicting query', () => {
     expect(settingsLocation('security', '#settings-section-features-risk-control').tab).toBe('features')
     expect(settingsLocation(['features'], '#unknown')).toEqual({ tab: 'general', anchor: undefined, linked: false })

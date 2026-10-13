@@ -1836,7 +1836,7 @@ describe('AccountUsageCell', () => {
 
     const text = wrapper.text()
     expect(text).toContain('ai studio paid')
-    expect(text).toContain('admin.accounts.gemini.quotaPolicy.title')
+    expect(wrapper.findComponent({ name: 'HelpTooltip' }).exists()).toBe(true)
     expect(text).toContain('admin.accounts.gemini.quotaPolicy.simulatedNote')
     expect(getUsage).toHaveBeenCalledWith(4003)
   })

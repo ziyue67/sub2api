@@ -1403,6 +1403,14 @@ export default {
         label: 'Show long-context billing badge',
         description: 'When enabled, usage records billed under long-context tiered pricing show an x2 badge next to their cost. Enabled by default.',
       },
+      cache_rate: {
+        label: 'Show usage cache rate',
+        description: 'When enabled, the usage record status column shows the cache rate for that request. Turning it off hides the rate from both admins and users. Enabled by default.',
+      },
+      cache_rate_to_users: {
+        label: 'Show cache rate to users',
+        description: 'When enabled, users can see the per-request cache rate on their own usage page. Off by default, so only admins see it.',
+      },
       saveSettings: 'Save Settings',
       saving: 'Saving...',
       settingsSaved: 'Settings saved successfully',

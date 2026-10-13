@@ -269,6 +269,7 @@ func (s *GeminiMessagesCompatService) doGeminiModelsGET(req *http.Request, accou
 	}
 
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	s.rateLimitService.observeQualityResponse(req.Context(), account, resp, err)
 	if err != nil {
 		return nil, err
 	}

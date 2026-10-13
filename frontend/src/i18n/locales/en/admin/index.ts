@@ -1,3 +1,4 @@
+import groupCacheTest from './groupCacheTest'
 import requestCapture from './requestCapture'
 import astraGateway from './astraGateway'
 import overview from './overview'
@@ -13,6 +14,7 @@ import plugins from './plugins'
 import harvestFlow from './harvestFlow'
 
 export default {
+  ...groupCacheTest,
   ...requestCapture,
   ...astraGateway,
   ...overview,
