@@ -15,30 +15,34 @@ const prioritySchedulingSettingKey = "priority_scheduling_v1"
 // PrioritySchedulingConfig only controls freely selectable OpenAI text requests.
 // Account eligibility, continuity, profit gates and concurrency acquisition stay authoritative.
 type PrioritySchedulingConfig struct {
-	OAuthQuotaPriority  bool     `json:"oauth_quota_priority"`
-	OAuthQuotaThreshold int      `json:"oauth_quota_threshold"`
-	BalanceProtocols    bool     `json:"balance_protocols"`
-	Enabled             bool     `json:"enabled"`
-	Mode                string   `json:"mode"`
-	GroupIDs            []int64  `json:"group_ids"`
-	Models              []string `json:"models"`
-	WindowMinutes       int      `json:"window_minutes"`
-	MinSamples          int      `json:"min_samples"`
-	TargetTTFTMs        int      `json:"target_ttft_ms"`
-	MaxLoadPercent      int      `json:"max_load_percent"`
-	MinQualityPercent   int      `json:"min_quality_percent"`
-	QualityMaxAgeHours  int      `json:"quality_max_age_hours"`
-	QualityWeight       float64  `json:"quality_weight"`
-	LatencyWeight       float64  `json:"latency_weight"`
-	LoadWeight          float64  `json:"load_weight"`
-	CostWeight          float64  `json:"cost_weight"`
+	OAuthQuotaPriority    bool     `json:"oauth_quota_priority"`
+	OAuthQuotaThreshold   int      `json:"oauth_quota_threshold"`
+	BalanceProtocols      bool     `json:"balance_protocols"`
+	Enabled               bool     `json:"enabled"`
+	Mode                  string   `json:"mode"`
+	GroupIDs              []int64  `json:"group_ids"`
+	Models                []string `json:"models"`
+	WindowMinutes         int      `json:"window_minutes"`
+	MinSamples            int      `json:"min_samples"`
+	TargetTTFTMs          int      `json:"target_ttft_ms"`
+	LatencyPenaltyMinutes int      `json:"latency_penalty_minutes"`
+	MaxLoadPercent        int      `json:"max_load_percent"`
+	MinQualityPercent     int      `json:"min_quality_percent"`
+	QualityMaxAgeHours    int      `json:"quality_max_age_hours"`
+	QualityWeight         float64  `json:"quality_weight"`
+	LatencyWeight         float64  `json:"latency_weight"`
+	LoadWeight            float64  `json:"load_weight"`
+	CostWeight            float64  `json:"cost_weight"`
 }
 
 func DefaultPrioritySchedulingConfig() PrioritySchedulingConfig {
-	return PrioritySchedulingConfig{OAuthQuotaThreshold: 90, BalanceProtocols: true, Mode: "balanced", GroupIDs: []int64{}, Models: []string{}, WindowMinutes: 60, MinSamples: 5, TargetTTFTMs: 3000, MaxLoadPercent: 80, MinQualityPercent: 90, QualityMaxAgeHours: 24, QualityWeight: 30, LatencyWeight: 25, LoadWeight: 25, CostWeight: 20}
+	return PrioritySchedulingConfig{OAuthQuotaThreshold: 90, BalanceProtocols: true, Mode: "balanced", GroupIDs: []int64{}, Models: []string{}, WindowMinutes: 60, MinSamples: 5, TargetTTFTMs: 3000, LatencyPenaltyMinutes: 10, MaxLoadPercent: 80, MinQualityPercent: 90, QualityMaxAgeHours: 24, QualityWeight: 30, LatencyWeight: 25, LoadWeight: 25, CostWeight: 20}
 }
 
 func ValidatePrioritySchedulingConfig(c PrioritySchedulingConfig) error {
+	if c.LatencyPenaltyMinutes < 0 || c.LatencyPenaltyMinutes > 1440 {
+		return errors.New("latency penalty must be between 0 and 1440 minutes")
+	}
 	if c.OAuthQuotaThreshold < 1 || c.OAuthQuotaThreshold > 100 {
 		return errors.New("OAuth quota threshold must be between 1 and 100")
 	}
@@ -180,14 +184,15 @@ func (s *OpenAIGatewayService) prioritySchedulingRuntimeConfig() PrioritySchedul
 }
 
 type PrioritySchedulingSignal struct {
-	LatestQualityPassed *bool   `json:"latest_quality_passed,omitempty"`
-	Revenue             float64 `json:"revenue"`
-	BaseCost            float64 `json:"-"`
-	ProfitSamples       int     `json:"profit_samples"`
-	Samples             int     `json:"samples"`
-	P90TTFTMs           float64 `json:"p90_ttft_ms"`
-	QualityPassed       int     `json:"quality_passed"`
-	QualitySamples      int     `json:"quality_samples"`
+	LatestLatencyAt     *time.Time `json:"latest_latency_at,omitempty"`
+	LatestQualityPassed *bool      `json:"latest_quality_passed,omitempty"`
+	Revenue             float64    `json:"revenue"`
+	BaseCost            float64    `json:"-"`
+	ProfitSamples       int        `json:"profit_samples"`
+	Samples             int        `json:"samples"`
+	P90TTFTMs           float64    `json:"p90_ttft_ms"`
+	QualityPassed       int        `json:"quality_passed"`
+	QualitySamples      int        `json:"quality_samples"`
 }
 
 type PrioritySchedulingQuery struct {
@@ -202,27 +207,29 @@ type PrioritySchedulingSignalReader interface {
 }
 
 type PrioritySchedulingScore struct {
-	OAuthQuotaRole      string   `json:"oauth_quota_role,omitempty"`
-	HistoryStatus       string   `json:"history_status"`
-	CapacityBand        int      `json:"capacity_band"`
-	BoundGroups         int      `json:"bound_groups"`
-	SelectionWeight     float64  `json:"selection_weight"`
-	ExplorationEligible bool     `json:"exploration_eligible"`
-	TheoreticalCost     float64  `json:"theoretical_cost"`
-	Profit              *float64 `json:"profit"`
-	Margin              *float64 `json:"margin"`
-	EconomicsSource     string   `json:"economics_source"`
-	Priority            int      `json:"priority"`
-	Concurrency         int      `json:"concurrency"`
-	LoadFactor          int      `json:"load_factor"`
-	AccountID           int64    `json:"account_id"`
-	AccountName         string   `json:"account_name"`
-	Score               float64  `json:"score"`
-	Tier                string   `json:"tier"`
-	Reasons             []string `json:"reasons"`
-	Rate                *float64 `json:"rate"`
-	LoadPercent         *int     `json:"load_percent"`
-	Waiting             int      `json:"waiting"`
+	LatencyPenaltyUntil *time.Time `json:"latency_penalty_until,omitempty"`
+	LatencyRecovery     bool       `json:"latency_recovery,omitempty"`
+	OAuthQuotaRole      string     `json:"oauth_quota_role,omitempty"`
+	HistoryStatus       string     `json:"history_status"`
+	CapacityBand        int        `json:"capacity_band"`
+	BoundGroups         int        `json:"bound_groups"`
+	SelectionWeight     float64    `json:"selection_weight"`
+	ExplorationEligible bool       `json:"exploration_eligible"`
+	TheoreticalCost     float64    `json:"theoretical_cost"`
+	Profit              *float64   `json:"profit"`
+	Margin              *float64   `json:"margin"`
+	EconomicsSource     string     `json:"economics_source"`
+	Priority            int        `json:"priority"`
+	Concurrency         int        `json:"concurrency"`
+	LoadFactor          int        `json:"load_factor"`
+	AccountID           int64      `json:"account_id"`
+	AccountName         string     `json:"account_name"`
+	Score               float64    `json:"score"`
+	Tier                string     `json:"tier"`
+	Reasons             []string   `json:"reasons"`
+	Rate                *float64   `json:"rate"`
+	LoadPercent         *int       `json:"load_percent"`
+	Waiting             int        `json:"waiting"`
 	PrioritySchedulingSignal
 }
 type PrioritySchedulingSnapshot struct {
@@ -240,7 +247,7 @@ type PrioritySchedulingSnapshot struct {
 	Candidates        []PrioritySchedulingScore `json:"candidates"`
 }
 
-func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandidateScore, signal PrioritySchedulingSignal, _ time.Time) PrioritySchedulingScore {
+func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandidateScore, signal PrioritySchedulingSignal, now time.Time) PrioritySchedulingScore {
 	rate := item.account.CostMultiplier()
 	theoreticalCost := signal.BaseCost * rate
 	out := PrioritySchedulingScore{Rate: &rate, TheoreticalCost: theoreticalCost, AccountID: item.account.ID, AccountName: item.account.Name, Priority: openAIAccountSchedulingPriority(item.account), Concurrency: item.account.Concurrency, LoadFactor: item.account.EffectiveLoadFactor(), Tier: "eligible", Reasons: []string{}, PrioritySchedulingSignal: signal}
@@ -262,8 +269,20 @@ func scorePriorityCandidate(c PrioritySchedulingConfig, item openAIAccountCandid
 	if signal.Samples >= c.MinSamples {
 		latency = 1 / (1 + signal.P90TTFTMs/float64(c.TargetTTFTMs))
 		if signal.P90TTFTMs > float64(c.TargetTTFTMs) {
-			degraded = true
-			out.Reasons = append(out.Reasons, "latency_above_target")
+			// The deadline belongs to the latest valid usage sample, not the
+			// scoring/cache refresh. Old evidence cannot continuously re-arm it.
+			if c.LatencyPenaltyMinutes > 0 && signal.LatestLatencyAt != nil {
+				until := signal.LatestLatencyAt.Add(time.Duration(c.LatencyPenaltyMinutes) * time.Minute)
+				out.LatencyPenaltyUntil = &until
+				out.LatencyRecovery = !now.Before(until)
+			}
+			if out.LatencyRecovery {
+				unknown = true
+				out.Reasons = append(out.Reasons, "latency_recovery")
+			} else {
+				degraded = true
+				out.Reasons = append(out.Reasons, "latency_above_target")
+			}
 		}
 	} else {
 		unknown = true
@@ -386,7 +405,8 @@ func applyPriorityCandidate(c PrioritySchedulingConfig, item *openAIAccountCandi
 		float64(score.QualityPassed)/float64(score.QualitySamples)*100 >= float64(c.MinQualityPercent)
 	item.priorityExploration = (item.account.IsOpenAIOAuth() || item.account.IsOpenAIApiKey()) &&
 		score.Tier == "insufficient" && qualityReady &&
-		(score.ProfitSamples < c.MinSamples || score.Samples < c.MinSamples) &&
+		(!score.LatencyRecovery || (score.LatestQualityPassed != nil && *score.LatestQualityPassed)) &&
+		(score.ProfitSamples < c.MinSamples || score.Samples < c.MinSamples || score.LatencyRecovery) &&
 		item.loadKnown && score.LoadPercent != nil && *score.LoadPercent < c.MaxLoadPercent
 	item.priorityOAuthSpare = priorityOAuthQuotaSpare(c, *item, score, now)
 	item.priorityAPIStandby = false

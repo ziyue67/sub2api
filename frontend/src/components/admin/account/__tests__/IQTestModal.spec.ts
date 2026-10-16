@@ -264,6 +264,18 @@ describe('Intelligence question selection', () => {
     expect((wrapper.vm as any).questionKind).toBe('candy')
     wrapper.unmount()
   })
+  it('previews generated reasoning as text without changing the manual question mode', async () => {
+    const wrapper = mountModal()
+    const manualKind = (wrapper.vm as any).questionKind
+    ;(wrapper.vm as any).previewScheduled({ id: 1, status: 'success', response_text: '{"example":0}', error_message: '', latency_ms: 100, started_at: new Date().toISOString(), pelican_config: { question_kind: 'random_reasoning', prompt: 'Synthetic generated question', reasoning_effort: 'medium', parallel_count: 1 } })
+    await flushPromises()
+    expect((wrapper.vm as any).questionKind).toBe(manualKind)
+    expect((wrapper.vm as any).runs[0].questionKind).toBe('random_reasoning')
+    expect((wrapper.vm as any).runs[0].html).toBe('')
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('previews scheduled candy results without marking text as invalid HTML', async () => {
     const wrapper = mountModal()
     ;(wrapper.vm as any).previewScheduled({ id: 1, status: 'success', response_text: '29', error_message: '', latency_ms: 100, started_at: new Date().toISOString(), pelican_config: { question_kind: 'candy', prompt: 'question', reasoning_effort: 'medium', parallel_count: 1 } })

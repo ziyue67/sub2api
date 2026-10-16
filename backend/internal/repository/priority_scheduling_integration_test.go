@@ -29,9 +29,9 @@ func TestPrioritySchedulingSignalsSeparateModelsAndCompletedRounds(t *testing.T)
 	add("upstream", "gpt-test", &fast, 0, 10, true, now) // free usage with real tokens is valid
 	add("gpt-test", "", &slow, 1, 10, true, now)         // legacy model fallback
 	add("other", "other", &slow, 1, 10, true, now)
-	add("gpt-test", "", nil, 1, 10, true, now)
-	add("gpt-test", "", &slow, 0, 0, true, now)   // failed placeholder
-	add("gpt-test", "", &slow, 1, 10, false, now) // nonstreaming duration is not TTFT
+	add("gpt-test", "", nil, 1, 10, true, now.Add(10*time.Second))
+	add("gpt-test", "", &slow, 0, 0, true, now.Add(10*time.Second))   // failed placeholder
+	add("gpt-test", "", &slow, 1, 10, false, now.Add(10*time.Second)) // nonstreaming duration is not TTFT
 	add("gpt-test", "", &slow, 1, 10, true, now.Add(-2*time.Hour))
 	var plan int64
 	rows, err := tx.QueryContext(ctx, `INSERT INTO scheduled_test_plans(account_id,model_id,cron_expression,enabled,pelican_config,updated_at) VALUES($1,'gpt-test','*/30 * * * *',true,'{"quality":{},"parallel_count":2}',NOW()-INTERVAL '1 hour') RETURNING id`, account.ID)
@@ -60,12 +60,15 @@ func TestPrioritySchedulingSignalsSeparateModelsAndCompletedRounds(t *testing.T)
 	got, err := repo.ReadPrioritySchedulingSignals(ctx, service.PrioritySchedulingQuery{AccountIDs: []int64{account.ID}, Model: "gpt-test", UsageSince: time.Now().Add(-time.Hour), QualitySince: time.Now().Add(-time.Hour)})
 	require.NoError(t, err)
 	require.Equal(t, 2, got[account.ID].Samples)
+	require.NotNil(t, got[account.ID].LatestLatencyAt)
+	require.WithinDuration(t, now, *got[account.ID].LatestLatencyAt, time.Millisecond, "nonstreaming, missing TTFT and failed placeholders must not extend a latency penalty")
 	require.Equal(t, 3, got[account.ID].ProfitSamples, "nonstreaming and missing TTFT still contribute financial records")
 	require.InDelta(t, 3, got[account.ID].Revenue, 0.0001)
 	require.InDelta(t, 6, got[account.ID].BaseCost, 0.0001, "account statistics price is aggregated before any billing or cost multiplier")
 	groupID := int64(999999)
 	differentGroup, err := repo.ReadPrioritySchedulingSignals(ctx, service.PrioritySchedulingQuery{AccountIDs: []int64{account.ID}, Model: "gpt-test", GroupID: &groupID, UsageSince: time.Now().Add(-time.Hour), QualitySince: time.Now().Add(-time.Hour)})
 	require.NoError(t, err)
+	require.Nil(t, differentGroup[account.ID].LatestLatencyAt)
 	require.Zero(t, differentGroup[account.ID].Revenue)
 	require.Zero(t, differentGroup[account.ID].ProfitSamples)
 	require.InDelta(t, 910, got[account.ID].P90TTFTMs, 0.01)

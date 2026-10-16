@@ -1,4 +1,8 @@
 export default {
+  latency_penalty_minutes: 'Latency penalty (minutes)',
+  latencyPenaltyHint: 'Defaults to 10 minutes; 0 retains ongoing demotion. Above-target P90 starts the clock at the latest valid first-token sample. After expiry, only accounts with passing quality, a passing latest test and no error, loss or congestion risk qualify for limited recovery exploration. Healthy accounts stay preferred and latency still reduces recovery weights. New samples with an above-target P90 restart the clock.',
+  latencyPenaltyUntil: 'Latency penalty ends',
+
   oauthQuotaPriority: 'Consume OAuth quota first; move trailing API keys to standby',
   oauthQuotaHint: 'When healthy OAuth accounts below the 7d usage threshold have spare capacity, move API keys from the end of the routing order to standby. The count follows OAuth capacity. Full, exhausted or unavailable OAuth accounts automatically release standby keys. Manual account status is unchanged. Requires valid quality evidence and quota data less than 5 minutes old.',
   oauthQuotaThreshold: 'OAuth preference cutoff (7d used %)',
@@ -33,5 +37,5 @@ export default {
   snapshotHint: 'Shows this instance’s latest pool, up to 100 accounts. Refresh asynchronously reads history and re-evaluates scores; candidates, configuration and load remain those observed at selection time. Re-evaluated scores do not describe the original routing decision. Rows are ordered by risk, projected utilization band and preference. Similar-capacity peers use weighted selection; row order is not a fixed allocation. Live candidates remain visible while history is loading.',
   model: 'Model', group: 'Group', account: 'Account', score: 'Score', tier: 'Status', latency: 'P90 first token', load: 'Concurrency', rate: 'Cost rate', quality: 'Quality passed', samples: 'samples', unknown: 'Unknown',
   tiers: { eligible: 'Targets met', insufficient: 'Insufficient data', degraded: 'Targets missed' },
-  reasons: { quality_below_target: 'Quality below target', quality_unknown: 'No fresh quality result', latency_above_target: 'Latency above target', latency_insufficient: 'Insufficient latency samples', busy: 'High concurrency or queueing', load_unknown: 'Concurrency unknown', cost_unknown: 'Cost unknown', recent_errors: 'Elevated recent errors', historical_loss: 'Recent charges below theoretical cost', profit_insufficient: 'Insufficient profit samples' }
+  reasons: { latency_recovery: 'Latency penalty expired; awaiting recovery samples', quality_below_target: 'Quality below target', quality_unknown: 'No fresh quality result', latency_above_target: 'Latency above target', latency_insufficient: 'Insufficient latency samples', busy: 'High concurrency or queueing', load_unknown: 'Concurrency unknown', cost_unknown: 'Cost unknown', recent_errors: 'Elevated recent errors', historical_loss: 'Recent charges below theoretical cost', profit_insufficient: 'Insufficient profit samples' }
 }

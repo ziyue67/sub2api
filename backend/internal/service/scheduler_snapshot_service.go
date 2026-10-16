@@ -120,11 +120,14 @@ type schedulerActiveGroupIDLister interface {
 }
 
 type SchedulerSnapshotService struct {
+	regionalRuntime              *regionalSchedulerRuntime
+	regionalExportMu             sync.Mutex
 	cache                        SchedulerCache
 	outboxRepo                   SchedulerOutboxRepository
 	accountRepo                  AccountRepository
 	groupRepo                    GroupRepository
 	cfg                          *config.Config
+	localSnapshotReader          LocalSchedulerSnapshotReader
 	stopCh                       chan struct{}
 	stopOnce                     sync.Once
 	wg                           sync.WaitGroup
@@ -168,8 +171,19 @@ func NewSchedulerSnapshotService(
 	}
 }
 
+// SetLocalSnapshotReader must be called before starting workers or serving requests.
+// SetLocalSnapshotReader enables the regional request path. Once configured,
+// ListSchedulableAccounts treats the local view as authoritative and does not
+// fall back to the primary database on miss or expiry.
+func (s *SchedulerSnapshotService) SetLocalSnapshotReader(reader LocalSchedulerSnapshotReader) {
+	if s == nil {
+		return
+	}
+	s.localSnapshotReader = reader
+}
+
 func (s *SchedulerSnapshotService) Start() {
-	if s == nil || s.cache == nil {
+	if s == nil || s.cache == nil || s.localSnapshotReader != nil {
 		return
 	}
 
@@ -203,6 +217,7 @@ func (s *SchedulerSnapshotService) Stop() {
 		return
 	}
 	s.stopOnce.Do(func() {
+		s.regionalRuntime.stop()
 		close(s.stopCh)
 	})
 	s.wg.Wait()
@@ -216,6 +231,20 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 	canPublish := false
 	if err := ctx.Err(); err != nil {
 		return nil, useMixed, err
+	}
+
+	if s.localSnapshotReader != nil {
+		cached, hit, err := s.localSnapshotReader.GetLocalSnapshot(ctx, bucket)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, useMixed, ctxErr
+		}
+		if err != nil {
+			return nil, useMixed, err
+		}
+		if !hit {
+			return nil, useMixed, ErrLocalSchedulerSnapshotUnavailable
+		}
+		return derefAccounts(cached), useMixed, nil
 	}
 
 	if s.cache != nil {
@@ -273,6 +302,13 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 }
 
 func (s *SchedulerSnapshotService) GetAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if s.localSnapshotReader != nil {
+		accounts, err := s.GetAccounts(ctx, []int64{accountID})
+		if err != nil {
+			return nil, err
+		}
+		return accounts[accountID], nil
+	}
 	if accountID <= 0 {
 		return nil, nil
 	}
@@ -340,6 +376,13 @@ func (s *SchedulerSnapshotService) getAccountAuthoritative(ctx context.Context, 
 
 // GetGroupByID 获取分组信息（供调度器使用）
 func (s *SchedulerSnapshotService) GetGroupByID(ctx context.Context, groupID int64) (*Group, error) {
+	if s.localSnapshotReader != nil {
+		reader, ok := s.localSnapshotReader.(LocalSchedulerDetailReader)
+		if !ok {
+			return nil, ErrLocalSchedulerSnapshotUnavailable
+		}
+		return reader.GetLocalGroup(ctx, groupID)
+	}
 	if s.groupRepo == nil {
 		return nil, nil
 	}
@@ -351,6 +394,13 @@ func (s *SchedulerSnapshotService) GetGroupByID(ctx context.Context, groupID int
 // 查询纯属浪费——composite / 模型路由 / fallback 每次装门都要付一次，WS 更是
 // 每个 turn 一次，且发生在「是否启用利润控制」判定之前。
 func (s *SchedulerSnapshotService) GetGroupByIDLite(ctx context.Context, groupID int64) (*Group, error) {
+	if s.localSnapshotReader != nil {
+		reader, ok := s.localSnapshotReader.(LocalSchedulerDetailReader)
+		if !ok {
+			return nil, ErrLocalSchedulerSnapshotUnavailable
+		}
+		return reader.GetLocalGroup(ctx, groupID)
+	}
 	if s.groupRepo == nil {
 		return nil, nil
 	}

@@ -649,6 +649,7 @@ type ProxyQualityCheckItem struct {
 
 // ProxyExitInfo represents proxy exit information from ip-api.com
 type ProxyExitInfo struct {
+	Timezone    string
 	IP          string
 	City        string
 	Region      string

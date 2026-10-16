@@ -8,6 +8,22 @@ import (
 
 const QualityActionObserveOnly = "observe_only"
 const QualityActionRemoveModel = "remove_models"
+const QualityActionIsolateModels = "isolate_models"
+const QualityModelIsolationKey = "quality_model_isolation"
+
+// QualityModels is the single source of truth for the models a policy manages.
+// Composite isolation always follows the tested models; legacy cooldown rules
+// retain their explicitly configured targets.
+func QualityModels(plan *ScheduledTestPlan) []string {
+	if plan.PelicanConfig.Quality.Action == QualityActionRemoveModel {
+		return plan.PelicanConfig.Quality.RemoveModels
+	}
+	return qualityPlanModels(plan)
+}
+
+func (q *QualityPolicy) UsesModelResults() bool {
+	return q.Action == QualityActionRemoveModel || q.Action == QualityActionIsolateModels
+}
 
 // QualityPolicy is opt-in. Legacy connectivity/HTML tests never modify membership.
 type QualityPolicy struct {
@@ -37,18 +53,18 @@ func validateQualityPolicy(plan *ScheduledTestPlan) error {
 	if plan.AutoRecover {
 		return fmt.Errorf("quality plans use auto_restore, not connectivity auto_recover")
 	}
-	if plan.PelicanConfig.QuestionKind != "candy" && plan.PelicanConfig.QuestionKind != OpenAICodexStateProbeQuestionKind {
+	if !isQualityAnswerQuestion(plan.PelicanConfig.QuestionKind) && plan.PelicanConfig.QuestionKind != OpenAICodexStateProbeQuestionKind {
 		return fmt.Errorf("quality plans require a text answer question")
 	}
-	// 探针题型自带满血/降智判定，不需要参考答案与判题模型。
-	if plan.PelicanConfig.QuestionKind != OpenAICodexStateProbeQuestionKind {
+	// 探针自带判定；随机题的参考答案由执行器生成，其他答题规则必须配置答案。
+	if plan.PelicanConfig.QuestionKind != OpenAICodexStateProbeQuestionKind && plan.PelicanConfig.QuestionKind != QualityRandomQuestionKind {
 		if strings.TrimSpace(q.ExpectedAnswer) == "" || len(q.ExpectedAnswer) > 4000 {
 			return fmt.Errorf("expected answer must be 1–4000 bytes")
 		}
 	} else if len(q.ExpectedAnswer) > 4000 {
 		return fmt.Errorf("expected answer must be 1–4000 bytes")
 	}
-	if q.Action != "remove_groups" && q.Action != "disable_scheduling" && q.Action != QualityActionRemoveModel && q.Action != QualityActionEnableBPS && q.Action != QualityActionObserveOnly {
+	if q.Action != "remove_groups" && q.Action != "disable_scheduling" && q.Action != QualityActionRemoveModel && q.Action != QualityActionEnableBPS && q.Action != QualityActionObserveOnly && q.Action != QualityActionIsolateModels {
 		return fmt.Errorf("invalid quality action")
 	}
 	if q.Action == QualityActionObserveOnly {
@@ -88,7 +104,10 @@ func validateQualityPolicy(plan *ScheduledTestPlan) error {
 	if q.RecoveryConcurrency < 0 || q.RecoveryConcurrency > 10000 {
 		return fmt.Errorf("recovery concurrency must be 0-10000")
 	}
-	if q.Action == "remove_groups" && len(q.RemoveGroupIDs) == 0 {
+	if q.Action == QualityActionIsolateModels && !isQualityAnswerQuestion(plan.PelicanConfig.QuestionKind) {
+		return fmt.Errorf("model isolation requires per-model answer tests")
+	}
+	if (q.Action == "remove_groups" || q.Action == QualityActionIsolateModels) && len(q.RemoveGroupIDs) == 0 {
 		return fmt.Errorf("select at least one group to remove")
 	}
 	if len(q.RemoveGroupIDs) > 100 {
@@ -107,7 +126,6 @@ func validateQualityPolicy(plan *ScheduledTestPlan) error {
 // One completed wrong answer quarantines; restoration requires every probe to pass.
 // Transport errors alone are inconclusive, never evidence of degradation.
 // Multi-model rules pass only when every selected model/sample passed.
-// Preserve the legacy single-model transport-error policy for existing rules.
 func qualityModelOutcomes(results []*ScheduledTestResult, targets []string) map[string]string {
 	outcomes := make(map[string]string, len(targets))
 	for _, model := range targets {
@@ -120,7 +138,9 @@ func qualityModelOutcomes(results []*ScheduledTestResult, targets []string) map[
 		if len(samples) == 0 || !qualityRoundHasResults(samples) {
 			outcomes[model] = "skipped"
 		} else {
-			outcomes[model] = qualityRoundOutcome(samples, false)
+			// A partially skipped model did not complete every configured sample.
+			// Do not let its successful sample release an existing restriction.
+			outcomes[model] = qualityOutcome(samples)
 		}
 	}
 	return outcomes
@@ -135,7 +155,7 @@ func qualityRoundHasResults(results []*ScheduledTestResult) bool {
 	return false
 }
 
-func qualityRoundOutcome(results []*ScheduledTestResult, multipleModels bool) string {
+func qualityRoundOutcome(results []*ScheduledTestResult) string {
 	effective := make([]*ScheduledTestResult, 0, len(results))
 	for _, result := range results {
 		if result == nil || result.Status != "skipped" {
@@ -145,11 +165,9 @@ func qualityRoundOutcome(results []*ScheduledTestResult, multipleModels bool) st
 	if len(effective) == 0 {
 		return "inconclusive"
 	}
-	outcome := qualityOutcome(effective)
-	if multipleModels && outcome != "passed" {
-		return "failed"
-	}
-	return outcome
+	// Unknown grading or transport failure cannot become a wrong answer merely
+	// because the rule tests multiple models. Recovery still requires all passes.
+	return qualityOutcome(effective)
 }
 
 func qualityOutcome(results []*ScheduledTestResult) string {
@@ -207,4 +225,20 @@ func (s *ScheduledTestService) ListQualityHistory(ctx context.Context, beforeID 
 		page.NextCursor = items[99].ID
 	}
 	return page, nil
+}
+
+// IsQualityModelIsolated shares account model mapping with the writer so all
+// aliases of the same upstream model observe the same persistent isolation.
+func (a *Account) IsQualityModelIsolated(model string) bool {
+	if a == nil {
+		return false
+	}
+	entries, _ := a.Extra[QualityModelIsolationKey].(map[string]any)
+	return entries[model] != nil || entries[a.GetMappedModel(model)] != nil
+}
+
+// Only trusted internal account tests may probe through their own isolation.
+// Normal scheduler selection and every later WebSocket turn share this gate.
+func (a *Account) qualityModelBlocked(ctx context.Context, model string) bool {
+	return ctx.Value(qualityProbeContextKey{}) != true && a.IsQualityModelIsolated(model)
 }

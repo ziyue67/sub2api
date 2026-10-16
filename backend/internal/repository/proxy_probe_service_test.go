@@ -54,7 +54,7 @@ func (s *ProxyProbeServiceSuite) TestProbeProxy_Success_IPAPI() {
 		// 检查是否是 ip-api 请求
 		if strings.Contains(r.RequestURI, "ip-api.com") {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"status":"success","query":"1.2.3.4","city":"c","regionName":"r","country":"cc","countryCode":"CC"}`)
+			_, _ = io.WriteString(w, `{"status":"success","query":"1.2.3.4","city":"c","regionName":"r","country":"cc","countryCode":"CC","timezone":"Asia/Tokyo"}`)
 			return
 		}
 		// 其他请求返回错误
@@ -69,6 +69,7 @@ func (s *ProxyProbeServiceSuite) TestProbeProxy_Success_IPAPI() {
 	require.Equal(s.T(), "r", info.Region)
 	require.Equal(s.T(), "cc", info.Country)
 	require.Equal(s.T(), "CC", info.CountryCode)
+	require.Equal(s.T(), "Asia/Tokyo", info.Timezone)
 }
 
 func (s *ProxyProbeServiceSuite) TestProbeProxy_Success_IPifyFallback() {

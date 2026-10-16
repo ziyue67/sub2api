@@ -925,7 +925,13 @@ func (s *GatewayService) resolveGroupByID(ctx context.Context, groupID int64) (*
 	if group := s.groupFromContext(ctx, groupID); group != nil {
 		return group, nil
 	}
-	group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+	var group *Group
+	var err error
+	if s.schedulerSnapshot != nil && s.schedulerSnapshot.localSnapshotReader != nil {
+		group, err = s.schedulerSnapshot.GetGroupByIDLite(ctx, groupID)
+	} else {
+		group, err = s.groupRepo.GetByIDLite(ctx, groupID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("get group failed: %w", err)
 	}
@@ -2014,8 +2020,16 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 
 	// require_privacy_set: 获取分组配置。GetByID 会聚合账号计数，旧选号路径不能用它。
 	var schedGroup *Group
-	if groupID != nil && s.groupRepo != nil {
-		schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
+	if groupID != nil {
+		if s.schedulerSnapshot != nil && s.schedulerSnapshot.localSnapshotReader != nil {
+			var groupErr error
+			schedGroup, groupErr = s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
+			if groupErr != nil {
+				return nil, groupErr
+			}
+		} else if s.groupRepo != nil {
+			schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
+		}
 	}
 
 	var accounts []Account
@@ -2280,8 +2294,16 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 
 	// require_privacy_set: 获取分组配置。GetByID 会聚合账号计数，旧选号路径不能用它。
 	var schedGroup *Group
-	if groupID != nil && s.groupRepo != nil {
-		schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
+	if groupID != nil {
+		if s.schedulerSnapshot != nil && s.schedulerSnapshot.localSnapshotReader != nil {
+			var groupErr error
+			schedGroup, groupErr = s.schedulerSnapshot.GetGroupByIDLite(ctx, *groupID)
+			if groupErr != nil {
+				return nil, groupErr
+			}
+		} else if s.groupRepo != nil {
+			schedGroup, _ = s.groupRepo.GetByIDLite(ctx, *groupID)
+		}
 	}
 
 	var accounts []Account

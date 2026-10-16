@@ -31,4 +31,4 @@
 - 当前没有上游权威 usage，不能作为按 token 收费通道。试验结束后测试账号开关关闭，避免把该账号的普通请求切到纯文本通道。
 - `gpt-6-astra` 明确返回 422，没有作为 Sol 的别名或 fallback。
 
-界面截图位于 `docs/screenshots/prism-oauth/`，为真实组件的本地 mock 预览，不含真实账号资料。
+界面预览说明位于 [Prism OAuth 验证记录](screenshots/prism-oauth/README.md)，历史截图通过其中的固定提交链接查看。预览使用真实组件与本地 mock，不含真实账号资料。

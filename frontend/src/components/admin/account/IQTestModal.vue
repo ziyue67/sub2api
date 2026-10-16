@@ -497,8 +497,8 @@ function formatDate(value: string) {
 function editSchedule(config: PelicanTestConfig, model: string) {
   if (running.value) return
   modelId.value = model
-  // 探针计划没有题目，手动测试的题目保持不变。
-  if (config.question_kind === STATE_PROBE_QUESTION) return
+  // Server-generated questions belong to quality rules, not manual test inputs.
+  if (config.question_kind === STATE_PROBE_QUESTION || config.question_kind === 'random_reasoning') return
   questionKind.value = config.question_kind || 'pelican'
   prompt.value = config.prompt
   modelId.value = model

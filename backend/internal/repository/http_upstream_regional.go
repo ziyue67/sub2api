@@ -45,6 +45,10 @@ func (t *regionalUpstreamTransport) RoundTrip(req *http.Request) (*http.Response
 		return nil, err
 	}
 	proxy, region := t.service.upstreamRoutes.MatchForAccount(req.URL, t.accountID)
+	req, bindErr := service.BindOpenAIRequestTimezone(req, proxy)
+	if bindErr != nil {
+		return nil, bindErr
+	}
 	var entry *upstreamClientEntry
 	var err error
 	if t.fingerprint != nil && req.URL.Scheme == "https" {

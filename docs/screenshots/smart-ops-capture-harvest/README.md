@@ -1,13 +1,15 @@
 # 请求采集、打票流程并入智能运维
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/smart-ops-capture-harvest)；下列文件名与验证说明保留用于追溯。
+
 截图来自本地前端开发服务器、仅监听本机的 mock API 和无头 Chromium（CDP）。页面使用虚构管理员和空数据，不含线上账号、凭据或用户数据。
 
 修改前基线为 `5bed80886e4b6e48b2e8825c93f7ad6b6e275eb1`，从独立 checkout 运行；修改后为同一基线上的本 PR 前端改动。两组截图均为实际页面渲染，没有用临时 CSS 或改写 DOM 模拟。mock 设置为开启请求采集。
 
 | 页面 | 修改前，1440 × 1000 | 修改后，1440 × 1000 | 修改后，390 × 1100 |
 | --- | --- | --- | --- |
-| 打票流程 | [宽屏](harvest-flow-before-desktop.png) | [宽屏](harvest-flow-after-desktop.png) | [手机端](harvest-flow-after-mobile.png) |
-| 请求采集 | 同上，侧栏第 2 项 | [宽屏](request-capture-after-desktop.png) | — |
+| 打票流程 | [宽屏](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/smart-ops-capture-harvest/harvest-flow-before-desktop.png) | [宽屏](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/smart-ops-capture-harvest/harvest-flow-after-desktop.png) | [手机端](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/smart-ops-capture-harvest/harvest-flow-after-mobile.png) |
+| 请求采集 | 同上，侧栏第 2 项 | [宽屏](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/smart-ops-capture-harvest/request-capture-after-desktop.png) | — |
 
 ## 验收
 

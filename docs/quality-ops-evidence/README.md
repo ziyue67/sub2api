@@ -1,11 +1,13 @@
 # 质量运维优化：界面复核
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/quality-ops-evidence)；下列文件名与验证说明保留用于追溯。
+
 基线为 `ranxi2001/sub2api` 的 `production` 提交 `0ae36e501952000c5c910a2e616c6e0861f66a49`。图片由本地 Vue 组件的隔离 mock 预览产生，使用虚构账号、分组和结果，不连接服务器、数据库、真实上游或付费接口。布局外壳和导航简化，质量页、规则表单和详情组件使用真实源码。截图仅证明组件的显示状态，不是生产验证或后端验收。
 
-- [修改前概览](before-overview.jpg)：单模型规则，失败后关闭账号调度。
-- [修改后概览](after-overview.jpg)：同一规则显示多个检测模型，区分配置目标和处理结果。
-- [修改后编辑器](after-editor.jpg)：追加检测模型和完整轮次说明。
-- [逐模型结果](after-model-results.jpg)：一个模型失败并冷却，另一个通过且没有新增冷却。
+- [修改前概览](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/quality-ops-evidence/before-overview.jpg)：单模型规则，失败后关闭账号调度。
+- [修改后概览](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/quality-ops-evidence/after-overview.jpg)：同一规则显示多个检测模型，区分配置目标和处理结果。
+- [修改后编辑器](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/quality-ops-evidence/after-editor.jpg)：追加检测模型和完整轮次说明。
+- [逐模型结果](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/quality-ops-evidence/after-model-results.jpg)：一个模型失败并冷却，另一个通过且没有新增冷却。
 
 复核步骤：管理员打开智能运维 → 质量运维，编辑糖果题规则并添加第二个模型；选择“保持调度，仅冷却指定模型”，填写两个目标、恢复并发和自动恢复；保存后核对规则卡，打开运营记录详情，核对每个模型的判定和本轮新增冷却。状态探针仍只允许一个模型；BPS 观察不证明直连恢复。不支持模型显示跳过，跳过样本不进入通过率分母。
 

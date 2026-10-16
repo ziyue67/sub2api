@@ -15,7 +15,7 @@ import (
 
 // ProvideConcurrencyCache 创建并发控制缓存，从配置读取 TTL 参数
 // 性能优化：TTL 可配置，支持长时间运行的 LLM 请求场景
-func ProvideConcurrencyCache(rdb *redis.Client, cfg *config.Config) service.ConcurrencyCache {
+func ProvideConcurrencyCache(rdb *redis.Client, cfg *config.Config, db *sql.DB) (service.ConcurrencyCache, error) {
 	waitTTLSeconds := int(cfg.Gateway.Scheduling.StickySessionWaitTimeout.Seconds())
 	if cfg.Gateway.Scheduling.FallbackWaitTimeout > cfg.Gateway.Scheduling.StickySessionWaitTimeout {
 		waitTTLSeconds = int(cfg.Gateway.Scheduling.FallbackWaitTimeout.Seconds())
@@ -23,7 +23,11 @@ func ProvideConcurrencyCache(rdb *redis.Client, cfg *config.Config) service.Conc
 	if waitTTLSeconds <= 0 {
 		waitTTLSeconds = cfg.Gateway.ConcurrencySlotTTLMinutes * 60
 	}
-	return NewConcurrencyCache(rdb, cfg.Gateway.ConcurrencySlotTTLMinutes, waitTTLSeconds)
+	base := NewConcurrencyCache(rdb, cfg.Gateway.ConcurrencySlotTTLMinutes, waitTTLSeconds)
+	if cfg.Runtime.RegionalConcurrencyFile == "" {
+		return base, nil
+	}
+	return provideRegionalConcurrencyCache(base, rdb, db, cfg)
 }
 
 // ProvideGitHubReleaseClient 创建 GitHub Release 客户端
@@ -65,6 +69,9 @@ func ProvideSchedulerCache(rdb *redis.Client, cfg *config.Config) service.Schedu
 
 // ProviderSet is the Wire provider set for all repositories
 var ProviderSet = wire.NewSet(
+	ProvideRegionalMetering,
+	NewRegionalSchedulerAuthority,
+	NewRegionalAuthAuthority,
 	NewUserRepository,
 	NewAPIKeyRepository,
 	NewGroupRepository,

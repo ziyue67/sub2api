@@ -1,5 +1,7 @@
 # V2 监控悬停详情与降智状态展示
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-hover)；下列文件名与验证说明保留用于追溯。
+
 ## 使用与验收
 
 1. 启用 V2 渠道监控, 打开 `/monitor`.
@@ -27,24 +29,24 @@
 
 改动前, 只有原生 title:
 
-![改动前](before.png)
+[改动前](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-hover/before.png)
 
 流量详情逐条展示原始采样:
 
-![桌面悬停详情](desktop.png)
+[桌面悬停详情](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-hover/desktop.png)
 
 手机点击右边缘色块:
 
-![手机详情](mobile.png)
+[手机详情](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-hover/mobile.png)
 
 管理员已获授权的检测摘要按纯文本显示:
 
-![检测详情](candy.png)
+[检测详情](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-hover/candy.png)
 
 所有分组均未开启检测时仍保留降智状态区域:
 
-![未开启检测](disabled.png)
+[未开启检测](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-hover/disabled.png)
 
 英文浅色界面的长详情内部滚动:
 
-![长内容详情](light-long.png)
+[长内容详情](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-hover/light-long.png)

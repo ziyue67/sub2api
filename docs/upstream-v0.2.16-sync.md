@@ -16,8 +16,8 @@
 
 本地真实 GroupI18nField 组件，虚构数据；验证默认内容与英文译文切换。截图不代表完整后台页面或真实接口验收。其余 UI 由 Vitest 验证，未逐页截图。
 
-![默认内容](screenshots/upstream-v0.2.16/group-default.png)
-![英文译文](screenshots/upstream-v0.2.16/group-english.png)
+[默认内容](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/upstream-v0.2.16/group-default.png)
+[英文译文](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/upstream-v0.2.16/group-english.png)
 
 ## 提交清单
 

@@ -519,6 +519,9 @@ func ProvideDeferredService(accountRepo AccountRepository, timingWheel *TimingWh
 // ProvideConcurrencyService creates ConcurrencyService and starts slot cleanup worker.
 func ProvideConcurrencyService(cache ConcurrencyCache, accountRepo AccountRepository, cfg *config.Config) *ConcurrencyService {
 	svc := NewConcurrencyService(cache)
+	if runtime, ok := cache.(interface{ RunRegionalRuntime(context.Context) }); ok {
+		go runtime.RunRegionalRuntime(svc.apiKeyQueueStopContext())
+	}
 	if err := svc.CleanupStaleProcessSlots(context.Background()); err != nil {
 		logger.LegacyPrintf("service.concurrency", "Warning: startup cleanup stale process slots failed: %v", err)
 	}
@@ -549,10 +552,26 @@ func ProvideSchedulerSnapshotService(
 	accountRepo AccountRepository,
 	groupRepo GroupRepository,
 	cfg *config.Config,
-) *SchedulerSnapshotService {
+	authority RegionalSchedulerAuthority,
+) (*SchedulerSnapshotService, error) {
 	svc := NewSchedulerSnapshotService(cache, outboxRepo, accountRepo, groupRepo, cfg)
+	if cfg != nil && cfg.Runtime.RegionalSchedulerFile != "" {
+		runtime, err := startRegionalSchedulerRuntime(cfg, authority)
+		if err != nil {
+			return nil, err
+		}
+		svc.regionalRuntime = runtime
+		if runtime.replica != nil {
+			reader, err := NewRegionalSchedulerReader(runtime.replica)
+			if err != nil {
+				runtime.stop()
+				return nil, err
+			}
+			svc.SetLocalSnapshotReader(reader)
+		}
+	}
 	svc.Start()
-	return svc
+	return svc, nil
 }
 
 // ProvideRateLimitService creates RateLimitService with optional dependencies.
@@ -980,11 +999,27 @@ func ProvideAPIKeyService(
 	cfg *config.Config,
 	billingCacheService *BillingCacheService,
 	concurrencyService *ConcurrencyService,
-) *APIKeyService {
+	authority RegionalAuthAuthority,
+) (*APIKeyService, error) {
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
 	svc.SetConcurrencyService(concurrencyService)
-	return svc
+	if cfg != nil && cfg.Runtime.RegionalAuthFile != "" {
+		runtime, err := startRegionalAuthRuntime(cfg, authority)
+		if err != nil {
+			return nil, err
+		}
+		svc.regionalAuthRuntime = runtime
+		if runtime.replica != nil {
+			reader, err := NewRegionalAuthReader(runtime.replica, runtime.cfg.AuthLookupKey)
+			if err != nil {
+				runtime.stop()
+				return nil, err
+			}
+			svc.localAuth = reader
+		}
+	}
+	return svc, nil
 }
 
 // ProviderSet is the Wire provider set for all services
@@ -1251,9 +1286,10 @@ func ProvideChannelMonitorV2Aggregator(repo ChannelMonitorV2Repository, db *sql.
 	return aggregator
 }
 
-func ProvideAccountOpsService(settings SettingRepository, repo AccountOpsRepository, email *EmailService, accounts AccountRepository, groups GroupRepository, cfg *config.Config, encryptor SecretEncryptor, usageCache *UsageCache, usageLogs UsageLogRepository, geminiQuota *GeminiQuotaService) *AccountOpsService {
+func ProvideAccountOpsService(settings SettingRepository, repo AccountOpsRepository, email *EmailService, accounts AccountRepository, groups GroupRepository, cfg *config.Config, encryptor SecretEncryptor, usageCache *UsageCache, usageLogs UsageLogRepository, geminiQuota *GeminiQuotaService, newAPI NewAPIAuthorizationRepository) *AccountOpsService {
 	svc := NewAccountOpsService(settings, repo, email)
 	svc.SetNotificationDependencies(accounts, encryptor, cfg.Totp.EncryptionKeyConfigured, cfg.Timezone)
+	svc.SetNewAPIGroupReader(newAPI)
 	svc.SetNotificationUsageCache(usageCache)
 	svc.SetNotificationQuotaReaders(usageLogs, geminiQuota)
 	svc.autoAccounts, _ = accounts.(AccountConcurrencyRepository)

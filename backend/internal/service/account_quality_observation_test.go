@@ -19,28 +19,34 @@ func bpsObservationConfig() *PelicanTestConfig {
 }
 
 func TestQualityBPSObservationValidation(t *testing.T) {
-	plan := pelicanPlan()
-	plan.PelicanConfig = bpsObservationConfig()
-	q := plan.PelicanConfig.Quality
-	q.AutoRestore, q.RemoveGroupIDs, q.BPS = true, []int64{3}, &QualityBPSPolicy{FailureThreshold: 2}
-	_, err := nextPlanRun(plan, time.Now())
-	require.NoError(t, err)
-	require.False(t, q.AutoRestore)
-	require.Empty(t, q.RemoveGroupIDs)
-	require.Nil(t, q.BPS)
-	for _, action := range []string{QualityActionEnableBPS, "remove_groups", "disable_scheduling"} {
-		q.Action = action
-		_, err := nextPlanRun(plan, time.Now())
-		require.ErrorContains(t, err, "observation-only")
+	for _, kind := range []string{"candy", QualityRandomQuestionKind} {
+		t.Run(kind, func(t *testing.T) {
+			plan := pelicanPlan()
+			plan.PelicanConfig = bpsObservationConfig()
+			plan.PelicanConfig.QuestionKind = kind
+			q := plan.PelicanConfig.Quality
+			q.AutoRestore, q.RemoveGroupIDs, q.BPS = true, []int64{3}, &QualityBPSPolicy{FailureThreshold: 2}
+			_, err := nextPlanRun(plan, time.Now())
+			require.NoError(t, err)
+			require.False(t, q.AutoRestore)
+			require.Empty(t, q.RemoveGroupIDs)
+			require.Nil(t, q.BPS)
+			for _, action := range []string{QualityActionEnableBPS, "remove_groups", "disable_scheduling"} {
+				q.Action = action
+				_, err := nextPlanRun(plan, time.Now())
+				require.ErrorContains(t, err, "observation-only")
+			}
+			q.Action = QualityActionObserveOnly
+			plan.PelicanConfig.QuestionKind = OpenAICodexStateProbeQuestionKind
+			_, err = nextPlanRun(plan, time.Now())
+			require.ErrorContains(t, err, "answer question")
+			plan.PelicanConfig = bpsObservationConfig()
+			plan.PelicanConfig.QuestionKind = kind
+			plan.PelicanConfig.TestChannel = "unknown"
+			_, err = nextPlanRun(plan, time.Now())
+			require.ErrorContains(t, err, "invalid test channel")
+		})
 	}
-	q.Action = QualityActionObserveOnly
-	plan.PelicanConfig.QuestionKind = OpenAICodexStateProbeQuestionKind
-	_, err = nextPlanRun(plan, time.Now())
-	require.ErrorContains(t, err, "candy question")
-	plan.PelicanConfig = bpsObservationConfig()
-	plan.PelicanConfig.TestChannel = "unknown"
-	_, err = nextPlanRun(plan, time.Now())
-	require.ErrorContains(t, err, "invalid test channel")
 }
 
 func TestQualityBPSObservationNeverFallsBackToNative(t *testing.T) {

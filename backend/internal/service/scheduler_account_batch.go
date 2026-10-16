@@ -17,6 +17,13 @@ type schedulerAccountBatchReader interface {
 // Misses fall back in bounded batches under the existing fallback policy.
 // Results belong to this call; they are not a cross-request authority cache.
 func (s *SchedulerSnapshotService) GetAccounts(ctx context.Context, accountIDs []int64) (map[int64]*Account, error) {
+	if s.localSnapshotReader != nil {
+		reader, ok := s.localSnapshotReader.(LocalSchedulerDetailReader)
+		if !ok {
+			return nil, ErrLocalSchedulerSnapshotUnavailable
+		}
+		return reader.GetLocalAccounts(ctx, accountIDs)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

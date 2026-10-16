@@ -8,6 +8,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -113,18 +114,35 @@ func configureTrustedProxies(r *gin.Engine, cfg config.ServerConfig) {
 		if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
 			log.Printf("Failed to set trusted proxies: %v", err)
 			_ = r.SetTrustedProxies(nil)
+			warnAuthProxyMisconfiguration(r)
 		}
 		if len(cfg.TrustedProxies) == 0 && cfg.Mode == "release" {
-			log.Printf("Warning: server.trusted_proxies is explicitly empty; forwarded client IP trust is disabled")
+			log.Printf("Warning: server.trusted_proxies is explicitly empty; auth IP guards use direct peer addresses, shared proxies will share signup quotas and login bans")
+		}
+		if len(cfg.TrustedProxies) == 0 {
+			warnAuthProxyMisconfiguration(r)
 		}
 	} else {
 		if err := r.SetTrustedProxies(nil); err != nil {
 			log.Printf("Failed to disable trusted proxies: %v", err)
 		}
 		if cfg.Mode == "release" {
-			log.Printf("Warning: server.trusted_proxies is not configured; disabling the forwarded-IP compatibility switch will use direct peer addresses only")
+			log.Printf("Warning: server.trusted_proxies is not configured; auth IP guards always use direct peer addresses, shared proxies will share signup quotas and login bans regardless of the forwarded-IP compatibility switch")
 		}
+		warnAuthProxyMisconfiguration(r)
 	}
+}
+
+func warnAuthProxyMisconfiguration(r *gin.Engine) {
+	var once sync.Once
+	r.Use(func(c *gin.Context) {
+		if c.GetHeader("X-Forwarded-For") != "" || c.GetHeader("X-Real-IP") != "" || c.GetHeader("CF-Connecting-IP") != "" {
+			once.Do(func() {
+				slog.Warn("Forwarded client IP headers received without usable server.trusted_proxies; auth IP guards use the proxy peer address and may share the two-account signup quota and login bans across users; configure trusted proxies before enabling public signup")
+			})
+		}
+		c.Next()
+	})
 }
 
 // ProvideHTTPServer 提供 HTTP 服务器

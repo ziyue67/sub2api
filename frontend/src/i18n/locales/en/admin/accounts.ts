@@ -1,5 +1,28 @@
 export default {
     accounts: {
+      sessionExport: {
+        "OPENAI_SESSION_ACCOUNT_UNSUPPORTED": "Only OpenAI OAuth accounts with their own credentials support Session export.",
+        "OPENAI_SESSION_COOKIE_REQUIRED": "A ChatGPT login Cookie containing __Secure-next-auth.session-token is required.",
+        "OPENAI_SESSION_COOKIE_INVALID": "Invalid Cookie format. Copy the complete request Cookie on one line.",
+        "OPENAI_SESSION_UNAVAILABLE": "Session export is temporarily unavailable.",
+        "OPENAI_SESSION_PROXY_UNAVAILABLE": "The account proxy is unavailable. Check its configuration.",
+        "OPENAI_SESSION_CLIENT_FAILED": "Could not create the Session request client.",
+        "OPENAI_SESSION_REQUEST_FAILED": "Session request failed or timed out. Check the account proxy.",
+        "OPENAI_SESSION_UPSTREAM_REJECTED": "ChatGPT rejected the Session request. Check the login Cookie, account proxy, or browser verification.",
+        "OPENAI_SESSION_INVALID_RESPONSE": "ChatGPT returned an invalid or oversized Session response.",
+        "OPENAI_SESSION_LOGIN_REQUIRED": "No logged-in Session was returned. Renew the Cookie or complete ChatGPT browser verification.",
+        "OPENAI_SESSION_EXPIRED": "The Session returned by ChatGPT has expired. Sign in again and copy the Cookie.",
+        "OPENAI_SESSION_IDENTITY_MISMATCH": "The Cookie belongs to a different user, or this account lacks identity information to verify it.",
+
+        "title": "Export ChatGPT Session",
+        "hint": "Request https://chatgpt.com/api/auth/session and download its real response. Copy this account’s request Cookie from browser developer tools while signed in to ChatGPT. OAuth tokens cannot replace a web login Cookie.",
+        "cookie": "ChatGPT login Cookie",
+        "placeholder": "__Secure-next-auth.session-token=...",
+        "sensitive": "The Cookie is used only for this request and is never saved. The Session file contains login credentials; keep it secure.",
+        "download": "Request and download Session",
+        "exporting": "Requesting…",
+        "failed": "Session export failed. Check that the Cookie is valid, belongs to this account, and the account proxy can reach ChatGPT."
+      },
       bpsAuthorizing: 'BPS authorization is automatic. Native routing remains active until authorization succeeds, then BPS activates automatically.',
       "modelsLoadFailed": "Could not load models. Please retry.",
       "retryModels": "Reload models",

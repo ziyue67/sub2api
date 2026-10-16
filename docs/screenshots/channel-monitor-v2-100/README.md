@@ -1,5 +1,7 @@
 # V2 降智状态固定 100 格
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-100)；下列文件名与验证说明保留用于追溯。
+
 ## 展示规则
 
 - 对已开启检测的分组固定显示 100 格. 从现有 24 小时保留期中, 读取当前检测配置的最近 100 条已完成记录, 按旧到新排列.
@@ -25,10 +27,10 @@
 
 ## 截图
 
-![改动前](before.png)
+[改动前](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-100/before.png)
 
-![不同数量均显示 100 格](desktop.png)
+[不同数量均显示 100 格](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-100/desktop.png)
 
-![超过一小时前的记录详情](tooltip.png)
+[超过一小时前的记录详情](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-100/tooltip.png)
 
-![手机展示 100 条](mobile.png)
+[手机展示 100 条](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-100/mobile.png)

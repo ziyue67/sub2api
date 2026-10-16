@@ -12,8 +12,8 @@ export default {
         "availability": "可用率",
         "ttft": "首 TOKEN",
         "windows": "近 {count} 个时间段",
-        "sampledWindows": "近 {count} 次有采样",
-        "noSamples": "当前范围没有采样数据",
+        "sampledWindows": "近 {count} 次有采样，不限时间段",
+        "noSamples": "还没有采样数据",
         "timelineMode": {
             "label": "卡片采样显示",
             "windows": "时间段采样",

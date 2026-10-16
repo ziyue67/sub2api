@@ -1,5 +1,7 @@
 # BPS 授权错误展示
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-authorization)；下列文件名与验证说明保留用于追溯。
+
 入口：账号管理 → 测试账号连接。截图为实际 Vue 组件的本地预览，API 使用虚构账号与 `OPENAI_EXCEL_AUTH_VERIFICATION_REQUIRED` 响应，不连接生产或上游。组件外的预览标识不是产品界面。
 
 - `before.png`：基线 `c703a99a1ca5976e68957b0ef4d8c801ca3d0eb3`，`frontend/src/components/account/AccountTestModal.vue`；模型列表失败后没有错误提示。

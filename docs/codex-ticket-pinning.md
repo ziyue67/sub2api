@@ -1,5 +1,7 @@
 # Codex 门票固定出口与会话身份
 
+> 历史实现记录：本文描述旧版门票采集与复用流程，仅供版本追溯，不作为当前部署或配置指南。新人请从[新人入门](新人入门.md)开始；协议配置和账号质量检测分别参阅 [Excel / BPS](excel-bps.md) 与[质量运维](account-quality-operations.md)。不要按本文启用旧开关或部署配套服务。
+
 移植来源：用户提供的 mracry/sub2api 源码快照（ZIP SHA-256 `2151721700fe475982e594cf47fb94ffdbe18d26e9aebdd3216d7584665b73f6`）及《Codex门票钉住原理.md》。原作者的 30 分钟实测属于其报告，本分支尚未复现。
 
 本版将票据绑定到采票时的出口节点和会话身份。打票成功后，HTTP/SSE 与 WebSocket 业务请求复用相同出口；请求体会移除采票时不存在的 `client_metadata`、`prompt_cache_key` 和设备身份字段，并沿用上游返回的 `x-codex-turn-state`。

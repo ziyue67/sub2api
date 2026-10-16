@@ -1,5 +1,7 @@
 # 使用记录：只有 1 个输出 Token 时不再显示 0.0 t/s
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/usage-tps-single-token)；下列文件名与验证说明保留用于追溯。
+
 截图来自本地前端开发服务器、仅监听本机的 mock API 和无头 Chromium（CDP），管理员「使用记录」页，深色主题，1440 × 1000 视口、2 倍像素。页面使用虚构用户、分组和账号，不含线上账号、凭据或用户数据。
 
 第一行仿照一条真实的中断记录：Claude Code 经 Anthropic API Key 账号流式请求 `claude-opus-5-5`，首字 973ms 后持续输出，21.14s 时上游返回 `Upstream request failed`（`stream usage incomplete: missing terminal event`），只记下 `message_start` 里的输出 1 个 Token。第二行是正常完成的请求，作对照。
@@ -8,7 +10,7 @@
 
 | 修改前 | 修改后 |
 | --- | --- |
-| [usage-latency-before.png](usage-latency-before.png) | [usage-latency-after.png](usage-latency-after.png) |
+| [usage-latency-before.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/usage-tps-single-token/usage-latency-before.png) | [usage-latency-after.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/usage-tps-single-token/usage-latency-after.png) |
 
 ## 验收
 

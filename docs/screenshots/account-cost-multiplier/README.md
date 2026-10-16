@@ -1,12 +1,14 @@
 # 账号成本倍率界面验证
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-cost-multiplier)；下列文件名与验证说明保留用于追溯。
+
 所有图片均为真实 Vue 组件在本地 mock 环境中的浏览器截图，使用虚构账号，不连接生产服务。修改前基线为 `production@9e034afc4a4ab9385a57c7d2cdbb32bd272582d2`。桌面视口为 1440 × 1000，手机视口为 390 × 844。
 
 | 界面 | 修改前 | 修改后 |
 | --- | --- | --- |
-| 编辑账号 | [桌面](account-edit-before-desktop.png) | [桌面](account-edit-after-desktop.png)、[手机](account-edit-after-mobile.png) |
-| 优先调度 | [采购成本区](priority-before-desktop.png) | [账号倍率估算](priority-after-desktop.png) |
-| 批量编辑 | 原版没有独立成本字段 | [单独设置成本倍率](account-bulk-after-desktop.png) |
+| 编辑账号 | [桌面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-cost-multiplier/account-edit-before-desktop.png) | [桌面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-cost-multiplier/account-edit-after-desktop.png)、[手机](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-cost-multiplier/account-edit-after-mobile.png) |
+| 优先调度 | [采购成本区](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-cost-multiplier/priority-before-desktop.png) | [账号倍率估算](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-cost-multiplier/priority-after-desktop.png) |
+| 批量编辑 | 原版没有独立成本字段 | [单独设置成本倍率](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-cost-multiplier/account-bulk-after-desktop.png) |
 
 浏览器交互验证：
 

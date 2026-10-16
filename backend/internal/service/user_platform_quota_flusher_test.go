@@ -509,3 +509,11 @@ func TestScenario_NinetyPercentCompany(t *testing.T) {
 		t.Errorf("90%% company: Readd should not be called, got %d calls", len(cache.readdCalled))
 	}
 }
+
+func TestQuotaFlusherCoordinatedNeverOverwritesAuthority(t *testing.T) {
+	// Nil legacy dependencies intentionally panic if any snapshot writer is used.
+	f := &UserPlatformQuotaUsageFlusher{coordinated: true, enabled: true}
+	f.Start()
+	f.flush()
+	f.Stop()
+}

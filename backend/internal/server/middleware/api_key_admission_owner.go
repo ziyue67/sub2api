@@ -14,6 +14,20 @@ import (
 )
 
 func nextWithAPIKeyAdmissionOwner(c *gin.Context, apiKeyService *service.APIKeyService, credential string, trustedClientIP string, key *service.APIKey, googleStyle bool) {
+	var lookup func(context.Context, string) (*service.APIKey, error)
+	if apiKeyService != nil {
+		lookup = apiKeyService.GetByKey
+		if isResponsesWebSocketRoute(c) {
+			lookup = apiKeyService.GetByKeyUncached
+		}
+	}
+	nextWithAPIKeyAdmissionLookup(c, lookup, credential, trustedClientIP, key, googleStyle)
+}
+
+// A regional lookup uses the authenticated local stream directly. Sharing the
+// owner/revalidation lifecycle preserves revocation and key-slot cancellation
+// without introducing the primary-backed API Key middleware.
+func nextWithAPIKeyAdmissionLookup(c *gin.Context, lookup func(context.Context, string) (*service.APIKey, error), credential string, trustedClientIP string, key *service.APIKey, googleStyle bool) {
 	var writer *apiKeyAdmissionWriter
 	// A WS connection outlives one capacity decision: install the revalidator
 	// (and its lightweight control owner) even when the handshake key is
@@ -21,12 +35,7 @@ func nextWithAPIKeyAdmissionOwner(c *gin.Context, apiKeyService *service.APIKeyS
 	// HTTP non-queue requests keep their existing shape.
 	installRevalidator := key.ConcurrencyLimit > 0 || isResponsesWebSocketRoute(c)
 	if installRevalidator {
-		revalidate := newAPIKeyQueueAuthRevalidator(apiKeyService, credential, trustedClientIP, key)
-		if isResponsesWebSocketRoute(c) && apiKeyService != nil {
-			// WS sessions must observe revocation even when an auth-cache
-			// invalidation is delayed or lost on this instance.
-			revalidate = newAPIKeyAuthRevalidator(apiKeyService.GetByKeyUncached, credential, trustedClientIP, key)
-		}
+		revalidate := newAPIKeyAuthRevalidator(lookup, credential, trustedClientIP, key)
 		base := service.WithAPIKeyQueueAuthRevalidator(
 			c.Request.Context(),
 			revalidate,
@@ -46,23 +55,6 @@ func nextWithAPIKeyAdmissionOwner(c *gin.Context, apiKeyService *service.APIKeyS
 	if writer != nil {
 		writer.rejectIfLost()
 	}
-}
-
-// newAPIKeyQueueAuthRevalidator re-reads the authenticated key through the
-// existing auth cache (L1, then L2, with at most one database read after an
-// invalidation) and re-applies the same gates as initial authentication,
-// including the captured trusted client IP and the permissions this request
-// actually still needs. The stable key/group identity is captured by value at
-// installation time so a benign group edit (name, pricing, routing, nil vs
-// empty collections) never aborts the wait. A definite rejection stops the
-// queue wait with the same application error the middleware would return; any
-// other failure is classified by the queue as a service error.
-func newAPIKeyQueueAuthRevalidator(apiKeyService *service.APIKeyService, credential string, trustedClientIP string, initial *service.APIKey) service.APIKeyQueueAuthRevalidator {
-	var lookup func(context.Context, string) (*service.APIKey, error)
-	if apiKeyService != nil {
-		lookup = apiKeyService.GetByKey
-	}
-	return newAPIKeyAuthRevalidator(lookup, credential, trustedClientIP, initial)
 }
 
 // Share all identity, permission and expiry gates between cached HTTP queue

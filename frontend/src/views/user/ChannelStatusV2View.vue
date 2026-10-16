@@ -848,7 +848,7 @@ async function loadDimensions(signal?: AbortSignal, id = sequence) {
 async function loadMetrics(signal?: AbortSignal, id = sequence) {
   const [nextSnapshot, nextMatrix] = await Promise.all([
     api.getSnapshot(filter.value, isAdmin.value, signal),
-    api.getMatrix(filter.value, analytics.value ? matrixGroupBy.value : 'platform_group', isAdmin.value, signal),
+    api.getMatrix(filter.value, analytics.value ? matrixGroupBy.value : 'platform_group', isAdmin.value, signal, { recentSamples: !analytics.value }),
   ])
   if (id !== sequence) return
   snapshot.value = nextSnapshot

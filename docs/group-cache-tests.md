@@ -50,6 +50,6 @@
 
 下图使用虚构分组、虚构 Key 和本地模拟 SSE/账单，仅验证 UI 交互。页面主体和导航使用实际组件，外层使用简化的离线预览布局。没有连接生产数据库或发送真实付费模型请求。真实缓存收益仍需在目标部署中由操作者测试。
 
-![桌面结果及账单详情（模拟数据）](images/group-cache-tests/results.jpg)
+[桌面结果及账单详情（模拟数据）](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/images/group-cache-tests/results.jpg)
 
-![英文窄屏深色模式（模拟数据）](images/group-cache-tests/mobile-dark.jpg)
+[英文窄屏深色模式（模拟数据）](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/images/group-cache-tests/mobile-dark.jpg)

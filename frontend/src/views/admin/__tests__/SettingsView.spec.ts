@@ -1141,6 +1141,18 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings.mock.calls[0]?.[0].openai_request_timezone_enabled).toBe(!enabled);
   });
 
+  it.each([false, true])("loads and saves timezone source from %s", async (auto) => {
+    getSettings.mockResolvedValueOnce({ ...baseSettingsResponse, openai_request_timezone_enabled: true, openai_request_timezone_auto: auto });
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.get<HTMLSelectElement>('#request-timezone-mode').element.value).toBe(auto ? 'auto' : 'manual');
+    await wrapper.get('#request-timezone-mode').setValue(auto ? 'manual' : 'auto');
+    await wrapper.find('form').trigger('submit.prevent');
+    await flushPromises();
+    expect(updateSettings.mock.calls[0]?.[0].openai_request_timezone_auto).toBe(!auto);
+    wrapper.unmount();
+  });
+
   it("keeps harvest policy and exit settings in their dedicated pages", async () => {
     getSettings.mockResolvedValueOnce({ ...baseSettingsResponse,
       openai_codex_ticket_enabled: true,

@@ -213,6 +213,9 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		strings.TrimSpace(headers.Get(openAICodexRoutingHintHeader)) != "",
 		"soft_routing_hint",
 	)
+	if c != nil && c.Request != nil {
+		s.requestTimezoneHeaders(ctx, account, c.Request.Header, headers)
+	}
 	s.restoreBoundCodexTicketHarvestIdentity(ctx, headers, account)
 
 	return headers, sessionResolution, nil

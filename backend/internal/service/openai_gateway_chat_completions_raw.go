@@ -247,6 +247,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 				UpstreamRequestID:  firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id")),
 				Kind:               kind,
 				Message:            upstreamMsg,
+				Detail:             s.opsUpstreamErrorDetail(respBody),
 			})
 			s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, upstreamModel), account, resp.StatusCode, resp.Header, respBody)
 			if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {
@@ -334,6 +335,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
+	var regionalUsagePayload []byte
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -373,10 +375,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			trimmedPayload := strings.TrimSpace(payload)
 			terminal.ObserveDataLine(trimmedPayload)
+			if trimmedPayload == "[DONE]" && c.Request != nil {
+				regionalMeterObserveUsage(c.Request.Context(), regionalUsagePayload, "json")
+			}
 			if trimmedPayload != "[DONE]" {
 				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsage(payload); u != nil {
+					regionalUsagePayload = []byte(payload)
 					usage = *u
 				}
 				if firstTokenMs == nil && !usageOnlyChunk {
@@ -548,6 +554,9 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		observer = beginUpstreamResponseModelObservation(c)
 	}
 	observer.ObserveOpenAI(respBody, strings.TrimSpace(gjson.GetBytes(respBody, "type").String()))
+	if c.Request != nil {
+		regionalMeterObserveUsage(c.Request.Context(), respBody, "json")
+	}
 
 	var usage OpenAIUsage
 	if parsedUsage, ok := extractOpenAIUsageFromJSONBytes(respBody); ok {

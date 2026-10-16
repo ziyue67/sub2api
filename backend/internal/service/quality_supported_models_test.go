@@ -64,8 +64,8 @@ func TestQualityUnsupportedResponseClassification(t *testing.T) {
 	}
 	passed := &ScheduledTestResult{Status: "success", QualityJudgment: &QualityJudgment{Verdict: "correct"}}
 	skip := &ScheduledTestResult{Status: "skipped", ErrorMessage: "model_unsupported"}
-	require.Equal(t, "passed", qualityRoundOutcome([]*ScheduledTestResult{skip, passed}, true))
-	require.Equal(t, "inconclusive", qualityRoundOutcome([]*ScheduledTestResult{skip}, true))
+	require.Equal(t, "passed", qualityRoundOutcome([]*ScheduledTestResult{skip, passed}))
+	require.Equal(t, "inconclusive", qualityRoundOutcome([]*ScheduledTestResult{skip}))
 }
 
 type qualitySupportAccounts struct {

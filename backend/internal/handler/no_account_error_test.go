@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -321,4 +322,73 @@ func TestClassifyNoAccountError_GPT55Retirement(t *testing.T) {
 func TestGPT55RetirementEmptyListingDoesNotUseDefaults(t *testing.T) {
 	require.Empty(t, modelListingSource(service.PlatformOpenAI, []string{}, []string{"gpt-5.5"}))
 	require.Equal(t, []string{"gpt-5.5"}, modelListingSource(service.PlatformOpenAI, nil, []string{"gpt-5.5"}))
+}
+
+func TestModelCapacityExhausted_ResponseAndRetryAfter(t *testing.T) {
+	resetAt := time.Now().Add(90 * time.Second)
+	diag := &fakeDiagnoser{resp: service.ModelAvailabilityDiagnosis{
+		Complete: true, HasAccountsInPool: true, HasModelSupport: true,
+		ConfiguredAccounts: 5, ModelSupportedAccounts: 2, ModelRateLimitedAccounts: 2, EarliestRateLimitResetAt: &resetAt,
+	}}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	cls := classifyNoAccountErrorFromGin(c, diag, &service.APIKey{GroupID: ptrInt64(24)}, "gpt-6.1-sol", "public-sol", service.PlatformOpenAI)
+	cls = classifySelectionFailureError(fmt.Errorf("pool=3, filtered: model_rate_limited=1 model_not_supported=2"), cls)
+	require.Equal(t, http.StatusServiceUnavailable, cls.Status)
+	require.Equal(t, "model_capacity_exhausted", cls.Code)
+	require.Equal(t, "90", recorder.Header().Get("Retry-After"))
+	require.Equal(t, "gpt-6.1-sol", diag.calls[0].Model)
+	require.Contains(t, cls.Message, "public-sol")
+	require.NotContains(t, cls.Message, "gpt-6.1-sol")
+	require.Contains(t, cls.Message, "availability may recover later")
+	h := &OpenAIGatewayHandler{}
+	h.handleStreamingAwareErrorWithCode(c, cls.Status, cls.ErrType, cls.Code, cls.Message, false, false)
+	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"code":"model_capacity_exhausted"`)
+}
+
+func TestModelCapacityDiagnosis_ConservativeFallbacks(t *testing.T) {
+	resetAt := time.Now().Add(time.Minute)
+	for _, tc := range []struct {
+		name               string
+		complete           bool
+		supported, limited int
+	}{
+		{"authority unavailable", false, 2, 2},
+		{"one supporting account not rate limited", true, 2, 1},
+		{"no supporting accounts", true, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diag := &fakeDiagnoser{resp: service.ModelAvailabilityDiagnosis{
+				Complete: tc.complete, HasAccountsInPool: true, HasModelSupport: tc.supported > 0 || !tc.complete,
+				ModelSupportedAccounts: tc.supported, ModelRateLimitedAccounts: tc.limited, EarliestRateLimitResetAt: &resetAt,
+			}}
+			c := newTestGinContextWithRequest()
+			cls := classifyNoAccountErrorFromGin(c, diag, &service.APIKey{GroupID: ptrInt64(24)}, "sol", "sol", service.PlatformOpenAI)
+			require.NotEqual(t, "model_capacity_exhausted", cls.Code)
+			require.Empty(t, c.Writer.Header().Get("Retry-After"))
+			if tc.complete && tc.supported == 0 {
+				require.Equal(t, http.StatusNotFound, cls.Status)
+			} else {
+				require.Equal(t, http.StatusServiceUnavailable, cls.Status)
+			}
+		})
+	}
+}
+
+func TestModelCapacityExhausted_CommittedStream(t *testing.T) {
+	resetAt := time.Now().Add(time.Minute)
+	diag := &fakeDiagnoser{resp: service.ModelAvailabilityDiagnosis{Complete: true, HasAccountsInPool: true, HasModelSupport: true,
+		ModelSupportedAccounts: 1, ModelRateLimitedAccounts: 1, EarliestRateLimitResetAt: &resetAt}}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Writer.WriteHeaderNow()
+	cls := classifyNoAccountErrorFromGin(c, diag, &service.APIKey{GroupID: ptrInt64(24)}, "sol", "sol", service.PlatformOpenAI)
+	require.Empty(t, c.Writer.Header().Get("Retry-After"))
+	h := &OpenAIGatewayHandler{}
+	h.handleStreamingAwareErrorWithCode(c, cls.Status, cls.ErrType, cls.Code, cls.Message, true, false)
+	require.Contains(t, recorder.Body.String(), "response.failed")
+	require.Contains(t, recorder.Body.String(), "model_capacity_exhausted")
 }

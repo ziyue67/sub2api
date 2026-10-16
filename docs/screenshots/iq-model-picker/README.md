@@ -1,5 +1,7 @@
 # 智商测试模型选择截图
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/iq-model-picker)；下列文件名与验证说明保留用于追溯。
+
 入口：账号管理 → 智商测试 → 题目测试。截图为真实 `IQTestModal.vue` 组件的本地模拟预览，使用虚构账号，不连接生产或真实模型。
 
 - 修复前组件：`17d8c566264b0c60f1bd00f48c62fd6d08756f88`。
@@ -10,8 +12,8 @@
 
 | 图片 | 操作与观察 |
 | --- | --- |
-| [before-six-models.png](before-six-models.png) | 展开修复前的模型选择器，仅显示上游目录返回的 6 个模型。 |
-| [after-eight-models.png](after-eight-models.png) | 在相同 mock 条件下展开修复后的选择器，显示 8 个已配置模型。 |
-| [manual-input.png](manual-input.png) | 点击“手动输入”，在真实输入框填写 `gpt-6.1-sol`。 |
+| [before-six-models.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/iq-model-picker/before-six-models.png) | 展开修复前的模型选择器，仅显示上游目录返回的 6 个模型。 |
+| [after-eight-models.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/iq-model-picker/after-eight-models.png) | 在相同 mock 条件下展开修复后的选择器，显示 8 个已配置模型。 |
+| [manual-input.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/iq-model-picker/manual-input.png) | 点击“手动输入”，在真实输入框填写 `gpt-6.1-sol`。 |
 
 截图未验证整页导航、真实账号目录、真实推理请求、移动端或生产部署。请求中的模型 ID 由 `IQTestModal.spec.ts` 的 mock 回归验证。

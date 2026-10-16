@@ -1,5 +1,7 @@
 # 节点添加为静态代理：组件截图
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/mihomo-static-proxies)；下列文件名与验证说明保留用于追溯。
+
 入口：IP 管理 → 节点。Chrome 实际渲染 MihomoSettings.vue，1440 × 950，本地 mock 数据。
 
 - before.png：production 基线 433fb65cc88f900c94aeae920852ddf5e580a0f0 的组件。

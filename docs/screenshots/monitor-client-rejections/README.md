@@ -1,5 +1,7 @@
 # V3 责任分类预览
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/monitor-client-rejections)；下列文件名与验证说明保留用于追溯。
+
 截图来自本地 V3 组件预览，所有分组、请求和统计均为虚构数据，没有连接生产数据库或真实上游。
 
 - `before.png`：旧行为把无近期请求的旧红色状态继续显示为当前服务异常。

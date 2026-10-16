@@ -2294,6 +2294,10 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 func setDefaults() {
 	viper.SetDefault("gateway.upstream_routing.enabled", false)
 	viper.SetDefault("runtime.role", RuntimeRoleFull)
+	viper.SetDefault("runtime.regional_scheduler_file", "")
+	viper.SetDefault("runtime.regional_auth_file", "")
+	viper.SetDefault("runtime.regional_concurrency_file", "")
+	viper.SetDefault("runtime.regional_funds_file", "")
 	viper.SetDefault("runtime.serverless_id", "")
 	viper.SetDefault("runtime.serverless_endpoint", "")
 	viper.SetDefault("runtime.serverless_region", "")

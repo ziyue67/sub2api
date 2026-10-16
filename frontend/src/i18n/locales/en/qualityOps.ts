@@ -1,4 +1,13 @@
 export default {
+  "isolateModels": "Isolate models; remove groups only when all degrade",
+  "isolationHelp": "Isolate only models with confirmed wrong answers. Remove selected groups only if every tested model explicitly fails this round. Timeouts, unknown and skipped results cannot remove groups. Isolation lasts until a passing retest, preserves healthy models and account concurrency, and applies across all groups on this account.",
+  "isolationRestoreHelp": "With automatic recovery enabled, each model recovers independently on a passing retest. Any passing model restores this rule’s original groups while other degraded models remain isolated. Restore owned changes before changing action/targets or deleting the rule. Pausing preserves isolation.",
+  "isolationRequiresCandy": "Model isolation requires answer tests, not an account state probe",
+  "modelAction": "Model action this round",
+  "modelIsolated": "Isolated until a passing retest",
+  "modelRestored": "Model restored",
+  "modelUnchanged": "Current state retained",
+
   "cooldownPerModelHint": "Each model is cooled or restored using its own test verdict. Passing peers stay available; untested or unsupported models receive no new cooldown. A 5xx lowers account concurrency first, then test verdicts determine model cooldowns.",
 
   "skipped": "Skipped",
@@ -98,6 +107,9 @@ export default {
   "bpsObservationHint": "Candy questions test the BPS channel only. If BPS is off or this model is not routed to BPS, the round is unavailable; it never falls back to the native channel. Selecting this channel makes this rule observation-only: it does not toggle BPS, change groups or scheduling, or restore previous settings. Other policies control BPS. Configure the question, reference answer and grading model.",
   "questionKind": "Test method",
   "questionCandy": "Candy question (model answer + grading model)",
+  "questionRandom": "Random reasoning (generated question + grading model)",
+  "randomHint": "Fresh questions and local reference answers are generated for every round. No question or answer entry is needed. Batches alternate path counting and weighted XOR; all models receive the same question set. View actual questions in test history. Results are quality indicators only.",
+  "generatedQuestion": "Generated question",
   "questionStateProbe": "State probe (full capability or degraded in seconds, no grading model)",
   "probeHint": "No question is sent. Each round runs one ticket probe: full capability passes, degraded counts as a wrong answer and triggers the action below, and inconclusive runs (network, rate limits, account errors) never change the account. OpenAI subscription (OAuth) accounts only; one probe per round.",
   "probeFailureAction": "Action when degraded",
@@ -151,6 +163,9 @@ export default {
   "queued": "Queued for testing, expected to start within one minute.",
   "deleteConfirm": "Delete this rule and its history? Removed memberships, disabled scheduling or BPS enabled by this rule will not be restored. Resolve them on the Accounts page first.",
   "outcomes": {
+    "models_isolated": "Degraded models isolated; groups retained",
+    "groups_restored_models_isolated": "Original groups restored; other models remain isolated",
+
     "models_cooled": "Failed models cooled",
     "model_cooldown_refreshed": "Model cooldown renewed",
     "models_partially_restored": "Some models restored",
@@ -272,6 +287,9 @@ export default {
   "discard": "Discard changes",
   "disableSchedulingShort": "Disable scheduling, keep groups",
   "actionHelp": {
+    "models_isolated": "Only models with confirmed wrong answers are isolated. Healthy models remain available. Isolation is removed by a passing retest, never by a timer.",
+    "groups_restored_models_isolated": "At least one model passed its retest, restoring this rule’s original groups. Other degraded models remain isolated.",
+
     "models_cooled": "This rule cooled only models that failed their tests. Passed, skipped and untested models received no new cooldown. See the per-model results below.",
     "model_cooldown_refreshed": "Models that still failed retain this rule's cooldown; models that passed recover independently. Other rules and manual settings are preserved.",
     "models_partially_restored": "Models that passed and were cooled by this rule have been restored. Other models still await a conclusive recovery result.",

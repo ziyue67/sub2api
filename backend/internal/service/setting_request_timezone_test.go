@@ -16,6 +16,9 @@ func (*timezoneSettingsRepo) GetValue(_ context.Context, key string) (string, er
 	if key == SettingKeyOpenAIRequestTimezoneEnabled {
 		return "true", nil
 	}
+	if key == SettingKeyOpenAIRequestTimezoneAuto {
+		return "false", nil
+	}
 	return "", ErrSettingNotFound
 }
 func (*timezoneSettingsRepo) GetMultiple(context.Context, []string) (map[string]string, error) {
@@ -33,12 +36,17 @@ func TestRequestTimezoneSwitch(t *testing.T) {
 		err         error
 		enabled     bool
 	}{
-		{name: "missing", err: ErrSettingNotFound}, {name: "disabled", value: "false"},
+		{name: "missing", err: ErrSettingNotFound, enabled: true}, {name: "empty", enabled: true}, {name: "disabled", value: "false"},
 		{name: "invalid", value: "invalid"}, {name: "read failure", err: errors.New("offline")},
 		{name: "enabled", value: "true", enabled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := &OpenAIGatewayService{settingService: NewSettingService(&codexTicketLifecycleSettings{get: func(context.Context, string) (string, error) { return tc.value, tc.err }}, &config.Config{})}
+			svc := &OpenAIGatewayService{settingService: NewSettingService(&codexTicketLifecycleSettings{get: func(_ context.Context, key string) (string, error) {
+				if key == SettingKeyOpenAIRequestTimezoneAuto {
+					return "false", nil
+				}
+				return tc.value, tc.err
+			}}, &config.Config{})}
 			for _, transport := range []string{"http", "ws"} {
 				got := svc.normalizeRequestTimezone(context.Background(), account, body, transport)
 				if !tc.enabled {
@@ -62,6 +70,6 @@ func TestRequestTimezoneSettingCacheInvalidation(t *testing.T) {
 	value = "false"
 	settings.InvalidateOpenAIRequestTimezoneEnabledCache()
 	require.False(t, settings.GetOpenAIRequestTimezoneEnabled(context.Background(), false))
-	require.False(t, settings.parseSettings(map[string]string{}).OpenAIRequestTimezoneEnabled)
+	require.True(t, settings.parseSettings(map[string]string{}).OpenAIRequestTimezoneEnabled)
 	require.True(t, settings.parseSettings(map[string]string{SettingKeyOpenAIRequestTimezoneEnabled: "true"}).OpenAIRequestTimezoneEnabled)
 }

@@ -1,5 +1,7 @@
 # 账号状态 BPS 标签预览
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-status-badge)；下列文件名与验证说明保留用于追溯。
+
 基线：`a53a7ff163d9337a094e7537df3aac2b31f308b7`（`production`，版本 `2.9.5`）。
 
 截图于 2026-09-30 在本地 Chromium 中生成，使用实际 `AccountStatusIndicator.vue`、项目样式和中文语言包。展示的是隔离组件预览，不是生产账号管理页面；所有数据均为虚构数据，未连接生产 API。

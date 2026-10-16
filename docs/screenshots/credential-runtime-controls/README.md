@@ -1,5 +1,7 @@
 # 凭证运营即时设置截图
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/credential-runtime-controls)；下列文件名与验证说明保留用于追溯。
+
 2026-09-30，基于 production 9f7d96be（2.9.6）。实际 TokenGuardV2View、加密设置卡片和 BaseDialog，使用虚构 API 数据；外围布局及导航替换为预览容器，未连接生产接口。
 
 - before-add-account.png：基线新增弹窗。

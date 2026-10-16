@@ -11,8 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenAISubscriptionLongContextExempt(t *testing.T) {
+func TestOpenAIGPT61SolLongContextExempt(t *testing.T) {
 	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
 	for _, tt := range []struct {
 		name    string
 		account *Account
@@ -30,12 +31,23 @@ func TestOpenAISubscriptionLongContextExempt(t *testing.T) {
 		{name: "仅响应标签相同", account: oauth, result: &OpenAIForwardResult{Model: "gpt-6-sol", UpstreamResponseModel: "gpt-6.1-sol"}},
 		{name: "其他模型", account: oauth, result: &OpenAIForwardResult{Model: "gpt-6-astra"}},
 		{name: "相似名称", account: oauth, result: &OpenAIForwardResult{Model: "gpt-6.1-sol-preview"}},
-		{name: "API账号", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}},
+		{name: "API Key", account: apiKey, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}, want: true},
+		{name: "API Key 别名", account: apiKey, result: &OpenAIForwardResult{Model: "openai/GPT_6.1_SOL-max"}, want: true},
+		{name: "API Key 压缩", account: apiKey, result: &OpenAIForwardResult{Model: "gpt-6.1-sol-openai-compact"}, want: true},
+		{name: "API Key 映射到目标", account: apiKey, result: &OpenAIForwardResult{Model: "custom", UpstreamModel: "gpt-6.1-sol"}, want: true},
+		{name: "API Key 映射离开目标", account: apiKey, result: &OpenAIForwardResult{Model: "gpt-6.1-sol", UpstreamModel: "gpt-6-sol"}},
+		{name: "API Key 仅计费标签", account: apiKey, result: &OpenAIForwardResult{Model: "gpt-6-sol", BillingModel: "gpt-6.1-sol"}},
+		{name: "API Key 仅响应标签", account: apiKey, result: &OpenAIForwardResult{Model: "gpt-6-sol", UpstreamResponseModel: "gpt-6.1-sol"}},
+		{name: "API Key 其他模型", account: apiKey, result: &OpenAIForwardResult{Model: "gpt-6-sol"}},
+		{name: "API Key Astra", account: apiKey, result: &OpenAIForwardResult{Model: "gpt-6-astra"}},
+		{name: "API Key 相似名称", account: apiKey, result: &OpenAIForwardResult{Model: "gpt-6.1-sol-preview"}},
 		{name: "其他平台", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth}, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}},
+		{name: "其他平台 API Key", account: &Account{Platform: PlatformGrok, Type: AccountTypeAPIKey}, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}},
 		{name: "订阅访问令牌", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeSetupToken}, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}, want: true},
+		{name: "上游透传不豁免", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeUpstream}, result: &OpenAIForwardResult{Model: "gpt-6.1-sol"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, openAISubscriptionLongContextExempt(tt.account, tt.result))
+			require.Equal(t, tt.want, openAIGPT61SolLongContextExempt(tt.account, tt.result))
 		})
 	}
 }
@@ -79,33 +91,27 @@ func TestOpenAIGatewayServiceRecordUsage_GPT61SolSubscriptionLongContext(t *test
 								APIKey: apiKey, User: &User{ID: 2}, Account: account,
 							})
 							require.NoError(t, err)
-							wantLong := accountType == AccountTypeAPIKey && (accountEnabled || groupMode == "分组开启")
-							inputFactor, outputFactor, tierFactor := 1.0, 1.0, 1.0
-							if wantLong {
-								inputFactor, outputFactor = 2, 1.5
-							}
+							// OAuth、Setup Token 与 API Key 上的 GPT-6.1 Sol 都豁免官方长上下文附加费。
+							// 分组开关和账号开关都不能把附加费加回来。
+							tierFactor := 1.0
 							if tier == "priority" {
 								tierFactor = 2
 							}
 							log := usageRepo.lastLog
 							require.NotNil(t, log)
-							require.Equal(t, wantLong, log.LongContextBillingApplied)
-							require.InDelta(t, 200000*2e-6*inputFactor*tierFactor, log.InputCost, 1e-12)
-							require.InDelta(t, 80000*0.1e-6*inputFactor*tierFactor, log.CacheReadCost, 1e-12)
-							require.InDelta(t, 20000*2.5e-6*inputFactor*tierFactor, log.CacheCreationCost, 1e-12)
-							require.InDelta(t, 2000*10e-6*outputFactor*tierFactor, log.OutputCost, 1e-12)
-							wantTotal := (0.458*inputFactor + 0.02*outputFactor) * tierFactor
+							require.False(t, log.LongContextBillingApplied)
+							require.InDelta(t, 200000*2e-6*tierFactor, log.InputCost, 1e-12)
+							require.InDelta(t, 80000*0.1e-6*tierFactor, log.CacheReadCost, 1e-12)
+							require.InDelta(t, 20000*2.5e-6*tierFactor, log.CacheCreationCost, 1e-12)
+							require.InDelta(t, 2000*10e-6*tierFactor, log.OutputCost, 1e-12)
+							wantTotal := 0.478 * tierFactor
 							require.InDelta(t, wantTotal, log.TotalCost, 1e-12)
 							require.InDelta(t, wantTotal*1.1, log.ActualCost, 1e-12)
 							require.Equal(t, 1, userRepo.deductCalls)
 							require.InDelta(t, wantTotal*1.1, userRepo.lastAmount, 1e-12)
 							if groupMode != "无分组" {
-								wantStats := 0.478 * tierFactor
-								if accountType == AccountTypeAPIKey && accountEnabled {
-									wantStats = (0.458*2 + 0.02*1.5) * tierFactor
-								}
 								require.NotNil(t, log.AccountStatsCost)
-								require.InDelta(t, wantStats, *log.AccountStatsCost, 1e-12)
+								require.InDelta(t, 0.478*tierFactor, *log.AccountStatsCost, 1e-12)
 							}
 						})
 					}
@@ -190,17 +196,43 @@ func TestOpenAIGatewayServiceRecordUsage_GPT61SolLongContextBoundary(t *testing.
 						Extra: map[string]any{openAILongContextBillingEnabledKey: true}},
 				})
 				require.NoError(t, err)
-				wantLong := accountType == AccountTypeAPIKey && totalInput > 272000
-				wantInput, wantOutput := float64(totalInput)*2e-6, 0.01
-				if wantLong {
-					wantInput *= 2
-					wantOutput *= 1.5
-				}
-				require.Equal(t, wantLong, usageRepo.lastLog.LongContextBillingApplied)
-				require.InDelta(t, wantInput, usageRepo.lastLog.InputCost, 1e-12)
-				require.InDelta(t, wantOutput, usageRepo.lastLog.OutputCost, 1e-12)
+				// API Key 与 OAuth 一样，GPT-6.1 Sol 越过 272k 也不加官方长上下文附加费。
+				require.False(t, usageRepo.lastLog.LongContextBillingApplied)
+				require.InDelta(t, float64(totalInput)*2e-6, usageRepo.lastLog.InputCost, 1e-12)
+				require.InDelta(t, 0.01, usageRepo.lastLog.OutputCost, 1e-12)
 			})
 		}
+	}
+}
+
+func TestOpenAIGatewayServiceRecordUsage_APIKeyGPT61SolSkipsOfficialLongContextOnly(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		model     string
+		upstream  string
+		wantLong  bool
+		wantTotal float64
+	}{
+		{name: "API Key Sol 豁免", model: "gpt-6.1-sol", wantTotal: 0.62},
+		{name: "API Key 别名映射到 Sol", model: "custom", upstream: "gpt-6.1-sol", wantTotal: 0.62},
+		{name: "API Key Sol 映射到旧模型仍计附加费", model: "gpt-6.1-sol", upstream: "gpt-6-sol", wantLong: true, wantTotal: 1.23},
+		{name: "API Key 非 Sol", model: "gpt-6-sol", wantLong: true, wantTotal: 1.23},
+		{name: "API Key Astra", model: "gpt-6-astra", wantLong: true, wantTotal: 6.15},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+			svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+				Result: &OpenAIForwardResult{RequestID: tt.name, Model: tt.model, UpstreamModel: tt.upstream,
+					Usage: OpenAIUsage{InputTokens: 300000, OutputTokens: 2000}, Duration: time.Second},
+				APIKey: openAIRecordUsageAPIKeyWithGroup(svc, 1, true), User: &User{ID: 2},
+				Account: &Account{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+					Extra: map[string]any{openAILongContextBillingEnabledKey: true}},
+			})
+			require.NoError(t, err)
+			require.Equal(t, tt.wantLong, usageRepo.lastLog.LongContextBillingApplied)
+			require.InDelta(t, tt.wantTotal, usageRepo.lastLog.TotalCost, 1e-12)
+		})
 	}
 }
 

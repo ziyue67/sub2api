@@ -716,6 +716,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 	hooks *OpenAIWSIngressHooks,
 	wsDecision OpenAIWSProtocolDecision,
 ) error {
+	ctx = s.withRequestTimezoneEgress(ctx, account)
 	// The same request context survives scheduler failover attempts. Clear any
 	// reverse mapping installed by the prior account before processing frames.
 	setCodexToolNameReverse(c, nil)
@@ -1230,6 +1231,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			//     覆盖（Store(nil)），因为 OpenAI 上游对该帧实际不传
 			//     service_tier 时按 default 处理，billing 应如实反映。
 			if policyErr == nil && blocked == nil && isResponseCreate {
+				if err := regionalMeterValidatePayload(ctx, out); err != nil {
+					return out, nil, err
+				}
+				if err := regionalMeterBeforeSend(ctx); err != nil {
+					return out, nil, err
+				}
 				if err := s.acquireOpenAIRPMForSend(ctx, account); err != nil {
 					return out, nil, err
 				}
@@ -1278,6 +1285,12 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		return admissionErr
 	}
 	if err := s.acquireOpenAIRPMForSend(ctx, latest); err != nil {
+		return err
+	}
+	if err := regionalMeterValidatePayload(ctx, firstClientMessage); err != nil {
+		return err
+	}
+	if err := regionalMeterBeforeSend(ctx); err != nil {
 		return err
 	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
@@ -1434,6 +1447,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return nil
 				}
 				eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
+				regionalMeterObserveUsage(ctx, payload, eventType)
 				if eventType == "response.created" {
 					failureAccountSideEffectsApplied = false
 				}

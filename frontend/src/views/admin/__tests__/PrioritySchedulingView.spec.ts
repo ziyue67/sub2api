@@ -9,9 +9,38 @@ vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<mai
 vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { template: '<nav />' } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin/priorityScheduling', () => ({ getPriorityConfig: vi.fn(), getPrioritySnapshot: vi.fn(), savePriorityConfig: vi.fn() }))
-const config: PrioritySchedulingConfig = { oauth_quota_priority: false, oauth_quota_threshold: 90, balance_protocols: true, enabled: false, mode: 'balanced', group_ids: [], models: [], window_minutes: 60, min_samples: 5, target_ttft_ms: 3000, max_load_percent: 80, min_quality_percent: 90, quality_max_age_hours: 24, quality_weight: 30, latency_weight: 25, load_weight: 25, cost_weight: 20 }
+const config: PrioritySchedulingConfig = { oauth_quota_priority: false, oauth_quota_threshold: 90, balance_protocols: true, enabled: false, mode: 'balanced', group_ids: [], models: [], window_minutes: 60, min_samples: 5, target_ttft_ms: 3000, latency_penalty_minutes: 10, max_load_percent: 80, min_quality_percent: 90, quality_max_age_hours: 24, quality_weight: 30, latency_weight: 25, load_weight: 25, cost_weight: 20 }
 beforeEach(() => { vi.resetAllMocks(); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.mocked(getPriorityConfig).mockResolvedValue({ ...config }); vi.mocked(getPrioritySnapshot).mockResolvedValue(null); vi.mocked(savePriorityConfig).mockImplementation(async c => c) })
 describe('priority scheduling', () => {
+  it('defaults an omitted latency penalty and saves an explicit duration or zero', async () => {
+    const legacy = { ...config }; delete legacy.latency_penalty_minutes
+    vi.mocked(getPriorityConfig).mockResolvedValue(legacy)
+    const wrapper = mount(PrioritySchedulingView); await flushPromises()
+    expect((wrapper.get('[data-testid="latency_penalty_minutes"]').element as HTMLInputElement).value).toBe('10')
+    await wrapper.get('[data-testid="latency_penalty_minutes"]').setValue(15)
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(savePriorityConfig).toHaveBeenLastCalledWith({ ...config, latency_penalty_minutes: 15 })
+    await wrapper.get('[data-testid="latency_penalty_minutes"]').setValue(0)
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(savePriorityConfig).toHaveBeenLastCalledWith({ ...config, latency_penalty_minutes: 0 })
+    wrapper.unmount()
+  })
+
+  it('shows the penalty deadline and distinguishes recovery exploration', async () => {
+    const candidate: PriorityCandidate = { account_id: 1, account_name: 'Mock recovery', score: 75, tier: 'degraded', reasons: ['latency_above_target'], priority: 1, concurrency: 20, load_factor: 10000, load_percent: 0, waiting: 0, rate: 0.1, revenue: 1, theoretical_cost: 0.2, profit: 0.8, margin: 0.8, economics_source: 'usage', profit_samples: 7, samples: 7, p90_ttft_ms: 19000, quality_passed: 10, quality_samples: 10, latency_penalty_until: '2026-10-14T02:00:00Z' }
+    const snapshot = { at: '2026-10-14T01:00:00Z', model: 'gpt-test', group_id: 11, mode: 'profit', history_ready: true, candidates: [candidate] }
+    vi.mocked(getPrioritySnapshot).mockResolvedValue(snapshot)
+    const wrapper = mount(PrioritySchedulingView); await flushPromises()
+    expect(wrapper.text()).toContain('priorityScheduling.latencyPenaltyUntil')
+    expect(wrapper.text()).not.toContain('priorityScheduling.explorationEligible')
+    vi.mocked(getPrioritySnapshot).mockResolvedValue({ ...snapshot, candidates: [{ ...candidate, tier: 'insufficient', latency_recovery: true, exploration_eligible: true, reasons: ['latency_recovery'] }] })
+    await (wrapper.vm as any).refresh(); await flushPromises()
+    expect(wrapper.text()).not.toContain('priorityScheduling.latencyPenaltyUntil')
+    expect(wrapper.text()).toContain('priorityScheduling.reasons.latency_recovery')
+    expect(wrapper.text()).toContain('priorityScheduling.explorationEligible')
+    wrapper.unmount()
+  })
+
   it('defaults legacy settings off and saves the quota cutoff and explicit disable', async () => {
     const legacy = { ...config }; delete legacy.oauth_quota_priority; delete legacy.oauth_quota_threshold
     vi.mocked(getPriorityConfig).mockResolvedValue(legacy)

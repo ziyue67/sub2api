@@ -23,7 +23,7 @@
 - `make test-frontend`：lint、类型检查和 78 文件 / 1323 项测试通过。首轮新增页面测试的 mock 翻译预期有误，修正后全量通过。
 - 前端生产构建和带前端嵌入的 Go 构建均在本机进行。测试使用 mock/本地输入，没有发送真实采票请求。
 - 集成命令中依赖未配置外部服务的用例可能跳过；本机未设置 `HARVEST_TEST_POSTGRES_DSN`，专用 PostgreSQL 持久化测试未执行。
-- CDP 在本地 mock 页面核对中英文文案、旧 host 输入移除及桌面无横向溢出。[改前页面](images/targeted-ticket-before.png)与[改后页面](images/targeted-ticket-probe.png)使用虚构管理员与节点；浏览器缺中文字体，截图采用英文，中文文案通过 DOM 核对。
+- CDP 在本地 mock 页面核对中英文文案、旧 host 输入移除及桌面无横向溢出。[改前页面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/changes/images/targeted-ticket-before.png)与[改后页面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/changes/images/targeted-ticket-probe.png)使用虚构管理员与节点；浏览器缺中文字体，截图采用英文，中文文案通过 DOM 核对。
 
 截图均来自 `/admin/harvest-flow` 的实际页面及本地 mock API：改前源码为 `d977e7a5e24e5536db6ce8b8478743e0c4b11f77`，改后源码为 `f79b6b3088208c043e6ab71275554a9ab028123b`。画面展示各版本的成功状态，不代表真实上游结果。
 

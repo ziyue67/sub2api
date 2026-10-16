@@ -36,3 +36,5 @@ CI `Re-login runtime` 在两种架构构建后，将 amd64 包部署到 Ubuntu 2
 主程序网页升级不会替换外部 systemd Worker。已设置 `OPENAI_REAUTH_WORKER_TOKEN` 的实例须同步升级独立 Worker 脚本及运行依赖，并配置绝对路径 `OPENAI_TOTP_JOURNAL_DIR`。沿用原恢复目录和加密 key；目录 0700、key/档案 0600。旧 Worker 或不可用的恢复存储不会报到 2FA 能力，API 将拒绝新任务，不能靠反复点击更换按钮解决。
 
 Worker 切换前排空活跃任务，保留原 `current` 和配置，按部署流程执行预检、切换和失败回滚。运行包的修复不改变 MFA 协议、任务状态或已有恢复档案格式。
+
+标准密码/TOTP sidecar 可用 [托管迁移工具](../../deploy/MANAGED_WORKER.md) 一次转入主程序自动管理。该迁移保留原 key/恢复记录并预校验当前版本运行包；以后主程序升级会自动选择配套 Worker。自定义邮箱协议继续使用外部模式。

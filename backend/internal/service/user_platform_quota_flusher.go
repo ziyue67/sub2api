@@ -50,6 +50,7 @@ const defaultFlushBatchSize = 1000
 // UserPlatformQuotaUsageFlusher 将 Redis 脏集快照定期批量写入 DB。
 // 不维护任何 delta/in-process 状态；每批读取 Redis 当前绝对值覆盖写入。
 type UserPlatformQuotaUsageFlusher struct {
+	coordinated bool
 	cache       quotaDirtyCache
 	quotaRepo   quotaSnapshotWriter
 	timingWheel *TimingWheelService
@@ -81,6 +82,7 @@ func NewUserPlatformQuotaUsageFlusher(cfg *config.Config, cache BillingCache, qu
 		interval = 2 * time.Second
 	}
 	return &UserPlatformQuotaUsageFlusher{
+		coordinated:  cfg.Runtime.RegionalFundsFile != "",
 		cache:        cache,
 		quotaRepo:    quotaRepo,
 		timingWheel:  tw,
@@ -222,7 +224,7 @@ func (s *UserPlatformQuotaUsageFlusher) flushOneBatch(parentCtx context.Context)
 
 // flush 执行一次完整的 flush，循环消费至脏集空或达到 maxBatchesPerTick。
 func (s *UserPlatformQuotaUsageFlusher) flush() {
-	if s == nil {
+	if s == nil || s.coordinated {
 		return
 	}
 	parentCtx := context.Background()
@@ -249,7 +251,7 @@ func (s *UserPlatformQuotaUsageFlusher) tick() {
 
 // Start 注册定时 tick。flusher_enabled=false 时直接返回，不注册定时器。
 func (s *UserPlatformQuotaUsageFlusher) Start() {
-	if s == nil || !s.enabled {
+	if s == nil || !s.enabled || s.coordinated {
 		return
 	}
 	s.timingWheel.ScheduleRecurring("deferred:platform_quota", s.interval, s.tick)
@@ -257,7 +259,7 @@ func (s *UserPlatformQuotaUsageFlusher) Start() {
 
 // Stop 停止 flusher：标记 stopped → Cancel 定时器 → 执行最后一次 flush。
 func (s *UserPlatformQuotaUsageFlusher) Stop() {
-	if s == nil {
+	if s == nil || s.coordinated {
 		return
 	}
 	s.stopped.Store(true)

@@ -118,6 +118,17 @@ func registerRoutes(
 	// 通用路由（健康检查、状态等）
 	routes.RegisterCommonRoutes(r)
 	if cfg.Runtime.Role == config.RuntimeRoleGateway {
+		if cfg.Runtime.RegionalSchedulerFile != "" || cfg.Runtime.RegionalAuthFile != "" {
+			if cfg.Runtime.RegionalAuthFile != "" {
+				r.Use(middleware2.RegionalAPIKeyAuth(apiKeyService, cfg))
+			}
+			// Local auth preview still cannot spend or schedule: account ownership and
+			// quota leases are not implemented. Never enter primary-backed middleware.
+			// Health routes above remain available.
+			r.Use(func(c *gin.Context) {
+				c.AbortWithStatusJSON(503, gin.H{"error": "regional gateway admission is not enabled"})
+			})
+		}
 		// Global settings, payments, and internal worker/admin APIs stay on the
 		// primary. Request replicas only expose authenticated gateway routes.
 		routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg)

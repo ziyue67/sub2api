@@ -130,3 +130,55 @@ func TestForwardGrokChatViaResponsesRecordsUpstreamErrorDetail(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, event.UpstreamStatusCode)
 	require.Equal(t, grokUnknownForbiddenBody, event.Detail)
 }
+
+func TestForwardGrokRawChatCompletionsRecordsUpstreamErrorDetail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name       string
+		enabled    bool
+		wantDetail string
+	}{
+		{name: "enabled", enabled: true, wantDetail: grokUnknownForbiddenBody},
+		{name: "disabled", enabled: false, wantDetail: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"grok","messages":[{"role":"user","content":"hi"}],"stream":false}`)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			// API key accounts never use the Chat->Responses bridge, so this
+			// exercises the raw Chat Completions forward.
+			account := &Account{
+				ID:          4602,
+				Name:        "grok-api-key",
+				Platform:    PlatformGrok,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: map[string]any{"api_key": "token", "base_url": "https://grok.example.test/v1"},
+			}
+			repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
+				accountsByID: map[int64]*Account{account.ID: account},
+			}}
+			cfg := rawChatCompletionsTestConfig()
+			cfg.Gateway.LogUpstreamErrorBody = tt.enabled
+			cfg.Gateway.LogUpstreamErrorBodyMaxBytes = 2048
+			upstream := &httpUpstreamRecorder{resp: grokForbiddenResponse()}
+			svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream, accountRepo: repo}
+
+			_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+			require.Error(t, err)
+			require.Equal(t, "https://grok.example.test/v1/chat/completions", upstream.lastReq.URL.String())
+
+			event := lastGrokOpsEvent(t, c)
+			require.Equal(t, http.StatusForbidden, event.UpstreamStatusCode)
+			require.Equal(t, "xai-forbidden", event.UpstreamRequestID)
+			require.Equal(t, tt.wantDetail, event.Detail)
+		})
+	}
+}

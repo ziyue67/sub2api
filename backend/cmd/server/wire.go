@@ -152,6 +152,16 @@ func provideCleanup(
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
+		if openAIGateway != nil {
+			stopCtx, stopCancel := context.WithTimeout(ctx, 5*time.Second)
+			err := stopRegionalFunds(stopCtx, openAIGateway.RegionalFundsReadiness())
+			stopCancel()
+			if err != nil {
+				log.Printf("[Cleanup] Funds join failed; dependencies retained: %v", err)
+				return
+			}
+		}
+
 		type cleanupStep struct {
 			name string
 			fn   func() error

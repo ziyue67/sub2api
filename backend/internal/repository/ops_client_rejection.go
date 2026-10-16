@@ -37,7 +37,14 @@ func opsClientRejectionSQL(alias string) string {
 }
 
 func opsBusinessLimitedSQL(alias string) string {
-	return `(COALESCE(` + alias + `.is_business_limited, FALSE) OR ` + opsClientRejectionSQL(alias) + `)`
+	p := alias + "."
+	// Older routing logs marked exhausted account pools as business limits.
+	// Capacity is a platform failure; keep local model rejections excluded.
+	capacity := `(COALESCE(` + p + `error_owner, '') = 'platform'
+ AND COALESCE(` + p + `error_phase, '') = 'routing'
+ AND COALESCE(` + p + `error_type, '') <> 'model_not_found'
+ AND COALESCE(` + p + `status_code, 0) IN (429, 503))`
+	return `((COALESCE(` + p + `is_business_limited, FALSE) AND NOT ` + capacity + `) OR ` + opsClientRejectionSQL(alias) + `)`
 }
 
 // Read-time compatibility: old logs keep their original storage, but list and

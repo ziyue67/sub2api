@@ -1,5 +1,7 @@
 # OAuth 首次质量规则截图
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/oauth-initial-quality)；下列文件名与验证说明保留用于追溯。
+
 - 入口：智能运维 → 自动配置 → OAuth 账户首次配置。
 - before.png 对应基线 7719df8be40dcc612b3ce63bdbbe67f136d009b6。
 - after-empty.png / after-saved.png 对应源码 afb0a5bf915db0745d8f94780b2c4a0dbaa13019。

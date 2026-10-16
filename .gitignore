@@ -158,15 +158,6 @@ docs/*
 !docs/astra-account-scheduling.md
 !docs/legal/
 !docs/legal/*.md
-!docs/screenshots/
-docs/screenshots/*
-!docs/screenshots/astra-auto-groups/
-!docs/screenshots/ws-sse-acceleration/
-!docs/screenshots/mobile-account-actions-menu.png
-!docs/screenshots/codex-referral-dialog.png
-!docs/screenshots/codex-referral-success.png
-!docs/screenshots/bps403-recovery/
-!docs/screenshots/account-cost-multiplier/
 .serena/
 .codex/
 frontend/coverage/
@@ -185,7 +176,6 @@ issues/
 !docs/codex-ticket-pinning.md
 
 !docs/account-auto-config.md
-!docs/screenshots/auto-config/
 
 # Runtime credential encryption keys must never enter source control.
 **/credential-operations.key
@@ -193,10 +183,6 @@ issues/
 !docs/credential-encryption.md
 !docs/new-api-upstream-probe.md
 !docs/account-ops-notifications.md
-!docs/screenshots/account-ops-monitoring/
-!docs/screenshots/credential-encryption/
-!docs/screenshots/pelican-showcase-api-ui/
-!docs/screenshots/smart-ops-capture-harvest/
 
 !docs/typesafe-jev.md
 
@@ -204,19 +190,19 @@ issues/
 !/docs/upstream-regional-routing.md
 
 !docs/harvest-gateway-borrow.md
-!docs/screenshots/harvest-gateway-borrow/
-!docs/screenshots/harvest-settings-cleanup/
-!docs/screenshots/channel-monitor-v3/
-!docs/screenshots/channel-monitor-v3-idle-probe/
-!docs/screenshots/monitor-client-rejections/
-!docs/screenshots/usage-tps-single-token/
-!docs/screenshots/support-tickets/
-!docs/screenshots/pelican-showcase-notice/
 
 !docs/openai-2fa-rotation.md
-!docs/screenshots/2fa-rotation/
 **/totp-recovery/
 **/*.sealed
 
 !docs/astra-candy-beta.md
-!docs/screenshots/astra-candy-beta/
+
+# PR screenshots belong in PR attachments; retain text evidence in docs/screenshots.
+!docs/screenshots/
+/docs/screenshots/**/*.png
+/docs/screenshots/**/*.jpg
+/docs/screenshots/**/*.jpeg
+/docs/screenshots/**/*.gif
+/docs/screenshots/**/*.webp
+/docs/screenshots/**/*.avif
+/docs/screenshots/**/*.svg
