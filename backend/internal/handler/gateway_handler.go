@@ -1727,6 +1727,11 @@ func (h *GatewayHandler) Usage(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	if requestIDs, present := c.Request.URL.Query()["request_id"]; present {
+		h.usageBillingRecord(c, apiKey, subject, requestIDs)
+		return
+	}
+
 	// 解析可选的日期范围参数（用于 model_stats 查询）
 	startTime, endTime := h.parseUsageDateRange(c)
 	days, ok := parseAPIKeyDailyUsageDays(c.DefaultQuery("days", ""))

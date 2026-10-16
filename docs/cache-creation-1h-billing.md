@@ -41,6 +41,70 @@
 
 客户看到的 1h 是计费档位。收费说明应与实际采用的价格一致；此功能不验证或延长上游真实缓存存活时间。
 
+## 下游中转站账单查询
+
+下游可以使用发起模型请求的同一 API Key 查询该请求的站内计费记录：
+
+```http
+GET /v1/usage?request_id=client%3Aexample-request-uuid
+Authorization: Bearer <same-api-key>
+```
+
+这是已有 `/v1/usage` 的可选查询模式。不带 `request_id` 时保持原有额度统计响应；带该参数时返回单条计费记录。仅允许当前用户的当前 Key 查询，不支持管理员代查、跨 Key 查询或模糊搜索。响应带 `Cache-Control: no-store`。
+
+对于普通 Messages / Responses / Chat Completions 请求，用模型响应头 `X-Client-Request-ID` 的值加上 `client:` 前缀作为查询 ID。网关会生成或规范化此 ID；必须保存响应头中的值，不要假定客户端自行发送的同名头会被沿用。每个独立生成请求对应独立 ID，不能用会话 ID 代替。这里不是上游响应体的 message ID，也不是上游站点的 request ID。异步视频、独立搜索等使用特殊计费事件 ID 的路径不属于此接入约定。
+
+以下是上游回报 360 个 5m tokens、本地成功按 1h 分类的一条示例（金额仅用于展示结构）：
+
+```json
+{
+  "request_id": "client:example-request-uuid",
+  "record_status": "recorded",
+  "billing_basis": "site_billing",
+  "billed_usage": {
+    "input_tokens": 4,
+    "output_tokens": 2,
+    "cache_creation_input_tokens": 360,
+    "cache_read_input_tokens": 1000,
+    "cache_creation_5m_tokens": 0,
+    "cache_creation_1h_tokens": 360
+  },
+  "upstream_cache_usage": {
+    "cache_creation_input_tokens": 360,
+    "cache_read_input_tokens": 1000,
+    "ephemeral_5m_input_tokens": 360,
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_present": true,
+    "ephemeral_1h_present": true
+  },
+  "cache_billing_status": "converted",
+  "actual_cost": 0.09664109,
+  "billing_type": 0,
+  "created_at": "2026-10-16T06:25:00Z"
+}
+```
+
+字段解释与接入规则：
+
+- `billed_usage` 是保存下来的本站计费数量，适合下游按照自己的价格计算收费；1h 字段表示计费档位，不代表已经验证的物理缓存 TTL。
+- `actual_cost`、`billing_type` 与使用记录保持一致。订阅、免费请求和扣费异常不能仅靠一个 usage 记录认定为余额支付成功；`record_status=recorded` 只表示已找到记录，不是支付成功状态。
+- `upstream_cache_usage` 来自已有缓存审计快照，明确保留原始 5m/1h，`*_present` 区分零值与缺失。历史记录或没有审计快照时为 `null`，不根据账单反推上游原始数据。
+- `cache_billing_status` 是缓存分类规则的状态；无审计快照时为 `null`。明细缺失或价格不适用的记录仍返回实际保存的原分类，不会仅因开关开启就硬报 1h。
+- 不返回管理员的账号信息、上游成本估算、转换费用差值、网络地址或完整审计对象。
+- 仍使用账号原有 `cache_creation_billing_1h_enabled` 开关决定分类；只读查询本身不新增策略开关，不修改历史账单，也不发起模型调用。
+
+模型响应结束后，后台计费记录可能尚未写入。`404 billing_record_not_found` 同时覆盖未写入、错误 ID 和非当前 Key 的记录；下游应有限退避查询，例如 1、2、4、8 秒。仍未查到应标记待核对，不能视为免费，也不能为查询账单重新发送生成请求。数据库不可用返回 503；重复匹配返回 409；空、重复或超长 `request_id` 返回 400。
+
+调用示例（环境变量由调用方提供，不在日志中打印 Key）：
+
+```bash
+curl --get "$BASE_URL/v1/usage" \
+  --header "Authorization: Bearer $API_KEY" \
+  --data-urlencode "request_id=client:$CLIENT_REQUEST_ID"
+```
+
+此接口需要下游显式接入。仅解析模型 JSON/SSE 的旧版中转程序仍会看到上游原始 Usage，不会因为新增查询接口自动按本站 1h 档位收费。应在下游测试环境验证“请求响应头 → 记录查询 → 分类与金额”后再启用下游结算规则。
+
 ## 数据与对账
 
 迁移 `277_usage_log_cache_creation_billing.sql` 添加可空 JSONB 列 `usage_logs.cache_creation_billing`。旧记录保持 NULL，不猜测历史原始分类。写入路径覆盖单条、批量和 best-effort；读取通过同一列清单恢复审计数据。
