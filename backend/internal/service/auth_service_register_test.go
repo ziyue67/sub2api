@@ -607,6 +607,18 @@ func TestAuthService_Register_CreateError(t *testing.T) {
 	require.ErrorIs(t, err, ErrServiceUnavailable)
 }
 
+func TestAuthService_Register_IPQuotaErrorIsPreserved(t *testing.T) {
+	repo := &userRepoStub{createErr: ErrRegistrationIPLimit}
+	svc := newAuthService(repo, map[string]string{
+		SettingKeyRegistrationEnabled: "true",
+	}, nil, nil)
+
+	token, user, err := svc.Register(context.Background(), "user@example.com", "password")
+	require.ErrorIs(t, err, ErrRegistrationIPLimit)
+	require.Empty(t, token)
+	require.Nil(t, user)
+}
+
 func TestAuthService_Register_CreateEmailExistsRace(t *testing.T) {
 	// 模拟竞态条件：ExistsByEmail 返回 false，但 Create 时因唯一约束失败
 	repo := &userRepoStub{createErr: ErrEmailExists}

@@ -1,5 +1,7 @@
 # Serverless 设置面板截图
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/serverless)；下列文件名与验证说明保留用于追溯。
+
 对应源码提交：f56180dd6591f424a12fdf808e06dd78b906000a，组件 frontend/src/components/settings/ServerlessSettings.vue。
 
 页面入口：设置 → 网关服务 → Serverless 管理。截图直接渲染实际 Vue 组件和项目样式；外层标题为本地预览容器，未运行完整 Settings 页导航。API、Pod、example.com 地址和流量计数全部为虚构数据，不是生产截图或后端业务验收。

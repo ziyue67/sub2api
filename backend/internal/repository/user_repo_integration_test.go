@@ -36,6 +36,7 @@ func (s *UserRepoSuite) SetupTest() {
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM user_subscriptions")
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM user_allowed_groups")
 	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM users")
+	_, _ = integrationDB.ExecContext(s.ctx, "DELETE FROM registration_ip_quotas")
 }
 
 func TestUserRepoSuite(t *testing.T) {

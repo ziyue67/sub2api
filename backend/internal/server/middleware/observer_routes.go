@@ -67,6 +67,7 @@ var observerAccountRoutes = map[string]struct{}{
 	"GET /api/v1/admin/accounts/:id/models":                          {},
 	"POST /api/v1/admin/accounts/:id/models/sync-upstream":           {},
 	"POST /api/v1/admin/accounts/batch":                              {},
+	"POST /api/v1/admin/accounts/:id/export-session":                 {},
 	"GET /api/v1/admin/accounts/data":                                {},
 	"POST /api/v1/admin/accounts/data":                               {},
 	"POST /api/v1/admin/accounts/batch-update-credentials":           {},

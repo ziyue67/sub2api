@@ -1612,3 +1612,9 @@ export async function getManagementCapabilities(): Promise<{ web_search_enabled:
   const { data } = await apiClient.get('/admin/accounts/management-capabilities')
   return data
 }
+
+/** Fetch the real ChatGPT web session using a request-scoped login Cookie. */
+export async function exportOpenAISession(id: number, cookie: string): Promise<Record<string, unknown>> {
+  const { data } = await apiClient.post<Record<string, unknown>>(`/admin/accounts/${id}/export-session`, { cookie })
+  return data
+}

@@ -48,7 +48,7 @@
 
 截图仅为虚构数据预览，不能作为线上运行或真实业务历史的证据：
 
-- [修改前](screenshots/auto-config-history/before.png)
-- [桌面近期日志](screenshots/auto-config-history/desktop.png)
-- [深色模式](screenshots/auto-config-history/dark.png)
-- [手机布局](screenshots/auto-config-history/mobile.png)
+- [修改前](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/auto-config-history/before.png)
+- [桌面近期日志](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/auto-config-history/desktop.png)
+- [深色模式](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/auto-config-history/dark.png)
+- [手机布局](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/auto-config-history/mobile.png)

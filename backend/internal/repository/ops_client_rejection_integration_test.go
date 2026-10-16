@@ -65,7 +65,12 @@ func TestChannelMonitorExcludesClientRejections(t *testing.T) {
 	require.EqualValues(t, 5, result.Total, "legacy local model rejection is also attributed to the client")
 	result, err = ops.ListErrorLogs(ctx, &service.OpsErrorLogFilter{StartTime: &start, EndTime: &end, View: "errors", Model: model})
 	require.NoError(t, err)
-	require.EqualValues(t, 2, result.Total)
+	require.EqualValues(t, 3, result.Total, "raw history retains the earlier provider failure even after a final local rejection")
+	var errorRequestIDs []string
+	for _, item := range result.Errors {
+		errorRequestIDs = append(errorRequestIDs, item.RequestID)
+	}
+	require.ElementsMatch(t, []string{"client-isolation-provider", "client-isolation-capacity", "client-isolation-dedup"}, errorRequestIDs)
 }
 
 func TestChannelMonitorClientRejectionRequiresLocalEvidence(t *testing.T) {

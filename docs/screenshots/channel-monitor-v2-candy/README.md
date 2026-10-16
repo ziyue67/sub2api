@@ -1,5 +1,7 @@
 # V2 渠道卡片与分组糖果检测
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-candy)；下列文件名与验证说明保留用于追溯。
+
 ## 配置与验收
 
 1. 启用系统设置中的 V2 数据监控, 打开 `/admin/channels/monitor`.
@@ -30,10 +32,10 @@
 - 手机: 390×844 视口, 检查卡片换行且页面无横向溢出.
 - 管理端: 1440×1100 视口, 添加分组并保存模型、推理强度和检测间隔, 核对提交参数为 `group_id`, 不包含 `account_id`. 保存请求仅发送给本地 mock.
 
-![改动前矩阵页](before.png)
+[改动前矩阵页](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-candy/before.png)
 
-![改动后桌面卡片页](desktop.png)
+[改动后桌面卡片页](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-candy/desktop.png)
 
-![手机卡片页](mobile.png)
+[手机卡片页](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-candy/mobile.png)
 
-![管理员分组检测配置](admin.png)
+[管理员分组检测配置](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v2-candy/admin.png)

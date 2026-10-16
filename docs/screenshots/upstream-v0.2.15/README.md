@@ -1,5 +1,7 @@
 # v0.2.15 同步界面证据
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/upstream-v0.2.15)；下列文件名与验证说明保留用于追溯。
+
 使用实际 Vue 组件与仓库 Tailwind 配置在本地 Vite 中渲染。API 客户端替换为 mock，统计值为虚构数据，API Key 字段为空；未连接生产、未提交账号，也未执行真实上游调用。
 
 - 改动前源码：`d3e43f2de33af9e987cffa511d76dfabbcd749da`。

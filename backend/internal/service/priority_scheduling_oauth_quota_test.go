@@ -79,6 +79,11 @@ func TestPriorityOAuthQuotaEvidenceAndCapacity(t *testing.T) {
 		{"latency", func(_ *PrioritySchedulingConfig, _ *openAIAccountCandidateScore, s *PrioritySchedulingSignal) {
 			s.P90TTFTMs = 9999
 		}, 0},
+		{"latency_recovery_cannot_displace_healthy_api_capacity", func(_ *PrioritySchedulingConfig, _ *openAIAccountCandidateScore, s *PrioritySchedulingSignal) {
+			s.P90TTFTMs = 9999
+			at := now.Add(-11 * time.Minute)
+			s.LatestLatencyAt = &at
+		}, 0},
 		{"cold_financial_samples", func(_ *PrioritySchedulingConfig, _ *openAIAccountCandidateScore, s *PrioritySchedulingSignal) {
 			s.Samples = 0
 			s.ProfitSamples = 0

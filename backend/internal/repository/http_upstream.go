@@ -241,6 +241,10 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 	if s.useRegionalEgress(proxyURL, accountID, profile) {
 		return s.doRegionalEgress(req, accountID, accountConcurrency, profile, nil)
 	}
+	req, bindErr := service.BindOpenAIRequestTimezone(req, proxyURL)
+	if bindErr != nil {
+		return nil, bindErr
+	}
 	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
 	entry, err := s.acquireClientWithProfileAndLane(proxyURL, accountID, accountConcurrency, profile, laneID)
 	if err != nil {
@@ -335,6 +339,10 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	// 区域出口（ranxi）优先；否则走 Fork 的车道感知客户端获取。
 	if s.useRegionalEgress(proxyURL, accountID, upstreamProfile) {
 		return s.doRegionalEgress(req, accountID, accountConcurrency, upstreamProfile, profile)
+	}
+	req, bindErr := service.BindOpenAIRequestTimezone(req, proxyURL)
+	if bindErr != nil {
+		return nil, bindErr
 	}
 	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
 	entry, err := s.acquireClientWithTLSAndLane(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID)

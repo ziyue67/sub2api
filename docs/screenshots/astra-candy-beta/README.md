@@ -1,5 +1,7 @@
 # Beta 糖果观测页面预览
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/astra-candy-beta)；下列文件名与验证说明保留用于追溯。
+
 实际 `HarvestFlowView.vue` / `HarvestPolicyPanel.vue` 本地浏览器渲染，API、账号与统计均为 mock；未连接生产。
 
 - `before.png`：生产基线 `781942a82` 的流程页，尚无糖果观测。

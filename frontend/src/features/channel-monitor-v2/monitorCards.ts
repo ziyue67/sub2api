@@ -4,6 +4,8 @@ export const CANDY_HISTORY_LIMIT = 100
 export const CANDY_HISTORY_LIMIT_MIN = 15
 export const CANDY_HISTORY_LIMIT_MAX = 100
 export const MONITOR_CARD_SLOT_COUNT = 18
+/** Matches ChannelMonitorV2RecentSampleBucket. Sample bars are 5-minute slots, not the selected range bucket. */
+export const MONITOR_CARD_SAMPLE_BUCKET_MS = 5 * 60 * 1000
 export type MonitorCardTimelineMode = 'windows' | 'samples'
 
 export function candyHistoryLimit(history: { history_limit?: number } | null | undefined): number {
@@ -57,12 +59,14 @@ function coverageBounds(coverage: MonitorCoverage | undefined) {
   return { start, end }
 }
 
-// Latest buckets that actually have samples. Empty time gaps are omitted, and
-// only the newest MONITOR_CARD_SLOT_COUNT observed buckets are kept.
+// Latest buckets that actually have traffic. sample_buckets already ignores the
+// selected range. Older payloads only have range buckets, so those stay clipped.
 export function monitorCardSampleTimeline(row: MonitorMatrixRow, coverage: MonitorCoverage | undefined): MonitorCardBar[] {
-  const bounds = coverageBounds(coverage)
-  const widthMs = coverage?.bucket_seconds && coverage.bucket_seconds > 0 ? coverage.bucket_seconds * 1000 : 0
-  return row.buckets
+  const dedicated = Array.isArray(row.sample_buckets)
+  const source = Array.isArray(row.sample_buckets) ? row.sample_buckets : row.buckets
+  const bounds = dedicated ? null : coverageBounds(coverage)
+  const widthMs = dedicated ? MONITOR_CARD_SAMPLE_BUCKET_MS : (coverage?.bucket_seconds && coverage.bucket_seconds > 0 ? coverage.bucket_seconds * 1000 : 0)
+  return source
     .map(bucket => ({ bucket, at: Date.parse(bucket.bucket_start) }))
     .filter(item => Number.isFinite(item.at) && hasMonitorSamples(item.bucket.metrics) && (!bounds || (item.at >= bounds.start && item.at < bounds.end)))
     .sort((a, b) => a.at - b.at)

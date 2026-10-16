@@ -1,5 +1,7 @@
 # Astra 路由探针与生产解耦
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/astra-probe-observation)；下列文件名与验证说明保留用于追溯。
+
 入口：管理后台打票设置的 Astra 路由面板，展开配置。
 
 - before.png：production `781942a82` 的实际 HarvestGatewayBorrowPanel 组件和英文文案。

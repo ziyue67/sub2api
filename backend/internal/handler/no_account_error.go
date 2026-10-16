@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -33,6 +36,9 @@ type noAccountErrorClassification struct {
 	ErrType       string
 	Message       string
 	ModelNotFound bool // true when this is a 404 model_not_found classification
+	Code          string
+	RetryAt       *time.Time
+	Diagnosis     service.ModelAvailabilityDiagnosis
 }
 
 var selectionModelRateLimitedPattern = regexp.MustCompile(`(?:model_rate_limited|rate_limited)=(\d+)`)
@@ -71,7 +77,7 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 	// one message that names the real problem. It also flips the ops attribution
 	// from a local model-configuration issue to routing capacity, because call
 	// sites gate markOpsRoutingCapacityLimitedIfNoAvailable on ModelNotFound.
-	if fallback.ModelNotFound {
+	if fallback.ModelNotFound || fallback.Code != "" {
 		return fallback
 	}
 	match := selectionModelRateLimitedPattern.FindStringSubmatch(strings.ToLower(err.Error()))
@@ -138,6 +144,13 @@ func classifyNoAccountError(
 	}
 
 	result := diag.DiagnoseModelAvailabilityForPlatform(ctx, apiKey.GroupID, routingModel, platform)
+	fallback.Diagnosis = result
+	if result.AllModelAccountsRateLimited() {
+		fallback.Code = "model_capacity_exhausted"
+		fallback.RetryAt = result.EarliestRateLimitResetAt
+		fallback.Message = fmt.Sprintf("Accounts supporting model %q are currently rate-limited. Earliest quota reset is %s; availability may recover later.", displayModel, fallback.RetryAt.UTC().Format(time.RFC3339))
+		return fallback
+	}
 	if result.HasAccountsInPool && !result.HasModelSupport {
 		message := fmt.Sprintf("Model %q is not supported by any configured account in this group", displayModel)
 		if result.HasRetiredSubscriptionModel {
@@ -148,6 +161,8 @@ func classifyNoAccountError(
 			ErrType:       "model_not_found",
 			Message:       message,
 			ModelNotFound: true,
+			Code:          "model_not_found",
+			Diagnosis:     result,
 		}
 	}
 	return fallback
@@ -169,6 +184,25 @@ func classifyNoAccountErrorFromGin(
 		ctx = c.Request.Context()
 	}
 	classification := classifyNoAccountError(ctx, diag, apiKey, routingModel, displayModel, platform)
+	if classification.Diagnosis.Complete && c != nil {
+		d := classification.Diagnosis
+		requestLogger(c, "handler.model_availability").Warn("gateway.model_capacity_diagnosis",
+			zap.String("requested_model", displayModel), zap.String("routing_model", routingModel),
+			zap.String("platform", platform), zap.Int64("group_id", *apiKey.GroupID),
+			zap.Int("configured_accounts", d.ConfiguredAccounts),
+			zap.Int("model_supported_accounts", d.ModelSupportedAccounts),
+			zap.Int("model_not_supported_accounts", d.ConfiguredAccounts-d.ModelSupportedAccounts),
+			zap.Int("model_rate_limited_accounts", d.ModelRateLimitedAccounts),
+			zap.Any("earliest_rate_limit_reset_at", d.EarliestRateLimitResetAt),
+		)
+	}
+	if classification.RetryAt != nil && c != nil && !c.Writer.Written() {
+		seconds := int64(math.Ceil(time.Until(*classification.RetryAt).Seconds()))
+		if seconds < 1 {
+			seconds = 1
+		}
+		c.Header("Retry-After", strconv.FormatInt(seconds, 10))
+	}
 	if classification.ModelNotFound {
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 	}

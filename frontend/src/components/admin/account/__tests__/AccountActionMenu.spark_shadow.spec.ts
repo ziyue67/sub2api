@@ -138,6 +138,7 @@ describe('AccountActionMenu — spark shadow 按钮可见性', () => {
     expect(body).not.toContain('admin.accounts.reAuthorize')
     expect(body).not.toContain('admin.accounts.refreshToken')
     expect(body).not.toContain('admin.accounts.setPrivacy')
+    expect(body).not.toContain('admin.accounts.sessionExport.title')
     wrapper.unmount()
   })
 
@@ -150,6 +151,7 @@ describe('AccountActionMenu — spark shadow 按钮可见性', () => {
     const body = getBodyText()
     expect(body).toContain('admin.accounts.reAuthorize')
     expect(body).toContain('admin.accounts.setPrivacy')
+    expect(body).toContain('admin.accounts.sessionExport.title')
     wrapper.unmount()
   })
 
@@ -173,4 +175,21 @@ describe('AccountActionMenu — spark shadow 按钮可见性', () => {
 
     wrapper.unmount()
   })
+})
+
+it.each([
+  { platform: 'openai', type: 'apikey' },
+  { platform: 'anthropic', type: 'oauth' },
+] as const)('hides session export for $platform/$type', (overrides) => {
+  const wrapper = mount(AccountActionMenu, { props: { show: true, account: makeAccount(overrides), anchorRect }, attachTo: document.body })
+  expect(getBodyText()).not.toContain('admin.accounts.sessionExport.title')
+  wrapper.unmount()
+})
+it('emits the selected account when exporting a session', () => {
+  const account = makeAccount({})
+  const wrapper = mount(AccountActionMenu, { props: { show: true, account, anchorRect }, attachTo: document.body })
+  getBodyButtons().find(b => b.textContent?.includes('admin.accounts.sessionExport.title'))!.click()
+  expect(wrapper.emitted('export-session')?.[0]).toEqual([account])
+  expect(wrapper.emitted('close')).toHaveLength(1)
+  wrapper.unmount()
 })

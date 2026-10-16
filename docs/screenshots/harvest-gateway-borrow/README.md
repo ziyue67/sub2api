@@ -1,5 +1,7 @@
 # 网关借票界面验收
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/harvest-gateway-borrow)；下列文件名与验证说明保留用于追溯。
+
 页面入口：`/admin/harvest-flow`。截图来自实际 `HarvestFlowView` 与 `HarvestGatewayBorrowPanel`，使用本地 Vite、简化的 slot 布局及模拟 API；不是生产截图，也未验证真实登录导航或上游借票效果。
 
 - 修改前：`dd1d9bdf5d996254a56e967a5c3b8e81039c48a3`，`before-desktop.png`。

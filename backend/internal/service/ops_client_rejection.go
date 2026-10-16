@@ -18,6 +18,7 @@ var OpsModelCapabilityRejectionNeedles = []string{
 }
 
 var OpsContextLimitRejectionNeedles = []string{
+	"request payload is too large",
 	"prompt is too long",
 	"context length exceeded",
 	"context_length_exceeded",

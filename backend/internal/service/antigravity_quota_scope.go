@@ -41,6 +41,10 @@ func (a *Account) IsSchedulableForModelWithContext(ctx context.Context, requeste
 	if !a.IsSchedulable() {
 		return false
 	}
+	// Quality isolation is independent of provider cooldowns and overage credits.
+	if a.qualityModelBlocked(ctx, requestedModel) {
+		return false
+	}
 	if a.isModelRateLimitedWithContext(ctx, requestedModel) {
 		// Antigravity + overages 启用 + 积分未耗尽 → 放行（有积分可用）
 		if a.Platform == PlatformAntigravity && a.IsOveragesEnabled() && !a.isCreditsExhausted() {

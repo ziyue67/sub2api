@@ -96,16 +96,16 @@ USD 金额使用 `$`，其他单位按原单位显示。OAuth 的余额显示剩
 
 | 原界面 | 规则与通道 |
 | --- | --- |
-| ![原账号运维界面](screenshots/account-ops-monitoring/account-ops-before.png) | ![通知通道与账号规则](screenshots/account-ops-monitoring/account-ops-settings.png) |
+| [原账号运维界面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-ops-monitoring/account-ops-before.png) | [通知通道与账号规则](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-ops-monitoring/account-ops-settings.png) |
 
-![提醒记录页签](screenshots/account-ops-monitoring/account-ops-records.png)
+[提醒记录页签](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-ops-monitoring/account-ops-records.png)
 
-![独立账号规则弹窗](screenshots/account-ops-monitoring/account-ops-rule.png)
+[独立账号规则弹窗](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-ops-monitoring/account-ops-rule.png)
 
-![统一新增通知通道](screenshots/account-ops-monitoring/account-ops-add-channel.png)
+[统一新增通知通道](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-ops-monitoring/account-ops-add-channel.png)
 
-![通用 Webhook 模板](screenshots/account-ops-monitoring/account-ops-webhook.png)
+[通用 Webhook 模板](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-ops-monitoring/account-ops-webhook.png)
 
-![批量账号规则](screenshots/account-ops-monitoring/account-ops-batch.png)
+[批量账号规则](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-ops-monitoring/account-ops-batch.png)
 
-![右侧通道发送详情](screenshots/account-ops-monitoring/account-ops-delivery.png)
+[右侧通道发送详情](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-ops-monitoring/account-ops-delivery.png)

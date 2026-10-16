@@ -1,5 +1,7 @@
 # BPS image policy settings / BPS 图片限额设置
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy)；下列文件名与验证说明保留用于追溯。
+
 Captured on 2026-09-28 using the real SettingsView component and local Vite,
 with offline API fixtures containing synthetic administrator settings. No production
 API, credentials, conversations or pictures were used. The screenshots are UI
@@ -23,7 +25,7 @@ review evidence, not backend integration or live BPS acceptance evidence.
 
 | State | 中文 | English |
 | --- | --- | --- |
-| Before | [before-zh.png](before-zh.png) | [before-en.png](before-en.png) |
-| Off (default) | [off-zh.png](off-zh.png) | [off-en.png](off-en.png) |
-| Automatic compaction | [auto_compact-zh.png](auto_compact-zh.png) | [auto_compact-en.png](auto_compact-en.png) |
-| Warning interception | [warn-zh.png](warn-zh.png) | [warn-en.png](warn-en.png) |
+| Before | [before-zh.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy/before-zh.png) | [before-en.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy/before-en.png) |
+| Off (default) | [off-zh.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy/off-zh.png) | [off-en.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy/off-en.png) |
+| Automatic compaction | [auto_compact-zh.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy/auto_compact-zh.png) | [auto_compact-en.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy/auto_compact-en.png) |
+| Warning interception | [warn-zh.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy/warn-zh.png) | [warn-en.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-image-policy/warn-en.png) |

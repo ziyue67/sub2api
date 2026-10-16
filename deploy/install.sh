@@ -1138,6 +1138,17 @@ main() {
 
     # Parse commands
     case "${1:-}" in
+        manage-worker)
+            check_root
+            local worker_migration="$INSTALL_DIR/migrate-reauth-managed.py"
+            if [ ! -f "$worker_migration" ]; then
+                print_error "Worker migration helper missing; install a release containing migrate-reauth-managed.py first."
+                exit 1
+            fi
+            shift
+            python3 "$worker_migration" "$@"
+            exit $?
+            ;;
         upgrade|update)
             check_root
             detect_platform
@@ -1241,6 +1252,7 @@ main() {
             echo "  $0                        # Install latest version"
             echo "  $0 install -v v0.1.0      # Install specific version"
             echo "  $0 upgrade                # Upgrade to latest"
+            echo "  $0 manage-worker --data-dir /opt/sub2api/data --drained  # Migrate a drained legacy Worker to automatic management"
             echo "  $0 upgrade -v v0.2.0      # Upgrade to specific version"
             echo "  $0 rollback v0.1.0        # Rollback to v0.1.0"
             echo "  $0 list-versions          # List available versions"

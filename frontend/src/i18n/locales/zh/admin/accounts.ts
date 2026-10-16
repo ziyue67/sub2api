@@ -1,5 +1,28 @@
 export default {
     accounts: {
+      sessionExport: {
+        "OPENAI_SESSION_ACCOUNT_UNSUPPORTED": "仅支持持有独立凭据的 OpenAI OAuth 账号。",
+        "OPENAI_SESSION_COOKIE_REQUIRED": "缺少 ChatGPT 登录 Cookie，请提供包含 __Secure-next-auth.session-token 的 Cookie。",
+        "OPENAI_SESSION_COOKIE_INVALID": "Cookie 格式无效，请复制完整的一行请求 Cookie。",
+        "OPENAI_SESSION_UNAVAILABLE": "Session 导出服务暂不可用。",
+        "OPENAI_SESSION_PROXY_UNAVAILABLE": "账号代理不可用，请检查代理配置。",
+        "OPENAI_SESSION_CLIENT_FAILED": "无法创建 Session 请求客户端。",
+        "OPENAI_SESSION_REQUEST_FAILED": "Session 请求失败或超时，请检查账号代理。",
+        "OPENAI_SESSION_UPSTREAM_REJECTED": "ChatGPT 拒绝了 Session 请求，请检查登录 Cookie、账号代理或浏览器验证。",
+        "OPENAI_SESSION_INVALID_RESPONSE": "ChatGPT 返回的 Session 响应无效或过大。",
+        "OPENAI_SESSION_LOGIN_REQUIRED": "未获取到已登录的 Session，请更新 Cookie 或完成 ChatGPT 浏览器验证。",
+        "OPENAI_SESSION_EXPIRED": "ChatGPT 返回的 Session 已过期，请重新登录后复制 Cookie。",
+        "OPENAI_SESSION_IDENTITY_MISMATCH": "Cookie 对应用户与此账号不匹配，或账号缺少可核对的身份信息。",
+
+        "title": "导出 ChatGPT Session",
+        "hint": "请求 https://chatgpt.com/api/auth/session 并下载真实响应。请在已登录 ChatGPT 的浏览器开发者工具中复制该账号的请求 Cookie；OAuth token 不能替代网页登录 Cookie。",
+        "cookie": "ChatGPT 登录 Cookie",
+        "placeholder": "__Secure-next-auth.session-token=...",
+        "sensitive": "Cookie 仅用于本次请求，不会保存。Session 文件包含登录凭据，请妥善保管。",
+        "download": "请求并下载 Session",
+        "exporting": "正在请求…",
+        "failed": "Session 导出失败，请检查 Cookie 是否有效、是否属于此账号，以及账号代理是否可访问 ChatGPT。"
+      },
       bpsAuthorizing: 'BPS 正在自动授权，当前使用原生通道；授权成功后自动切换，无需再次操作开关。',
       "modelsLoadFailed": "模型列表加载失败，请重试。",
       "retryModels": "重新加载模型",

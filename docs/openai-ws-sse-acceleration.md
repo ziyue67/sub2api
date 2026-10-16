@@ -28,4 +28,4 @@
 
 | 修改前 | 修改后（已开启） |
 | --- | --- |
-| ![修改前账号传输设置](screenshots/ws-sse-acceleration/before.png) | ![新增 HTTP 流式 WS 加速开关](screenshots/ws-sse-acceleration/after.png) |
+| [修改前账号传输设置](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/ws-sse-acceleration/before.png) | [新增 HTTP 流式 WS 加速开关](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/ws-sse-acceleration/after.png) |

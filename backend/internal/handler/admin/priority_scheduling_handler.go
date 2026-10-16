@@ -18,16 +18,17 @@ func (h *SettingHandler) GetPriorityScheduling(c *gin.Context) {
 func (h *SettingHandler) SavePriorityScheduling(c *gin.Context) {
 	var request struct {
 		service.PrioritySchedulingConfig
-		OAuthQuotaPriority  *bool `json:"oauth_quota_priority"`
-		OAuthQuotaThreshold *int  `json:"oauth_quota_threshold"`
-		BalanceProtocols    *bool `json:"balance_protocols"`
+		OAuthQuotaPriority    *bool `json:"oauth_quota_priority"`
+		OAuthQuotaThreshold   *int  `json:"oauth_quota_threshold"`
+		BalanceProtocols      *bool `json:"balance_protocols"`
+		LatencyPenaltyMinutes *int  `json:"latency_penalty_minutes"`
 	}
 	if c.ShouldBindJSON(&request) != nil {
 		response.BadRequest(c, "Invalid scheduling configuration")
 		return
 	}
 	cfg := request.PrioritySchedulingConfig
-	if request.OAuthQuotaPriority == nil || request.OAuthQuotaThreshold == nil || request.BalanceProtocols == nil {
+	if request.OAuthQuotaPriority == nil || request.OAuthQuotaThreshold == nil || request.BalanceProtocols == nil || request.LatencyPenaltyMinutes == nil {
 		current, err := h.settingService.GetPrioritySchedulingConfig(c.Request.Context())
 		if err != nil {
 			response.Error(c, http.StatusServiceUnavailable, "Priority scheduling configuration unavailable")
@@ -36,6 +37,7 @@ func (h *SettingHandler) SavePriorityScheduling(c *gin.Context) {
 		cfg.BalanceProtocols = current.BalanceProtocols
 		cfg.OAuthQuotaPriority = current.OAuthQuotaPriority
 		cfg.OAuthQuotaThreshold = current.OAuthQuotaThreshold
+		cfg.LatencyPenaltyMinutes = current.LatencyPenaltyMinutes
 	}
 	if request.OAuthQuotaPriority != nil {
 		cfg.OAuthQuotaPriority = *request.OAuthQuotaPriority
@@ -45,6 +47,9 @@ func (h *SettingHandler) SavePriorityScheduling(c *gin.Context) {
 	}
 	if request.BalanceProtocols != nil {
 		cfg.BalanceProtocols = *request.BalanceProtocols
+	}
+	if request.LatencyPenaltyMinutes != nil {
+		cfg.LatencyPenaltyMinutes = *request.LatencyPenaltyMinutes
 	}
 
 	if err := service.ValidatePrioritySchedulingConfig(cfg); err != nil {

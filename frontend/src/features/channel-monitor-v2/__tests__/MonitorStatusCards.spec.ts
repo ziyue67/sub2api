@@ -191,6 +191,18 @@ it('switches cards between equal time windows and the latest samples that have d
   expect(wrapper.findAll('[data-testid="traffic-history-bar"]')).toHaveLength(18)
 })
 
+it('shows recent samples from outside the selected range and does not fall back when that history is empty', async () => {
+  const { wrapper, row } = hoverFixture()
+  const outside = { bucket_start: '2026-09-20T00:00:00Z', metrics: row.metrics, health: { overall: 'critical' } }
+  await wrapper.setProps({ items: [{ ...row, sample_buckets: [outside] }] })
+  await wrapper.get('[data-testid="card-timeline-samples"]').trigger('click')
+  expect(wrapper.findAll('[data-testid="traffic-history-bar"]')).toHaveLength(1)
+  expect(wrapper.text()).toContain('channelMonitorV2.cards.sampledWindows 1 18')
+  await wrapper.setProps({ items: [{ ...row, sample_buckets: [] }] })
+  expect(wrapper.find('[data-testid="card-timeline-empty"]').exists()).toBe(true)
+  expect(wrapper.findAll('[data-testid="traffic-history-bar"]')).toHaveLength(0)
+})
+
 it('distinguishes an enabled check awaiting its first result from a disabled check', async () => {
   const { wrapper, row } = hoverFixture()
   await wrapper.setProps({ items: [{ ...row, candy: { ...row.candy!, results: [] } }] })

@@ -306,6 +306,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpenAICodexClientVersionSynced:                         settings.OpenAICodexClientVersionSynced,
 		OpenAICodexVersionAutoSyncEnabled:                      settings.OpenAICodexVersionAutoSyncEnabled,
 		OpenAIRequestTimezoneEnabled:                           settings.OpenAIRequestTimezoneEnabled,
+		OpenAIRequestTimezoneAuto:                              settings.OpenAIRequestTimezoneAuto,
 		OpenAICodexTicketEnabled:                               settings.OpenAICodexTicketEnabled,
 		OpenAICodexTicketHarvestProxyURL:                       service.MaskProxyURL(settings.OpenAICodexTicketHarvestProxyURL),
 		OpenAICodexTicketStaticProxyURL:                        service.MaskProxyURL(settings.OpenAICodexTicketStaticProxyURL),

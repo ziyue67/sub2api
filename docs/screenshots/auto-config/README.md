@@ -1,5 +1,7 @@
 # 自动配置页面验证
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/auto-config)；下列文件名与验证说明保留用于追溯。
+
 使用构建后的前端、仅监听本机的 mock API 和 Chrome CDP 渲染。账号和分组均为虚构数据，保存只修改 mock 内存。
 
 - desktop-zh.png：1440 × 1000，两个功能卡片并列。

@@ -1,5 +1,7 @@
 # 自动打票策略与号池调度
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/harvest-oauth-pool-policy)；下列文件名与验证说明保留用于追溯。
+
 页面入口：智能运维 → 打票流程。截图为实际 Vue 组件的本地 Vite 渲染，接口通过 Axios adapter 提供虚构分组与账号；不代表真实接口、整页导航或生产验收。
 
 - `before.png`：production `781942a82b0f10bd206715fea16472980a036f2a` 的原始组件，自动打票按分组选择，号池调度藏在借票面板中。

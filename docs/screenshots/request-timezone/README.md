@@ -1,5 +1,7 @@
 # 请求时区绑定组件预览
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/request-timezone)；下列文件名与验证说明保留用于追溯。
+
 源码：`09d6c4d50f2800566671d852dd216882f1bf2879`。截图为本地 Vite 加载真实 `RequestTimezoneSettings.vue` 和 `OpenAIRequestTimezoneField.vue` 的组件预览；时区目录 API 使用虚构响应。没有连接生产、保存真实设置或验证整页导航。
 
 - `disabled.png`：默认关闭，账号默认新加坡时区。

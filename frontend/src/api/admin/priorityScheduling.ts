@@ -9,6 +9,7 @@ export interface PrioritySchedulingConfig {
   models: string[]
   window_minutes: number
   min_samples: number
+  latency_penalty_minutes?: number
   target_ttft_ms: number
   max_load_percent: number
   min_quality_percent: number
@@ -25,6 +26,8 @@ export interface PriorityCandidate {
   capacity_band?: number
   selection_weight?: number
   exploration_eligible?: boolean
+  latency_penalty_until?: string
+  latency_recovery?: boolean
   bound_groups?: number
   profit: number | null
   margin: number | null

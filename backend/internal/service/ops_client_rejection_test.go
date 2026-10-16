@@ -76,6 +76,13 @@ func TestOpsContextLimitRejection(t *testing.T) {
 		{400, 0, "prompt is too long: compact the conversation and retry.", true},
 		{502, 413, "maximum prompt length exceeded", true},
 		{400, 400, "context_length_exceeded", true},
+		{400, 400, "Request payload is too large", true},
+		{413, 0, "Request payload is too large", true},
+		{502, 413, "REQUEST PAYLOAD IS TOO LARGE", true},
+		{422, 422, "Request payload is too large", true},
+		{503, 503, "Request payload is too large", false},
+		{502, 0, "Request payload is too large", false},
+		{400, 400, "Upstream request failed", false},
 		{503, 503, "prompt is too long; upstream service unavailable", false},
 		{400, 400, "Encrypted content could not be verified", false},
 	} {
@@ -95,6 +102,24 @@ func TestNormalizeOpsResponsibilityKeepsOccurrenceLayer(t *testing.T) {
 	require.Equal(t, "request", entry.ErrorPhase)
 	require.Equal(t, "upstream_http", entry.ErrorSource)
 	require.Equal(t, &upstreamStatus, entry.UpstreamStatusCode)
+}
+
+func TestNormalizeOpsPayloadLimitPreservesProviderEvidence(t *testing.T) {
+	upstreamStatus := 400
+	message := "Request payload is too large"
+	entry := &OpsInsertErrorLogInput{StatusCode: 400, UpstreamStatusCode: &upstreamStatus,
+		ErrorOwner: "provider", ErrorPhase: "upstream", ErrorSource: "upstream_http",
+		ErrorType: "invalid_request_error", ErrorMessage: message, UpstreamErrorMessage: &message}
+	NormalizeOpsClientRejection(entry)
+
+	require.True(t, entry.IsBusinessLimited)
+	require.Equal(t, "client", entry.ErrorOwner)
+	require.Equal(t, "request", entry.ErrorPhase)
+	require.Equal(t, "context_limit", entry.ErrorType)
+	require.Equal(t, "upstream_http", entry.ErrorSource)
+	require.Equal(t, &upstreamStatus, entry.UpstreamStatusCode)
+	require.Equal(t, message, entry.ErrorMessage)
+	require.Equal(t, &message, entry.UpstreamErrorMessage)
 }
 
 func TestOpsServicePersistsRequestResponsibility(t *testing.T) {

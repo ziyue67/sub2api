@@ -4535,7 +4535,7 @@
               </h2>
             </div>
             <div class="p-6 space-y-4">
-                <RequestTimezoneSettings v-model="form.openai_request_timezone_enabled" />
+                <RequestTimezoneSettings v-model="form.openai_request_timezone_enabled" v-model:auto="form.openai_request_timezone_auto" />
                 <div class="rounded-lg border border-gray-200 p-4 dark:border-dark-600" data-testid="codex-management-links">
                   <p class="text-sm text-gray-500 dark:text-gray-400">{{ localText('自动打票、模型与票据策略在「打票全流程」管理；采票出口、订阅与节点在「IP 管理」管理。', 'Manage automatic harvesting, models and ticket policies in Harvest Flow; manage exits, subscriptions and nodes in IP Management.') }}</p>
                   <div class="mt-3 flex flex-wrap gap-2">
@@ -10475,7 +10475,8 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
-  openai_request_timezone_enabled: false,
+  openai_request_timezone_enabled: true,
+  openai_request_timezone_auto: true,
   claude_code_client_version: "",
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   claude_code_client_version_synced: "",
@@ -12220,6 +12221,7 @@ async function saveSettings() {
       openai_codex_version_auto_sync_enabled:
         form.openai_codex_version_auto_sync_enabled,
       openai_request_timezone_enabled: form.openai_request_timezone_enabled,
+      openai_request_timezone_auto: form.openai_request_timezone_auto,
       claude_code_client_version: form.claude_code_client_version?.trim() || "",
       claude_code_version_auto_sync_enabled:
         form.claude_code_version_auto_sync_enabled,

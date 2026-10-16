@@ -1,5 +1,7 @@
 # Prism 专属模型选择
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/prism-model-scope)；下列文件名与验证说明保留用于追溯。
+
 入口：账号管理 → 编辑 OpenAI OAuth 账号 → Prism。
 
 截图来自本 PR 的实际 `EditAccountModal.vue`，使用本地 Vite、Playwright 和虚构账号 / mock API。验证了四模型默认勾选、仅保留 6.1 Sol 并提交保存、移动端深色布局；不是生产截图或整页导航验收。

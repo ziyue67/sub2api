@@ -35,11 +35,22 @@ func cooldownEntryUntil(entry any) time.Time {
 	return until
 }
 
+// qualityModelStorage selects storage, expiry and concurrency semantics while
+// keeping ownership, conflict detection and restoration in one transition.
+func qualityModelStorage(state *qualityState) string {
+	if state.PersistentModels {
+		return service.QualityModelIsolationKey
+	}
+	return "model_rate_limits"
+}
+
 // Native/manual expiry cleanup can remove the live entry before a probe runs.
 // Relinquish only expired snapshots that are absent or still exactly ours.
-// An active snapshot or a replacement entry remains protected by ownership.
 func pruneExpiredQualityModels(account *service.Account, state *qualityState, now time.Time) {
-	limits, _ := account.Extra["model_rate_limits"].(map[string]any)
+	if state.PersistentModels {
+		return
+	}
+	limits, _ := account.Extra[qualityModelStorage(state)].(map[string]any)
 	for model, applied := range state.ModelApplied {
 		var entry any
 		if json.Unmarshal(applied, &entry) != nil {
@@ -58,7 +69,7 @@ func pruneExpiredQualityModels(account *service.Account, state *qualityState, no
 		delete(state.ModelApplied, model)
 	}
 	if len(limits) == 0 {
-		delete(account.Extra, "model_rate_limits")
+		delete(account.Extra, qualityModelStorage(state))
 	}
 }
 
@@ -69,6 +80,9 @@ func transitionQualityModels(account *service.Account, state *qualityState, plan
 func transitionQualityModelsScoped(account *service.Account, state *qualityState, planID int64, models []string, until time.Time, outcome string, restore bool, now time.Time, holdRecovery bool) (string, error) {
 	pruneExpiredQualityModels(account, state, now)
 	if outcome == "inconclusive" {
+		if state.PersistentModels {
+			return "inconclusive", nil
+		}
 		owned := false
 		for _, model := range models {
 			if _, ok := state.ModelRateLimits[account.GetMappedModel(model)]; ok {
@@ -86,7 +100,7 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 	if account.Extra == nil {
 		account.Extra = map[string]any{}
 	}
-	limits, _ := account.Extra["model_rate_limits"].(map[string]any)
+	limits, _ := account.Extra[qualityModelStorage(state)].(map[string]any)
 	if limits == nil {
 		limits = map[string]any{}
 	}
@@ -141,6 +155,9 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 				reset = previous
 			}
 			entry := map[string]any{"rate_limited_at": now.UTC().Format(time.RFC3339), "rate_limit_reset_at": reset.UTC().Format(time.RFC3339), "reason": fmt.Sprintf("quality_rule:%d", planID)}
+			if state.PersistentModels {
+				entry = map[string]any{"isolated_at": now.UTC().Format(time.RFC3339Nano), "reason": fmt.Sprintf("quality_rule:%d", planID)}
+			}
 			limits[key] = entry
 			raw, err := json.Marshal(entry)
 			if err != nil {
@@ -148,7 +165,7 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 			}
 			state.ModelApplied[key] = raw
 		}
-		account.Extra["model_rate_limits"] = limits
+		account.Extra[qualityModelStorage(state)] = limits
 		if first || state.AppliedConcurrency == nil {
 			lowerQualityRecoveryConcurrency(account, state)
 		}
@@ -178,7 +195,7 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 		if err := json.Unmarshal(previous, &original); err != nil {
 			return "", err
 		}
-		if cooldownEntryUntil(original).After(now) {
+		if (state.PersistentModels && original != nil) || cooldownEntryUntil(original).After(now) {
 			limits[key] = original
 		} else {
 			delete(limits, key)
@@ -188,9 +205,9 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 		restoredCount++
 	}
 	if len(limits) == 0 {
-		delete(account.Extra, "model_rate_limits")
+		delete(account.Extra, qualityModelStorage(state))
 	} else {
-		account.Extra["model_rate_limits"] = limits
+		account.Extra[qualityModelStorage(state)] = limits
 	}
 	if len(state.ModelRateLimits) > 0 {
 		if conflict {
@@ -234,7 +251,7 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 
 // The concurrency ceiling is shared by the account; model availability is not.
 func lowerQualityRecoveryConcurrency(account *service.Account, state *qualityState) {
-	if account.Type != service.AccountTypeOAuth {
+	if state.PersistentModels || account.Type != service.AccountTypeOAuth {
 		return
 	}
 	cap := state.RecoveryConcurrency
@@ -255,6 +272,35 @@ func lowerQualityRecoveryConcurrency(account *service.Account, state *qualitySta
 	}
 	state.AppliedConcurrency = &applied
 	account.Concurrency = applied
+}
+
+// transitionQualityModelRound is shared by timed cooldowns and persistent
+// isolation. It owns alias reduction, transition ordering and per-model history.
+func transitionQualityModelRound(account *service.Account, state *qualityState, planID int64, models []string, outcomes map[string]string, until time.Time, restore bool, now time.Time, holdRecovery bool) (map[string]string, string, error) {
+	actions := map[string]string{}
+	action := "inconclusive"
+	priority := map[string]int{"inconclusive": 0, "passed": 1, "models_partially_restored": 2, "restored": 2, "recovery_started": 2, "models_cooled": 3, "model_cooldown_refreshed": 3}
+	for _, decision := range qualityModelDecisions(account, models, outcomes) {
+		if decision.outcome == "skipped" {
+			continue
+		}
+		result, err := transitionQualityModelsScoped(account, state, planID, []string{decision.model}, until, decision.outcome, restore, now, holdRecovery)
+		if err != nil {
+			return nil, "", err
+		}
+		if result == "action_conflict" || result == "restore_conflict" {
+			return nil, result, nil
+		}
+		for _, model := range models {
+			if account.GetMappedModel(model) == account.GetMappedModel(decision.model) {
+				actions[model] = result
+			}
+		}
+		if priority[result] > priority[action] {
+			action = result
+		}
+	}
+	return actions, action, nil
 }
 
 func applyQualityModelOutcome(ctx context.Context, tx *sql.Tx, plan *service.ScheduledTestPlan, outcome, status string, state qualityState) (string, error) {
@@ -285,7 +331,7 @@ func applyQualityModelOutcome(ctx context.Context, tx *sql.Tx, plan *service.Sch
 	}
 	beforeConcurrency := account.Concurrency
 	restore := plan.PelicanConfig.Quality.AutoRestore || plan.PelicanConfig.Quality.TriggerOnUpstream5xx
-	action := "inconclusive"
+	var action string
 	modelActions := map[string]string{}
 	if plan.QualityModelOutcomes == nil {
 		action, err = transitionQualityModels(account, &state, plan.ID, plan.PelicanConfig.Quality.RemoveModels, schedule.Next(now), outcome, restore, now)
@@ -293,24 +339,14 @@ func applyQualityModelOutcome(ctx context.Context, tx *sql.Tx, plan *service.Sch
 		allConfirmed := outcome == "passed"
 		// Apply failed models first, then passing models; a healthy peer cannot
 		// unlock the shared recovery ramp while another model remains cooled.
-		for _, verdict := range []string{"failed", "inconclusive", "passed"} {
-			for _, model := range plan.PelicanConfig.Quality.RemoveModels {
-				if plan.QualityModelOutcomes[model] != verdict {
-					continue
-				}
-				modelAction, e := transitionQualityModelsScoped(account, &state, plan.ID, []string{model}, schedule.Next(now), verdict, restore, now, !allConfirmed)
-				if e != nil {
-					return "", e
-				}
-				if modelAction == "restore_conflict" || modelAction == "action_conflict" {
-					return modelAction, nil
-				}
-				modelActions[model] = modelAction
-				if modelAction != "passed" && modelAction != "inconclusive" {
-					action = modelAction
-				}
-			}
+		modelActions, action, err = transitionQualityModelRound(account, &state, plan.ID, plan.PelicanConfig.Quality.RemoveModels, plan.QualityModelOutcomes, schedule.Next(now), restore, now, !allConfirmed)
+		if err != nil {
+			return "", err
 		}
+		if action == "action_conflict" || action == "restore_conflict" {
+			return action, nil
+		}
+
 		// Model restoration is independent; the account's shared concurrency
 		// recovery still requires the complete eligible round to pass.
 		if allConfirmed && len(state.ModelRateLimits) == 0 && state.PreviousConcurrency != nil {

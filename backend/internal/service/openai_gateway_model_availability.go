@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
@@ -55,7 +56,8 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 		return ModelAvailabilityDiagnosis{HasAccountsInPool: true, HasModelSupport: true}
 	}
 
-	diag := ModelAvailabilityDiagnosis{}
+	diag := ModelAvailabilityDiagnosis{Complete: true}
+	now := time.Now()
 	for i := range accounts {
 		diag.HasAccountsInPool = true
 		if isRetiredOpenAISubscriptionModel(&accounts[i], resolveOpenAIAccountUpstreamModelForRequest(&accounts[i], requestedModel, false)) {
@@ -66,11 +68,8 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 		// model_mapping accepts everything; otherwise the explicit / wildcard
 		// mapping must match, and the account's allowlist for this group (if
 		// any) must admit the model.
-		if accounts[i].IsModelSupportedInGroup(groupID, requestedModel) &&
-			!accounts[i].modelCapabilityRejectedForRequest(ctx, requestedModel) {
-			diag.HasModelSupport = true
-			return diag
-		}
+		diag.recordAccount(&accounts[i], accounts[i].IsModelSupportedInGroup(groupID, requestedModel) &&
+			!accounts[i].modelCapabilityRejectedForRequest(ctx, requestedModel), now)
 	}
 	return diag
 }

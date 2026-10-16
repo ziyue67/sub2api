@@ -249,3 +249,36 @@ func TestDiagnoseModelAvailabilityForPlatform_WrongPlatformFiltersOut(t *testing
 	require.False(t, diag.HasAccountsInPool, "OpenAI route must not see Anthropic accounts in pool")
 	require.False(t, diag.HasModelSupport)
 }
+
+func TestOpenAIModelCapacityDiagnosis_WholeConfiguredGroup(t *testing.T) {
+	now := time.Now()
+	early, late := now.Add(time.Hour), now.Add(2*time.Hour)
+	makeAccount := func(id int64, model string, reset *time.Time) Account {
+		return Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: StatusActive, Schedulable: true,
+			AccountGroups: []AccountGroup{{GroupID: 24}}, RateLimitResetAt: reset, Credentials: map[string]any{"model_mapping": map[string]any{model: model}}}
+	}
+	repo := &mockAccountRepoForPlatform{accounts: []Account{
+		makeAccount(3, "gpt-6.1-sol", &late), makeAccount(36, "gpt-6.1-sol", &early),
+		makeAccount(331, "gpt-image-2", nil), makeAccount(390, "gpt-6-astra", nil), makeAccount(503, "gpt-image-2-c", nil),
+	}, accountsByID: map[int64]*Account{}}
+	svc := &OpenAIGatewayService{accountRepo: repo, cfg: testConfig()}
+	groupID := int64(24)
+	diag := svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-6.1-sol", PlatformOpenAI)
+	require.True(t, diag.Complete)
+	require.Equal(t, 5, diag.ConfiguredAccounts)
+	require.Equal(t, 2, diag.ModelSupportedAccounts)
+	require.Equal(t, 2, diag.ModelRateLimitedAccounts)
+	require.True(t, diag.AllModelAccountsRateLimited())
+	require.Equal(t, early, *diag.EarliestRateLimitResetAt)
+	expired := now.Add(-time.Minute)
+	repo.accounts[1].RateLimitResetAt = &expired
+	diag = svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-6.1-sol", PlatformOpenAI)
+	require.Equal(t, 2, diag.ModelSupportedAccounts)
+	require.Equal(t, 1, diag.ModelRateLimitedAccounts)
+	require.False(t, diag.AllModelAccountsRateLimited())
+	diag = svc.DiagnoseModelAvailabilityForPlatform(context.Background(), &groupID, "gpt-6-astra", PlatformOpenAI)
+	require.Equal(t, 1, diag.ModelSupportedAccounts)
+	require.Zero(t, diag.ModelRateLimitedAccounts)
+	require.Nil(t, diag.EarliestRateLimitResetAt)
+	require.False(t, diag.AllModelAccountsRateLimited())
+}

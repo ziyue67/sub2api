@@ -1,5 +1,7 @@
 # 鹈鹕作品 API 界面验收截图
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-api-ui)；下列文件名与验证说明保留用于追溯。
+
 截图日期：2026-10-02。通过 Playwright 控制本机 Chrome，在隔离测试实例中使用虚构用户采集；没有上游 AI 账号、真实作品、邮箱、密码或实际 API Key。
 
 前端对照基线为 `origin/production` 的 `bf9405e4a`，修改后源码为 `9d7b5cd5d`。前后截图共用本次实现的隔离后端，以便保持相同的虚构数据；“修改前”用于对照原有前端界面，不代表旧后端行为的 HTTP 验证。
@@ -12,9 +14,9 @@
 
 修改前只有网页展示、保留数量及自动清理配置。修改后增加独立的“允许 API Key 读取作品”开关和已保存配置的 API 调用信息入口。
 
-![管理端修改前](admin-before-desktop.png)
+[管理端修改前](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-api-ui/admin-before-desktop.png)
 
-![管理端修改后](admin-after-desktop.png)
+[管理端修改后](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-api-ui/admin-after-desktop.png)
 
 浏览器验收步骤：关闭 API 读取 → 保存 → 刷新 → 确认 API 开关仍关闭且用户展示仍开启 → 重新开启并保存。开关保存与刷新后的状态已通过实际页面操作验证。
 
@@ -22,16 +24,16 @@
 
 入口：鹈鹕测智。虚构用户余额为零；没有发布作品时仍可查看 API 调用说明。
 
-![用户端修改前](user-before-desktop.png)
+[用户端修改前](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-api-ui/user-before-desktop.png)
 
-![用户端修改后](user-after-desktop.png)
+[用户端修改后](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-api-ui/user-after-desktop.png)
 
 ## API 调用弹窗
 
 点击“API 调用”，可查看当前开放状态、清单和正文地址、Bearer 鉴权、三种 curl 示例、复制按钮和 API Key 管理入口。没有作品时正文 ID 显示 `RESULT_ID`；示例只显示 `YOUR_API_KEY` 和 `YOUR_ETAG` 占位符。
 
-![桌面 API 调用弹窗](user-api-desktop.png)
+[桌面 API 调用弹窗](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-api-ui/user-api-desktop.png)
 
-![移动 API 调用弹窗](user-api-mobile.png)
+[移动 API 调用弹窗](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-api-ui/user-api-mobile.png)
 
 浏览器验收步骤：分别切换“读取清单”“读取正文”“条件请求”，确认示例内容对应端点及完整 ETag 占位符；三种示例代码区高度均为 128px。桌面和移动端没有页面脚本错误或横向溢出。图片展示中文界面，未进行英文界面的浏览器截图验收。

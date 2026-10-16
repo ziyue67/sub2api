@@ -1,5 +1,7 @@
 # Codex 目录与套餐显示
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211)；下列文件名与验证说明保留用于追溯。
+
 页面入口：用户「API Keys → 使用密钥 → Codex CLI」；管理员「账号管理」的套餐徽标。
 
 截图由实际 `UseKeyModal.vue`、`BaseDialog.vue` 和 `PlatformTypeBadge.vue` 渲染，使用本地 Vite、Playwright Chromium 和模拟目录接口。URL、演示 Key、套餐与模型数据均为虚构数据。截图验证组件渲染和目录切换，不代表整页导航、真实 Codex 请求或生产验收。
@@ -11,9 +13,9 @@
 
 | 状态 | 修改前 | 修改后 |
 | --- | --- | --- |
-| 获取目录后的配置 | [原本地配置](before/catalog-before.png) | [默认远程配置](after/catalog-remote.png) |
-| 套餐徽标 | [旧套餐名称](before/plans-before.png) | [新套餐名称](after/plans-after.png) |
-| 手动选择本地文件 | — | [本地模式](after/catalog-file.png) |
-| 获取超过 1 MiB 的目录 | — | [自动切换本地文件](after/catalog-oversized.png) |
-| 深色模式 | — | [超限提示](after/catalog-dark.png) |
-| 移动端 | — | [390 px 宽度，滚动至目录区域](after/catalog-mobile.png) |
+| 获取目录后的配置 | [原本地配置](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211/before/catalog-before.png) | [默认远程配置](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211/after/catalog-remote.png) |
+| 套餐徽标 | [旧套餐名称](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211/before/plans-before.png) | [新套餐名称](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211/after/plans-after.png) |
+| 手动选择本地文件 | — | [本地模式](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211/after/catalog-file.png) |
+| 获取超过 1 MiB 的目录 | — | [自动切换本地文件](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211/after/catalog-oversized.png) |
+| 深色模式 | — | [超限提示](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211/after/catalog-dark.png) |
+| 移动端 | — | [390 px 宽度，滚动至目录区域](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/codex-0211/after/catalog-mobile.png) |

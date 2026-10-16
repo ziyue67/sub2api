@@ -102,6 +102,7 @@ jobs:
       - run: bash -n .github/release-tools/release-images.sh
       - run: bash -n deploy/upgrade-k3s.sh
       - run: python -m unittest discover -s deploy/tests -p 'test_upgrade_k3s.py'
+      - run: python -m unittest discover -s deploy/tests -p 'test_migrate_reauth_managed.py'
 
   prism-adapter:
     runs-on: ubuntu-latest

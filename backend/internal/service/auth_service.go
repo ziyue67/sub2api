@@ -28,6 +28,7 @@ var (
 	ErrUserNotActive                = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
 	ErrEmailExists                  = infraerrors.Conflict("EMAIL_EXISTS", "email already exists")
 	ErrEmailReserved                = infraerrors.BadRequest("EMAIL_RESERVED", "email is reserved")
+	ErrRegistrationIPLimit          = infraerrors.Forbidden("REGISTRATION_IP_LIMIT", "this IP address has already registered two accounts; contact support")
 	ErrInvalidToken                 = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
 	ErrTokenExpired                 = infraerrors.Unauthorized("TOKEN_EXPIRED", "token has expired")
 	ErrAccessTokenExpired           = infraerrors.Unauthorized("ACCESS_TOKEN_EXPIRED", "access token has expired")
@@ -347,6 +348,8 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 			return "", nil, ErrEmailExists
 		case errors.Is(err, ErrEmailDomainRegistrationLimit):
 			return "", nil, ErrEmailDomainRegistrationLimit
+		case errors.Is(err, ErrRegistrationIPLimit):
+			return "", nil, ErrRegistrationIPLimit
 		case errors.Is(err, ErrInvitationCodeInvalid):
 			return "", nil, ErrInvitationCodeInvalid
 		default:
@@ -716,6 +719,9 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 			}
 
 			if err := s.userRepo.Create(ctx, newUser); err != nil {
+				if errors.Is(err, ErrRegistrationIPLimit) {
+					return "", nil, ErrRegistrationIPLimit
+				}
 				if errors.Is(err, ErrEmailExists) {
 					// 并发场景：GetByEmail 与 Create 之间用户被创建。
 					user, err = s.userRepo.GetByEmail(ctx, email)
@@ -874,6 +880,9 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				txCtx := dbent.NewTxContext(ctx, tx)
 
 				if err := s.userRepo.Create(txCtx, newUser); err != nil {
+					if errors.Is(err, ErrRegistrationIPLimit) {
+						return nil, nil, ErrRegistrationIPLimit
+					}
 					if errors.Is(err, ErrEmailExists) {
 						user, err = s.userRepo.GetByEmail(ctx, email)
 						if err != nil {
@@ -902,6 +911,9 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 				}
 			} else {
 				if err := s.userRepo.Create(ctx, newUser); err != nil {
+					if errors.Is(err, ErrRegistrationIPLimit) {
+						return nil, nil, ErrRegistrationIPLimit
+					}
 					if errors.Is(err, ErrEmailExists) {
 						user, err = s.userRepo.GetByEmail(ctx, email)
 						if err != nil {

@@ -1,15 +1,17 @@
 # 鹈鹕测智展示页：顶部提示
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-notice)；下列文件名与验证说明保留用于追溯。
+
 截图来自本地前端开发服务器、仅监听本机的 mock API 和无头 Chromium（CDP），以普通用户身份打开 `/pelican-showcase`。分组名、模型名、时间和作品都是虚构的。作品是手写的简单静态 SVG，不是模型生成的。页面里没有线上账号、凭据或用户数据。
 
 修改前的基线是 `ff59ca31a`，在独立 checkout 里运行；修改后是同一基线加上本次的前端改动。截图都是页面实际渲染的结果，没有用临时 CSS 或改写 DOM 来模拟。
 
 | 截图 | 视口 |
 | --- | --- |
-| [修改前（深色）](showcase-before-desktop.png) | 1440 × 900 |
-| [修改后（深色）](showcase-after-desktop.png) | 1440 × 900 |
-| [修改后（浅色）](showcase-after-desktop-light.png) | 1440 × 900 |
-| [修改后（手机端）](showcase-after-mobile.png) | 390 × 844，2 倍像素 |
+| [修改前（深色）](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-notice/showcase-before-desktop.png) | 1440 × 900 |
+| [修改后（深色）](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-notice/showcase-after-desktop.png) | 1440 × 900 |
+| [修改后（浅色）](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-notice/showcase-after-desktop-light.png) | 1440 × 900 |
+| [修改后（手机端）](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/pelican-showcase-notice/showcase-after-mobile.png) | 390 × 844，2 倍像素 |
 
 ## 验收
 

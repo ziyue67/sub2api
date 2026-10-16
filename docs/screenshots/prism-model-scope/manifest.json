@@ -6,5 +6,10 @@
   "savedModels": [
     "gpt-6.1-sol"
   ],
-  "errors": []
+  "errors": [],
+  "screenshot_archive": {
+    "commit": "297e9201a2f6d6fe70073b370a5b71f49579accf",
+    "base_url": "https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/prism-model-scope/",
+    "note": "Screenshot binaries were removed from the current source tree; filenames refer to this historical commit."
+  }
 }

@@ -95,7 +95,7 @@ const loading = ref(false), saving = ref(false), error = ref(''), notice = ref('
 const qualityPlans = ref<ScheduledTestPlan[]>([]), selectedQualityRule = ref(''), qualityLoadFailed = ref(false)
 const availableQualityPlans = computed(() => qualityPlans.value.filter(p => p.pelican_config?.quality && (draft.value?.platform === 'openai' || p.pelican_config.question_kind !== 'state_probe')))
 function qualityActionLabel(plan: ScheduledTestPlan) {
- const keys: Record<string, string> = { observe_only: 'observeOnly', remove_groups: 'removeGroups', remove_models: 'removeModels', disable_scheduling: 'disableScheduling', enable_bps: 'enableBPSShort' }
+ const keys: Record<string, string> = { isolate_models: 'isolateModels', observe_only: 'observeOnly', remove_groups: 'removeGroups', remove_models: 'removeModels', disable_scheduling: 'disableScheduling', enable_bps: 'enableBPSShort' }
  return t('qualityOps.' + keys[plan.pelican_config?.quality?.action ?? 'observe_only'])
 }
 async function loadQualityPlans() {

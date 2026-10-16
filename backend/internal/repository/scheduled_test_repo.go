@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -80,9 +81,7 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 		RETURNING id, account_id, model_id, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, pelican_config, running_until
 	`
 	args := []any{plan.ID, plan.ModelID, plan.CronExpression, plan.Enabled, plan.MaxResults, plan.AutoRecover, plan.NextRunAt, marshalPelicanConfig(plan.PelicanConfig)}
-	if plan.PelicanConfig == nil || plan.PelicanConfig.Quality == nil || plan.PelicanConfig.Quality.Action != service.QualityActionObserveOnly {
-		return scanPlan(r.db.QueryRowContext(ctx, query, args...))
-	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -92,9 +91,19 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, plan.ID); err != nil {
+	state, err := readQualityState(ctx, tx, plan.ID)
+	if err != nil {
 		return nil, err
 	}
+	if err = checkQualityIsolationScope(updated, &state); err != nil {
+		return nil, err
+	}
+	if updated.PelicanConfig != nil && updated.PelicanConfig.Quality != nil && updated.PelicanConfig.Quality.Action == service.QualityActionObserveOnly {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, plan.ID); err != nil {
+			return nil, err
+		}
+	}
+
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -102,8 +111,28 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 }
 
 func (r *scheduledTestPlanRepository) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM scheduled_test_plans WHERE id = $1`, id)
-	return err
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var locked int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM scheduled_test_plans WHERE id=$1 FOR UPDATE`, id).Scan(&locked); err == sql.ErrNoRows {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	state, err := readQualityState(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if state.Action == service.QualityActionIsolateModels {
+		return fmt.Errorf("restore this rule's isolated models and groups before deleting it")
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM scheduled_test_plans WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *scheduledTestPlanRepository) UpdateAfterRun(ctx context.Context, id int64, lastRunAt time.Time, nextRunAt time.Time) error {

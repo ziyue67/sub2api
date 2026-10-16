@@ -1,5 +1,7 @@
 # 检测账户筛选截图
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/quality-account-filters)；下列文件名与验证说明保留用于追溯。
+
 Chrome 本地预览使用虚构账户、分组与 mock API，不连接生产服务。截图使用实际 `AccountQualityView`、`BaseDialog` 和页面样式，外层应用布局在预览中替换为空容器。
 
 - `before.png`：`f80611d6c` 基线的新建检测规则抽屉。

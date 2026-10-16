@@ -1,4 +1,8 @@
 export default {
+  latency_penalty_minutes: '延迟惩罚时长（分钟）',
+  latencyPenaltyHint: '默认 10 分钟，0 保持原有持续降档。P90 超标时，从最近一次有效首字延迟样本开始计时；到期后仅质量达标、最新检测通过且没有错误、亏损或拥堵风险的账号可进入少量恢复探索。正常账号优先，恢复账号保留延迟权重惩罚；新样本仍超标会重新计时。',
+  latencyPenaltyUntil: '延迟惩罚截止',
+
   oauthQuotaPriority: '优先消耗 OAuth 额度，末位 API Key 自动后备',
   oauthQuotaHint: '质量正常且 7d 已用低于阈值的 OAuth 有可用容量时，从调度队尾让 API Key 转为后备，数量随 OAuth 容量变化。OAuth 满载、额度不足或不可用时自动恢复；不更改手动启停状态。需要有效质量检测和 5 分钟内的额度数据。',
   oauthQuotaThreshold: 'OAuth 优先消耗截止值（7d 已用 %）',
@@ -41,5 +45,5 @@ export default {
   snapshotHint: '展示当前实例最近一次候选池，最多 100 个账号。刷新会异步读取历史并重算评分；候选、配置与并发占用仍取自该次选号，顶部时间不会改变，重算结果不代表当时实际选路。按风险、预计占用档位及分流偏好展示；占用接近的候选会加权抽样，表格不是固定选取顺序或流量比例。历史未就绪也会展示实时容量候选。',
   model: '模型', group: '分组', account: '账号', score: '得分', tier: '状态', latency: 'P90 首 token', load: '并发占用', rate: '成本倍率', quality: '质量通过', samples: '条样本', unknown: '未知',
   tiers: { eligible: '体验达标', insufficient: '数据不足', degraded: '体验未达标' },
-  reasons: { quality_below_target: '质量低于目标', quality_unknown: '无有效质量结果', latency_above_target: '延迟超过目标', latency_insufficient: '延迟样本不足', busy: '并发偏高或有排队', load_unknown: '并发数据未知', cost_unknown: '成本未知', recent_errors: '近期错误偏多', historical_loss: '近期用户扣费低于理论成本', profit_insufficient: '利润样本不足' }
+  reasons: { latency_recovery: '延迟惩罚到期，等待恢复样本', quality_below_target: '质量低于目标', quality_unknown: '无有效质量结果', latency_above_target: '延迟超过目标', latency_insufficient: '延迟样本不足', busy: '并发偏高或有排队', load_unknown: '并发数据未知', cost_unknown: '成本未知', recent_errors: '近期错误偏多', historical_loss: '近期用户扣费低于理论成本', profit_insufficient: '利润样本不足' }
 }

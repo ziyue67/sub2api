@@ -86,7 +86,7 @@ func TestQualityModelsWaitForSlowModelBeforeOutcome(t *testing.T) {
 			require.True(t, <-done)
 			expected := "passed"
 			if failureModel != "" {
-				expected = "failed"
+				expected = "inconclusive"
 			}
 			require.Equal(t, []string{expected}, plans.outcomes)
 			require.True(t, plans.finished)

@@ -1,5 +1,7 @@
 # 新建账号模型同步
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/account-model-sync)；下列文件名与验证说明保留用于追溯。
+
 入口：账号管理 → 添加账号 → OpenAI → API Key → 同步上游支持的模型。
 
 截图来自实际 `CreateAccountModal`、`ModelWhitelistSelector`、`Toast` 组件及项目样式，在本地 Chromium 151 中渲染。使用英文界面、1200 × 900 视口、虚构账号和连接参数，所有接口响应均为本地 mock，没有调用生产或真实上游。

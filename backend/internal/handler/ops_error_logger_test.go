@@ -814,7 +814,7 @@ func TestNormalizeOpsErrorType(t *testing.T) {
 	}
 }
 
-func TestClassifyOpsNoAvailableAccountsExcludedFromSLA(t *testing.T) {
+func TestClassifyOpsNoAvailableAccountsCountForSLA(t *testing.T) {
 	const message = "No available accounts"
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -827,12 +827,12 @@ func TestClassifyOpsNoAvailableAccountsExcludedFromSLA(t *testing.T) {
 
 	require.Equal(t, "api_error", errType)
 	require.Equal(t, "routing", phase)
-	require.True(t, isBusinessLimited)
+	require.False(t, isBusinessLimited)
 	require.Equal(t, "platform", errorOwner)
 	require.Equal(t, "gateway", errorSource)
 }
 
-func TestClassifyOpsRoutingCapacityMarkerExcludesMaskedSelectionFailureFromSLA(t *testing.T) {
+func TestClassifyOpsRoutingCapacityMarkerCountsMaskedSelectionFailureForSLA(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -848,7 +848,7 @@ func TestClassifyOpsRoutingCapacityMarkerExcludesMaskedSelectionFailureFromSLA(t
 	)
 
 	require.Equal(t, "routing", phase)
-	require.True(t, isBusinessLimited)
+	require.False(t, isBusinessLimited)
 	require.Equal(t, "platform", errorOwner)
 	require.Equal(t, "gateway", errorSource)
 }
@@ -858,6 +858,7 @@ func TestClassifyOpsLocalModelConfigurationRejection(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
+	markOpsRoutingCapacityLimited(c)
 
 	phase, isBusinessLimited, errorOwner, errorSource := classifyOpsErrorLog(
 		c,
@@ -1411,7 +1412,7 @@ func TestClassifyOpsOtherErrorsStillCountForSLA(t *testing.T) {
 	require.Equal(t, "gateway", errorSource)
 }
 
-func TestClassifyOpsUnsupportedModelExcludedFromSLA(t *testing.T) {
+func TestClassifyOpsUndiagnosedModelAvailabilityCountsForSLA(t *testing.T) {
 	tests := []string{
 		"No available accounts: no available accounts supporting model: made-up-model",
 		"No available accounts: no available OpenAI accounts supporting model: made-up-model",
@@ -1431,7 +1432,7 @@ func TestClassifyOpsUnsupportedModelExcludedFromSLA(t *testing.T) {
 
 			require.Equal(t, "api_error", errType)
 			require.Equal(t, "routing", phase)
-			require.True(t, isBusinessLimited)
+			require.False(t, isBusinessLimited)
 			require.Equal(t, "platform", errorOwner)
 			require.Equal(t, "gateway", errorSource)
 		})
@@ -1455,6 +1456,21 @@ func TestClassifyOpsUnmarkedNoAvailableTextStillCountsForSLA(t *testing.T) {
 	require.False(t, isBusinessLimited)
 	require.Equal(t, "platform", errorOwner)
 	require.Equal(t, "gateway", errorSource)
+}
+
+func TestClassifyOpsModelCapacityExhaustedOverridesStaleUserLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	markOpsRoutingCapacityLimited(c)
+	service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalPolicyDenied)
+
+	phase, limited, owner, source := classifyOpsErrorLog(c, "api_error",
+		`Accounts supporting model "example" are currently rate-limited`, "model_capacity_exhausted", http.StatusServiceUnavailable)
+
+	require.Equal(t, "routing", phase)
+	require.False(t, limited)
+	require.Equal(t, "platform", owner)
+	require.Equal(t, "gateway", source)
 }
 
 func TestClassifyOpsUpstreamAuthTextStillCountsForSLA(t *testing.T) {

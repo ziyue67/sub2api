@@ -1,5 +1,7 @@
 # 渠道监控 V3 组件状态页
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3)；下列文件名与验证说明保留用于追溯。
+
 截图来自本地演示环境：Docker 中的 PostgreSQL 18 / Redis 8、按提交 `2057cdc12` 构建的后端、前端开发服务器、仅监听本机的假上游，以及无头 Chromium（CDP）。分组名、倍率、账号、用户和请求全部是虚构数据；没有连接生产数据库，也没有向真实上游发出模型请求。截图时间为 2026-10-05 02:05 前后（北京时间）。
 
 V3 是新增的展示模式，没有修改前对照；V1、V2 页面不变。
@@ -14,14 +16,14 @@ V3 是新增的展示模式，没有修改前对照；V1、V2 页面不变。
 
 | 内容 | 文件 |
 | --- | --- |
-| 用户页，1440 × 1000，浅色 | [user-desktop.png](user-desktop.png) |
-| 用户页，1440 × 1000，深色 | [user-dark.png](user-dark.png) |
-| 用户页，390 × 844（整页） | [user-mobile.png](user-mobile.png) |
-| 悬停红格：时段、状态、成功率、首 Token 中位数、主要错误 | [user-tooltip-down.png](user-tooltip-down.png) |
-| 悬停黄格：首 Token 中位数所在区间超过阈值 | [user-tooltip-slow.png](user-tooltip-slow.png) |
-| 事件记录弹窗 | [user-incidents.png](user-incidents.png) |
-| 管理员页：模式切换、页面设置、分类与组件 | [admin-settings.png](admin-settings.png) |
-| 管理员页：页面预览（额外显示请求数，仅管理员可见） | [admin-preview.png](admin-preview.png) |
+| 用户页，1440 × 1000，浅色 | [user-desktop.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3/user-desktop.png) |
+| 用户页，1440 × 1000，深色 | [user-dark.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3/user-dark.png) |
+| 用户页，390 × 844（整页） | [user-mobile.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3/user-mobile.png) |
+| 悬停红格：时段、状态、成功率、首 Token 中位数、主要错误 | [user-tooltip-down.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3/user-tooltip-down.png) |
+| 悬停黄格：首 Token 中位数所在区间超过阈值 | [user-tooltip-slow.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3/user-tooltip-slow.png) |
+| 事件记录弹窗 | [user-incidents.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3/user-incidents.png) |
+| 管理员页：模式切换、页面设置、分类与组件 | [admin-settings.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3/admin-settings.png) |
+| 管理员页：页面预览（额外显示请求数，仅管理员可见） | [admin-preview.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3/admin-preview.png) |
 
 ## 验收要点
 

@@ -631,7 +631,11 @@ export default {
         claudeCodeVersionSyncedValue: '当前同步到：{version}',
         codexHardeningTitle: 'Codex 设置',
         requestTimezoneEnabled: '请求时区绑定',
-        requestTimezoneEnabledDesc: '开启后，按 OpenAI 账号配置替换环境上下文和网页搜索工具中已有的时区，默认 Asia/Singapore。保留日期和普通对话原文；关闭后不改写时区。此功能不保证改善模型表现。',
+        requestTimezoneEnabledDesc: '默认开启并跟随出口 IP；可选手动账号时区或按请求出口 IP 自动识别，替换已有环境上下文、网页搜索时区及受支持的时区请求头。保留日期和普通对话；关闭后不改写。此功能不保证改善模型表现。',
+        requestTimezoneMode: '时区来源',
+        requestTimezoneManual: '手动：使用账号配置',
+        requestTimezoneAuto: '自动：跟随出口 IP',
+        requestTimezoneModeDesc: '手动模式默认 Asia/Singapore；自动模式经请求出口识别 IP 时区，切换代理后重新识别，失败时保留原文。保留日期和普通对话，不保证改善模型表现。',
         codexTicketEnabled: '自动打票',
         codexTicketEnabledDesc:
           '控制后台自动采票和业务请求中的票据注入。手动采票在本页单独发起。',

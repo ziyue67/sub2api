@@ -1,5 +1,7 @@
 # 渠道监控 V3：空闲时主动探测
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe)；下列文件名与验证说明保留用于追溯。
+
 截图来自本地演示环境：
 
 - Docker 里的 PostgreSQL 18.1 / Redis 8.4，按本 PR 代码（基于 production `884948ed2`）构建的后端，前端开发服务器，以及无头 Chromium（CDP）。
@@ -30,15 +32,15 @@ V3 原来就有，探测默认关闭，关闭时页面和原来完全一样，�
 
 | 内容 | 文件 |
 | --- | --- |
-| 用户页，1440 × 1000，浅色 | [user-desktop.png](user-desktop.png) |
-| 用户页，1440 × 1000，深色 | [user-dark.png](user-dark.png) |
-| 用户页，390 × 844（整页） | [user-mobile.png](user-mobile.png) |
-| 悬停探测成功的格子：标「自动探测」，显示探测耗时和说明 | [tooltip-probe-ok.png](tooltip-probe-ok.png) |
-| 悬停探测太慢的格子：探测耗时 12 秒，超过 10 秒阈值 | [tooltip-probe-slow.png](tooltip-probe-slow.png) |
-| 悬停探测失败的格子：错误原因 + 探测说明 | [tooltip-probe-down.png](tooltip-probe-down.png) |
-| 事件记录：上游一直 503 的分组形成一条进行中的事件 | [incidents.png](incidents.png) |
-| 管理员卡片「空闲时主动探测」，浅色 | [admin-idle-probe.png](admin-idle-probe.png) |
-| 管理员卡片，深色 | [admin-idle-probe-dark.png](admin-idle-probe-dark.png) |
+| 用户页，1440 × 1000，浅色 | [user-desktop.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/user-desktop.png) |
+| 用户页，1440 × 1000，深色 | [user-dark.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/user-dark.png) |
+| 用户页，390 × 844（整页） | [user-mobile.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/user-mobile.png) |
+| 悬停探测成功的格子：标「自动探测」，显示探测耗时和说明 | [tooltip-probe-ok.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/tooltip-probe-ok.png) |
+| 悬停探测太慢的格子：探测耗时 12 秒，超过 10 秒阈值 | [tooltip-probe-slow.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/tooltip-probe-slow.png) |
+| 悬停探测失败的格子：错误原因 + 探测说明 | [tooltip-probe-down.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/tooltip-probe-down.png) |
+| 事件记录：上游一直 503 的分组形成一条进行中的事件 | [incidents.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/incidents.png) |
+| 管理员卡片「空闲时主动探测」，浅色 | [admin-idle-probe.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/admin-idle-probe.png) |
+| 管理员卡片，深色 | [admin-idle-probe-dark.png](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/channel-monitor-v3-idle-probe/admin-idle-probe-dark.png) |
 
 管理员卡片是把 `IdleProbeSettings.vue` 单独渲染后截的图，数据（配置、组件、近 24 小时统计）用和 `ProbeStats` 相同的 SQL 从演示数据库导出。原因是新建的演示库里，管理员的部署合规确认需要站长本人在界面上完成，没有替站长确认。在管理员页面里，这张卡片位于「分类与组件」下面、「页面预览」上面。
 

@@ -32,7 +32,13 @@ describe('channel monitor V2 query serialization', () => {
         group_id: [7],
         model: undefined,
         group_by: 'platform_group',
+        recent_samples: undefined,
       },
+    }))
+
+    await getMatrix({ range: '90m', platforms: [], groupIds: [], models: [] }, 'platform_group', false, undefined, { recentSamples: true })
+    expect(get).toHaveBeenLastCalledWith('/channel-monitor-v2/matrix', expect.objectContaining({
+      params: expect.objectContaining({ range: '90m', group_by: 'platform_group', recent_samples: 1 }),
     }))
   })
 })

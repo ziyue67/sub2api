@@ -19,9 +19,9 @@
 
 页面预览使用本地 mock API 和虚构账号，不代表线上已部署：
 
-- [账号内两个开关](screenshots/bps-defaults/account-desktop-zh.png)
-- [默认模板配置](screenshots/bps-defaults/desktop-zh.png)
-- [手机布局](screenshots/bps-defaults/mobile-zh.png)
+- [账号内两个开关](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-defaults/account-desktop-zh.png)
+- [默认模板配置](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-defaults/desktop-zh.png)
+- [手机布局](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps-defaults/mobile-zh.png)
 
 ## 模型计价
 
@@ -37,8 +37,8 @@
 
 以下截图使用本地 mock API 与虚构数据，展示默认 10× 规则和启用后的界面，不代表生产已启用：
 
-- [模型计价桌面页面](screenshots/model-billing/desktop-zh.png)
-- [模型计价手机页面](screenshots/model-billing/mobile-zh.png)
+- [模型计价桌面页面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/model-billing/desktop-zh.png)
+- [模型计价手机页面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/model-billing/mobile-zh.png)
 
 ## OAuth 账户首次配置
 
@@ -98,5 +98,5 @@ OpenAI 原生、OAuth、透传和 Excel/BPS 的流式响应，在网关确认成
 
 以下为本地 mock API 的虚构数据，不是线上账号或生产验证。
 
-- [桌面中文页面](screenshots/auto-config/desktop-zh.png)
-- [手机中文页面](screenshots/auto-config/mobile-zh.png)
+- [桌面中文页面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/auto-config/desktop-zh.png)
+- [手机中文页面](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/auto-config/mobile-zh.png)

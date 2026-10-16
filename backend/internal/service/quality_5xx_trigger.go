@@ -225,6 +225,11 @@ func (s *RateLimitService) temporarilyUnscheduleQuality5xx(ctx context.Context, 
 // bypass BPS to test direct ticket state when diagnosing the BPS route itself.
 func quality5xxTestConfig(account *Account, model string, cfg PelicanTestConfig) (PelicanTestConfig, bool) {
 	cfg.ParallelCount = 1
+	if cfg.QuestionKind == QualityRandomQuestionKind {
+		// Preserve the configured external judge. Never substitute the public
+		// fixed candy answer or bypass judging for a random reasoning rule.
+		return cfg, !cfg.BPSRecoveryPending
+	}
 	if len(cfg.ModelIDs) <= 1 && openAICodexStateProbeUnsupportedReason(account, model, false) == "" {
 		cfg.QuestionKind = OpenAICodexStateProbeQuestionKind
 		return cfg, true

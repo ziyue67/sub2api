@@ -175,6 +175,8 @@ export interface MonitorMatrixRow {
   metrics: MonitorMetric
   health: MonitorHealth
   buckets: MonitorMatrixBucket[]
+  /** Newest sampled buckets, independent of the selected range. Absent on older payloads. */
+  sample_buckets?: MonitorMatrixBucket[]
 }
 
 export interface MonitorCandyProbe {
@@ -276,8 +278,11 @@ export async function getSnapshot(filter: MonitorFilter, admin = false, signal?:
   const { data } = await apiClient.get<MonitorSnapshot>(`${base(admin)}/snapshot`, requestConfig(filter, signal))
   return data
 }
-export async function getMatrix(filter: MonitorFilter, groupBy: MonitorMatrixGroupBy, admin = false, signal?: AbortSignal) {
-  const { data } = await apiClient.get<MonitorMatrixResponse>(`${base(admin)}/matrix`, requestConfig(filter, signal, { group_by: groupBy }))
+export async function getMatrix(filter: MonitorFilter, groupBy: MonitorMatrixGroupBy, admin = false, signal?: AbortSignal, options?: { recentSamples?: boolean }) {
+  const { data } = await apiClient.get<MonitorMatrixResponse>(`${base(admin)}/matrix`, requestConfig(filter, signal, {
+    group_by: groupBy,
+    recent_samples: options?.recentSamples ? 1 : undefined,
+  }))
   return data
 }
 export async function getModels(filter: MonitorFilter, admin = false, signal?: AbortSignal) {

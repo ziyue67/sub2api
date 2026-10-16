@@ -1,5 +1,7 @@
 # BPS 403 自定义间隔恢复探测：界面对照
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps403-recovery)；下列文件名与验证说明保留用于追溯。
+
 截图日期：2026-09-28。使用真实 `EditAccountModal.vue` 组件、项目样式和语言包，在独立 Vite 页面中挂载虚构的 OpenAI OAuth 账号；管理 API 使用本地 mock，不连接生产服务或真实 BPS。浏览器：Chrome 152.0.7977.75，浅色主题。
 
 修改前组件取自 `ranxi2001/sub2api` 的 `production` 提交 `dfdb8642a314dca6a176868adf6b5284497d54fb`。其余截图使用本分支组件。截图保留真实弹窗布局，仅滚动到相关设置。
@@ -17,16 +19,16 @@
 
 ## 修改前（中文，PR #181 的固定每小时探测）
 
-![修改前，恢复探测固定为每小时](before-zh.png)
+[修改前，恢复探测固定为每小时](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps403-recovery/before-zh.png)
 
 ## 修改后（中文，30 分钟）
 
-![新增自定义间隔恢复探测开关](after-zh.png)
+[新增自定义间隔恢复探测开关](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps403-recovery/after-zh.png)
 
 ## 自动关闭后仍可编辑（中文，360 分钟）
 
-![BPS 已关闭，恢复探测选项仍可编辑](disabled-zh.png)
+[BPS 已关闭，恢复探测选项仍可编辑](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps403-recovery/disabled-zh.png)
 
 ## 修改后（英文）
 
-![英文恢复探测设置](after-en.png)
+[英文恢复探测设置](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/bps403-recovery/after-en.png)

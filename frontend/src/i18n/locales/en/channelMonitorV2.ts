@@ -12,8 +12,8 @@ export default {
         "availability": "Availability",
         "ttft": "First token",
         "windows": "Last {count} time windows",
-        "sampledWindows": "Latest {count} samples",
-        "noSamples": "No samples in this range",
+        "sampledWindows": "Latest {count} samples, any time range",
+        "noSamples": "No sampled requests yet",
         "timelineMode": {
             "label": "Card sample display",
             "windows": "Time windows",

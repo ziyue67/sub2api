@@ -1,5 +1,7 @@
 # 手机账户提示框越界复现
 
+> PR 截图已从当前源码中清理，以减小源码包体积。[查看固定提交中的历史截图](https://github.com/ranxi2001/sub2api/tree/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/mobile-account-tooltips)；下列文件名与验证说明保留用于追溯。
+
 基线：`7719df8be`（production，版本 2.9.10）。
 
 本地 Vite 挂载实际 `AccountStatusIndicator` 和 `HelpTooltip` 组件，使用虚构错误消息和统计说明。触发器放在右侧，375 × 812px 触摸视口。未连接生产 API；截图是组件复现，不是生产账户页面截图。
@@ -10,8 +12,8 @@
 
 | 场景 | 修复前 | 修复后 |
 | --- | --- | --- |
-| 账户错误详情 | [截图](before-error.png)：左边 343px，宽 200px，右边 543px | [截图](after-chromium-error.png)：向左展开，位于视口内 |
-| 统计说明 | [截图](before-stats.png)：左边 191px，宽 320px，右边 511px | [截图](after-chromium-stats.png)：向左展开，位于视口内 |
+| 账户错误详情 | [截图](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/mobile-account-tooltips/before-error.png)：左边 343px，宽 200px，右边 543px | [截图](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/mobile-account-tooltips/after-chromium-error.png)：向左展开，位于视口内 |
+| 统计说明 | [截图](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/mobile-account-tooltips/before-stats.png)：左边 191px，宽 320px，右边 511px | [截图](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/mobile-account-tooltips/after-chromium-stats.png)：向左展开，位于视口内 |
 
 错误及用量提示原来使用表格内部绝对定位，可能向右溢出或被滚动容器裁剪；公共提示框也未限制定位边界，并错误地给 fixed 坐标加了页面滚动偏移。现在这些提示使用 Teleport 和公共定位逻辑，在手机端优先右对齐、向左展开，并限制在视口内。顶部空间不足时向下显示，长内容可滚动，支持触摸点击切换及点外关闭。
 

@@ -18,8 +18,9 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 	start := time.Now().UTC().Truncate(time.Hour).Add(-4 * time.Hour)
 	end := start.Add(time.Hour)
 	model := "monitor-rejection-regression"
-	up404, up400, up401, up502 := 404, 400, 401, 502
+	up404, up400, up401, up413, up502 := 404, 400, 401, 413, 502
 	capability := `Model "example" is not available for this group`
+	payload := "Request payload is too large"
 	rows := []*service.OpsInsertErrorLogInput{
 		{RequestID: "monitor-reg-missing-code", StatusCode: 502, UpstreamStatusCode: &up404, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorMessage: "model_not_found"},
 		{RequestID: "monitor-reg-admission", StatusCode: 404, ErrorOwner: "client", ErrorPhase: "request", ErrorType: "model_not_found", IsBusinessLimited: true, ErrorMessage: "The requested model is not supported by the selected account"},
@@ -28,6 +29,11 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 		{RequestID: "monitor-reg-local", StatusCode: 400, ErrorOwner: "client", ErrorPhase: "request", ErrorType: "invalid_request_error"},
 		{RequestID: "monitor-reg-balance", StatusCode: 403, ErrorOwner: "client", ErrorPhase: "request", ErrorType: "billing_error", ErrorMessage: "Insufficient user balance"},
 		{RequestID: "monitor-reg-claude-context", StatusCode: 400, UpstreamStatusCode: &up400, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorMessage: "prompt is too long: compact the conversation and retry."},
+		{RequestID: "monitor-reg-payload", StatusCode: 400, UpstreamStatusCode: &up400, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorType: "invalid_request_error", ErrorMessage: payload},
+		{RequestID: "monitor-reg-wrapped-payload", StatusCode: 502, UpstreamStatusCode: &up413, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorSource: "upstream_http", UpstreamErrorMessage: &payload},
+		// Insert raw legacy flags to exercise read-time compatibility, not new-log normalization.
+		{RequestID: "monitor-reg-capacity-503", StatusCode: 503, ErrorOwner: "platform", ErrorPhase: "routing", ErrorSource: "gateway", IsBusinessLimited: true, ErrorMessage: `Accounts supporting model "example" are currently rate-limited`},
+		{RequestID: "monitor-reg-capacity-429", StatusCode: 429, ErrorOwner: "platform", ErrorPhase: "routing", ErrorType: "rate_limit_error", ErrorSource: "gateway", IsBusinessLimited: true, ErrorMessage: "All available accounts are currently rate-limited"},
 		{RequestID: "monitor-reg-supplier", StatusCode: 502, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorMessage: "Insufficient account balance"},
 		{RequestID: "monitor-reg-auth", StatusCode: 503, UpstreamStatusCode: &up401, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorMessage: "Your authentication token has expired"},
 		{RequestID: "monitor-reg-validation", StatusCode: 400, UpstreamStatusCode: &up400, ErrorOwner: "provider", ErrorPhase: "upstream", ErrorType: "invalid_request_error", ErrorMessage: "Encrypted content could not be verified"},
@@ -53,9 +59,9 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 	filter := &service.OpsDashboardFilter{StartTime: start, EndTime: end, Platform: "openai"}
 	total, excluded, sla, _, _, _, err := ops.queryErrorCounts(ctx, filter, start, end)
 	require.NoError(t, err)
-	require.EqualValues(t, 12, total, "the forwarded error has one request outcome")
-	require.EqualValues(t, 7, excluded)
-	require.EqualValues(t, 5, sla, "provider balance/auth/validation and Pod failures remain")
+	require.EqualValues(t, 16, total, "the forwarded error has one request outcome")
+	require.EqualValues(t, 9, excluded)
+	require.EqualValues(t, 7, sla, "provider balance/auth/validation, Pod and account-pool capacity failures remain")
 	trend, err := ops.GetErrorTrend(ctx, filter, 60)
 	require.NoError(t, err)
 	var trendTotal, trendSLA int64
@@ -82,10 +88,10 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 	require.NoError(t, monitor.RecomputeRange(ctx, start, end))
 	var errors int64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT sum(error_requests) FROM channel_monitor_v2_metrics_1m WHERE model=$1", model).Scan(&errors))
-	require.EqualValues(t, 5, errors)
+	require.EqualValues(t, 7, errors)
 	result, err := ops.ListErrorLogs(ctx, &service.OpsErrorLogFilter{StartTime: &start, EndTime: &end, Model: model, View: "excluded"})
 	require.NoError(t, err)
-	require.EqualValues(t, 7, result.Total, "legacy rows are visible under excluded without rewriting raw logs")
+	require.EqualValues(t, 9, result.Total, "legacy rows are visible under excluded without rewriting raw logs")
 	for _, item := range result.Errors {
 		require.Equal(t, "client", item.Owner)
 		require.Equal(t, "request", item.Phase)
@@ -94,9 +100,33 @@ func TestOpsMonitorCapabilityRejectionsAndForwardedDuplicates(t *testing.T) {
 		require.True(t, detail.IsBusinessLimited)
 		require.Equal(t, item.Owner, detail.Owner)
 	}
+	result, err = ops.ListErrorLogs(ctx, &service.OpsErrorLogFilter{StartTime: &start, EndTime: &end, Model: model, View: "errors"})
+	require.NoError(t, err)
+	require.EqualValues(t, 8, result.Total, "raw history retains both forwarded error records; SLA counts one outcome")
+	var capacityCount int
+	var errorRequestIDs []string
+	for _, item := range result.Errors {
+		errorRequestIDs = append(errorRequestIDs, item.RequestID)
+		if item.RequestID == "monitor-reg-capacity-503" || item.RequestID == "monitor-reg-capacity-429" {
+			capacityCount++
+			detail, err := ops.GetErrorLogByID(ctx, item.ID)
+			require.NoError(t, err)
+			require.False(t, detail.IsBusinessLimited)
+			require.Equal(t, "platform", detail.Owner)
+			require.Equal(t, "routing", detail.Phase)
+		}
+	}
+	require.ElementsMatch(t, []string{
+		"monitor-reg-capacity-503", "monitor-reg-capacity-429", "monitor-reg-supplier",
+		"monitor-reg-auth", "monitor-reg-validation", "monitor-reg-pod",
+		"monitor-reg-duplicate", "monitor-reg-duplicate",
+	}, errorRequestIDs)
+	require.Equal(t, 2, capacityCount)
 	var raw int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT count(*) FROM ops_error_logs WHERE model=$1", model).Scan(&raw))
-	require.Equal(t, 13, raw, "diagnostic records stay intact")
+	require.Equal(t, 17, raw, "diagnostic records stay intact")
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT count(*) FROM ops_error_logs WHERE request_id IN ('monitor-reg-capacity-503', 'monitor-reg-capacity-429') AND is_business_limited").Scan(&raw))
+	require.Equal(t, 2, raw, "historical capacity flags are corrected at read time without rewriting evidence")
 }
 
 func TestOpsMetricMissingIDsAndRecoveredAttempts(t *testing.T) {

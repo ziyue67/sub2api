@@ -28,6 +28,6 @@
 
 以下截图来自本地浏览器与模拟 API，账号数据为虚构值，不代表生产部署状态。验证了未启用时禁止添加、一键启用后可继续添加，以及账号 2FA 输入说明。
 
-- [未启用凭据加密](screenshots/credential-encryption/unconfigured.png)
-- [启用后允许添加账号](screenshots/credential-encryption/enabled.png)
-- [账号 2FA 与自动巡检表单](screenshots/credential-encryption/account-editor.png)
+- [未启用凭据加密](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/credential-encryption/unconfigured.png)
+- [启用后允许添加账号](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/credential-encryption/enabled.png)
+- [账号 2FA 与自动巡检表单](https://github.com/ranxi2001/sub2api/blob/297e9201a2f6d6fe70073b370a5b71f49579accf/docs/screenshots/credential-encryption/account-editor.png)
