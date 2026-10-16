@@ -374,6 +374,38 @@ describe('EditAccountModal', () => {
     restored.unmount()
   })
 
+  it('round-trips the Anthropic API Key independent 1h cache billing switch', async () => {
+    const account = {
+      ...buildAccount(),
+      name: 'Anthropic API Key',
+      platform: 'anthropic',
+      extra: { unrelated: 'preserve' }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="edit-anthropic-cache-creation-billing-1h"]')
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra.cache_creation_billing_1h_enabled).toBe(true)
+    expect(extra.unrelated).toBe('preserve')
+    expect(extra).not.toHaveProperty('force_anthropic_cache_ttl_1h')
+    wrapper.unmount()
+
+    const restored = mountModal({ ...account, extra })
+    await restored.get('[data-testid="edit-anthropic-cache-creation-billing-1h"]').trigger('click')
+    await restored.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.cache_creation_billing_1h_enabled).toBe(false)
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.unrelated).toBe('preserve')
+    restored.unmount()
+  })
+
   it('round-trips the Anthropic API Key tool image compatibility switch', async () => {
     const account = {
       ...buildAccount(),

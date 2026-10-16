@@ -582,6 +582,8 @@ const exportToExcel = async () => {
       t('admin.usage.cacheReadCost'), t('admin.usage.cacheCreationCost'),
       t('usage.rate'), t('usage.accountMultiplier'), t('usage.original'), t('usage.userBilled'), t('usage.accountBilled'),
       t('usage.firstToken'), t('usage.duration'),
+      'Cache Write 5m Tokens', 'Cache Write 1h Tokens',
+      ...(!props.observerMode ? [t('usage.cacheBillingStatus'), 'Upstream 5m Tokens', 'Upstream 1h Tokens', t('usage.cacheBillingOriginalCost'), t('usage.cacheBillingBilledCost'), t('usage.cacheBillingDelta')] : []),
       t('admin.usage.requestId'), t('admin.usage.upstreamRequestId'), t('usage.userAgent'), t('admin.usage.ipAddress')
     ]
     const ws = XLSX.utils.aoa_to_sheet([headers])
@@ -602,6 +604,8 @@ const exportToExcel = async () => {
         log.rate_multiplier?.toPrecision(4) || '1.00', (log.account_rate_multiplier ?? 1).toPrecision(4),
         log.total_cost?.toFixed(6) || '0.000000', log.actual_cost?.toFixed(6) || '0.000000',
         ((log.account_stats_cost ?? log.total_cost) * (log.account_rate_multiplier ?? 1)).toFixed(6), log.first_token_ms ?? '', log.duration_ms,
+        log.cache_creation_5m_tokens, log.cache_creation_1h_tokens,
+        ...(!props.observerMode ? [log.cache_creation_billing?.status ?? '', log.cache_creation_billing?.original_5m_tokens ?? '', log.cache_creation_billing?.original_1h_tokens ?? '', log.cache_creation_billing?.original_creation_cost ?? '', log.cache_creation_billing?.billed_creation_cost ?? '', log.cache_creation_billing?.actual_cost_delta ?? ''] : []),
         log.request_id || '', log.upstream_request_id || '', log.user_agent || '', log.ip_address || ''
       ])
       if (rows.length) {

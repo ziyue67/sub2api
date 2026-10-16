@@ -81,6 +81,7 @@ type postUsageBillingParams struct {
 	RequestPayloadHash    string
 	IsSubscriptionBill    bool
 	AccountRateMultiplier float64
+	UpstreamTotalCost     *float64 // pre-conversion quota basis; not a verified provider bill
 	APIKeyService         APIKeyQuotaUpdater
 	Platform              string // 来自 APIKey 关联 Group 的平台标识
 	// SimpleModeKeyRateLimitOnly opts the request into the simple-mode billing
@@ -136,8 +137,15 @@ func (p *postUsageBillingParams) shouldUpdateRateLimits() bool {
 	return p.Cost.ActualCost > 0 && p.APIKey.HasRateLimits() && p.APIKeyService != nil
 }
 
+func (p *postUsageBillingParams) accountQuotaBaseCost() float64 {
+	if p.UpstreamTotalCost != nil {
+		return *p.UpstreamTotalCost
+	}
+	return p.Cost.TotalCost
+}
+
 func (p *postUsageBillingParams) shouldUpdateAccountQuota() bool {
-	return p.Cost.TotalCost > 0 && p.Account.IsAPIKeyOrBedrock() && p.Account.HasAnyQuotaLimit()
+	return p.accountQuotaBaseCost() > 0 && p.Account.IsAPIKeyOrBedrock() && p.Account.HasAnyQuotaLimit()
 }
 
 // postUsageBilling is the legacy fallback billing path used when the unified
@@ -182,7 +190,7 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	}
 
 	if p.shouldUpdateAccountQuota() {
-		accountCost := cost.TotalCost * p.AccountRateMultiplier
+		accountCost := p.accountQuotaBaseCost() * p.AccountRateMultiplier
 		if err := deps.accountRepo.IncrementQuotaUsed(billingCtx, p.Account.ID, accountCost); err != nil {
 			slog.Error("increment account quota used failed", "account_id", p.Account.ID, "cost", accountCost, "error", err)
 		}
@@ -344,7 +352,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		cmd.APIKeyRateLimitCost = p.Cost.ActualCost
 	}
 	if p.shouldUpdateAccountQuota() {
-		cmd.AccountQuotaCost = p.Cost.TotalCost * p.AccountRateMultiplier
+		cmd.AccountQuotaCost = p.accountQuotaBaseCost() * p.AccountRateMultiplier
 	}
 
 	cmd.Normalize()
@@ -550,7 +558,7 @@ func notifyAccountQuota(p *postUsageBillingParams, deps *billingDeps, result *Us
 		)
 		return
 	}
-	accountCost := p.Cost.TotalCost * p.AccountRateMultiplier
+	accountCost := p.accountQuotaBaseCost() * p.AccountRateMultiplier
 	var quotaState *AccountQuotaState
 	if result != nil {
 		quotaState = result.QuotaState
@@ -771,7 +779,7 @@ func logResponseModelBillingApplied(component string, account *Account, requestI
 
 // recordUsageCore 是 RecordUsage 的核心实现。
 func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsageCoreInput) error {
-	result := input.Result
+	result, cacheBillingAudit := prepareCacheCreationBilling(input.Result)
 	apiKey := input.APIKey
 	user := input.User
 	account := input.Account
@@ -824,12 +832,26 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
 			baselineChannelPriced := s.resolveChannelPricing(ctx, billingModel, apiKey) != nil
 			if responseModelBillingAdoptable(cost, responseCost, baselineChannelPriced, responseChannelPriced) {
-				// billingModel 到此为止只是定价查表的入参，后续流程只消费 cost，
-				// 因此这里不改写它，改由日志记录实际生效的计费基准。
+				// Keep the effective model for the raw-usage audit repricing below.
 				logResponseModelBillingApplied("service.gateway", account, result.RequestID, billingModel, responseModel, cost, responseCost)
 				cost = responseCost
+				billingModel = responseModel
 			}
 		}
+	}
+	originalCost := s.priceCacheCreationBilling(ctx, result, cacheBillingAudit, apiKey, billingModel, multiplier, imageMultiplier, pricingAt, cost)
+	if cacheBillingAudit != nil && cacheBillingAudit.Status == "unavailable_pricing" {
+		cost = originalCost
+	}
+	// Use raw usage and pre-conversion prices for upstream estimates and quotas.
+	statsUsage := input.Result.Usage
+	statsTotalCost := cost.TotalCost
+	var upstreamTotalCost *float64
+	if cacheBillingAudit != nil && originalCost != nil {
+		statsTotalCost = originalCost.TotalCost
+		upstreamTotalCost = &statsTotalCost
+	} else {
+		statsUsage = result.Usage
 	}
 	if result.Usage.WebSearchRequests > 0 {
 		webSearchCost := s.billingService.CalculateWebSearchCost(
@@ -838,6 +860,13 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			baseMultiplier,
 		)
 		cost = addToolSurchargeCost(cost, webSearchCost)
+		if upstreamTotalCost != nil && webSearchCost != nil {
+			statsTotalCost += webSearchCost.TotalCost
+		}
+	}
+
+	if upstreamTotalCost == nil {
+		statsTotalCost = cost.TotalCost
 	}
 
 	// 判断计费方式：订阅模式 vs 余额模式
@@ -852,7 +881,12 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	usageLog := s.buildRecordUsageLog(ctx, input, result, apiKey, user, account, subscription,
 		requestedModel, multiplier, imageMultiplier, baseMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
 	usageLog.RateMultiplier *= costModelBillingMultiplier(cost)
+	usageLog.CacheCreationBilling = cacheBillingAudit
 
+	stats5m, stats1h := 0, 0
+	if cacheBillingAudit != nil {
+		stats5m, stats1h = statsUsage.CacheCreation5mTokens, statsUsage.CacheCreation1hTokens
+	}
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。纯存储费不是一次模型请求，
 	// 账号统计成本回落 total_cost（官方存储价）。
 	if apiKey.GroupID != nil && !isCacheStorageOnlyResult(result) {
@@ -861,16 +895,22 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			// Anthropic's input_tokens excludes cache_read and cache_creation (billed separately);
 			// OpenAI gateway uses actualInputTokens which also excludes cache_read for the same reason.
 			UsageTokens{
-				InputTokens:         result.Usage.InputTokens,
-				OutputTokens:        result.Usage.OutputTokens,
-				CacheCreationTokens: result.Usage.CacheCreationInputTokens,
-				CacheReadTokens:     result.Usage.CacheReadInputTokens,
-				ImageOutputTokens:   result.Usage.ImageOutputTokens,
+				InputTokens:           statsUsage.InputTokens,
+				OutputTokens:          statsUsage.OutputTokens,
+				CacheCreationTokens:   statsUsage.CacheCreationInputTokens,
+				CacheReadTokens:       statsUsage.CacheReadInputTokens,
+				CacheCreation5mTokens: stats5m,
+				CacheCreation1hTokens: stats1h,
+				ImageOutputTokens:     statsUsage.ImageOutputTokens,
 			},
-			cost.TotalCost-cacheStorageCost, pricingAt,
+			statsTotalCost-cacheStorageCost, pricingAt,
 			accountStatsLongContextPricingEnabled(nil),
 		)
 		addCacheStorageToAccountStatsCost(usageLog, cacheStorageCost)
+	}
+
+	if cacheBillingAudit != nil && usageLog.AccountStatsCost == nil {
+		usageLog.AccountStatsCost = &statsTotalCost
 	}
 
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
@@ -894,6 +934,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	requestID := usageLog.RequestID
 	_, billingErr := applyUsageBilling(ctx, requestID, usageLog, &postUsageBillingParams{
 		Cost:                       cost,
+		UpstreamTotalCost:          upstreamTotalCost,
 		User:                       user,
 		APIKey:                     apiKey,
 		Account:                    account,
@@ -1010,7 +1051,12 @@ func (s *GatewayService) QuoteUsageCost(ctx context.Context, input *RecordUsageI
 	}
 	multiplier, imageMultiplier, _, pricingAt := s.recordUsageMultipliers(ctx, input.APIKey, user, input.Account, input.PricingAt)
 	billingModel := s.recordUsageBillingModel(ctx, input.APIKey, input.Result, input.ChannelUsageFields)
-	cost := s.calculateRecordUsageCost(ctx, input.Result, input.APIKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	result, audit := prepareCacheCreationBilling(input.Result)
+	cost := s.calculateRecordUsageCost(ctx, result, input.APIKey, billingModel, multiplier, imageMultiplier, pricingAt)
+	original := s.priceCacheCreationBilling(ctx, result, audit, input.APIKey, billingModel, multiplier, imageMultiplier, pricingAt, cost)
+	if audit != nil && audit.Status == "unavailable_pricing" {
+		cost = original
+	}
 	if cost == nil {
 		return 0
 	}

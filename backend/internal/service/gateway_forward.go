@@ -89,6 +89,13 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 
 // Forward 转发请求到Claude API
 func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (result *ForwardResult, err error) {
+	cacheBilling1h := account.IsCacheCreationBilling1hEnabled()
+	defer func() {
+		if result != nil {
+			result.CacheCreationBilling1h = cacheBilling1h
+		}
+	}()
+
 	// Carry the scheduler's selected lane into every rebuilt/retried upstream
 	// request. The HTTP pool uses this value to isolate identical proxy URLs.
 	ctx = WithSelectedAccountProxyLane(ctx, account)

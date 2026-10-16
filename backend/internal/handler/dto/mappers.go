@@ -805,6 +805,7 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 	usageLog.UpstreamEndpoint = l.UpstreamEndpoint
 	return &AdminUsageLog{
 		UsageLog:                usageLog,
+		CacheCreationBilling:    l.CacheCreationBilling,
 		UpstreamModel:           l.UpstreamModel,
 		UpstreamReasoningEffort: adminUpstreamReasoningEffort(l),
 		UpstreamResponseModel:   l.UpstreamResponseModel,
@@ -818,6 +819,16 @@ func UsageLogFromServiceAdmin(l *service.UsageLog) *AdminUsageLog {
 		IPAddress:               l.IPAddress,
 		Account:                 AccountSummaryFromService(l.Account),
 	}
+}
+
+// UsageLogFromServiceObserver retains existing observer fields but never exposes
+// the administrator-only cache billing audit.
+func UsageLogFromServiceObserver(l *service.UsageLog) *AdminUsageLog {
+	out := UsageLogFromServiceAdmin(l)
+	if out != nil {
+		out.CacheCreationBilling = nil
+	}
+	return out
 }
 
 func userFacingReasoningEffort(l *service.UsageLog) *string {

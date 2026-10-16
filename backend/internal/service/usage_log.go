@@ -211,7 +211,8 @@ type UsageLog struct {
 	// ToolSurcharges records completed hosted-tool calls and their billed
 	// surcharge snapshot. Price is USD per 1,000 calls; Cost is the actual
 	// user charge after RateMultiplier.
-	ToolSurcharges []ToolSurcharge
+	ToolSurcharges       []ToolSurcharge
+	CacheCreationBilling *CacheCreationBillingAudit
 
 	CreatedAt time.Time
 

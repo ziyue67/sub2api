@@ -1199,3 +1199,20 @@ describe('admin UsageTable latency TPS', () => {
     appStoreMocks.cachedPublicSettings = undefined
   })
 })
+
+
+describe('cache creation billing visibility', () => {
+  it('shows 1h to customers but reserves the conversion badge for administrators', () => {
+    const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', cache_creation_tokens: 100, cache_creation_1h_tokens: 100,
+      cache_creation_billing: { version: 1, enabled: true, status: 'converted', original_creation_tokens: 100, original_5m_tokens: 100, original_1h_tokens: 0, original_read_tokens: 0, converted_tokens: 100, original_creation_cost: 0.0005, billed_creation_cost: 0.0008, actual_cost_delta: 0.000255 } }
+    for (const admin of [true, false]) {
+      const wrapper = mount(UsageTable, {
+        props: { data: [row], loading: false, columns: [], showAccountBilling: admin },
+        global: { stubs: { DataTable: DataTableStub, Icon: true, Teleport: true } },
+      })
+      expect(wrapper.text()).toContain('1h')
+      expect(wrapper.find('[data-testid="cache-billing-audit-badge"]').exists()).toBe(admin)
+      wrapper.unmount()
+    }
+  })
+})

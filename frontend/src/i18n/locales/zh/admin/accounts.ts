@@ -1143,6 +1143,9 @@ export default {
           '仅对 Anthropic API Key 生效。开启后，messages/count_tokens 请求将透传上游并仅替换认证，保留计费/并发/审计及必要安全过滤；关闭即可回滚到现有兼容链路。',
         toolResultImages: '工具结果图片兼容',
         toolResultImagesDesc: '仅对此 Anthropic API Key 账号生效。将工具结果中的结构化图片移到同一用户消息的顶层，保留工具关联与缓存标记，兼容会把嵌套图片当文本处理的上游。不压缩图片，不改写 Usage 或计费。',
+        cacheCreationBilling1h: '缓存创建按 1h 计费',
+        cacheCreationBilling1hDesc: '仅对该账号生效。将上游回报的 5m 缓存创建量按 1h 单价计费，客户记录显示 1h；管理员保留转换说明与原始用量。默认关闭，不改变实际缓存时长，不追扣历史账单。',
+        cacheCreationBilling1hRequestOff: '请求强制 1h 尚未开启；当前开关只改变本站计费分类。',
         forceCacheTTL1h: '强制真实 1h 缓存',
         forceCacheTTL1hDesc:
           '仅对该 Anthropic API Key 账号生效。将请求中已有的 ephemeral 缓存断点改为 1h，并补齐上游所需 beta；不会新增缓存断点，也不会改写 Usage 计费分类。',

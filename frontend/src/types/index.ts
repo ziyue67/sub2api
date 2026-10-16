@@ -2076,7 +2076,24 @@ export interface UsageLogAccountSummary {
   name: string
 }
 
+export interface CacheCreationBillingAudit {
+  original_5m_present?: boolean
+  original_1h_present?: boolean
+  version: number
+  enabled: boolean
+  status: string
+  original_creation_tokens: number
+  original_5m_tokens: number
+  original_1h_tokens: number
+  original_read_tokens: number
+  converted_tokens: number
+  original_creation_cost: number
+  billed_creation_cost: number
+  actual_cost_delta: number
+}
+
 export interface AdminUsageLog extends UsageLog {
+  cache_creation_billing?: CacheCreationBillingAudit | null
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
   upstream_response_model?: string | null

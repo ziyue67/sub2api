@@ -104,6 +104,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			log.NativeCompactionV2,
 			sqlmock.AnyArg(), // tool_surcharges
 			createdAt,
+			nil, // cache_creation_billing
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
 
@@ -200,6 +201,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			log.NativeCompactionV2,
 			sqlmock.AnyArg(), // tool_surcharges
 			createdAt,
+			nil, // cache_creation_billing
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
 
@@ -280,10 +282,10 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	prepared := prepareUsageLogInsert(log)
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3])
-	require.Equal(t, true, prepared.args[len(prepared.args)-3])
-	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
-	require.Nil(t, prepared.args[len(prepared.args)-2])
+	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4])
+	require.Equal(t, true, prepared.args[len(prepared.args)-4])
+	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3])
+	require.Nil(t, prepared.args[len(prepared.args)-3])
 	require.Equal(t, int16(service.RequestTypeStream), prepared.args[30])
 	require.Equal(t, service.RequestTypeStream, log.RequestType)
 	require.True(t, log.Stream)
@@ -332,7 +334,7 @@ func TestPrepareUsageLogInsert_PersistsToolSurchargesJSON(t *testing.T) {
 		}},
 	})
 
-	encoded, ok := prepared.args[len(prepared.args)-2].(string)
+	encoded, ok := prepared.args[len(prepared.args)-3].(string)
 	require.True(t, ok)
 	require.JSONEq(t, `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225,"account_cost":0.03}]`, encoded)
 }
@@ -983,6 +985,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			false, // native_compaction_v2
 			sql.NullString{Valid: true, String: `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225,"account_cost":0.03}]`}, // tool_surcharges
 			now,
+			sql.NullString{}, // cache_creation_billing
 		}})
 		require.NoError(t, err)
 		require.Equal(t, 2, log.ImageCount)
@@ -1067,6 +1070,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			false,             // native_compaction_v2
 			sql.NullString{},  // tool_surcharges
 			now,
+			sql.NullString{}, // cache_creation_billing
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -1131,6 +1135,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			true,              // native_compaction_v2
 			sql.NullString{},  // tool_surcharges
 			now,
+			sql.NullString{}, // cache_creation_billing
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -1196,6 +1201,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			false,             // native_compaction_v2
 			sql.NullString{},  // tool_surcharges
 			now,
+			sql.NullString{}, // cache_creation_billing
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)

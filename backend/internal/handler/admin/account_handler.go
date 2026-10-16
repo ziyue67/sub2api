@@ -29,6 +29,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -1240,6 +1241,21 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var cacheBillingBefore *bool
+	if value, present := req.Extra[service.CacheCreationBilling1hKey]; present {
+		if _, valid := value.(bool); !valid {
+			response.BadRequest(c, "cache_creation_billing_1h_enabled must be a boolean")
+			return
+		}
+		previous, getErr := h.adminService.GetAccount(c.Request.Context(), accountID)
+		if getErr != nil {
+			response.ErrorFrom(c, getErr)
+			return
+		}
+		before := previous.IsCacheCreationBilling1hEnabled()
+		cacheBillingBefore = &before
+	}
+
 	// 确定是否跳过混合渠道检查
 	skipCheck := req.ConfirmMixedChannelRisk != nil && *req.ConfirmMixedChannelRisk
 
@@ -1278,6 +1294,13 @@ func (h *AccountHandler) Update(c *gin.Context) {
 
 		response.ErrorFrom(c, err)
 		return
+	}
+
+	if cacheBillingBefore != nil {
+		middleware.SetAuditExtra(c, map[string]any{
+			"cache_billing_1h_before": *cacheBillingBefore,
+			"cache_billing_1h_after":  account.IsCacheCreationBilling1hEnabled(),
+		})
 	}
 
 	// OpenAI APIKey: credentials 修改后重新探测上游能力（base_url/api_key 可能变更）。

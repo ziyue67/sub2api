@@ -1146,6 +1146,9 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		service.OpenAIAutoResetCredit7dThresholdExtraKey,
 		service.OpenAIAutoResetCreditStateExtraKey,
 		"model_rate_limits",
+		// Billing classification is fixed at dispatch from this account snapshot;
+		// dropping it would make an enabled API-key account silently bill as raw 5m.
+		service.CacheCreationBilling1hKey,
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",
