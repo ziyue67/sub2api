@@ -34,6 +34,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	parsed *ParsedRequest,
 ) (result *ForwardResult, err error) {
 	cacheBilling1h := account.IsCacheCreationBilling1hEnabled()
+	ctx = withCacheCreationBillingSnapshot(ctx, cacheBilling1h)
 	defer func() {
 		if result != nil {
 			result.CacheCreationBilling1h = cacheBilling1h
