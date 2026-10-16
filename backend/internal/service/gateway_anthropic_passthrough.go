@@ -546,6 +546,11 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 					firstTokenMs = &ms
 				}
 				parseSSEUsagePassthrough(data, usage)
+				if cacheCreationBillingSnapshot(ctx, account) {
+					if rewritten, changed := rewriteAnthropicPassthroughSSEData(data, cacheTTLTarget1h); changed {
+						line = "data: " + rewritten
+					}
+				}
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
@@ -622,6 +627,33 @@ func extractAnthropicSSEDataLine(line string) (string, bool) {
 		start++
 	}
 	return line[start:], true
+}
+
+// rewriteAnthropicPassthroughSSEData changes only the Usage exposed downstream.
+// Callers must parse usage from data before invoking it so internal billing keeps
+// the raw upstream 5m/1h split.
+func rewriteAnthropicPassthroughSSEData(data, target string) (string, bool) {
+	var event map[string]any
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return data, false
+	}
+	changed := false
+	if msg, ok := event["message"].(map[string]any); ok {
+		if u, ok := msg["usage"].(map[string]any); ok {
+			changed = rewriteCacheCreationJSON(u, target) || changed
+		}
+	}
+	if u, ok := event["usage"].(map[string]any); ok {
+		changed = rewriteCacheCreationJSON(u, target) || changed
+	}
+	if !changed {
+		return data, false
+	}
+	out, err := json.Marshal(event)
+	if err != nil {
+		return data, false
+	}
+	return string(out), true
 }
 
 // parseSSEUsagePassthrough 从 Anthropic SSE data 行提取 usage（包级函数：
@@ -892,6 +924,11 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 			return nil, err
 		}
 	}
+	if cacheCreationBillingSnapshot(ctx, account) {
+		if rewritten, changed := rewriteAnthropicPassthroughResponseBody(body, cacheTTLTarget1h); changed {
+			body = rewritten
+		}
+	}
 
 	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -901,6 +938,22 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	body = reverseToolNamesIfPresent(c, body)
 	c.Data(resp.StatusCode, contentType, body)
 	return usage, nil
+}
+
+func rewriteAnthropicPassthroughResponseBody(body []byte, target string) ([]byte, bool) {
+	var response map[string]any
+	if err := json.Unmarshal(body, &response); err != nil {
+		return body, false
+	}
+	usage, ok := response["usage"].(map[string]any)
+	if !ok || !rewriteCacheCreationJSON(usage, target) {
+		return body, false
+	}
+	out, err := json.Marshal(response)
+	if err != nil {
+		return body, false
+	}
+	return out, true
 }
 
 func classifyAnthropicResponseInputAsCacheRead(body []byte, usage *ClaudeUsage) ([]byte, error) {

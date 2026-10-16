@@ -61,8 +61,13 @@ func TestCacheCreationBillingDispatchSnapshotAndRawResponse(t *testing.T) {
 					require.Equal(t, 100, result.Usage.CacheCreation5mTokens)
 					require.Zero(t, result.Usage.CacheCreation1hTokens)
 					if endpoint == "messages" {
-						require.Contains(t, recorder.Body.String(), `"ephemeral_5m_input_tokens":100`)
-						require.Contains(t, recorder.Body.String(), `"ephemeral_1h_input_tokens":0`)
+						if enabled {
+							require.Contains(t, recorder.Body.String(), `"ephemeral_5m_input_tokens":0`)
+							require.Contains(t, recorder.Body.String(), `"ephemeral_1h_input_tokens":100`)
+						} else {
+							require.Contains(t, recorder.Body.String(), `"ephemeral_5m_input_tokens":100`)
+							require.Contains(t, recorder.Body.String(), `"ephemeral_1h_input_tokens":0`)
+						}
 					}
 				})
 			}

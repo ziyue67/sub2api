@@ -981,9 +981,13 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			}
 		}
 
+		// Extract the raw upstream usage before rewriting the event sent downstream.
+		// Billing/audit must retain the provider's original 5m/1h split.
+		usagePatch := s.extractSSEUsagePatch(event)
+
 		// Cache TTL Override: 重写 SSE 事件中的 cache_creation 分类。
 		// 账号级设置优先；全局 1h 请求注入开启时，默认把 usage 计费归回 5m。
-		if overrideTarget, ok := s.resolveCacheTTLUsageOverrideTarget(ctx, account); ok {
+		if overrideTarget, ok := s.resolveDownstreamCacheTTLUsageOverrideTarget(ctx, account); ok {
 			if eventType == "message_start" {
 				if msg, ok := event["message"].(map[string]any); ok {
 					if u, ok := msg["usage"].(map[string]any); ok {
@@ -1007,7 +1011,6 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			}
 		}
 
-		usagePatch := s.extractSSEUsagePatch(event)
 		if anthropicStreamEventIsTerminal(eventName, dataLine) {
 			sawTerminalEvent = true
 		}
@@ -1451,6 +1454,16 @@ func (s *GatewayService) resolveCacheTTLUsageOverrideTarget(ctx context.Context,
 	return "", false
 }
 
+// resolveDownstreamCacheTTLUsageOverrideTarget controls only the Usage shape
+// exposed to the downstream client. The raw upstream Usage is collected before
+// this target is applied and remains the source for internal billing/audit.
+func (s *GatewayService) resolveDownstreamCacheTTLUsageOverrideTarget(ctx context.Context, account *Account) (string, bool) {
+	if cacheCreationBillingSnapshot(ctx, account) {
+		return cacheTTLTarget1h, true
+	}
+	return s.resolveCacheTTLUsageOverrideTarget(ctx, account)
+}
+
 func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, originalModel, mappedModel string) (*ClaudeUsage, error) {
 	// 更新5h窗口状态
 	s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
@@ -1498,15 +1511,18 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 		}
 	}
 
+	rawUsage := response.Usage
+
 	// Cache TTL Override: 重写 non-streaming 响应中的 cache_creation 分类。
 	// 账号级设置优先；全局 1h 请求注入开启时，默认把 usage 计费归回 5m。
-	if overrideTarget, ok := s.resolveCacheTTLUsageOverrideTarget(ctx, account); ok {
-		if applyCacheTTLOverride(&response.Usage, overrideTarget) {
+	if overrideTarget, ok := s.resolveDownstreamCacheTTLUsageOverrideTarget(ctx, account); ok {
+		outboundUsage := rawUsage
+		if applyCacheTTLOverride(&outboundUsage, overrideTarget) {
 			// 同步更新 body JSON 中的嵌套 cache_creation 对象
-			if newBody, err := sjson.SetBytes(body, "usage.cache_creation.ephemeral_5m_input_tokens", response.Usage.CacheCreation5mTokens); err == nil {
+			if newBody, err := sjson.SetBytes(body, "usage.cache_creation.ephemeral_5m_input_tokens", outboundUsage.CacheCreation5mTokens); err == nil {
 				body = newBody
 			}
-			if newBody, err := sjson.SetBytes(body, "usage.cache_creation.ephemeral_1h_input_tokens", response.Usage.CacheCreation1hTokens); err == nil {
+			if newBody, err := sjson.SetBytes(body, "usage.cache_creation.ephemeral_1h_input_tokens", outboundUsage.CacheCreation1hTokens); err == nil {
 				body = newBody
 			}
 		}
@@ -1531,7 +1547,7 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	// 写入响应
 	c.Data(resp.StatusCode, contentType, body)
 
-	return &response.Usage, nil
+	return &rawUsage, nil
 }
 
 // replaceModelInResponseBody 替换响应体中的model字段

@@ -8,6 +8,21 @@ import (
 
 const CacheCreationBilling1hKey = "cache_creation_billing_1h_enabled"
 
+type cacheCreationBillingSnapshotContextKey struct{}
+
+func withCacheCreationBillingSnapshot(ctx context.Context, enabled bool) context.Context {
+	return context.WithValue(ctx, cacheCreationBillingSnapshotContextKey{}, enabled)
+}
+
+func cacheCreationBillingSnapshot(ctx context.Context, account *Account) bool {
+	if ctx != nil {
+		if enabled, ok := ctx.Value(cacheCreationBillingSnapshotContextKey{}).(bool); ok {
+			return enabled
+		}
+	}
+	return account != nil && account.IsCacheCreationBilling1hEnabled()
+}
+
 // IsCacheCreationBilling1hEnabled is independent of request TTL injection and
 // the legacy OAuth response-usage override. Missing or malformed flags are off.
 func (a *Account) IsCacheCreationBilling1hEnabled() bool {
