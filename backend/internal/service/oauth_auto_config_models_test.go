@@ -129,7 +129,7 @@ func TestOAuthModelMappingEmptyCredentialsAndIsolation(t *testing.T) {
 	require.True(t, ok)
 	firstMapping["gpt-5.4"] = "changed"
 	require.Equal(t, "gpt-5.6-sol", secondMapping["gpt-5.4"])
-	require.Equal(t, "gpt-5.5", rules[0].To)
+	require.Equal(t, "gpt-5.6-sol", rules[0].To)
 }
 
 func TestOAuthModelMappingCRSNewAccount(t *testing.T) {
@@ -157,7 +157,7 @@ func TestOAuthModelMappingIdentityImportScope(t *testing.T) {
 		name, platform, kind, want string
 		enabled                    bool
 	}{
-		{"enabled OAuth", PlatformOpenAI, AccountTypeOAuth, "gpt-5.5", true},
+		{"enabled OAuth", PlatformOpenAI, AccountTypeOAuth, "gpt-5.6-sol", true},
 		{"disabled", PlatformOpenAI, AccountTypeOAuth, "gpt-5.4", false},
 		{"API key", PlatformOpenAI, AccountTypeAPIKey, "gpt-5.4", true},
 		{"other platform", PlatformAnthropic, AccountTypeOAuth, "gpt-5.4", true},
