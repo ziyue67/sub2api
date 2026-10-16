@@ -74,3 +74,12 @@ func TestCodexSkipHarvestExtraStaysOnSchedulerProjection(t *testing.T) {
 	require.NotContains(t, got, "unrelated_admin_flag")
 	require.False(t, isSchedulerNeutralExtraKey(service.OpenAICodexSkipHarvestExtraKey))
 }
+
+func TestCacheCreationBillingFlagStaysOnSchedulerProjection(t *testing.T) {
+	got := filterSchedulerExtra(map[string]any{
+		service.CacheCreationBilling1hKey: true,
+		"unrelated_admin_flag":            true,
+	})
+	require.Equal(t, true, got[service.CacheCreationBilling1hKey])
+	require.NotContains(t, got, "unrelated_admin_flag")
+}
