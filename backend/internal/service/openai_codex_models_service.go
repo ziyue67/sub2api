@@ -216,7 +216,12 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 		return fmt.Errorf("restrict group BPS capabilities: %w", err)
 	}
 	changed = changed || restricted
-	if changed {
+	filtered, retired, err := filterRetiredOpenAIPublicModelsBody(body, catalog, true)
+	if err != nil {
+		return fmt.Errorf("filter retired Codex models: %w", err)
+	}
+	body = filtered
+	if changed || retired {
 		manifest.Body = body
 		manifest.ETag = codexModelsManifestBodyETag(body)
 	}
@@ -312,7 +317,7 @@ func openAIConfiguredCodexModelIDsForGroup(accounts []Account, group *Group) []s
 	}
 	models := supplementUnmappedOpenAIModels(accounts, groupID, openAIConfiguredCodexModelIDs(accounts, groupID))
 	if group == nil || !group.ModelAllowlistEnabled() {
-		return models
+		return filterRetiredOpenAIModelIDs(accounts, models)
 	}
 
 	seen := make(map[string]struct{}, len(models)+len(group.ModelAllowlist.Models))
@@ -341,7 +346,7 @@ func openAIConfiguredCodexModelIDsForGroup(accounts []Account, group *Group) []s
 		}
 	}
 	sort.Strings(models)
-	return models
+	return filterRetiredOpenAIModelIDs(accounts, models)
 }
 
 const (
@@ -920,6 +925,19 @@ func buildCodexModelsManifestForAccounts(
 	compositeRoutes []CompositeModelRoute,
 	compositeRoutesAvailable bool,
 ) ([]byte, error) {
+	if effectivePlatform == PlatformOpenAI {
+		modelIDs = filterRetiredOpenAIModelIDs(accounts, modelIDs)
+	} else if effectivePlatform == PlatformComposite {
+		filtered := make([]string, 0, len(modelIDs))
+		for _, modelID := range modelIDs {
+			platform, target, resolved := resolveCodexCompositeModelTarget(modelID, accounts, compositeRoutes, compositeRoutesAvailable)
+			if resolved && platform == PlatformOpenAI && openAIModelRetiredForAccounts(accounts, target) {
+				continue
+			}
+			filtered = append(filtered, modelID)
+		}
+		modelIDs = filtered
+	}
 	imageInputModels := make(map[string]bool, len(modelIDs))
 	searchToolModels := make(map[string]bool, len(modelIDs))
 	var groupID *int64
@@ -1098,7 +1116,7 @@ func uniqueCodexMappedModel(accounts []Account, platform string, modelID string)
 	targets := make(map[string]struct{})
 	for i := range accounts {
 		account := &accounts[i]
-		if account.Platform != platform {
+		if !codexAccountServesPlatformModel(account, platform, modelID) {
 			continue
 		}
 		mappedModel, matched := account.ResolveMappedModel(modelID)

@@ -22,7 +22,7 @@ export default {
   },
   "mapping": {
     "title": "Model mappings",
-    "hint": "Applied with initial configuration to new OAuth accounts on the selected platform. Fills missing mappings and replaces same-name passthrough entries while preserving existing custom mappings. The OpenAI example is gpt-5.4 → gpt-5.5; edit or remove all rules as needed.",
+    "hint": "Applied with initial configuration to new OAuth accounts on the selected platform. Fills missing mappings and replaces same-name passthrough entries while preserving existing custom mappings. The OpenAI example is gpt-5.4 → gpt-5.6-sol; edit or remove all rules as needed.",
     "from": "Requested model",
     "to": "Target model",
     "add": "Add mapping",

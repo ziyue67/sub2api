@@ -15,7 +15,9 @@ type OAuthModelMappingRule struct {
 
 func defaultOAuthModelMappings(platform string) []OAuthModelMappingRule {
 	if platform == PlatformOpenAI {
-		return []OAuthModelMappingRule{{From: "gpt-5.4", To: "gpt-5.5"}}
+		// gpt-5.5 自上游 v0.2.17 起在 OAuth/ChatGPT 账号上已退役：退役判定按出站
+		// 模型评估，指向它的映射会让整个源模型（gpt-5.4）一起被判为不可服务。
+		return []OAuthModelMappingRule{{From: "gpt-5.4", To: "gpt-5.6-sol"}}
 	}
 	return []OAuthModelMappingRule{}
 }
