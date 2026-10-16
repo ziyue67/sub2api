@@ -281,7 +281,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 	if isObserverUsageRequest(c) {
 		out := make([]dto.AdminUsageLog, 0, len(records))
 		for i := range records {
-			out = append(out, *dto.UsageLogFromServiceAdmin(&records[i]).Localized(c.GetHeader("Accept-Language")))
+			out = append(out, *dto.UsageLogFromServiceObserver(&records[i]).Localized(c.GetHeader("Accept-Language")))
 		}
 		response.Paginated(c, out, result.Total, page, pageSize)
 		return
@@ -464,7 +464,7 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 	}
 
 	if isObserverUsageRequest(c) {
-		response.Success(c, dto.UsageLogFromServiceAdmin(record).Localized(c.GetHeader("Accept-Language")))
+		response.Success(c, dto.UsageLogFromServiceObserver(record).Localized(c.GetHeader("Accept-Language")))
 		return
 	}
 	response.Success(c, dto.UsageLogFromService(record).Localized(c.GetHeader("Accept-Language")))

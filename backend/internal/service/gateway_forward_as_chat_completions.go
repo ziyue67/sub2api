@@ -32,7 +32,14 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	account *Account,
 	body []byte,
 	parsed *ParsedRequest,
-) (*ForwardResult, error) {
+) (result *ForwardResult, err error) {
+	cacheBilling1h := account.IsCacheCreationBilling1hEnabled()
+	defer func() {
+		if result != nil {
+			result.CacheCreationBilling1h = cacheBilling1h
+		}
+	}()
+
 	ctx = WithSelectedAccountProxyLane(ctx, account)
 	startTime := time.Now()
 
@@ -187,7 +194,6 @@ func (s *GatewayService) ForwardAsChatCompletions(
 
 	// 13. Handle normal response
 	// Read Anthropic SSE → convert to Responses events → convert to CC format
-	var result *ForwardResult
 	var handleErr error
 	if clientStream {
 		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)

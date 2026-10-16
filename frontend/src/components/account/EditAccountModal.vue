@@ -2560,6 +2560,43 @@
         </div>
       </div>
 
+      <!-- Anthropic API Key 缓存创建按 1h 计费 -->
+      <div
+        v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.cacheCreationBilling1h') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.cacheCreationBilling1hDesc') }}
+            </p>
+          </div>
+          <button
+            role="switch"
+            :aria-checked="cacheCreationBilling1hEnabled"
+            :aria-label="t('admin.accounts.anthropic.cacheCreationBilling1h')"
+            type="button"
+            data-testid="edit-anthropic-cache-creation-billing-1h"
+            @click="cacheCreationBilling1hEnabled = !cacheCreationBilling1hEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              cacheCreationBilling1hEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                cacheCreationBilling1hEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <p v-if="cacheCreationBilling1hEnabled && !forceAnthropicCacheTTL1hEnabled" class="mt-2 text-xs text-amber-600 dark:text-amber-400">
+          {{ t('admin.accounts.anthropic.cacheCreationBilling1hRequestOff') }}
+        </p>
+      </div>
+
       <!-- Anthropic API Key 工具结果图片兼容 -->
       <div
         v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
@@ -4327,6 +4364,7 @@ const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 const forceAnthropicCacheTTL1hEnabled = ref(false)
+const cacheCreationBilling1hEnabled = ref(false)
 const anthropicToolResultImagesEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
@@ -4854,6 +4892,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
   forceAnthropicCacheTTL1hEnabled.value = false
+  cacheCreationBilling1hEnabled.value = false
   anthropicToolResultImagesEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
@@ -4948,6 +4987,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
     forceAnthropicCacheTTL1hEnabled.value = extra?.force_anthropic_cache_ttl_1h === true
+    cacheCreationBilling1hEnabled.value = extra?.cache_creation_billing_1h_enabled === true
     anthropicToolResultImagesEnabled.value = extra?.anthropic_tool_result_images === true
     anthropicAPIKeyAuthScheme.value = extra?.anthropic_apikey_auth_scheme === 'authorization_bearer'
       ? 'authorization_bearer'
@@ -6499,6 +6539,11 @@ const handleSubmit = async () => {
         newExtra.anthropic_passthrough = true
       } else {
         delete newExtra.anthropic_passthrough
+      }
+      if (cacheCreationBilling1hEnabled.value) {
+        newExtra.cache_creation_billing_1h_enabled = true
+      } else {
+        newExtra.cache_creation_billing_1h_enabled = false
       }
       if (forceAnthropicCacheTTL1hEnabled.value) {
         newExtra.force_anthropic_cache_ttl_1h = true

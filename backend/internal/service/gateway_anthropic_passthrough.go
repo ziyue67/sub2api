@@ -645,7 +645,9 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 			cc1h := msgUsage.Get("cache_creation.ephemeral_1h_input_tokens")
 			if cc5m.Exists() || cc1h.Exists() {
 				usage.CacheCreation5mTokens = int(cc5m.Int())
+				usage.CacheCreation5mPresent = cc5m.Exists()
 				usage.CacheCreation1hTokens = int(cc1h.Int())
+				usage.CacheCreation1hPresent = cc1h.Exists()
 			}
 		}
 	case "message_delta":
@@ -668,9 +670,11 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 			cc1h := deltaUsage.Get("cache_creation.ephemeral_1h_input_tokens")
 			if cc5m.Exists() {
 				usage.CacheCreation5mTokens = int(cc5m.Int())
+				usage.CacheCreation5mPresent = cc5m.Exists()
 			}
 			if cc1h.Exists() {
 				usage.CacheCreation1hTokens = int(cc1h.Int())
+				usage.CacheCreation1hPresent = cc1h.Exists()
 			}
 		}
 	}
@@ -785,6 +789,8 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 	usage.CacheReadInputTokens = int(usageNode.Get("cache_read_input_tokens").Int())
 	usage.WebSearchRequests = int(usageNode.Get("server_tool_use.web_search_requests").Int())
 
+	usage.CacheCreation5mPresent = usageNode.Get("cache_creation.ephemeral_5m_input_tokens").Exists()
+	usage.CacheCreation1hPresent = usageNode.Get("cache_creation.ephemeral_1h_input_tokens").Exists()
 	cc5m := usageNode.Get("cache_creation.ephemeral_5m_input_tokens").Int()
 	cc1h := usageNode.Get("cache_creation.ephemeral_1h_input_tokens").Int()
 	if cc5m > 0 || cc1h > 0 {

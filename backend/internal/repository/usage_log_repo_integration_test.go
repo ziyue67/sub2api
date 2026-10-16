@@ -1698,3 +1698,26 @@ func (s *UsageLogRepoSuite) TestListWithFilters_CombinedFilters() {
 	s.Require().Len(logs, 2)
 	s.Require().Equal(int64(2), page.Total)
 }
+
+func (s *UsageLogRepoSuite) TestCacheCreationBillingAuditRoundTrip() {
+	user := mustCreateUser(s.T(), s.client, &service.User{Email: "cache-billing@test.com"})
+	key := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-cache-billing", Name: "k"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "cache-billing"})
+	audit := &service.CacheCreationBillingAudit{Version: 1, Enabled: true, Status: "converted", OriginalCreationTokens: 100, Original5mTokens: 100, Original5mPresent: true, Original1hPresent: true, ConvertedTokens: 100, OriginalCreationCost: 0.0005, BilledCreationCost: 0.0008, ActualCostDelta: 0.000255}
+	log := &service.UsageLog{UserID: user.ID, APIKeyID: key.ID, AccountID: account.ID, RequestID: uuid.NewString(), Model: "claude-opus-5-5", CacheCreationTokens: 100, CacheCreation1hTokens: 100, CacheCreationBilling: audit}
+	inserted, err := s.repo.Create(s.ctx, log)
+	s.Require().NoError(err)
+	s.Require().True(inserted)
+	loaded, err := s.repo.GetByID(s.ctx, log.ID)
+	s.Require().NoError(err)
+	s.Equal(audit, loaded.CacheCreationBilling)
+	s.Equal(100, loaded.CacheCreation1hTokens)
+	s.Zero(loaded.CacheCreation5mTokens)
+	inserted, err = s.repo.Create(s.ctx, log)
+	s.Require().NoError(err)
+	s.False(inserted, "replayed billing record must not insert twice")
+	legacy := s.createUsageLog(user, key, account, 1, 1, 0.01, time.Now())
+	loaded, err = s.repo.GetByID(s.ctx, legacy.ID)
+	s.Require().NoError(err)
+	s.Nil(loaded.CacheCreationBilling)
+}

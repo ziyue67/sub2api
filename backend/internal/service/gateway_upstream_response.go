@@ -1339,9 +1339,11 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 	}
 	if patch.hasCacheCreation5m {
 		usage.CacheCreation5mTokens = patch.cacheCreation5mTokens
+		usage.CacheCreation5mPresent = true
 	}
 	if patch.hasCacheCreation1h {
 		usage.CacheCreation1hTokens = patch.cacheCreation1hTokens
+		usage.CacheCreation1hPresent = true
 	}
 	if patch.hasWebSearchRequests {
 		// Anthropic reports a cumulative request count. Replace the prior value;
@@ -1479,7 +1481,9 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	cc1h := gjson.GetBytes(body, "usage.cache_creation.ephemeral_1h_input_tokens")
 	if cc5m.Exists() || cc1h.Exists() {
 		response.Usage.CacheCreation5mTokens = int(cc5m.Int())
+		response.Usage.CacheCreation5mPresent = cc5m.Exists()
 		response.Usage.CacheCreation1hTokens = int(cc1h.Int())
+		response.Usage.CacheCreation1hPresent = cc1h.Exists()
 	}
 	response.Usage.WebSearchRequests = int(gjson.GetBytes(body, "usage.server_tool_use.web_search_requests").Int())
 

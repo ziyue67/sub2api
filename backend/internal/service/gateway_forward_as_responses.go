@@ -34,7 +34,14 @@ func (s *GatewayService) ForwardAsResponses(
 	account *Account,
 	body []byte,
 	parsed *ParsedRequest,
-) (*ForwardResult, error) {
+) (result *ForwardResult, err error) {
+	cacheBilling1h := account.IsCacheCreationBilling1hEnabled()
+	defer func() {
+		if result != nil {
+			result.CacheCreationBilling1h = cacheBilling1h
+		}
+	}()
+
 	ctx = WithSelectedAccountProxyLane(ctx, account)
 	startTime := time.Now()
 
@@ -198,7 +205,6 @@ func (s *GatewayService) ForwardAsResponses(
 	}
 
 	// 13. Handle normal response (convert Anthropic → Responses)
-	var result *ForwardResult
 	var handleErr error
 	if clientStream {
 		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
@@ -295,9 +301,11 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 	if cc := src.CacheCreation; cc != nil {
 		if cc.Ephemeral5mInputTokens != nil {
 			dst.CacheCreation5mTokens = *cc.Ephemeral5mInputTokens
+			dst.CacheCreation5mPresent = true
 		}
 		if cc.Ephemeral1hInputTokens != nil {
 			dst.CacheCreation1hTokens = *cc.Ephemeral1hInputTokens
+			dst.CacheCreation1hPresent = true
 		}
 	}
 
