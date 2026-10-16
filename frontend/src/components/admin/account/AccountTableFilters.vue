@@ -1,4 +1,5 @@
 <template>
+  <!-- 窄屏两列网格铺满宽度，sm 起恢复单行流式排布 -->
   <div class="grid min-w-0 w-full grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
     <SearchInput
       :model-value="searchQuery"
