@@ -3,10 +3,12 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
-	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/stretchr/testify/require"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCacheCreationBillingPersistence(t *testing.T) {
@@ -17,11 +19,13 @@ func TestCacheCreationBillingPersistence(t *testing.T) {
 	require.Equal(t, "cache_creation_billing", columns[len(columns)-1])
 	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-1])
 	var decoded service.CacheCreationBillingAudit
-	require.NoError(t, json.Unmarshal([]byte(prepared.args[len(prepared.args)-1].(string)), &decoded))
+	encoded, ok := prepared.args[len(prepared.args)-1].(string)
+	require.True(t, ok)
+	require.NoError(t, json.Unmarshal([]byte(encoded), &decoded))
 	require.Equal(t, *audit, decoded)
 	require.Nil(t, nullCacheCreationBillingJSON(nil))
 	// Start from a fully typed zero row built by the scanner itself.
-	log, err := scanUsageLog(cacheBillingScanner{encoded: prepared.args[len(prepared.args)-1].(string)})
+	log, err := scanUsageLog(cacheBillingScanner{encoded: encoded})
 	require.NoError(t, err)
 	require.Equal(t, audit, log.CacheCreationBilling)
 	_, err = scanUsageLog(cacheBillingScanner{encoded: "{"})
@@ -32,6 +36,10 @@ type cacheBillingScanner struct{ encoded string }
 
 func (s cacheBillingScanner) Scan(dest ...any) error {
 	// Go zero values already satisfy every field; set only the trailing audit.
-	*dest[len(dest)-1].(*sql.NullString) = sql.NullString{Valid: true, String: s.encoded}
+	audit, ok := dest[len(dest)-1].(*sql.NullString)
+	if !ok {
+		return fmt.Errorf("expected audit destination *sql.NullString, got %T", dest[len(dest)-1])
+	}
+	*audit = sql.NullString{Valid: true, String: s.encoded}
 	return nil
 }
