@@ -242,7 +242,7 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 	req.SizeTier = normalizeOpenAIImageSizeTier(req.Size)
 	if isWorkBuddySeedreamModel(req.Model) {
 		if req.Multipart || req.IsEdits() {
-			return nil, fmt.Errorf("WorkBuddy Seedream requires JSON images/generations; use reference_images for editing")
+			return nil, fmt.Errorf("this image model requires JSON /v1/images/generations; use reference_images for editing")
 		}
 		normalized, normalizeErr := normalizeWorkBuddySeedreamBody(body, req.Model)
 		if normalizeErr != nil {
@@ -672,7 +672,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	}
 	if isWorkBuddySeedreamModel(upstreamModel) {
 		if parsed.Multipart || parsed.IsEdits() {
-			return nil, fmt.Errorf("WorkBuddy Seedream requires JSON images/generations; use reference_images for editing")
+			return nil, fmt.Errorf("this image model requires JSON /v1/images/generations; use reference_images for editing")
 		}
 		copyParsed := *parsed
 		parsed = &copyParsed
