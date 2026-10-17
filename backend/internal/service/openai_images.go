@@ -240,6 +240,16 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 		return nil, err
 	}
 	req.SizeTier = normalizeOpenAIImageSizeTier(req.Size)
+	if isWorkBuddySeedreamModel(req.Model) {
+		if req.Multipart || req.IsEdits() {
+			return nil, fmt.Errorf("WorkBuddy Seedream requires JSON images/generations; use reference_images for editing")
+		}
+		normalized, normalizeErr := normalizeWorkBuddySeedreamBody(body, req.Model)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		applyWorkBuddySeedreamRequestMetadata(req, normalized)
+	}
 	req.RequiredCapability = classifyOpenAIImagesCapability(req)
 	return req, nil
 }
@@ -513,7 +523,7 @@ func isGeminiCompatibleImageModel(model string) bool {
 }
 
 func validateCompatibleImagesModel(model string) error {
-	if isGeminiCompatibleImageModel(model) {
+	if isAPIKeyCompatibleImageModel(model) {
 		return nil
 	}
 	return validateOpenAIImagesModel(model)
@@ -522,7 +532,7 @@ func validateCompatibleImagesModel(model string) error {
 // RequiredCapabilityForModel also applies the API-key-only fence when channel
 // mapping introduces a compatible provider model after request parsing.
 func (req *OpenAIImagesRequest) RequiredCapabilityForModel(model string) OpenAIImagesCapability {
-	if isGeminiCompatibleImageModel(model) {
+	if isAPIKeyCompatibleImageModel(model) {
 		return OpenAIImagesCapabilityAPIKey
 	}
 	return req.RequiredCapability
@@ -544,7 +554,7 @@ func classifyOpenAIImagesCapability(req *OpenAIImagesRequest) OpenAIImagesCapabi
 	if req == nil {
 		return OpenAIImagesCapabilityNative
 	}
-	if isGeminiCompatibleImageModel(req.Model) {
+	if isAPIKeyCompatibleImageModel(req.Model) {
 		return OpenAIImagesCapabilityAPIKey
 	}
 	if req.ExplicitModel || req.ExplicitSize {
@@ -659,6 +669,14 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	forwardBody, forwardContentType, err := rewriteOpenAIImagesModel(body, parsed.ContentType, upstreamModel)
 	if err != nil {
 		return nil, err
+	}
+	if isWorkBuddySeedreamModel(upstreamModel) {
+		if parsed.Multipart || parsed.IsEdits() {
+			return nil, fmt.Errorf("WorkBuddy Seedream requires JSON images/generations; use reference_images for editing")
+		}
+		copyParsed := *parsed
+		parsed = &copyParsed
+		applyWorkBuddySeedreamRequestMetadata(parsed, forwardBody)
 	}
 	// 生图是长耗时、上游侧已产生实际成本的操作：客户端中途断开不应连带取消上游请求。
 	// detachStreamUpstreamContext 在非流式时原样返回请求 context，于是客户端一断开
@@ -898,6 +916,12 @@ func rewriteOpenAIImagesModel(body []byte, contentType string, model string) ([]
 	rewritten, err := sjson.SetBytes(body, "model", model)
 	if err != nil {
 		return nil, "", fmt.Errorf("rewrite image request model: %w", err)
+	}
+	if isWorkBuddySeedreamModel(model) {
+		rewritten, err = normalizeWorkBuddySeedreamBody(rewritten, model)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 	return rewritten, contentType, nil
 }
