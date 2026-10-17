@@ -86,7 +86,7 @@ func normalizeWorkBuddySeedreamBody(body []byte, model string) ([]byte, error) {
 						}
 					}
 					if aspect == "" {
-						return nil, fmt.Errorf("Seedream size must use a supported aspect ratio; use resolution and aspect_ratio")
+						return nil, fmt.Errorf("seedream size must use a supported aspect ratio; use resolution and aspect_ratio")
 					}
 				}
 			} else if resolution == "" {
