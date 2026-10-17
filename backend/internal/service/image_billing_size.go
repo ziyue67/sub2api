@@ -146,6 +146,11 @@ func ApplyOpenAIImageBillingResolution(result *OpenAIForwardResult) {
 	if result == nil || result.ImageCount <= 0 {
 		return
 	}
+	if resolved, ok := resolveWorkBuddySeedreamBilling(result); ok {
+		applyImageBillingResolution(&result.ImageSize, &result.ImageInputSize, &result.ImageOutputSize,
+			&result.ImageSizeSource, &result.ImageSizeBreakdown, resolved)
+		return
+	}
 	if hasResolvedOutputImageBillingSize(result.ImageSize, result.ImageSizeSource, result.ImageSizeBreakdown) {
 		result.ImageOutputSize = firstNonEmptyString(result.ImageOutputSize, firstDisplayImageOutputSize(result.ImageOutputSizes))
 		result.ImageSizeBreakdown = normalizeImageSizeBreakdown(result.ImageSizeBreakdown)

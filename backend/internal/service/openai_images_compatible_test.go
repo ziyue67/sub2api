@@ -19,6 +19,171 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func TestCompatibleImagesWorkBuddyModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct{ model, resolution, tier string }{
+		{"seedream-5.0-lite", "4K", "4K"},
+		{"seedream-5.0-lite", "2K", "2K"},
+		{"seedream-5.0-pro", "2K", "2K"},
+		{"seedream-5.0-pro", "1K", "1K"},
+		{"seedream-5.0-pro", "1.5K", "2K"},
+	} {
+		t.Run(tc.model+"/"+tc.resolution, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"model":%q,"prompt":"draw","resolution":%q,"aspect_ratio":"16:9","n":1,"response_format":"b64_json"}`, tc.model, tc.resolution))
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			parsed, err := (&OpenAIGatewayService{}).ParseOpenAIImagesRequest(c, body)
+			require.NoError(t, err)
+			require.Equal(t, OpenAIImagesCapabilityAPIKey, parsed.RequiredCapability)
+			require.Equal(t, tc.tier, parsed.SizeTier)
+			require.False(t, isOpenAIImageGenerationModel(tc.model), "WorkBuddy must not enter native Responses conversion")
+			require.Equal(t, OpenAIImagesCapabilityAPIKey, (&OpenAIImagesRequest{}).RequiredCapabilityForModel(tc.model))
+		})
+	}
+	for _, model := range []string{"seedream-unknown", "seedance-2.5", "seedream-5.0-lite-extra"} {
+		require.Error(t, validateCompatibleImagesModel(model))
+	}
+}
+
+func TestCompatibleImagesForwardWorkBuddy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, model := range []string{"seedream-5.0-lite", "seedream-5.0-pro"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", model, stream), func(t *testing.T) {
+				resolution := "2K"
+				if model == "seedream-5.0-lite" {
+					resolution = "4K"
+				}
+				body := []byte(fmt.Sprintf(`{"model":%q,"prompt":"draw","resolution":%q,"aspect_ratio":"16:9","n":1,"response_format":"b64_json","stream":%t,"reference_images":[{"image_url":"https://input.example/ref.png"}]}`, model, resolution, stream))
+				responseBody := `{"id":"img_test","model":"` + model + `","size":"5504x3040","data":[{"b64_json":"aW1hZ2U="}],"usage":{"credit":6.29,"output_image_counts":1}}`
+				header := http.Header{"Content-Type": {"application/json"}}
+				if stream {
+					header.Set("Content-Type", "text/event-stream")
+					responseBody = "event: image_generation.completed\ndata: " + `{"type":"image_generation.completed","id":"img_test","model":"` + model + `","size":"5504x3040","b64_json":"aW1hZ2U=","usage":{"credit":6.29,"output_image_counts":1}}` + "\n\n"
+				}
+				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: header, Body: io.NopCloser(strings.NewReader(responseBody))}}
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, bytes.NewReader(body))
+				c.Request.Header.Set("Content-Type", "application/json")
+				svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+				parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+				require.NoError(t, err)
+				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "test-only", "base_url": "https://wb.example/shipin/v1"}}
+				result, err := svc.ForwardImages(c.Request.Context(), c, account, body, parsed, "")
+				require.NoError(t, err)
+				require.Equal(t, "https://wb.example/shipin/v1/images/generations", upstream.lastReq.URL.String())
+				require.JSONEq(t, string(body), string(upstream.lastBody))
+				require.Equal(t, 1, result.ImageCount)
+				require.Equal(t, resolution, result.ImageSize)
+				require.Contains(t, rec.Body.String(), "6.29")
+				require.Contains(t, rec.Body.String(), "aW1hZ2U=")
+			})
+		}
+	}
+}
+
+func TestCompatibleImagesWorkBuddyStandardOptions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct{ model, size, resolution string }{
+		{"seedream-5.0-lite", "3840x2160", "4K"},
+		{"seedream-5.0-lite", "1024x1024", "2K"},
+		{"seedream-5.0-pro", "2048x1152", "2K"},
+	} {
+		t.Run(tc.model+"/"+tc.size, func(t *testing.T) {
+			body := []byte(fmt.Sprintf(`{"model":%q,"prompt":"draw","size":%q,"quality":"high","reference_images":[{"image_url":"https://input.example/ref.png"}]}`, tc.model, tc.size))
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			parsed, err := (&OpenAIGatewayService{}).ParseOpenAIImagesRequest(c, body)
+			require.NoError(t, err)
+			require.Equal(t, tc.resolution, parsed.SizeTier)
+			rewritten, _, err := rewriteOpenAIImagesModel(body, "application/json", tc.model)
+			require.NoError(t, err)
+			require.Equal(t, tc.resolution, gjson.GetBytes(rewritten, "resolution").String())
+			expectedAspect := "16:9"
+			if tc.size == "1024x1024" {
+				expectedAspect = "1:1"
+			}
+			require.Equal(t, expectedAspect, gjson.GetBytes(rewritten, "aspect_ratio").String())
+			require.False(t, gjson.GetBytes(rewritten, "quality").Exists())
+			require.False(t, gjson.GetBytes(rewritten, "size").Exists())
+			require.Equal(t, "https://input.example/ref.png", gjson.GetBytes(rewritten, "reference_images.0.image_url").String())
+		})
+	}
+}
+
+func TestCompatibleImagesWorkBuddyBillingResolution(t *testing.T) {
+	for _, tc := range []struct{ model, resolution, output, tier string }{
+		{"seedream-5.0-lite", "4K", "5504x3040", "4K"},
+		{"seedream-5.0-lite", "2K", "2816x1584", "2K"},
+		{"seedream-5.0-pro", "2K", "2816x1584", "2K"},
+		{"seedream-5.0-pro", "1.5K", "2112x1184", "2K"},
+		{"seedream-5.0-pro", "1K", "1408x784", "1K"},
+	} {
+		t.Run(tc.model+"/"+tc.resolution, func(t *testing.T) {
+			result := &OpenAIForwardResult{
+				Model: "public-image", UpstreamModel: tc.model, ImageCount: 1,
+				ImageInputSize: tc.resolution, ImageOutputSizes: []string{tc.output},
+			}
+			ApplyOpenAIImageBillingResolution(result)
+			require.Equal(t, tc.tier, result.ImageSize)
+			require.Equal(t, tc.output, result.ImageOutputSize, "retain real dimensions for audit")
+			require.Equal(t, ImageSizeSourceInput, result.ImageSizeSource)
+			ApplyOpenAIImageBillingResolution(result)
+			require.Equal(t, tc.tier, result.ImageSize, "usage resolution may be applied twice")
+		})
+	}
+}
+
+func TestCompatibleImagesWorkBuddyNativeFence(t *testing.T) {
+	for _, model := range []string{"seedream-5.0-lite", "seedream-5.0-pro"} {
+		for _, typ := range []string{AccountTypeOAuth, AccountTypeSetupToken} {
+			for _, mapped := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/mapped=%t", model, typ, mapped), func(t *testing.T) {
+					inputModel := model
+					account := &Account{Platform: PlatformOpenAI, Type: typ, Credentials: map[string]any{"access_token": "unused"}}
+					if mapped {
+						inputModel = "gpt-image-2"
+						account.Credentials["model_mapping"] = map[string]any{inputModel: model}
+					}
+					c, _ := gin.CreateTestContext(httptest.NewRecorder())
+					c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, nil)
+					upstream := &httpUpstreamRecorder{}
+					svc := &OpenAIGatewayService{httpUpstream: upstream}
+					_, err := svc.ForwardImages(context.Background(), c, account, nil, &OpenAIImagesRequest{Model: inputModel}, "")
+					require.ErrorContains(t, err, "images endpoint requires an image model")
+					require.Empty(t, upstream.requests)
+				})
+			}
+		}
+	}
+}
+
+func TestCompatibleImagesWorkBuddyInvalidOptions(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"seedream-5.0-pro","resolution":"4K"}`,
+		`{"model":"seedream-5.0-lite","resolution":"1K"}`,
+		`{"model":"seedream-5.0-lite","resolution":4}`,
+		`{"model":"seedream-5.0-pro","aspect_ratio":"auto"}`,
+		`{"model":"seedream-5.0-pro","size":"1234x1000"}`,
+	} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		_, err := (&OpenAIGatewayService{}).ParseOpenAIImagesRequest(c, []byte(body))
+		require.Error(t, err)
+	}
+	body := []byte(`{"model":"seedream-5.0-lite","resolution":"4K","aspect_ratio":"16:9","size":"1024x1024","quality":"low"}`)
+	normalized, err := normalizeWorkBuddySeedreamBody(body, "seedream-5.0-lite")
+	require.NoError(t, err)
+	require.Equal(t, "4K", gjson.GetBytes(normalized, "resolution").String())
+	require.Equal(t, "16:9", gjson.GetBytes(normalized, "aspect_ratio").String())
+	require.False(t, gjson.GetBytes(normalized, "size").Exists())
+	require.False(t, gjson.GetBytes(normalized, "quality").Exists())
+}
+
 func TestCompatibleImagesGeminiModels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, model := range []string{"gemini-2.5-flash-image", "gemini-2.5-flash-image-preview", "gemini-3-pro-image", "gemini-3.1-flash-image"} {
