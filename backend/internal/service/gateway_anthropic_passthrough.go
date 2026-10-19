@@ -311,12 +311,20 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 		targetURL = validatedURL + "/v1/messages?beta=true"
 	}
 
+	stripClaudeCodeIdentity := account != nil && account.IsAnthropicStripClaudeCodeIdentityEnabled()
+	if stripClaudeCodeIdentity {
+		body = stripAnthropicClaudeCodeIdentityFromBody(body)
+	}
+
 	// 能力维度 body sanitize：透传路径上 anthropic-beta header 原样透传客户端值，
 	// 依此决定是否保留 body 中的 context_management。避免“客户端 body 带字段但
 	// header 忘记带 beta token”的客户端 bug 在透传场景下让上游 400。
 	clientBeta := ""
 	if c != nil && c.Request != nil {
 		clientBeta = getHeaderRaw(c.Request.Header, "anthropic-beta")
+	}
+	if stripClaudeCodeIdentity {
+		clientBeta = stripAnthropicClaudeCodeIdentityFromBetaHeader(clientBeta)
 	}
 	// 账号覆写了 anthropic-beta 时，覆写值即最终上游值：净化以覆写值为准
 	if beta, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
@@ -362,6 +370,10 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	}
 	if getHeaderRaw(req.Header, "anthropic-version") == "" {
 		setHeaderRaw(req.Header, "anthropic-version", "2023-06-01")
+	}
+
+	if stripClaudeCodeIdentity {
+		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
 	}
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）

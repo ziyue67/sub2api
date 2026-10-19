@@ -54,6 +54,7 @@ type AccountHandler struct {
 	adminService            service.AdminService
 	oauthService            *service.OAuthService
 	openaiOAuthService      *service.OpenAIOAuthService
+	openaiOAuthReauth       *service.OpenAIOAuthReauthService
 	geminiOAuthService      *service.GeminiOAuthService
 	antigravityOAuthService *service.AntigravityOAuthService
 	grokOAuthService        service.GrokOAuthTokenService
@@ -95,6 +96,10 @@ func (h *AccountHandler) SetCodexTicketSettings(settings *service.SettingService
 
 func (h *AccountHandler) SetOpenAIGatewayService(gateway *service.OpenAIGatewayService) {
 	h.openAIGatewayService = gateway
+}
+
+func (h *AccountHandler) SetOpenAIOAuthReauthService(reauth *service.OpenAIOAuthReauthService) {
+	h.openaiOAuthReauth = reauth
 }
 
 // NewAccountHandler creates a new admin account handler

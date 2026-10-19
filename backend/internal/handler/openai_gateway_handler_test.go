@@ -3145,6 +3145,7 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 			c.Next()
 		})
 	}
+	router.Use(middleware.GroupBlockSubagents())
 	handlerDone := make(chan struct{})
 	router.GET("/v1/responses", func(c *gin.Context) {
 		defer close(handlerDone)

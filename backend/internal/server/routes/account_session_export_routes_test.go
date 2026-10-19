@@ -26,18 +26,20 @@ func TestOpenAISessionExportRequiresAuthAndStepUp(t *testing.T) {
 	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) { stepUpCalls++; c.AbortWithStatus(http.StatusForbidden) })
 	handlers := &handler.Handlers{Admin: &handler.AdminHandlers{Account: &adminhandler.AccountHandler{}}}
 	registerAccountRoutes(group, handlers, stepUp)
-	for _, authenticated := range []bool{false, true} {
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/7/export-session", nil)
-		if authenticated {
-			request.Header.Set("Authorization", "Bearer offline-test")
-		}
-		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, request)
-		if authenticated {
-			require.Equal(t, http.StatusForbidden, recorder.Code)
-		} else {
-			require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	for _, endpoint := range []struct{ method, path string }{{"POST", "/api/v1/admin/accounts/7/export-session"}, {"GET", "/api/v1/admin/accounts/7/export-session/9/download"}} {
+		for _, authenticated := range []bool{false, true} {
+			request := httptest.NewRequest(endpoint.method, endpoint.path, nil)
+			if authenticated {
+				request.Header.Set("Authorization", "Bearer offline-test")
+			}
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if authenticated {
+				require.Equal(t, http.StatusForbidden, recorder.Code)
+			} else {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			}
 		}
 	}
-	require.Equal(t, 1, stepUpCalls)
+	require.Equal(t, 2, stepUpCalls)
 }

@@ -157,6 +157,9 @@ export default {
       refreshTitle: 'Aggregation interval',
       refreshHint: 'Affects matrix time granularity and refresh cadence',
       refreshAria: 'Aggregation interval',
+      cardTimelineTitle: 'Card sample display',
+      cardTimelineHint: 'This chooses the user card bars. Time windows split the selected range into 18 equal slices. Latest 18 samples shows only 5-minute buckets that meet the minimum sample, in any time range.',
+      cardTimelineAria: 'Card sample display',
       platformsTitle: 'Platforms and models',
       platformsHint:
         'Leave empty = show all real model names; when filled, only listed models get their own rows and the rest roll into “Other”. Add a supported platform, or type the same identifier as a group platform. Composite group usage is recorded on the account’s concrete platform.',
@@ -179,6 +182,7 @@ export default {
       badgeAllModels: 'All models',
       badgeOther: '+ Other',
       groupsTitle: 'Monitored groups',
+      groupsOrderHint: 'Use the arrows to set card and matrix order inside one platform. Groups you have not moved stay after those, in name order.',
       groupsSelected: '{count} groups selected',
       groupsAll: 'All groups',
       groupsEmpty: 'No groups available',

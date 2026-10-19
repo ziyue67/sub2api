@@ -95,6 +95,13 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 	if err != nil {
 		return nil, err
 	}
+	if updated.PelicanConfig != nil && updated.PelicanConfig.Quality != nil &&
+		updated.PelicanConfig.Quality.Action == service.QualityActionIsolateModels &&
+		(state.Action == "remove_groups" || state.Action == "disable_scheduling") {
+		if err = restoreQualityAccountActionForIsolation(ctx, tx, updated, &state); err != nil {
+			return nil, err
+		}
+	}
 	if err = checkQualityIsolationScope(updated, &state); err != nil {
 		return nil, err
 	}

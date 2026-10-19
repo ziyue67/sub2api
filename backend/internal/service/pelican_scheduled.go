@@ -313,7 +313,7 @@ func (s *ScheduledTestRunnerService) runPelicanSample(ctx context.Context, plan 
 		return failure("random_question_not_prepared")
 	}
 	var err error
-	result, err = s.runPelican(ctx, plan.AccountID, plan.ModelID, plan.PelicanConfig)
+	result, err = s.runPelicanAnswer(ctx, plan)
 	if err != nil {
 		return failure(fmt.Sprint(err))
 	}

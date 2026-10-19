@@ -166,7 +166,7 @@ func TestPelicanClaudeReportsWhyTheAnswerIsMissing(t *testing.T) {
 			require.Equal(t, tc.wantOutput, output != "")
 			// The answer itself is the result; another account would run the same model.
 			result := &ScheduledTestResult{Status: "failed", ResponseText: output, ErrorMessage: message}
-			require.False(t, pelicanFailedBeforeOutput(result))
+			require.False(t, pelicanGroupTestRetryable(result))
 		})
 	}
 }
@@ -185,8 +185,8 @@ func TestClaudeConnectionProbeKeepsItsShortBudgetAndSuccessRule(t *testing.T) {
 }
 
 func TestPelicanGroupStillRetriesAccountFailures(t *testing.T) {
-	require.True(t, pelicanFailedBeforeOutput(&ScheduledTestResult{Status: "failed", ErrorMessage: "API returned 401: invalid token"}))
-	require.False(t, pelicanFailedBeforeOutput(&ScheduledTestResult{Status: "failed", ErrorMessage: pelicanErrEmptyOutput}))
+	require.True(t, pelicanGroupTestRetryable(&ScheduledTestResult{Status: "failed", ErrorMessage: "API returned 401: invalid token"}))
+	require.False(t, pelicanGroupTestRetryable(&ScheduledTestResult{Status: "failed", ErrorMessage: pelicanErrEmptyOutput}))
 }
 
 func TestPelicanClaudeVertexServiceAccountSendsTheQuestion(t *testing.T) {

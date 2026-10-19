@@ -34,6 +34,7 @@ func TestAPIKeyAdmissionRealForwardingHandlersRejectBeforeUpstream(t *testing.T)
 		{"input_tokens", false, h.ResponsesInputTokens},
 		{"count_tokens", false, h.CountTokens},
 		{"realtime", true, h.GrokRealtime},
+		{"tts_stream", true, h.GrokTTSStream},
 		{"tts", true, func(c *gin.Context) { h.GrokVoice(c, "tts") }},
 		{"stt", true, func(c *gin.Context) { h.GrokVoice(c, "stt") }},
 		{"custom_voices", true, func(c *gin.Context) { h.GrokVoice(c, "custom-voices") }},

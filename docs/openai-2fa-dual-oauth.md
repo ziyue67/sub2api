@@ -37,3 +37,7 @@ Excel Auth / Excel OAuth 创建的单授权账号（主凭据 `client_id` 为官
 离线回归覆盖双授权保留、身份/profile 拒绝、并发 Excel 刷新、保存失败、BPS 401 隔离和自动排队。PostgreSQL 集成验证同账号任务互斥、Local/Session Studio 分流、最终写回故障回滚、密文 CAS 和失败冷却。测试不调用真实 OpenAI 登录或模型接口。
 
 升级 API 时须使用包含 `openai_excel_oauth_adapter.py`、`openai_excel_password_flow.mjs` 的 Worker 运行包。旧 Worker 即使返回了 Codex grant，也会因 profile 不匹配被拒绝写入，不能据此认为支持 Excel。备份须包含数据库及凭据加密 key；只回退二进制不会移除新增表或已取得的 Excel grant。
+
+## ChatGPT Session 导出
+
+凭证运营 Worker 的能力列表包含 `chatgpt_session_export` 时，凭证运营的「2FA 管理」可以使用保存的邮箱、密码和 TOTP 一键导出 ChatGPT Web Session。该操作与 OAuth/Excel 重登任务分开排队，旧版 Worker 不会领取；Session JSON 不落库、不写入账号导出或日志，API 重启后未下载结果会过期。部署 API、前端和 Worker 时应一起升级，确认 Worker 的本地登录运行包支持 `--web-only --output-mode session`。

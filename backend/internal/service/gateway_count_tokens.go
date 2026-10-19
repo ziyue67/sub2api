@@ -421,11 +421,18 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 		targetURL = validatedURL + "/v1/messages/count_tokens?beta=true"
 	}
 	body = sanitizeCountTokensRequestBody(body)
+	stripClaudeCodeIdentity := account != nil && account.IsAnthropicStripClaudeCodeIdentityEnabled()
+	if stripClaudeCodeIdentity {
+		body = stripAnthropicClaudeCodeIdentityFromBody(body)
+	}
 
 	// 同 buildUpstreamRequestAnthropicAPIKeyPassthrough：能力维度 sanitize。
 	clientBeta := ""
 	if c != nil && c.Request != nil {
 		clientBeta = getHeaderRaw(c.Request.Header, "anthropic-beta")
+	}
+	if stripClaudeCodeIdentity {
+		clientBeta = stripAnthropicClaudeCodeIdentityFromBetaHeader(clientBeta)
 	}
 	// 账号覆写了 anthropic-beta 时，覆写值即最终上游值：净化以覆写值为准
 	if beta, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
@@ -466,6 +473,10 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	}
 	if req.Header.Get("anthropic-version") == "" {
 		req.Header.Set("anthropic-version", "2023-06-01")
+	}
+
+	if stripClaudeCodeIdentity {
+		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
 	}
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）
@@ -544,10 +555,19 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 
 	// === 计算最终 anthropic-beta header（先于 body sanitize 与 CCH 签名）===
 	// 顺序约束同 buildUpstreamRequest。
+	stripClaudeCodeIdentity := account != nil && account.IsAnthropicStripClaudeCodeIdentityEnabled()
+	if stripClaudeCodeIdentity {
+		body = stripAnthropicClaudeCodeIdentityFromBody(body)
+	}
+
 	ctEffectiveDropSet := mergeDropSets(s.getBetaPolicyFilterSet(ctx, c, account, modelID))
 	finalBetaHeader, finalBetaShouldSet := s.computeFinalCountTokensAnthropicBeta(
 		tokenType, mimicClaudeCode, modelID, clientHeaders, body, ctEffectiveDropSet,
 	)
+	if stripClaudeCodeIdentity && finalBetaShouldSet {
+		finalBetaHeader = stripAnthropicClaudeCodeIdentityFromBetaHeader(finalBetaHeader)
+		finalBetaShouldSet = finalBetaHeader != ""
+	}
 
 	// 账号覆写了 anthropic-beta 时，覆写值即最终上游值：净化以覆写值为准
 	if beta, ok := account.HeaderOverrideValue("anthropic-beta"); ok {
@@ -621,6 +641,10 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 				setHeaderRaw(req.Header, "X-Claude-Code-Session-Id", parsed.SessionID)
 			}
 		}
+	}
+
+	if stripClaudeCodeIdentity {
+		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
 	}
 
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）

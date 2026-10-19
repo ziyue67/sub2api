@@ -160,6 +160,8 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 		FallbackGroupID:                 groupDuplicateTestPointer(int64(7)),
 		FallbackGroupIDOnInvalidRequest: groupDuplicateTestPointer(int64(8)),
 		StreamOnly:                      true,
+		CodexCLIOnly:                    true,
+		BlockSubagents:                  true,
 		ModelRouting:                    map[string][]int64{"gpt-*": {13, 17}},
 		ModelRoutingEnabled:             true,
 		MCPXMLInject:                    true,
@@ -218,6 +220,8 @@ func TestDuplicateGroupCopiesConfigurationDeeplyAndResetsRuntimeState(t *testing
 	require.Equal(t, source.MessagesDispatchModelConfig, duplicate.MessagesDispatchModelConfig)
 	require.Equal(t, source.ForceOpenAIFast, duplicate.ForceOpenAIFast)
 	require.True(t, duplicate.StreamOnly)
+	require.True(t, duplicate.CodexCLIOnly, "duplicating a group must preserve its client restriction")
+	require.True(t, duplicate.BlockSubagents)
 	require.Equal(t, source.FreeOpenAIFast, duplicate.FreeOpenAIFast)
 	require.Equal(t, source.ModelAllowlist, duplicate.ModelAllowlist)
 	require.Equal(t, source.RPMLimit, duplicate.RPMLimit)

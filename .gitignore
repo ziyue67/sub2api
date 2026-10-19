@@ -34,6 +34,7 @@ backend/.gocache/
 # ===================
 node_modules/
 frontend/node_modules/
+.pnpm-store/
 frontend/dist/
 *.local
 *.tsbuildinfo
@@ -151,6 +152,7 @@ docs/*
 !docs/releases/*.md
 !docs/codex-credits.md
 !docs/quality-bps-observation.md
+!docs/modeltrace-tests.md
 !docs/cyber-session-blocking.md
 !docs/request-capture.md
 !docs/account-token-guard.md
@@ -182,6 +184,7 @@ issues/
 **/.credential-key-*
 !docs/credential-encryption.md
 !docs/new-api-upstream-probe.md
+!docs/minimax-h3-video-relay.md
 !docs/account-ops-notifications.md
 
 !docs/typesafe-jev.md
@@ -206,3 +209,6 @@ issues/
 /docs/screenshots/**/*.webp
 /docs/screenshots/**/*.avif
 /docs/screenshots/**/*.svg
+
+# Local macOS re-auth Worker runtime (ephemeral, never commit)
+tools/local-worker/

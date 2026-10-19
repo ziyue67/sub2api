@@ -249,7 +249,7 @@ func TestOpenAISessionExportOmitsAuditBody(t *testing.T) {
 	})
 
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/7/export-session",
-		bytes.NewBufferString(`{"cookie":"__Secure-next-auth.session-token=audit-canary-cookie"}`))
+		bytes.NewBufferString(`{"cookie":"__Secure-next-auth.session-token=audit-canary-cookie","remember_cookie":true}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)

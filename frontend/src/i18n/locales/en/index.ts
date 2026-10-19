@@ -4,6 +4,7 @@ import controlledExperiments from './controlledExperiments'
 import accountOps from './accountOps'
 import tokenGuard from './tokenGuard'
 import pelicanTests from './pelicanTests'
+import modelTrace from './modelTrace'
 import tokenGuardV2 from './tokenGuardV2'
 import landing from './landing'
 import common from './common'
@@ -33,6 +34,7 @@ export default {
   accountOps,
   tokenGuard,
   pelicanTests,
+  modelTrace,
   tokenGuardV2,
   requestTiming,
   ...landing,

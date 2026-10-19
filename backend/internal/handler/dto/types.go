@@ -178,7 +178,9 @@ type AdminGroup struct {
 	// FreeOpenAIFast 是管理端计费策略，用户侧分组 DTO 无需暴露。
 	FreeOpenAIFast bool `json:"free_openai_fast"`
 	// StreamOnly 是管理端请求策略（只接受流式的对话生成请求），用户侧分组 DTO 无需暴露。
-	StreamOnly bool `json:"stream_only"`
+	StreamOnly     bool `json:"stream_only"`
+	CodexCLIOnly   bool `json:"codex_cli_only"`
+	BlockSubagents bool `json:"block_subagents"`
 
 	// Dynamic group rate settings are admin-only operational pricing data.
 	DynamicRateEnabled          bool    `json:"dynamic_rate_enabled"`

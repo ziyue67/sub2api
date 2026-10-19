@@ -137,11 +137,20 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	//      被 Anthropic 判 third-party）
 	//   4) NewRequest（body 至此最终敲定）
 	//   5) 透传白名单 / fingerprint / mimic header / 写入 finalBeta
+	stripClaudeCodeIdentity := account != nil && account.IsAnthropicStripClaudeCodeIdentityEnabled()
+	if stripClaudeCodeIdentity {
+		body = stripAnthropicClaudeCodeIdentityFromBody(body)
+	}
+
 	policyFilterSet := s.getBetaPolicyFilterSet(ctx, c, account, modelID)
 	effectiveDropSet := mergeDropSets(policyFilterSet)
 	finalBetaHeader, finalBetaShouldSet := s.computeFinalAnthropicBeta(
 		tokenType, mimicClaudeCode, modelID, clientHeaders, body, effectiveDropSet,
 	)
+	if stripClaudeCodeIdentity && finalBetaShouldSet {
+		finalBetaHeader = stripAnthropicClaudeCodeIdentityFromBetaHeader(finalBetaHeader)
+		finalBetaShouldSet = finalBetaHeader != ""
+	}
 
 	// 账号覆写了 anthropic-beta 时，覆写值即最终上游值（由下方 ApplyHeaderOverrides 写入）：
 	// body 能力净化必须以覆写值为准，否则 header/body 不对称会被上游 400。
@@ -228,6 +237,10 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 				setHeaderRaw(req.Header, "X-Claude-Code-Session-Id", parsed.SessionID)
 			}
 		}
+	}
+
+	if stripClaudeCodeIdentity {
+		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
 	}
 
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）。

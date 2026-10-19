@@ -382,6 +382,7 @@ type InflightEstimateRequest struct {
 	// 视频：分辨率与时长（秒）。
 	VideoResolution      string
 	VideoDurationSeconds int
+	MiniMaxH3BaseCost    *float64
 	// 音频：模式（tts/stt/realtime）与计量单位（百万字符/小时/分钟）。
 	AudioMode  string
 	AudioUnits float64
@@ -646,6 +647,10 @@ func (d inflightEstimateDeps) estimateOne(ctx context.Context, apiKey *APIKey, m
 
 // estimate 返回保守的单请求费用（USD，已乘倍率）；无法定价返回 (0,false)。
 func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req InflightEstimateRequest) (float64, bool) {
+	if req.MiniMaxH3BaseCost != nil && apiKey != nil && apiKey.Group != nil {
+		cost := *req.MiniMaxH3BaseCost * math.Max(0, apiKey.Group.RateMultiplier)
+		return cost, validCost(cost)
+	}
 	if apiKey == nil || apiKey.User == nil {
 		return 0, false
 	}

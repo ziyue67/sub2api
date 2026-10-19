@@ -618,6 +618,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AudioSTTPricePerHour:            audioSTTPricePerHour,
 		ClaudeCodeOnly:                  input.ClaudeCodeOnly,
 		StreamOnly:                      input.StreamOnly,
+		CodexCLIOnly:                    input.CodexCLIOnly,
+		BlockSubagents:                  input.BlockSubagents,
 		FallbackGroupID:                 input.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: fallbackOnInvalidRequest,
 		ModelRouting:                    input.ModelRouting,
@@ -982,6 +984,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.StreamOnly != nil {
 		group.StreamOnly = *input.StreamOnly
+	}
+	if input.CodexCLIOnly != nil {
+		group.CodexCLIOnly = *input.CodexCLIOnly
+	}
+	if input.BlockSubagents != nil {
+		group.BlockSubagents = *input.BlockSubagents
 	}
 	if input.FallbackGroupID != nil {
 		// 校验降级分组

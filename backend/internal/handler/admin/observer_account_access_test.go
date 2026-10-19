@@ -40,8 +40,8 @@ func TestObserverGuardRejectsWholeUnauthorizedBatch(t *testing.T) {
 		grants                          []int64
 		status                          int
 	}{
-		{"session_export", "POST", "/accounts/:id/export-session", "/accounts/1/export-session", `{ "cookie": "test-cookie" }`, []int64{10}, 204},
-		{"session_export_hidden", "POST", "/accounts/:id/export-session", "/accounts/2/export-session", `{ "cookie": "test-cookie" }`, []int64{10}, 403},
+		{"session_export", "POST", "/accounts/:id/export-session", "/accounts/1/export-session", `{}`, []int64{10}, 204},
+		{"session_export_hidden", "POST", "/accounts/:id/export-session", "/accounts/2/export-session", `{}`, []int64{10}, 403},
 		{"single", "GET", "/accounts/:id", "/accounts/1", "", []int64{10}, 204},
 		{"shared", "DELETE", "/accounts/:id", "/accounts/3", "", []int64{10}, 204},
 		{"hidden", "GET", "/accounts/:id", "/accounts/2", "", []int64{10}, 403},

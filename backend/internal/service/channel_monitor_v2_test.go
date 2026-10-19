@@ -185,6 +185,14 @@ func TestChannelMonitorV2ConfigValidation(t *testing.T) {
 		require.Empty(t, item.Models)
 	}
 	require.Equal(t, []int64{1, 3}, cfg.GroupIDs)
+	require.Equal(t, ChannelMonitorV2CardTimelineWindows, cfg.CardTimelineMode)
+
+	cfg.CardTimelineMode = " Samples "
+	require.NoError(t, normalizeChannelMonitorV2Config(&cfg))
+	require.Equal(t, ChannelMonitorV2CardTimelineSamples, cfg.CardTimelineMode)
+	cfg.CardTimelineMode = "bars"
+	require.ErrorIs(t, normalizeChannelMonitorV2Config(&cfg), ErrChannelMonitorV2InvalidConfig)
+	cfg.CardTimelineMode = ChannelMonitorV2CardTimelineWindows
 
 	cfg.RefreshIntervalSeconds = 120
 	require.ErrorIs(t, normalizeChannelMonitorV2Config(&cfg), ErrChannelMonitorV2InvalidConfig)
@@ -303,6 +311,39 @@ func TestChannelMonitorV2UpdateKeepsOmittedCandyHistoryLimit(t *testing.T) {
 	require.Equal(t, 15, updated.CandyHistoryLimit)
 	_, err = NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60, CandyHistoryLimit: 14}, 2, 9)
 	require.ErrorIs(t, err, ErrChannelMonitorV2InvalidConfig)
+}
+
+func TestChannelMonitorV2GroupOrderKeepsSequence(t *testing.T) {
+	order, err := normalizeChannelMonitorV2GroupOrder([]int64{9, 3, 9, 1})
+	require.NoError(t, err)
+	require.Equal(t, []int64{9, 3, 1}, order)
+	order, err = normalizeChannelMonitorV2GroupOrder(nil)
+	require.NoError(t, err)
+	require.Empty(t, order)
+	_, err = normalizeChannelMonitorV2GroupOrder([]int64{2, 0})
+	require.ErrorIs(t, err, ErrChannelMonitorV2InvalidConfig)
+}
+
+func TestChannelMonitorV2UpdateKeepsOmittedGroupOrder(t *testing.T) {
+	repo := &channelMonitorV2RepoStub{config: ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60, CandyHistoryLimit: 15, GroupOrder: []int64{9, 3}}}
+	updated, err := NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60, CandyHistoryLimit: 15, CardTimelineMode: ChannelMonitorV2CardTimelineWindows}, 2, 9)
+	require.NoError(t, err)
+	require.Equal(t, []int64{9, 3}, updated.GroupOrder)
+
+	updated, err = NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 3, RefreshIntervalSeconds: 60, CandyHistoryLimit: 15, CardTimelineMode: ChannelMonitorV2CardTimelineWindows, GroupOrder: []int64{}}, 3, 9)
+	require.NoError(t, err)
+	require.Empty(t, updated.GroupOrder)
+}
+
+func TestChannelMonitorV2UpdateKeepsOmittedCardTimelineMode(t *testing.T) {
+	repo := &channelMonitorV2RepoStub{config: ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60, CardTimelineMode: ChannelMonitorV2CardTimelineSamples}}
+	updated, err := NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 2, RefreshIntervalSeconds: 60, CandyHistoryLimit: 15}, 2, 9)
+	require.NoError(t, err)
+	require.Equal(t, ChannelMonitorV2CardTimelineSamples, updated.CardTimelineMode)
+
+	updated, err = NewChannelMonitorV2Service(repo).UpdateConfig(context.Background(), ChannelMonitorV2Config{Version: 3, RefreshIntervalSeconds: 60, CandyHistoryLimit: 15, CardTimelineMode: ChannelMonitorV2CardTimelineWindows}, 3, 9)
+	require.NoError(t, err)
+	require.Equal(t, ChannelMonitorV2CardTimelineWindows, updated.CardTimelineMode)
 }
 
 func TestChannelMonitorV2ErrorTaxonomyPriority(t *testing.T) {

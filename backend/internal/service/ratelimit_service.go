@@ -346,6 +346,12 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 func (s *RateLimitService) handleUpstreamErrorAfterStreakReset(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
 	ctx = s.observeAccountOps(ctx, account, statusCode, headers, responseBody)
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	// An upstream group's image permission says nothing about text credentials.
+	// Keep it out of the generic 403 streak and whole-account policies.
+	if account != nil && account.Platform == PlatformOpenAI && isOpenAIImagePermissionError(statusCode, responseBody) {
+		_ = s.HandleOpenAIImageCapabilityLoss(ctx, account, statusCode, responseBody)
+		return false
+	}
 	// Anthropic's safeguard block is scoped to this conversation. It is not
 	// evidence that the account credentials or entitlement are invalid, so it
 	// must not reach custom error policies or account scheduling side effects.
@@ -2483,12 +2489,23 @@ func (s *RateLimitService) HandleOpenAIImageCapabilityLoss(ctx context.Context, 
 	return true
 }
 
-// isOpenAIImageCapabilityLossError reports whether upstream rejected the
-// image_generation tool choice that sub2api itself put into the request body.
-// Only meaningful for self-built images requests, where tools always carries a
-// matching image_generation entry — upstream saying otherwise means the account
-// lost the capability.
+// isOpenAIImagePermissionError only trusts the structured, explicit denial.
+// Generic 403s, content-policy errors and echoed prompt text are not evidence
+// that this upstream group lacks image generation permission.
+func isOpenAIImagePermissionError(statusCode int, body []byte) bool {
+	if statusCode != http.StatusForbidden || !gjson.ValidBytes(body) {
+		return false
+	}
+	return gjson.GetBytes(body, "error.type").String() == "permission_error" &&
+		strings.TrimSpace(gjson.GetBytes(body, "error.message").String()) == ImageGenerationPermissionMessage()
+}
+
+// The 400 tool-choice variant is meaningful only for self-built images
+// requests; the explicit 403 group permission denial also covers passthrough.
 func isOpenAIImageCapabilityLossError(statusCode int, body []byte) bool {
+	if isOpenAIImagePermissionError(statusCode, body) {
+		return true
+	}
 	if statusCode != http.StatusBadRequest || len(body) == 0 {
 		return false
 	}

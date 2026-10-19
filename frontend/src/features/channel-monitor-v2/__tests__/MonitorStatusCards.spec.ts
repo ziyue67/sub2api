@@ -176,29 +176,42 @@ it('hides the intelligence section when the group has no candy check configured'
   expect(wrapper.text()).not.toContain('channelMonitorV2.candy.waiting')
 })
 
-it('switches cards between equal time windows and the latest samples that have data', async () => {
+it('follows the admin timeline mode and does not offer a visitor toggle', async () => {
   const { wrapper } = hoverFixture()
+  expect(wrapper.find('[data-testid="card-timeline-mode"]').exists()).toBe(false)
   expect(wrapper.findAll('[data-testid="traffic-history-bar"]')).toHaveLength(18)
   expect(wrapper.text()).toContain('channelMonitorV2.cards.windows 18')
-  await wrapper.get('[data-testid="card-timeline-samples"]').trigger('click')
+  await wrapper.setProps({ timelineMode: 'samples' })
   const bars = wrapper.findAll('[data-testid="traffic-history-bar"]')
   expect(bars).toHaveLength(2)
   expect(wrapper.text()).toContain('channelMonitorV2.cards.sampledWindows 2 18')
   await bars[0].trigger('mouseenter')
   expect(tooltip()?.textContent).toContain('channelMonitorV2.cards.sampleDetails')
   expect(tooltip()?.textContent).not.toContain('channelMonitorV2.matrix.noTraffic')
-  await wrapper.get('[data-testid="card-timeline-windows"]').trigger('click')
+  await wrapper.setProps({ timelineMode: 'windows' })
   expect(wrapper.findAll('[data-testid="traffic-history-bar"]')).toHaveLength(18)
+})
+
+it('does not render recent samples below the minimum sample count', async () => {
+  const { wrapper, row } = hoverFixture()
+  const enough = { ...row.metrics, request_count: 50, has_samples: true }
+  const quiet = { ...row.metrics, request_count: 3, has_samples: true }
+  await wrapper.setProps({ timelineMode: 'samples', items: [{ ...row, sample_buckets: [
+    { bucket_start: '2026-09-20T00:00:00Z', metrics: quiet, health: { overall: 'unknown', minimum_sample: 50 } },
+    { bucket_start: '2026-09-20T00:05:00Z', metrics: enough, health: { overall: 'healthy', minimum_sample: 50 } },
+  ] }] })
+  expect(wrapper.findAll('[data-testid="traffic-history-bar"]')).toHaveLength(1)
+  expect(wrapper.text()).toContain('channelMonitorV2.cards.sampledWindows 1 18')
+  expect(wrapper.find('[data-testid="card-timeline-empty"]').exists()).toBe(false)
 })
 
 it('shows recent samples from outside the selected range and does not fall back when that history is empty', async () => {
   const { wrapper, row } = hoverFixture()
   const outside = { bucket_start: '2026-09-20T00:00:00Z', metrics: row.metrics, health: { overall: 'critical' } }
-  await wrapper.setProps({ items: [{ ...row, sample_buckets: [outside] }] })
-  await wrapper.get('[data-testid="card-timeline-samples"]').trigger('click')
+  await wrapper.setProps({ timelineMode: 'samples', items: [{ ...row, sample_buckets: [outside] }] })
   expect(wrapper.findAll('[data-testid="traffic-history-bar"]')).toHaveLength(1)
   expect(wrapper.text()).toContain('channelMonitorV2.cards.sampledWindows 1 18')
-  await wrapper.setProps({ items: [{ ...row, sample_buckets: [] }] })
+  await wrapper.setProps({ timelineMode: 'samples', items: [{ ...row, sample_buckets: [] }] })
   expect(wrapper.find('[data-testid="card-timeline-empty"]').exists()).toBe(true)
   expect(wrapper.findAll('[data-testid="traffic-history-bar"]')).toHaveLength(0)
 })

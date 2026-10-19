@@ -462,6 +462,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/test", h.Admin.Account.Test)
 		accounts.POST("/batch-test", h.Admin.Account.BatchTest)
 		accounts.POST("/:id/pelican-test", h.Admin.Account.PelicanTest)
+		accounts.POST("/:id/modeltrace-test", h.Admin.Account.ModelTraceTest)
 		accounts.POST("/:id/state-probe", h.Admin.Account.StateProbe)
 		accounts.POST("/:id/recover-state", h.Admin.Account.RecoverState)
 		accounts.POST("/:id/refresh", h.Admin.Account.Refresh)
@@ -488,6 +489,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		// 账号导出泄露上游凭证原文——要求 step-up 2FA
 		accounts.GET("/data", gin.HandlerFunc(stepUpAuth), h.Admin.Account.ExportData)
 		accounts.POST("/:id/export-session", gin.HandlerFunc(stepUpAuth), h.Admin.Account.ExportOpenAISession)
+		accounts.GET("/:id/export-session/:task_id", h.Admin.Account.GetOpenAISessionExportTask)
+		accounts.GET("/:id/export-session/:task_id/download", gin.HandlerFunc(stepUpAuth), h.Admin.Account.DownloadOpenAISessionExport)
 		accounts.POST("/data", h.Admin.Account.ImportData)
 		accounts.POST("/batch-update-credentials", h.Admin.Account.BatchUpdateCredentials)
 		accounts.POST("/batch-refresh-tier", h.Admin.Account.BatchRefreshTier)
@@ -516,6 +519,10 @@ func registerOpenAIOAuthReauthWorkerRoutes(v1 *gin.RouterGroup, h *handler.Handl
 	worker := v1.Group("/internal/openai-reauth")
 	{
 		worker.POST("/claim", h.Admin.OpenAIOAuthReauth.Claim)
+		worker.POST("/session-export/claim", h.Admin.OpenAIOAuthReauth.ClaimSessionExport)
+		worker.POST("/:task_id/session-export/progress", h.Admin.OpenAIOAuthReauth.SessionExportProgress)
+		worker.POST("/:task_id/session-export/result", h.Admin.OpenAIOAuthReauth.SessionExportResult)
+		worker.POST("/:task_id/session-export/fail", h.Admin.OpenAIOAuthReauth.SessionExportFail)
 		worker.POST("/totp-claim", h.Admin.OpenAIOAuthReauth.ClaimTOTP)
 		worker.POST("/:task_id/totp-phase", h.Admin.OpenAIOAuthReauth.TOTPPhase)
 		worker.POST("/:task_id/totp-finish", h.Admin.OpenAIOAuthReauth.TOTPFinish)

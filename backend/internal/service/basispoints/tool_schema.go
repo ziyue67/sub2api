@@ -3,10 +3,13 @@ package basispoints
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/santhosh-tekuri/jsonschema/v6"
 	"strconv"
 	"strings"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
+
+const toolSchemaURL = "https://basispoints.invalid/client-tool.json"
 
 // Compile once per request, preserve json.Number, and never resolve external
 // schemas. Validation errors must not echo private argument values.
@@ -24,13 +27,12 @@ func compileToolSchema(parameters object) (*jsonschema.Schema, error) {
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
 	compiler.UseLoader(localSchemaLoader{})
-	const schemaURL = "https://basispoints.invalid/client-tool.json"
-	if err := compiler.AddResource(schemaURL, parameters); err != nil {
-		return nil, fmt.Errorf("basispoints tool schema is invalid")
+	if err := compiler.AddResource(toolSchemaURL, parameters); err != nil {
+		return nil, diagnoseToolSchema(parameters, err)
 	}
-	schema, err := compiler.Compile(schemaURL)
+	schema, err := compiler.Compile(toolSchemaURL)
 	if err != nil {
-		return nil, fmt.Errorf("basispoints tool schema is invalid or references an external resource")
+		return nil, diagnoseToolSchema(parameters, err)
 	}
 	return schema, nil
 }

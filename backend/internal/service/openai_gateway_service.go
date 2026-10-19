@@ -296,9 +296,12 @@ type OpenAIForwardResult struct {
 	VideoResolution       string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
+	// MiniMaxH3BaseCost is a server-only create-time tariff snapshot in USD.
+	MiniMaxH3BaseCost *float64
 	// WebSearchCalls is the number of completed OpenAI hosted web_search_call
 	// invocations. It also covers the standalone Codex alpha/search endpoint.
 	// The surcharge is additive when token usage is present.
+	// 上游不返回 usage 字段，>0 时走按次计费（分组单价 × 次数 × 倍率）。
 	WebSearchCalls int
 	// SearchCount is Grok-native web_search / tool search call count (per 1k pricing).
 	SearchCount int
@@ -704,6 +707,9 @@ func (s *OpenAIGatewayService) ResolveChannelMappingAndRestrict(ctx context.Cont
 // 因此非 OpenAI 平台账号一律不桥接，后续再按账号 → 渠道 → 全局的优先级取开关。
 func (s *OpenAIGatewayService) isCodexImageGenerationBridgeEnabled(ctx context.Context, account *Account, apiKey *APIKey) bool {
 	if account == nil || account.Platform != PlatformOpenAI {
+		return false
+	}
+	if openAIImageRequestRejection(WithOpenAIImageGenerationIntent(ctx), account, "gpt-image-2") != "" {
 		return false
 	}
 	if override := account.CodexImageGenerationBridgeOverride(); override != nil {

@@ -45,6 +45,14 @@ func TestOpenAIOAuthReauthPreservesExternalWorker(t *testing.T) {
 	require.Equal(t, "external_offline", s.WorkerStatus().Reason)
 }
 
+func TestOpenAIOAuthReauthWorkerHeartbeatKeepsExternalWorkerAvailable(t *testing.T) {
+	t.Setenv("OPENAI_REAUTH_WORKER_TOKEN", strings.Repeat("a", 32))
+	s := &OpenAIOAuthReauthService{}
+	s.configureWorker(nil, BuildInfo{Version: "2.9.4"})
+	s.MarkWorkerSeen()
+	require.Equal(t, "running", s.WorkerStatus().State)
+}
+
 func TestOpenAIOAuthReauthShortExplicitTokenDoesNotStartCompetingWorker(t *testing.T) {
 	t.Setenv("OPENAI_REAUTH_WORKER_TOKEN", "short")
 	s := &OpenAIOAuthReauthService{}

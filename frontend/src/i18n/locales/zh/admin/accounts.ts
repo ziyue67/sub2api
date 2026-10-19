@@ -1,28 +1,5 @@
 export default {
     accounts: {
-      sessionExport: {
-        "OPENAI_SESSION_ACCOUNT_UNSUPPORTED": "仅支持持有独立凭据的 OpenAI OAuth 账号。",
-        "OPENAI_SESSION_COOKIE_REQUIRED": "缺少 ChatGPT 登录 Cookie，请提供包含 __Secure-next-auth.session-token 的 Cookie。",
-        "OPENAI_SESSION_COOKIE_INVALID": "Cookie 格式无效，请复制完整的一行请求 Cookie。",
-        "OPENAI_SESSION_UNAVAILABLE": "Session 导出服务暂不可用。",
-        "OPENAI_SESSION_PROXY_UNAVAILABLE": "账号代理不可用，请检查代理配置。",
-        "OPENAI_SESSION_CLIENT_FAILED": "无法创建 Session 请求客户端。",
-        "OPENAI_SESSION_REQUEST_FAILED": "Session 请求失败或超时，请检查账号代理。",
-        "OPENAI_SESSION_UPSTREAM_REJECTED": "ChatGPT 拒绝了 Session 请求，请检查登录 Cookie、账号代理或浏览器验证。",
-        "OPENAI_SESSION_INVALID_RESPONSE": "ChatGPT 返回的 Session 响应无效或过大。",
-        "OPENAI_SESSION_LOGIN_REQUIRED": "未获取到已登录的 Session，请更新 Cookie 或完成 ChatGPT 浏览器验证。",
-        "OPENAI_SESSION_EXPIRED": "ChatGPT 返回的 Session 已过期，请重新登录后复制 Cookie。",
-        "OPENAI_SESSION_IDENTITY_MISMATCH": "Cookie 对应用户与此账号不匹配，或账号缺少可核对的身份信息。",
-
-        "title": "导出 ChatGPT Session",
-        "hint": "请求 https://chatgpt.com/api/auth/session 并下载真实响应。请在已登录 ChatGPT 的浏览器开发者工具中复制该账号的请求 Cookie；OAuth token 不能替代网页登录 Cookie。",
-        "cookie": "ChatGPT 登录 Cookie",
-        "placeholder": "__Secure-next-auth.session-token=...",
-        "sensitive": "Cookie 仅用于本次请求，不会保存。Session 文件包含登录凭据，请妥善保管。",
-        "download": "请求并下载 Session",
-        "exporting": "正在请求…",
-        "failed": "Session 导出失败，请检查 Cookie 是否有效、是否属于此账号，以及账号代理是否可访问 ChatGPT。"
-      },
       bpsAuthorizing: 'BPS 正在自动授权，当前使用原生通道；授权成功后自动切换，无需再次操作开关。',
       "modelsLoadFailed": "模型列表加载失败，请重试。",
       "retryModels": "重新加载模型",
@@ -1172,6 +1149,9 @@ export default {
         forceCacheTTL1h: '强制真实 1h 缓存',
         forceCacheTTL1hDesc:
           '仅对该 Anthropic API Key 账号生效。将请求中已有的 ephemeral 缓存断点改为 1h，并补齐上游所需 beta；不会新增缓存断点，也不会改写 Usage 计费分类。',
+        stripClaudeCodeIdentity: '抹除 Claude Code 身份',
+        stripClaudeCodeIdentityDesc:
+          '仅对 Anthropic API Key 生效。开启后，转发与测试连接时自动剥离 Claude Code / Agent SDK 客户端特征（替换 claude-cli User-Agent、移除 claude-code/oauth beta、剔除 system 中的 x-anthropic-billing-header 块与官方 CLI/SDK 身份句、移除 metadata.user_id），避免限制 Claude Code 调用的官方 API Key（如 sk-ant-usr-* 额度 Key）被上游拒绝并返回余额不足错误。',
         apiKeyAuthScheme: '上游认证方式',
         apiKeyAuthSchemeDesc: '选择转发到 Anthropic-compatible 上游时使用的 API Key 认证头。Ollama Cloud 使用 Authorization: Bearer。',
         apiKeyAuthSchemeXApiKey: 'x-api-key',

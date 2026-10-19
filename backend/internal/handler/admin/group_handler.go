@@ -229,6 +229,8 @@ type CreateGroupRequest struct {
 	AudioSttPricePerHour            *float64                      `json:"audio_stt_price_per_hour"`
 	ClaudeCodeOnly                  bool                          `json:"claude_code_only"`
 	StreamOnly                      bool                          `json:"stream_only"`
+	CodexCLIOnly                    bool                          `json:"codex_cli_only"`
+	BlockSubagents                  bool                          `json:"block_subagents"`
 	FallbackGroupID                 *int64                        `json:"fallback_group_id"`
 	FallbackGroupIDOnInvalidRequest *int64                        `json:"fallback_group_id_on_invalid_request"`
 	// 模型路由配置（仅 anthropic 平台使用）
@@ -308,6 +310,8 @@ type UpdateGroupRequest struct {
 	AudioSttPricePerHour            *float64                      `json:"audio_stt_price_per_hour"`
 	ClaudeCodeOnly                  *bool                         `json:"claude_code_only"`
 	StreamOnly                      *bool                         `json:"stream_only"`
+	CodexCLIOnly                    *bool                         `json:"codex_cli_only"`
+	BlockSubagents                  *bool                         `json:"block_subagents"`
 	FallbackGroupID                 *int64                        `json:"fallback_group_id"`
 	FallbackGroupIDOnInvalidRequest *int64                        `json:"fallback_group_id_on_invalid_request"`
 	// 模型路由配置（仅 anthropic 平台使用）
@@ -725,6 +729,8 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		AudioSTTPricePerHour:            req.AudioSttPricePerHour,
 		ClaudeCodeOnly:                  req.ClaudeCodeOnly,
 		StreamOnly:                      req.StreamOnly,
+		CodexCLIOnly:                    req.CodexCLIOnly,
+		BlockSubagents:                  req.BlockSubagents,
 		FallbackGroupID:                 req.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: req.FallbackGroupIDOnInvalidRequest,
 		ModelRouting:                    req.ModelRouting,
@@ -875,6 +881,8 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		AudioSTTPricePerHour:            req.AudioSttPricePerHour,
 		ClaudeCodeOnly:                  req.ClaudeCodeOnly,
 		StreamOnly:                      req.StreamOnly,
+		CodexCLIOnly:                    req.CodexCLIOnly,
+		BlockSubagents:                  req.BlockSubagents,
 		FallbackGroupID:                 req.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: req.FallbackGroupIDOnInvalidRequest,
 		ModelRouting:                    req.ModelRouting,

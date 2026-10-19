@@ -116,6 +116,10 @@ type Group struct {
 	FallbackGroupID *int64 `json:"fallback_group_id,omitempty"`
 	// 无效请求兜底使用的分组 ID
 	FallbackGroupIDOnInvalidRequest *int64 `json:"fallback_group_id_on_invalid_request,omitempty"`
+	// 是否拒绝员工 API 入口中带子代理标识的请求
+	BlockSubagents bool `json:"block_subagents,omitempty"`
+	// 是否仅允许 Codex 客户端调用本分组
+	CodexCliOnly bool `json:"codex_cli_only,omitempty"`
 	// 是否仅允许流式请求：开启后非流式的对话生成请求在网关入口直接拒绝
 	StreamOnly bool `json:"stream_only,omitempty"`
 	// 模型路由配置：模型模式 -> 优先账号ID列表
@@ -270,7 +274,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case group.FieldI18n, group.FieldVideoModelPrices, group.FieldModelPricing, group.FieldModelRouting, group.FieldSupportedModelScopes, group.FieldMessagesDispatchModelConfig, group.FieldModelAllowlist, group.FieldCodexModelsManifestConfig, group.FieldReasoningEffortMappings:
 			values[i] = new([]byte)
-		case group.FieldDynamicRateEnabled, group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldStreamOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
+		case group.FieldDynamicRateEnabled, group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldBlockSubagents, group.FieldCodexCliOnly, group.FieldStreamOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
 		case group.FieldRateMultiplier, group.FieldDynamicRateMarkup, group.FieldDynamicRateSourceMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
 			values[i] = new(sql.NullFloat64)
@@ -613,6 +617,18 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.FallbackGroupIDOnInvalidRequest = new(int64)
 				*_m.FallbackGroupIDOnInvalidRequest = value.Int64
+			}
+		case group.FieldBlockSubagents:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field block_subagents", values[i])
+			} else if value.Valid {
+				_m.BlockSubagents = value.Bool
+			}
+		case group.FieldCodexCliOnly:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field codex_cli_only", values[i])
+			} else if value.Valid {
+				_m.CodexCliOnly = value.Bool
 			}
 		case group.FieldStreamOnly:
 			if value, ok := values[i].(*sql.NullBool); !ok {
@@ -1021,6 +1037,12 @@ func (_m *Group) String() string {
 		builder.WriteString("fallback_group_id_on_invalid_request=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("block_subagents=")
+	builder.WriteString(fmt.Sprintf("%v", _m.BlockSubagents))
+	builder.WriteString(", ")
+	builder.WriteString("codex_cli_only=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CodexCliOnly))
 	builder.WriteString(", ")
 	builder.WriteString("stream_only=")
 	builder.WriteString(fmt.Sprintf("%v", _m.StreamOnly))

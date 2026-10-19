@@ -36,11 +36,17 @@ func channelMonitorV2RecentSampleWindow(filter service.ChannelMonitorV2Filter, n
 	return start, end
 }
 
+func channelMonitorV2RecentSampleMinimum(cfg service.ChannelMonitorV2Config) int64 {
+	return service.NormalizeChannelMonitorV2HealthThresholds(cfg.HealthThresholds).MinimumSample
+}
+
 func channelMonitorV2RecentSampleFactsSQL(modelClause string) string {
 	modelSQL := ""
 	if modelClause != "" {
 		modelSQL = " AND " + modelClause
 	}
+	// $5 is the normalized minimum sample. HAVING runs before LIMIT, so the 18
+	// rows are the newest buckets that can be scored, not the newest noisy ones.
 	return fmt.Sprintf(`SELECT s.bucket_start, s.platform, s.group_id, s.success_requests, s.error_requests, s.upstream_affected, s.upstream_attempts, s.input_tokens, s.output_tokens, s.cache_creation_tokens, s.cache_read_tokens, s.ttft_sum_ms, s.ttft_count, s.duration_sum_ms, s.duration_count
 FROM unnest($1::text[], $2::bigint[]) AS keys(platform, group_id)
 CROSS JOIN LATERAL (
@@ -66,15 +72,15 @@ CROSS JOIN LATERAL (
     AND (m.group_id <= 0 OR m.group_id IN (SELECT id FROM groups WHERE deleted_at IS NULL))
     AND (m.success_requests + m.error_requests) > 0%s
   GROUP BY m.bucket_start, m.platform, m.group_id
-  HAVING SUM(m.success_requests) + SUM(m.error_requests) > 0
+  HAVING SUM(m.success_requests) + SUM(m.error_requests) >= $5
   ORDER BY m.bucket_start DESC
   LIMIT %d
 ) s`, int(service.ChannelMonitorV2RecentSampleBucket.Seconds()), modelSQL, service.ChannelMonitorV2RecentSampleLimit)
 }
 
 func channelMonitorV2RecentSampleQuery(platforms []string, groupIDs []int64, start, end time.Time, filter service.ChannelMonitorV2Filter, cfg service.ChannelMonitorV2Config) (string, []any) {
-	modelSQL, modelArgs := channelMonitorV2SampleModelClause(filter, cfg, "m", 5)
-	args := []any{pq.Array(platforms), pq.Array(groupIDs), start, end}
+	modelSQL, modelArgs := channelMonitorV2SampleModelClause(filter, cfg, "m", 6)
+	args := []any{pq.Array(platforms), pq.Array(groupIDs), start, end, channelMonitorV2RecentSampleMinimum(cfg)}
 	args = append(args, modelArgs...)
 	return channelMonitorV2RecentSampleFactsSQL(modelSQL), args
 }
@@ -202,6 +208,7 @@ func (r *channelMonitorV2Repository) loadRecentSampleBuckets(ctx context.Context
 	}
 	start, end := channelMonitorV2RecentSampleWindow(filter, time.Now())
 	query, args := channelMonitorV2RecentSampleQuery(platforms, groupIDs, start, end, filter, cfg)
+	minimum := channelMonitorV2RecentSampleMinimum(cfg)
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("load recent monitor samples: %w", err)
@@ -216,6 +223,11 @@ func (r *channelMonitorV2Repository) loadRecentSampleBuckets(ctx context.Context
 		var fact channelMonitorV2Fact
 		if err := rows.Scan(&bucket, &fact.Platform, &fact.GroupID, &fact.Success, &fact.Errors, &fact.UpstreamAffected, &fact.UpstreamAttempts, &fact.Input, &fact.Output, &fact.CacheCreation, &fact.CacheRead, &fact.TTFTSum, &fact.TTFTCount, &fact.DurationSum, &fact.DurationCount); err != nil {
 			return nil, fmt.Errorf("scan recent monitor samples: %w", err)
+		}
+		// SQL already applies this bound. Keep it here so a row that does not
+		// meet the minimum never becomes a card sample.
+		if fact.Success+fact.Errors < minimum {
+			continue
 		}
 		fact.BucketStart = bucket.UTC().Format(time.RFC3339Nano)
 		key := channelMonitorV2MatrixKey{platform: fact.Platform, groupID: fact.GroupID}

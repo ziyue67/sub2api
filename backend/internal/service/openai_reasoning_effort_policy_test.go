@@ -152,7 +152,7 @@ func TestNormalizeReasoningEffortMappings(t *testing.T) {
 			require.ErrorContains(t, err, "only supported for platforms")
 		}
 
-		_, err := NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "ultra", To: "high"}})
+		_, err := NormalizeReasoningEffortMappings(PlatformOpenAI, []ReasoningEffortMapping{{From: "custom", To: "high"}})
 		require.ErrorContains(t, err, "empty or unknown")
 	})
 

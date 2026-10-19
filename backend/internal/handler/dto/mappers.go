@@ -158,6 +158,8 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 		DynamicRateMarkup:           g.DynamicRateMarkup,
 		DynamicRateSourceMultiplier: g.DynamicRateSourceMultiplier,
 		StreamOnly:                  g.StreamOnly,
+		CodexCLIOnly:                g.CodexCLIOnly,
+		BlockSubagents:              g.BlockSubagents,
 		ProfitControlEnabled:        g.ProfitControlEnabled,
 		ProfitMinMargin:             g.ProfitMinMargin,
 		ProfitSafetyBuffer:          g.ProfitSafetyBuffer,

@@ -29,7 +29,7 @@
           :class="testMode === mode ? 'bg-white text-primary-700 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
           @click="selectMode(mode)"
         >
-          {{ t(mode === 'probe' ? 'admin.accounts.pelicanTest.modeProbe' : 'admin.accounts.pelicanTest.modeQuestion') }}
+          {{ t(mode === 'modeltrace' ? 'modelTrace.tab' : mode === 'probe' ? 'admin.accounts.pelicanTest.modeProbe' : 'admin.accounts.pelicanTest.modeQuestion') }}
         </button>
       </div>
 
@@ -117,6 +117,10 @@
         </div>
       </div>
 
+      <template v-else-if="testMode === 'modeltrace'">
+        <ModelTracePanel v-if="show && account" :key="account.id" v-model:model-id="modelId" :account="account"
+          :model-options="modelOptions" :reasoning-levels="reasoningLevels" @running="running = $event" />
+      </template>
       <template v-else>
       <div>
         <label class="input-label mb-1.5 block">{{ t('admin.accounts.pelicanTest.question') }}</label>
@@ -268,7 +272,7 @@
             <Icon v-else name="play" size="sm" />
             {{ running ? t('admin.accounts.pelicanTest.probe.probing') : t('admin.accounts.pelicanTest.probe.start') }}
           </button>
-          <button v-else-if="activeTab !== 'schedule'" type="button" class="btn btn-primary flex items-center gap-2" :disabled="running || !canStart" @click="startTest">
+          <button v-else-if="testMode === 'question' && activeTab !== 'schedule'" type="button" class="btn btn-primary flex items-center gap-2" :disabled="running || !canStart" @click="startTest">
             <Icon v-if="running" name="refresh" size="sm" class="animate-spin" />
             <Icon v-else name="play" size="sm" />
             {{ running ? t('admin.accounts.pelicanTest.generating') : t('admin.accounts.pelicanTest.start') }}
@@ -296,6 +300,7 @@ import type { Account, AccountListItem, PelicanTestConfig, ScheduledTestResult }
 import ScheduledTestsPanel from './ScheduledTestsPanel.vue'
 import PelicanRecordsDashboard from './PelicanRecordsDashboard.vue'
 import TestModelSelect from './TestModelSelect.vue'
+import ModelTracePanel from './ModelTracePanel.vue'
 
 const { t } = useI18n()
 
@@ -304,8 +309,8 @@ const PROBE_CONTROLLER_KEY = 'state-probe'
 const PROBE_RESULT_LIMIT = 5
 const PROBE_FAILURE_KINDS = new Set(['unsupported', 'account_error', 'rate_limited', 'model_unsupported', 'upstream_error', 'network_error', 'stream_error', 'no_ticket', 'cancelled'])
 
-type TestMode = 'question' | 'probe'
-const testModes: TestMode[] = ['question', 'probe']
+type TestMode = 'question' | 'probe' | 'modeltrace'
+const testModes: TestMode[] = ['question', 'probe', 'modeltrace']
 
 type RunStatus = 'running' | 'success' | 'error'
 interface TestRun {

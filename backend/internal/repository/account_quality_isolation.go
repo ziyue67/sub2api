@@ -65,6 +65,61 @@ func checkQualityIsolationScope(plan *service.ScheduledTestPlan, state *qualityS
 	return nil
 }
 
+// Saving the new policy is an explicit request to replace the old account
+// action. Restore only this rule's group/scheduling mutation, under the same
+// plan -> account lock order as detection. Do not fabricate a passing result or
+// require AutoRestore (which controls future probes, not this policy change).
+func restoreQualityAccountActionForIsolation(ctx context.Context, tx *sql.Tx, plan *service.ScheduledTestPlan, state *qualityState) error {
+	var status string
+	err := tx.QueryRowContext(ctx, `SELECT status FROM accounts WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, plan.AccountID).Scan(&status)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("无法自动切换模型隔离：账号已删除")
+	}
+	if err != nil {
+		return err
+	}
+	if status != "active" {
+		return fmt.Errorf("无法自动切换模型隔离：账号不是正常状态，请先检查账号状态")
+	}
+	before, err := qualityGroups(ctx, tx, plan.AccountID)
+	if err != nil {
+		return err
+	}
+	switch state.Action {
+	case "remove_groups":
+		conflict, err := restoreQualityGroups(ctx, tx, plan.AccountID, state)
+		if err != nil {
+			return err
+		}
+		if conflict {
+			return fmt.Errorf("无法自动切换模型隔离：原分组已删除或分组归属已被人工修改，请先检查账号分组；本次修改未保存")
+		}
+	case "disable_scheduling":
+		result, err := tx.ExecContext(ctx, `UPDATE accounts SET schedulable=true,updated_at=clock_timestamp()
+ WHERE id=$1 AND (expires_at IS NULL OR expires_at>NOW())`, plan.AccountID)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("无法自动切换模型隔离：账号已过期，不能恢复调度；本次修改未保存")
+		}
+	default:
+		return fmt.Errorf("unsupported previous quality action: %s", state.Action)
+	}
+	if err = qualityGroupsChanged(ctx, tx, plan.AccountID, before, state.Removed); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, plan.ID); err != nil {
+		return err
+	}
+	*state = qualityState{}
+	return nil
+}
+
 func applyQualityIsolation(ctx context.Context, tx *sql.Tx, plan *service.ScheduledTestPlan, status string, state *qualityState) (string, error) {
 	if err := checkQualityIsolationScope(plan, state); err != nil {
 		return "action_conflict", nil

@@ -215,6 +215,10 @@ func grokContentPolicyMessage(value string) bool {
 		"input violates content policy",
 		"input violates policy",
 		"violates usage guidelines",
+		// xAI chat safety refusal, returned as 403 permission-denied with the
+		// model's refusal sentence as the error string.
+		"can't help with that request",
+		"can’t help with that request",
 	} {
 		if strings.Contains(lower, phrase) {
 			return true

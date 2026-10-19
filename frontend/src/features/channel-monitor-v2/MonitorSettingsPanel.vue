@@ -81,6 +81,32 @@
             </button>
           </div>
         </div>
+        <div class="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+          <div>
+            <strong class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('channelMonitorV2.settings.cardTimelineTitle') }}</strong>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">{{ t('channelMonitorV2.settings.cardTimelineHint') }}</p>
+          </div>
+          <div class="tabs inline-flex w-auto" role="group" :aria-label="t('channelMonitorV2.settings.cardTimelineAria')" data-testid="monitor-v2-card-timeline">
+            <button
+              type="button"
+              class="tab"
+              data-testid="monitor-v2-card-timeline-windows"
+              :class="draft.card_timeline_mode !== 'samples' ? 'tab-active' : ''"
+              @click="draft.card_timeline_mode = 'windows'"
+            >
+              {{ t('channelMonitorV2.cards.timelineMode.windows') }}
+            </button>
+            <button
+              type="button"
+              class="tab"
+              data-testid="monitor-v2-card-timeline-samples"
+              :class="draft.card_timeline_mode === 'samples' ? 'tab-active' : ''"
+              @click="draft.card_timeline_mode = 'samples'"
+            >
+              {{ t('channelMonitorV2.cards.timelineMode.samples') }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="card overflow-hidden !rounded-3xl !border-0 shadow-sm ring-1 ring-gray-900/5 dark:!bg-dark-800 dark:ring-dark-700">
@@ -172,6 +198,7 @@
                   : t('channelMonitorV2.settings.groupsAll')
               }}
             </p>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">{{ t('channelMonitorV2.settings.groupsOrderHint') }}</p>
           </div>
           <button
             v-if="draft.group_ids.length"
@@ -182,23 +209,32 @@
             {{ t('channelMonitorV2.settings.groupsAll') }}
           </button>
         </div>
-        <div class="max-h-[min(40vh,280px)] overflow-y-auto px-3 py-2 sm:px-4">
-          <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
-            <label
-              v-for="group in groups"
+        <div class="max-h-[min(40vh,420px)] overflow-y-auto px-3 py-2 sm:px-4">
+          <section v-for="section in groupSections" :key="section.platform" class="py-2" :data-testid="'monitor-v2-group-platform'" :data-platform="section.platform">
+            <h4 class="px-3 py-1 text-xs font-semibold text-gray-500 dark:text-gray-400">{{ platformLabel(section.platform) }}</h4>
+            <div
+              v-for="(group, index) in section.groups"
               :key="group.id"
-              class="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition hover:bg-gray-50 dark:hover:bg-dark-800/60"
+              class="flex items-center gap-2 rounded-xl px-3 py-2 text-sm"
+              data-testid="monitor-v2-group-row"
+              :data-group-id="group.id"
             >
-              <input
-                type="checkbox"
-                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500/40"
-                :checked="draft.group_ids.includes(group.id)"
-                @change="toggleGroup(group.id)"
-              />
-              <span class="min-w-0 flex-1 truncate font-medium text-gray-800 dark:text-gray-100">{{ group.name }}</span>
-              <small class="shrink-0 text-xs text-gray-400">{{ platformLabel(group.platform) }} · #{{ group.id }}</small>
-            </label>
-          </div>
+              <div class="flex items-center gap-1">
+                <button type="button" class="icon-btn" :disabled="index === 0" :title="t('channelMonitorV2.settings.moveUp')" data-testid="monitor-v2-group-move-up" @click="moveGroup(section.platform, index, -1)"><Icon name="arrowUp" size="xs" /></button>
+                <button type="button" class="icon-btn" :disabled="index === section.groups.length - 1" :title="t('channelMonitorV2.settings.moveDown')" data-testid="monitor-v2-group-move-down" @click="moveGroup(section.platform, index, 1)"><Icon name="arrowDown" size="xs" /></button>
+              </div>
+              <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500/40"
+                  :checked="draft.group_ids.includes(group.id)"
+                  @change="toggleGroup(group.id)"
+                />
+                <span class="min-w-0 flex-1 truncate font-medium text-gray-800 dark:text-gray-100">{{ group.name }}</span>
+                <small class="shrink-0 text-xs text-gray-400">#{{ group.id }}</small>
+              </label>
+            </div>
+          </section>
           <p v-if="groups.length === 0" class="empty-state py-8 text-sm text-gray-400">{{ t('channelMonitorV2.settings.groupsEmpty') }}</p>
         </div>
       </div>
@@ -416,6 +452,58 @@ function setModels(platform: MonitorConfig['platforms'][number], event: Event) {
   ].sort()
 }
 
+const groupSections = computed(() => {
+  if (!draft.value) return []
+  const byPlatform = new Map<string, AdminGroup[]>()
+  for (const group of groups.value) {
+    const platform = (group.platform || '').toLowerCase()
+    const list = byPlatform.get(platform) || []
+    list.push(group)
+    byPlatform.set(platform, list)
+  }
+  const rank = new Map<string, number>()
+  draft.value.platforms.forEach((item, index) => rank.set(item.platform, index))
+  const order = new Map<number, number>()
+  ;(draft.value.group_order || []).forEach((id, index) => {
+    if (!order.has(id)) order.set(id, index)
+  })
+  const missing = order.size
+  const compare = (a: AdminGroup, b: AdminGroup) => {
+    const ia = order.has(a.id) ? order.get(a.id)! : missing
+    const ib = order.has(b.id) ? order.get(b.id)! : missing
+    if (ia !== ib) return ia - ib
+    if (a.name !== b.name) return a.name < b.name ? -1 : 1
+    return a.id - b.id
+  }
+  return [...byPlatform.entries()]
+    .sort((a, b) => (rank.get(a[0]) ?? rank.size) - (rank.get(b[0]) ?? rank.size) || a[0].localeCompare(b[0]))
+    .map(([platform, items]) => ({ platform, groups: [...items].sort(compare) }))
+})
+
+function uniqueIds(values: number[] | undefined): number[] {
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const id of values || []) {
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
+function moveGroup(platform: string, index: number, offset: number) {
+  if (!draft.value) return
+  const next = index + offset
+  const ordered = groupSections.value.flatMap((item) => {
+    const ids = item.groups.map((group) => group.id)
+    if (item.platform !== platform || next < 0 || next >= ids.length) return ids
+    const [moved] = ids.splice(index, 1)
+    ids.splice(next, 0, moved)
+    return ids
+  })
+  draft.value.group_order = ordered
+}
+
 function toggleGroup(id: number) {
   if (!draft.value) return
   draft.value.group_ids = draft.value.group_ids.includes(id)
@@ -524,6 +612,8 @@ function normalizeConfig(value: MonitorConfig): MonitorConfig {
     ...value,
     candy_probes: value.candy_probes || [],
     candy_history_limit: value.candy_history_limit && value.candy_history_limit > 0 ? value.candy_history_limit : CANDY_HISTORY_LIMIT,
+    card_timeline_mode: value.card_timeline_mode === 'samples' ? 'samples' : 'windows',
+    group_order: uniqueIds(value.group_order),
     health_thresholds: { ...defaultThresholds, ...(value.health_thresholds || {}) },
     // Preserve explicit empty arrays from the server (operator cleared all).
     ignored_error_categories: [

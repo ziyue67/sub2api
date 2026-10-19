@@ -149,12 +149,12 @@ type grokLeaseBarrierConn struct {
 	started, stopping, allowStop chan struct{}
 }
 
-func (c *grokLeaseBarrierConn) ReadMessage(ctx context.Context) ([]byte, error) {
+func (c *grokLeaseBarrierConn) ReadFrame(ctx context.Context) (coderws.MessageType, []byte, error) {
 	close(c.started)
 	<-ctx.Done()
 	close(c.stopping)
 	<-c.allowStop
-	return nil, ctx.Err()
+	return coderws.MessageText, nil, ctx.Err()
 }
 
 func TestAPIKeyAdmissionGrokRealtimeJoinsBeforeRelease(t *testing.T) {

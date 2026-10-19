@@ -103,6 +103,38 @@ func containsManifestModel(body []byte, id string) bool {
 	return false
 }
 
+func TestGPT55RetirementPreservesGroupProjection(t *testing.T) {
+	group := &Group{ID: 42, Platform: PlatformOpenAI}
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{"model_mapping": map[string]any{
+			"gpt-5.5": "gpt-6.1-sol", "retired": "gpt-5.5", "hidden": "gpt-6.1-sol",
+		}},
+		AccountGroups: []AccountGroup{{GroupID: group.ID, AllowedModels: []string{"gpt-5.5", "retired"}}},
+	}
+	for _, codex := range []bool{false, true} {
+		body := []byte(`{"data":[{"id":"gpt-5.5"},{"id":"gpt-6.1-sol"}]}`)
+		field, idField := "data", "id"
+		if codex {
+			body = []byte(`{"models":[{"slug":"gpt-5.5"},{"slug":"gpt-6.1-sol"}]}`)
+			field, idField = "models", "slug"
+		}
+		projected, err := projectAccountModelsBody(body, account, group, codex)
+		require.NoError(t, err)
+		entries := gjson.GetBytes(projected, field).Array()
+		require.Len(t, entries, 1)
+		require.Equal(t, "gpt-5.5", entries[0].Get(idField).String(), "replacement alias survives; retired target and group-hidden alias do not")
+	}
+	require.True(t, account.IsModelSupportedInGroup(&group.ID, "gpt-5.5"))
+	require.False(t, account.IsModelSupportedInGroup(&group.ID, "retired"))
+	require.False(t, account.IsModelSupportedInGroup(&group.ID, "hidden"))
+	account.Extra = map[string]any{"astra_model_disabled": true, "astra_model_empty_mapping": true}
+	// fork 的 Astra 禁用映射守卫在 IsModelSupported 里（并非上游的
+	// supportsOpenAIRequestModel），因此按账号真实入口断言。
+	require.False(t, account.IsModelSupported("gpt-5.5"), "retirement support must preserve the fork's disabled-mapping guard")
+}
+
 func TestGPT55RetirementAccountProjection(t *testing.T) {
 	body := []byte(`{"object":"list","data":[{"id":"gpt-5.5"},{"id":"gpt-6.1-sol","unknown":true}],"unknown_top":true}`)
 	for _, typ := range []string{AccountTypeOAuth, AccountTypeAPIKey} {

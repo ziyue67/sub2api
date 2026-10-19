@@ -1,5 +1,5 @@
 <template>
-  <BaseDialog :show="!!record" :title="t('requestTiming.title')" width="extra-wide" placement="right" close-on-click-outside @close="$emit('close')">
+  <BaseDialog :show="!!record" :title="t('requestTiming.title')" width="extra-wide" :placement="viewportWidth < 768 ? 'center' : 'right'" close-on-click-outside @close="$emit('close')">
     <div v-if="record" class="space-y-5">
       <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-800">
         <div class="flex flex-wrap justify-between gap-2"><strong>{{ record.model }}</strong><span>{{ formatDateTime(record.created_at) }}</span></div>
@@ -62,6 +62,7 @@
 <script setup lang="ts">
 import { inject, computed, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useWindowSize } from '@vueuse/core'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { AdminUsageLog } from '@/types'
 import { formatDateTime } from '@/utils/format'
@@ -74,6 +75,7 @@ const observerMode = inject(observerUsageContext, false)
 const props = defineProps<{ record: AdminUsageLog | null }>()
 defineEmits<{ close: [] }>()
 const { t } = useI18n()
+const { width: viewportWidth } = useWindowSize()
 const traces = ref<RequestTiming[]>([]), selected = ref(0), loading = ref(false), error = ref(false), retention = ref(30)
 let controller: AbortController | undefined
 const trace = computed(() => traces.value[selected.value])

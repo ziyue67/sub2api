@@ -2529,6 +2529,40 @@
         </div>
       </div>
 
+      <!-- Anthropic API Key 抹除 Claude Code 身份开关 -->
+      <div
+        v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.stripClaudeCodeIdentity') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.stripClaudeCodeIdentityDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="anthropicStripClaudeCodeIdentityEnabled"
+            :aria-label="t('admin.accounts.anthropic.stripClaudeCodeIdentity')"
+            data-testid="edit-anthropic-strip-claude-code-identity"
+            @click="anthropicStripClaudeCodeIdentityEnabled = !anthropicStripClaudeCodeIdentityEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              anthropicStripClaudeCodeIdentityEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                anthropicStripClaudeCodeIdentityEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- Anthropic API Key 强制真实 1h 缓存 -->
       <div
         v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
@@ -4366,6 +4400,7 @@ const anthropicPassthroughEnabled = ref(false)
 const forceAnthropicCacheTTL1hEnabled = ref(false)
 const cacheCreationBilling1hEnabled = ref(false)
 const anthropicToolResultImagesEnabled = ref(false)
+const anthropicStripClaudeCodeIdentityEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -4894,6 +4929,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   forceAnthropicCacheTTL1hEnabled.value = false
   cacheCreationBilling1hEnabled.value = false
   anthropicToolResultImagesEnabled.value = false
+  anthropicStripClaudeCodeIdentityEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
@@ -4989,6 +5025,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     forceAnthropicCacheTTL1hEnabled.value = extra?.force_anthropic_cache_ttl_1h === true
     cacheCreationBilling1hEnabled.value = extra?.cache_creation_billing_1h_enabled === true
     anthropicToolResultImagesEnabled.value = extra?.anthropic_tool_result_images === true
+    anthropicStripClaudeCodeIdentityEnabled.value = extra?.anthropic_strip_claude_code_identity === true
     anthropicAPIKeyAuthScheme.value = extra?.anthropic_apikey_auth_scheme === 'authorization_bearer'
       ? 'authorization_bearer'
       : 'x_api_key'
@@ -6556,6 +6593,11 @@ const handleSubmit = async () => {
         newExtra.anthropic_tool_result_images = true
       } else {
         delete newExtra.anthropic_tool_result_images
+      }
+      if (anthropicStripClaudeCodeIdentityEnabled.value) {
+        newExtra.anthropic_strip_claude_code_identity = true
+      } else {
+        delete newExtra.anthropic_strip_claude_code_identity
       }
       if (anthropicAPIKeyAuthScheme.value === 'authorization_bearer') {
         newExtra.anthropic_apikey_auth_scheme = 'authorization_bearer'

@@ -116,3 +116,58 @@ func TestAccount_GetAnthropicAPIKeyAuthScheme(t *testing.T) {
 		})
 	}
 }
+
+func TestAccount_IsAnthropicStripClaudeCodeIdentityEnabled(t *testing.T) {
+	t.Run("Anthropic API Key 开启", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeAPIKey,
+			Extra: map[string]any{
+				"anthropic_strip_claude_code_identity": true,
+			},
+		}
+		require.True(t, account.IsAnthropicStripClaudeCodeIdentityEnabled())
+	})
+
+	t.Run("Anthropic API Key 关闭", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeAPIKey,
+			Extra: map[string]any{
+				"anthropic_strip_claude_code_identity": false,
+			},
+		}
+		require.False(t, account.IsAnthropicStripClaudeCodeIdentityEnabled())
+	})
+
+	t.Run("字段类型非法默认关闭", func(t *testing.T) {
+		account := &Account{
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeAPIKey,
+			Extra: map[string]any{
+				"anthropic_strip_claude_code_identity": "true",
+			},
+		}
+		require.False(t, account.IsAnthropicStripClaudeCodeIdentityEnabled())
+	})
+
+	t.Run("非 Anthropic API Key 账号始终关闭", func(t *testing.T) {
+		oauth := &Account{
+			Platform: PlatformAnthropic,
+			Type:     AccountTypeOAuth,
+			Extra: map[string]any{
+				"anthropic_strip_claude_code_identity": true,
+			},
+		}
+		require.False(t, oauth.IsAnthropicStripClaudeCodeIdentityEnabled())
+
+		openai := &Account{
+			Platform: PlatformOpenAI,
+			Type:     AccountTypeAPIKey,
+			Extra: map[string]any{
+				"anthropic_strip_claude_code_identity": true,
+			},
+		}
+		require.False(t, openai.IsAnthropicStripClaudeCodeIdentityEnabled())
+	})
+}

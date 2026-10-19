@@ -129,7 +129,7 @@ func TestPelicanGroupCostIncludesFailedAttempts(t *testing.T) {
 		u.read(`{"type":"message_start","message":{"model":"claude-sonnet-4","usage":{"input_tokens":1000,"output_tokens":500}}}`)
 		u.read(`{"type":"message_stop"}`)
 		if id == 11 {
-			return &ScheduledTestResult{Status: "failed", ErrorMessage: "upstream error"}, nil
+			return &ScheduledTestResult{Status: "failed", ResponseText: "<html>partial", ErrorMessage: "The service is temporarily unavailable. Please retry later."}, nil
 		}
 		return &ScheduledTestResult{Status: "failed", ResponseText: "not HTML", ErrorMessage: "Model did not return HTML or SVG"}, nil
 	})

@@ -200,12 +200,21 @@ func (c *ReplayCache) getMatching(scope, id, signature string, requireSignature 
 }
 
 func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
+	return b.collectToolsAt(value, namespace, "tools", false)
+}
+
+// A replayed declaration already carries its original item location.
+func (b *Bridge) collectToolsAt(value any, namespace, path string, single bool) ([]any, error) {
 	var catalog []any
 	items, ok := value.([]any)
 	if value != nil && !ok {
 		return nil, fmt.Errorf("basispoints client tools must be an array")
 	}
-	for _, raw := range items {
+	for index, raw := range items {
+		itemPath := path
+		if !single {
+			itemPath = fmt.Sprintf("%s[%d]", path, index)
+		}
 		item, ok := raw.(object)
 		if !ok {
 			return nil, fmt.Errorf("invalid Basispoints client tool")
@@ -219,7 +228,7 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 			if namespace != "" {
 				nestedNamespace = namespace + "." + name
 			}
-			nested, err := b.collectTools(item["tools"], nestedNamespace)
+			nested, err := b.collectToolsAt(item["tools"], nestedNamespace, itemPath+".tools", false)
 			if err != nil {
 				return nil, err
 			}
@@ -249,9 +258,12 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 				entry[field] = v
 			}
 		}
+		schemaField := "parameters"
 		if kind == "function" && entry["parameters"] == nil {
+			schemaField = "inputSchema"
 			entry["parameters"] = item["inputSchema"]
 			if entry["parameters"] == nil {
+				schemaField = "input_schema"
 				entry["parameters"] = item["input_schema"]
 			}
 		}
@@ -264,11 +276,11 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 		}
 		parameters, ok := entry["parameters"].(object)
 		if entry["parameters"] != nil && !ok {
-			return nil, fmt.Errorf("basispoints function parameters must be a schema object")
+			return nil, contextualToolSchemaError(key, itemPath+"."+schemaField, &ToolSchemaValidationError{Reason: "invalid_schema"})
 		}
 		schema, err := compileToolSchema(parameters)
 		if err != nil {
-			return nil, err
+			return nil, contextualToolSchemaError(key, itemPath+"."+schemaField, err)
 		}
 		b.tools[key] = tool{Name: name, Namespace: namespace, Kind: kind, Definition: definition, Parameters: parameters, Schema: schema, Catalog: item}
 		if kind == "function" {

@@ -67,3 +67,7 @@ OPENAI_TOTP_JOURNAL_DIR=/var/lib/sub2api-reauth/totp-recovery
 - Vue 测试覆盖显式导出、默认不带密码、待确认禁止重新更换、关闭后忽略迟到的明文响应。
 
 开发测试使用虚构账号和本地 mock，不修改真实账号。
+
+## ChatGPT Session 导出能力
+
+同一个本地 Worker 也可声明 `chatgpt_session_export` 能力领取 ChatGPT Session 导出任务。API 只会把该操作分发给声明能力的新 Worker；旧 Worker 会继续处理原有 OAuth/2FA 任务而跳过新任务。Session 导出使用已加密保存的邮箱、密码和 TOTP，登录后固定请求 `https://chatgpt.com/api/auth/session`，结果只在 API 内存中保留 10 分钟并由一次性下载接口消费。

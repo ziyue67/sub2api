@@ -9,17 +9,19 @@ func isCatalogItem(kind string) bool {
 type catalogDeclaration struct {
 	item           object
 	namespace, key string
+	path           string
 }
 
 // Flatten only declaration identity here. Validate the selected schema later,
 // so a superseded historical schema cannot reject a valid current declaration.
-func flattenCatalog(value any, namespace string) ([]catalogDeclaration, error) {
+func flattenCatalogAt(value any, namespace, location string) ([]catalogDeclaration, error) {
 	items, ok := value.([]any)
 	if value != nil && !ok {
 		return nil, fmt.Errorf("basispoints client tools must be an array")
 	}
 	var result []catalogDeclaration
-	for _, raw := range items {
+	for index, raw := range items {
+		itemPath := fmt.Sprintf("%s[%d]", location, index)
 		item, ok := raw.(object)
 		if !ok {
 			return nil, fmt.Errorf("invalid Basispoints client tool")
@@ -33,7 +35,7 @@ func flattenCatalog(value any, namespace string) ([]catalogDeclaration, error) {
 			if namespace != "" {
 				path = namespace + "." + name
 			}
-			nested, err := flattenCatalog(item["tools"], path)
+			nested, err := flattenCatalogAt(item["tools"], path, itemPath+".tools")
 			if err != nil {
 				return nil, err
 			}
@@ -47,7 +49,7 @@ func flattenCatalog(value any, namespace string) ([]catalogDeclaration, error) {
 		if isUnsupportedHostedTool(kind) {
 			key = "hosted:" + kind
 		}
-		result = append(result, catalogDeclaration{item: item, namespace: namespace, key: key})
+		result = append(result, catalogDeclaration{item: item, namespace: namespace, key: key, path: itemPath})
 	}
 	return result, nil
 }
@@ -63,12 +65,12 @@ func (b *Bridge) collectClientCatalog(source object, inherited bool) ([]any, err
 	var order []string
 	replayed := make(map[string]catalogDeclaration)
 	items, _ := source["input"].([]any)
-	for _, raw := range items {
+	for index, raw := range items {
 		item, _ := raw.(object)
 		if !isCatalogItem(text(item["type"])) {
 			continue
 		}
-		declarations, err := flattenCatalog(item["tools"], "")
+		declarations, err := flattenCatalogAt(item["tools"], "", fmt.Sprintf("input[%d].tools", index))
 		if err != nil {
 			return nil, err
 		}
@@ -97,7 +99,7 @@ func (b *Bridge) collectClientCatalog(source object, inherited bool) ([]any, err
 		if inherited {
 			delete(b.tools, key)
 		}
-		additional, err := b.collectTools([]any{declaration.item}, declaration.namespace)
+		additional, err := b.collectToolsAt([]any{declaration.item}, declaration.namespace, declaration.path, true)
 		if err != nil {
 			return nil, err
 		}

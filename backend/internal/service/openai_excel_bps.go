@@ -387,6 +387,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		if errors.Is(err, basispoints.ErrStateUnavailable) {
 			return fail(503, "basispoints_state_unavailable", basispoints.ErrStateUnavailable.Error())
 		}
+		var schemaErr *basispoints.ToolSchemaValidationError
+		if errors.As(err, &schemaErr) {
+			return fail(400, "basispoints_request_invalid", schemaErr.Error(), schemaErr.Path)
+		}
 		var contentErr *basispoints.ContentValidationError
 		if errors.As(err, &contentErr) {
 			return fail(400, "basispoints_request_invalid", err.Error(), contentErr.Path)

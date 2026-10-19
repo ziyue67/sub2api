@@ -23,13 +23,14 @@ func (r *channelMonitorV2Repository) GetConfig(ctx context.Context) (*service.Ch
 	var cfg service.ChannelMonitorV2Config
 	var platforms, thresholds, probes []byte
 	err := r.db.QueryRowContext(ctx, `
-		SELECT version, enabled, refresh_interval_seconds, platforms, group_ids,
+		SELECT version, enabled, refresh_interval_seconds, card_timeline_mode, platforms, group_ids,
+		       COALESCE(group_order, '{}'),
 		       COALESCE(ignored_error_categories, '{}'),
 		       COALESCE(health_thresholds, '{}'::jsonb), candy_probes,
 		       candy_history_limit, updated_at, updated_by
 		FROM channel_monitor_v2_config WHERE id = 1`).Scan(
-		&cfg.Version, &cfg.Enabled, &cfg.RefreshIntervalSeconds, &platforms,
-		pq.Array(&cfg.GroupIDs), pq.Array(&cfg.IgnoredErrorCategories),
+		&cfg.Version, &cfg.Enabled, &cfg.RefreshIntervalSeconds, &cfg.CardTimelineMode, &platforms,
+		pq.Array(&cfg.GroupIDs), pq.Array(&cfg.GroupOrder), pq.Array(&cfg.IgnoredErrorCategories),
 		&thresholds, &probes, &cfg.CandyHistoryLimit,
 		&cfg.UpdatedAt, &cfg.UpdatedBy,
 	)
@@ -38,6 +39,12 @@ func (r *channelMonitorV2Repository) GetConfig(ctx context.Context) (*service.Ch
 	}
 	if err := json.Unmarshal(platforms, &cfg.Platforms); err != nil {
 		return nil, fmt.Errorf("decode channel monitor v2 platforms: %w", err)
+	}
+	if cfg.GroupIDs == nil {
+		cfg.GroupIDs = []int64{}
+	}
+	if cfg.GroupOrder == nil {
+		cfg.GroupOrder = []int64{}
 	}
 	if cfg.IgnoredErrorCategories == nil {
 		cfg.IgnoredErrorCategories = []string{}
@@ -51,6 +58,7 @@ func (r *channelMonitorV2Repository) GetConfig(ctx context.Context) (*service.Ch
 		_ = json.Unmarshal(thresholds, &cfg.HealthThresholds)
 	}
 	cfg.HealthThresholds = service.NormalizeChannelMonitorV2HealthThresholds(cfg.HealthThresholds)
+	cfg.CardTimelineMode = service.NormalizeChannelMonitorV2CardTimelineMode(cfg.CardTimelineMode)
 	return &cfg, nil
 }
 
@@ -61,6 +69,9 @@ func (r *channelMonitorV2Repository) UpdateConfig(ctx context.Context, cfg servi
 	}
 	if cfg.IgnoredErrorCategories == nil {
 		cfg.IgnoredErrorCategories = []string{}
+	}
+	if cfg.GroupOrder == nil {
+		cfg.GroupOrder = []int64{}
 	}
 	cfg.HealthThresholds = service.NormalizeChannelMonitorV2HealthThresholds(cfg.HealthThresholds)
 	thresholds, err := json.Marshal(cfg.HealthThresholds)
@@ -81,16 +92,17 @@ func (r *channelMonitorV2Repository) UpdateConfig(ctx context.Context, cfg servi
 		SET version = version + 1, enabled = $1, refresh_interval_seconds = $2,
 		    platforms = $3, group_ids = $4, ignored_error_categories = $5,
 		    health_thresholds = $6, updated_by = $7, updated_at = NOW(), candy_probes = $9,
-		    candy_history_limit = $10
+		    candy_history_limit = $10, card_timeline_mode = $11, group_order = $12
 		WHERE id = 1 AND version = $8
-		RETURNING version, enabled, refresh_interval_seconds, platforms, group_ids,
+		RETURNING version, enabled, refresh_interval_seconds, card_timeline_mode, platforms, group_ids,
+		          COALESCE(group_order, '{}'),
 		          COALESCE(ignored_error_categories, '{}'),
 		          COALESCE(health_thresholds, '{}'::jsonb), candy_probes,
 		          candy_history_limit, updated_at, updated_by`,
 		cfg.Enabled, cfg.RefreshIntervalSeconds, platforms, pq.Array(cfg.GroupIDs),
-		pq.Array(cfg.IgnoredErrorCategories), thresholds, cfg.UpdatedBy, expectedVersion, probes, cfg.CandyHistoryLimit,
-	).Scan(&updated.Version, &updated.Enabled, &updated.RefreshIntervalSeconds, &raw,
-		pq.Array(&updated.GroupIDs), pq.Array(&updated.IgnoredErrorCategories),
+		pq.Array(cfg.IgnoredErrorCategories), thresholds, cfg.UpdatedBy, expectedVersion, probes, cfg.CandyHistoryLimit, cfg.CardTimelineMode, pq.Array(cfg.GroupOrder),
+	).Scan(&updated.Version, &updated.Enabled, &updated.RefreshIntervalSeconds, &updated.CardTimelineMode, &raw,
+		pq.Array(&updated.GroupIDs), pq.Array(&updated.GroupOrder), pq.Array(&updated.IgnoredErrorCategories),
 		&rawThresholds, &rawProbes, &updated.CandyHistoryLimit,
 		&updated.UpdatedAt, &updated.UpdatedBy)
 	if err == sql.ErrNoRows {
@@ -102,6 +114,12 @@ func (r *channelMonitorV2Repository) UpdateConfig(ctx context.Context, cfg servi
 	if err := json.Unmarshal(raw, &updated.Platforms); err != nil {
 		return nil, err
 	}
+	if updated.GroupIDs == nil {
+		updated.GroupIDs = []int64{}
+	}
+	if updated.GroupOrder == nil {
+		updated.GroupOrder = []int64{}
+	}
 	if updated.IgnoredErrorCategories == nil {
 		updated.IgnoredErrorCategories = []string{}
 	}
@@ -112,6 +130,7 @@ func (r *channelMonitorV2Repository) UpdateConfig(ctx context.Context, cfg servi
 	updated.HealthThresholds = service.DefaultChannelMonitorV2HealthThresholds()
 	_ = json.Unmarshal(rawThresholds, &updated.HealthThresholds)
 	updated.HealthThresholds = service.NormalizeChannelMonitorV2HealthThresholds(updated.HealthThresholds)
+	updated.CardTimelineMode = service.NormalizeChannelMonitorV2CardTimelineMode(updated.CardTimelineMode)
 	return &updated, nil
 }
 
@@ -503,18 +522,9 @@ func (r *channelMonitorV2Repository) GetMatrix(ctx context.Context, filter servi
 		}
 		result.Items = append(result.Items, row)
 	}
+	groupOrder := channelMonitorV2GroupOrderIndex(cfg.GroupOrder)
 	sort.Slice(result.Items, func(i, j int) bool {
-		a, b := result.Items[i], result.Items[j]
-		if a.Platform != b.Platform {
-			return channelMonitorV2PlatformLess(cfg, a.Platform, b.Platform)
-		}
-		if a.GroupName != b.GroupName {
-			return a.GroupName < b.GroupName
-		}
-		if a.GroupID != nil && b.GroupID != nil && *a.GroupID != *b.GroupID {
-			return *a.GroupID < *b.GroupID
-		}
-		return a.Model < b.Model
+		return channelMonitorV2MatrixLess(cfg, groupOrder, result.Items[i], result.Items[j])
 	})
 	if filter.IncludeRecentSamples && groupBy == service.ChannelMonitorV2GroupByPlatformGroup {
 		if err := r.attachRecentSampleBuckets(ctx, result, filter, cfg, admin); err != nil {
@@ -1216,6 +1226,48 @@ func channelMonitorV2Where(filter service.ChannelMonitorV2Filter, cfg service.Ch
 	// group_id 0 is a platform-level row and has no groups record.
 	conditions = append(conditions, fmt.Sprintf("(%s.group_id <= 0 OR %s.group_id IN (SELECT id FROM groups WHERE deleted_at IS NULL))", alias, alias))
 	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func channelMonitorV2GroupOrderIndex(order []int64) map[int64]int {
+	index := make(map[int64]int, len(order))
+	for i, id := range order {
+		if _, ok := index[id]; ok {
+			continue
+		}
+		index[id] = i
+	}
+	return index
+}
+
+// channelMonitorV2MatrixLess orders rows by the configured platform list, then
+// by the operator group order inside that platform. Groups missing from the
+// order keep the old name, then id sequence, after every ordered group.
+func channelMonitorV2MatrixLess(cfg service.ChannelMonitorV2Config, order map[int64]int, a, b service.ChannelMonitorV2MatrixRow) bool {
+	if a.Platform != b.Platform {
+		return channelMonitorV2PlatformLess(cfg, a.Platform, b.Platform)
+	}
+	missing := len(order)
+	ia, ib := missing, missing
+	if a.GroupID != nil {
+		if index, ok := order[*a.GroupID]; ok {
+			ia = index
+		}
+	}
+	if b.GroupID != nil {
+		if index, ok := order[*b.GroupID]; ok {
+			ib = index
+		}
+	}
+	if ia != ib {
+		return ia < ib
+	}
+	if a.GroupName != b.GroupName {
+		return a.GroupName < b.GroupName
+	}
+	if a.GroupID != nil && b.GroupID != nil && *a.GroupID != *b.GroupID {
+		return *a.GroupID < *b.GroupID
+	}
+	return a.Model < b.Model
 }
 
 func channelMonitorV2PlatformLess(cfg service.ChannelMonitorV2Config, a, b string) bool {
