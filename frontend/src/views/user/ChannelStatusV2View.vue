@@ -211,6 +211,7 @@
         :countdown="countdown"
         :now="clockNow"
         :platform-order="cardPlatformOrder"
+        :timeline-mode="cardTimelineMode"
       />
       <template v-else>
       <!-- Overview KPI: success · TTFT · tokens/s(optional) · cache · (+ RPM when throughput visible) -->
@@ -688,6 +689,7 @@ const snapshot = ref<MonitorSnapshot | null>(null)
 // Dimensions load only in analytics mode. Cards are the default view, so their
 // order comes from the snapshot config fetched with the matrix.
 const cardPlatformOrder = computed(() => monitorCardPlatformOrder(snapshot.value?.config?.platforms))
+const cardTimelineMode = computed(() => snapshot.value?.config?.card_timeline_mode === 'samples' ? 'samples' : 'windows')
 const matrix = ref<MonitorMatrixResponse | null>(null)
 const modelRows = ref<MonitorModelRow[]>([])
 const errorRows = ref<MonitorErrorRow[]>([])

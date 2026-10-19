@@ -26,6 +26,14 @@ class RotationError(Exception):
         super().__init__(code)
 
 
+def _proxy_failure_output(output: str) -> bool:
+    text = str(output or "").lower()
+    return any(marker in text for marker in (
+        "econnrefused", "connection refused", "proxy connect", "proxy error",
+        "could not connect", "connect etimedout", "socket hang up",
+    ))
+
+
 def totp(secret: str, at: float | None = None) -> str:
     value = ''.join(secret.upper().split()).rstrip('=')
     if not 16 <= len(value) <= 128:
@@ -95,7 +103,11 @@ def login_web(config, claim, secret):
         output = result.stdout + '\n' + result.stderr
         if 'The code generated from the configured 2FA key was rejected' in output:
             return None
+        if 'Password was rejected' in output:
+            raise RotationError('password_rejected')
         if result.returncode or not session_file.exists():
+            if claim.get('proxy_url') and _proxy_failure_output(output):
+                raise RotationError('proxy_unavailable')
             raise RotationError('login_failed')
         data = json.loads(session_file.read_text())
         if data.get('web', {}).get('mfaVerified') is not True:
@@ -116,6 +128,10 @@ class WebSession:
                 self.client.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'], path=cookie.get('path', '/'))
         try:
             payload = self.request('GET', '/api/auth/session')
+            # Keep the complete upstream Session JSON.  Session export uses
+            # this exact authenticated response; TOTP rotation only needs the
+            # access token below to authorize its follow-up requests.
+            self.auth_session_payload = payload
             if str(payload.get('user', {}).get('email', '')).lower() != claim['login_email'].lower():
                 raise RotationError('identity_mismatch')
             token = payload.get('accessToken')

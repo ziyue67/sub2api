@@ -1124,7 +1124,10 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		w.finalizeCapture()
 		observeAutoConfigRequest(c, ops, w, requestStart)
 
-		if _, rejected := middleware2.GetIngressRejectReason(c); rejected {
+		if reason, rejected := middleware2.GetIngressRejectReason(c); rejected {
+			if reason == middleware2.IngressRejectSubagentsBlocked {
+				logOpsSubagentRejection(c, ops)
+			}
 			return
 		}
 

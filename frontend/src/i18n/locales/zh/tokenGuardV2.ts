@@ -16,6 +16,43 @@ export default {
   "previous": "原凭据（恢复用）",
   "includePassword": "包含登录密码",
   "export": "显示并导出凭据",
+sessionExport: {
+        button: "使用 2FA 导出 ChatGPT Session",
+        title: "使用 2FA 导出 ChatGPT Session",
+        hint: "系统将使用凭证运营中保存的邮箱、密码和 TOTP，通过本地 Worker 登录 ChatGPT 并下载经过身份校验的 Session。密码、TOTP 和 Cookie 不会写入任务或日志。",
+        starting: "正在启动导出任务…",
+        exporting: "正在登录并导出…",
+        download: "重新导出",
+        failed: "Session 导出失败，请稍后重试。",
+        stages: {
+          queued: "排队中",
+          starting: "准备凭证",
+          connecting: "连接本地 Worker",
+          passwordSubmitted: "提交密码",
+          totpSubmitted: "验证 TOTP",
+          sessionRequest: "请求 ChatGPT Session",
+          identityVerification: "校验账号身份",
+          succeeded: "导出完成",
+          failed: "导出失败"
+        },
+        errors: {
+          password_rejected: "密码错误或已被 ChatGPT 拒绝。",
+          totp_rejected: "TOTP 验证失败，请检查凭证运营配置。",
+          identity_mismatch: "登录身份与托管账号不匹配。",
+          upstream_rejected: "ChatGPT 拒绝了登录或 Session 请求。",
+          worker_timeout: "本地 Worker 执行超时。",
+          worker_offline: "没有可用的本地 Worker。",
+          proxy_unavailable: "账号代理不可用，请启动 127.0.0.1:7890 的代理或更新账号代理配置。",
+          session_token_missing: "ChatGPT 没有返回可用的 Web Session Token。",
+          OPENAI_SESSION_EXPORT_CONFIG_REQUIRED: "账号尚未配置邮箱、密码和 TOTP。",
+          OPENAI_REAUTH_WORKER_UNAVAILABLE: "没有可用的本地 Worker。",
+          OPENAI_SESSION_EXPORT_ACCOUNT_INVALID: "仅支持独立的 OpenAI OAuth 父账号。",
+          credentials_required: "账号尚未配置邮箱、密码和 TOTP。",
+          task_expired: "导出任务已过期，请重新发起。",
+          expired: "导出任务已过期，请重新发起。",
+          failed: "Session 导出失败，请稍后重试。"
+        }
+      },
   "recoveryLabel": "待确认凭据：请保留文件，验证成功前不要覆盖验证器中的现有条目。",
   "qr": "2FA 验证器二维码",
   "secret": "2FA 密钥",
@@ -71,6 +108,13 @@ export default {
     running: '已就绪，正在处理重登队列',
     unavailable: '暂时不可用，程序会自动重试',
     stopped: '服务正在停止'
+  },
+  reauthErrors: {
+    proxy_unavailable: '账号代理不可用，请启动代理或更新账号代理配置。',
+    password_rejected: '密码被 ChatGPT 拒绝，请重新保存正确的网页登录密码。',
+    totp_rejected: 'TOTP 验证失败，请检查凭证运营中的 2FA 密钥。',
+    upstream_rejected: 'OpenAI 登录请求被上游拒绝，请检查代理和账号状态。',
+    worker_timeout: 'Worker 执行超时，请检查 Worker 运行状态。'
   },
 
   encryption: {

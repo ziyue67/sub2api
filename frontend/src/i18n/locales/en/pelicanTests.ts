@@ -40,7 +40,7 @@ export default {
   },
   plans: {
     title: 'Group tests',
-    hint: 'For every question the scheduler picks the account by the same rules as a user request. When that account fails before producing output, another one is tried, as a user request would, up to 3 accounts.',
+    hint: 'The scheduler picks an account for each question. Failures before output, temporary unavailability or interrupted streams restart on another account, up to 3 accounts. Retries may increase test costs.',
     empty: 'No group tests yet. Once you add one, its group appears on the user showcase.',
     modelMissing: 'No model set',
     parallel: '{count} per run',

@@ -169,10 +169,14 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 		return s.handleErrorResponse(ctx, resp, c, account, chatBody, billingModel)
 	}
 
-	if clientStream {
-		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, suppressSummary, startTime)
+	var toolTextDecoder *apicompat.DeepSeekToolTextDecoder
+	if !compact && len(chatReq.Tools) > 0 && isDeepSeekSemanticsChatUpstream(account, upstreamModel) {
+		toolTextDecoder = apicompat.NewDeepSeekToolTextDecoder(chatReq.Tools)
 	}
-	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, suppressSummary, startTime, compact)
+	if clientStream {
+		return s.streamChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, suppressSummary, startTime, toolTextDecoder)
+	}
+	return s.bufferChatCompletionsAsResponses(c, resp, originalModel, customTools, functionTools, toolSearch, namespaceTools, billingModel, upstreamModel, reasoningEffort, serviceTier, suppressSummary, startTime, compact, toolTextDecoder)
 }
 
 func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
@@ -190,13 +194,24 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 	suppressSummary bool,
 	startTime time.Time,
 	compact bool,
+	toolTextDecoder *apicompat.DeepSeekToolTextDecoder,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	ccResp, usage, err := s.readCCUpstreamJSONResponse(c, resp, writeOpenAIResponsesFallbackError)
 	if err != nil {
 		return nil, err
 	}
+	var toolTextErr error
+	if toolTextDecoder != nil && len(ccResp.Choices) > 0 {
+		toolTextErr = toolTextDecoder.RecoverMessage(&ccResp.Choices[0].Message, ccResp.Choices[0].FinishReason)
+	}
 	responsesResp := apicompat.ChatCompletionsResponseToResponses(ccResp, originalModel, customTools, functionTools, toolSearch, namespaceTools)
+	if toolTextErr != nil {
+		responsesResp.Status = "failed"
+		responsesResp.IncompleteDetails = nil
+		responsesResp.Output = []apicompat.ResponsesOutput{}
+		responsesResp.Error = deepSeekToolTextError(c, requestID, toolTextErr)
+	}
 	recordChatReasoningOnlyFailure(c, requestID, upstreamModel, responsesResp)
 	s.cacheReasoningItemsFromOutput(responsesResp.Output)
 	if suppressSummary {
@@ -272,6 +287,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	serviceTier *string,
 	suppressSummary bool,
 	startTime time.Time,
+	toolTextDecoder *apicompat.DeepSeekToolTextDecoder,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
@@ -315,6 +331,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	}
 
 	scan := s.scanCCStream(c, resp, "openai responses chat fallback", requestID, startTime, func(chunk *apicompat.ChatCompletionsChunk) {
+		if toolTextDecoder != nil {
+			chunk = toolTextDecoder.Push(chunk)
+		}
 		events := apicompat.ChatCompletionsChunkToResponsesEvents(chunk, state)
 		s.cacheReasoningItemsFromEvents(events)
 		writeEvents(events)
@@ -338,7 +357,17 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			FirstTokenMs:                  scan.FirstTokenMs,
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
 	}
-	if err := state.ValidateToolCallArguments(); err != nil {
+	if toolTextDecoder != nil {
+		chunk, err := toolTextDecoder.Finish(state.FinishReason)
+		if err != nil {
+			state.UpstreamError = deepSeekToolTextError(c, requestID, err)
+		} else if chunk != nil {
+			events := apicompat.ChatCompletionsChunkToResponsesEvents(chunk, state)
+			s.cacheReasoningItemsFromEvents(events)
+			writeEvents(events)
+		}
+	}
+	if err := state.ValidateToolCallArguments(); state.UpstreamError == nil && err != nil {
 		return &OpenAIForwardResult{
 			RequestID:                     requestID,
 			UpstreamHeaders:               resp.Header,
@@ -639,4 +668,13 @@ func ensureDeepSeekChatReasoningPlaceholders(account *Account, body []byte) []by
 		return body
 	}
 	return updated
+}
+
+// Never include upstream markup, arguments, or credentials in protocol errors.
+func deepSeekToolTextError(c *gin.Context, requestID string, err error) *apicompat.ResponsesError {
+	const code = "upstream_tool_protocol_error"
+	const message = "DeepSeek returned malformed text tool calls; no text tool call was executed. Retry with a fresh turn."
+	setOpsUpstreamError(c, http.StatusOK, code, message)
+	logger.L().Warn("openai.responses_tool_protocol_error", zap.String("request_id", requestID), zap.Error(err))
+	return &apicompat.ResponsesError{Code: code, Message: message}
 }

@@ -91,6 +91,15 @@ func (s *OpenAIOAuthReauthService) EnsureWorker() {
 		s.worker.Ensure()
 	}
 }
+
+// MarkWorkerSeen records an authenticated worker heartbeat. Workers call the
+// runtime-settings endpoint even when the queue is empty, so an idle worker is
+// still considered available for newly-created re-login or Session tasks.
+func (s *OpenAIOAuthReauthService) MarkWorkerSeen() {
+	if s != nil {
+		s.workerLastSeen.Store(time.Now().UnixNano())
+	}
+}
 func (s *OpenAIOAuthReauthService) stopWorker() {
 	if s != nil && s.worker != nil {
 		s.worker.Stop()

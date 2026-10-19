@@ -143,6 +143,8 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		AudioSTTPricePerHour:            cloneGroupValuePointer(source.AudioSTTPricePerHour),
 		ClaudeCodeOnly:                  source.ClaudeCodeOnly,
 		StreamOnly:                      source.StreamOnly,
+		CodexCLIOnly:                    source.CodexCLIOnly,
+		BlockSubagents:                  source.BlockSubagents,
 		FallbackGroupID:                 cloneGroupValuePointer(source.FallbackGroupID),
 		FallbackGroupIDOnInvalidRequest: cloneGroupValuePointer(source.FallbackGroupIDOnInvalidRequest),
 		ModelRouting:                    cloneGroupModelRouting(source.ModelRouting),

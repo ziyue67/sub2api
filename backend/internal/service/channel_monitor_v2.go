@@ -14,11 +14,14 @@ import (
 const (
 	ChannelMonitorV2OtherModel      = "__other__"
 	ChannelMonitorV2TaxonomyVersion = 1
-	// Card "recent samples" are the newest 5-minute buckets that had traffic.
-	// They are not the 18 equal windows of the selected 90m/24h/7d/30d range.
+	// Card "recent samples" are the newest 5-minute buckets that meet the
+	// minimum sample. They are not the 18 equal windows of the selected range.
 	// Five-minute rollups are retained for 7 days, which is the lookback limit.
 	ChannelMonitorV2RecentSampleLimit  = 18
 	ChannelMonitorV2RecentSampleBucket = 5 * time.Minute
+	// Card timeline is an operator choice, not a visitor toggle.
+	ChannelMonitorV2CardTimelineWindows = "windows"
+	ChannelMonitorV2CardTimelineSamples = "samples"
 )
 
 var (
@@ -61,13 +64,19 @@ type ChannelMonitorV2Config struct {
 	CandyProbes []ChannelMonitorV2CandyProbe `json:"candy_probes,omitempty"`
 	// CandyHistoryLimit is how many recent checks each model shows on a card.
 	// Zero means the default; stored values are 15–100.
-	CandyHistoryLimit      int                              `json:"candy_history_limit"`
-	Version                int                              `json:"version"`
-	Enabled                bool                             `json:"enabled"`
-	RefreshIntervalSeconds int                              `json:"refresh_interval_seconds"`
-	Platforms              []ChannelMonitorV2PlatformConfig `json:"platforms"`
-	GroupIDs               []int64                          `json:"group_ids"`
-	HealthThresholds       ChannelMonitorV2HealthThresholds `json:"health_thresholds"`
+	CandyHistoryLimit      int  `json:"candy_history_limit"`
+	Version                int  `json:"version"`
+	Enabled                bool `json:"enabled"`
+	RefreshIntervalSeconds int  `json:"refresh_interval_seconds"`
+	// CardTimelineMode chooses the user card bars: windows or samples.
+	// Empty means windows, including configs saved before the field existed.
+	CardTimelineMode string                           `json:"card_timeline_mode"`
+	Platforms        []ChannelMonitorV2PlatformConfig `json:"platforms"`
+	GroupIDs         []int64                          `json:"group_ids"`
+	// GroupOrder is the operator display order for groups inside one platform.
+	// Nil means the client omitted it. An empty slice means name, then id.
+	GroupOrder       []int64                          `json:"group_order"`
+	HealthThresholds ChannelMonitorV2HealthThresholds `json:"health_thresholds"`
 	// IgnoredErrorCategories are excluded from error_rate / health scoring.
 	// They still appear in the error breakdown with ignored=true (greyed in UI).
 	// Unknown categories always roll into "other" via the taxonomy classifier.
@@ -284,9 +293,9 @@ type ChannelMonitorV2MatrixRow struct {
 	Metrics             ChannelMonitorV2Metric         `json:"metrics"`
 	Health              ChannelMonitorV2Health         `json:"health"`
 	Buckets             []ChannelMonitorV2TrendPoint   `json:"buckets"`
-	// SampleBuckets is the newest sampled 5-minute buckets for this group,
+	// SampleBuckets is the newest 5-minute buckets that meet the minimum sample,
 	// independent of the selected range. Nil means the request did not ask for
-	// them. A non-nil empty slice means history was searched and had no traffic.
+	// them. A non-nil empty slice means history was searched and none qualified.
 	SampleBuckets *[]ChannelMonitorV2TrendPoint `json:"sample_buckets,omitempty"`
 }
 
@@ -471,11 +480,11 @@ func (s *ChannelMonitorV2Service) getEnabledConfig(ctx context.Context) (*Channe
 }
 
 func (s *ChannelMonitorV2Service) UpdateConfig(ctx context.Context, cfg ChannelMonitorV2Config, expectedVersion int, actorID int64) (*ChannelMonitorV2Config, error) {
-	// Older admin bundles omit candy_history_limit. A JSON object that omits
-	// platforms is also not a new platform list. Read once when either field is
-	// absent so a partial save cannot reset the other.
+	// Older admin bundles omit candy_history_limit, card_timeline_mode,
+	// group_order, or the platforms list. Read once when any of those is absent
+	// so a partial save cannot reset the others.
 	var current *ChannelMonitorV2Config
-	if s.repo != nil && (cfg.CandyHistoryLimit == 0 || cfg.Platforms == nil) {
+	if s.repo != nil && (cfg.CandyHistoryLimit == 0 || cfg.Platforms == nil || strings.TrimSpace(cfg.CardTimelineMode) == "" || cfg.GroupOrder == nil) {
 		loaded, err := s.repo.GetConfig(ctx)
 		if err != nil {
 			return nil, err
@@ -487,6 +496,12 @@ func (s *ChannelMonitorV2Service) UpdateConfig(ctx context.Context, cfg ChannelM
 	}
 	if cfg.Platforms == nil && current != nil {
 		cfg.Platforms = append([]ChannelMonitorV2PlatformConfig(nil), current.Platforms...)
+	}
+	if strings.TrimSpace(cfg.CardTimelineMode) == "" && current != nil {
+		cfg.CardTimelineMode = current.CardTimelineMode
+	}
+	if cfg.GroupOrder == nil && current != nil {
+		cfg.GroupOrder = append([]int64(nil), current.GroupOrder...)
 	}
 	if err := normalizeChannelMonitorV2Config(&cfg); err != nil {
 		return nil, err
@@ -693,6 +708,7 @@ func redactChannelMonitorV2PublicConfig(cfg *ChannelMonitorV2Config) {
 		return
 	}
 	cfg.GroupIDs = nil
+	cfg.GroupOrder = nil
 	cfg.IgnoredErrorCategories = nil
 	cfg.UpdatedBy = nil
 	cfg.CandyProbes = nil
@@ -819,6 +835,15 @@ func channelMonitorV2TopUsersWithSelf(items []ChannelMonitorV2UserRow, selfIndex
 	return out
 }
 
+// NormalizeChannelMonitorV2CardTimelineMode maps an empty or unknown stored
+// value to windows. Saves reject unknown values before they are stored.
+func NormalizeChannelMonitorV2CardTimelineMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), ChannelMonitorV2CardTimelineSamples) {
+		return ChannelMonitorV2CardTimelineSamples
+	}
+	return ChannelMonitorV2CardTimelineWindows
+}
+
 func normalizeChannelMonitorV2Config(cfg *ChannelMonitorV2Config) error {
 	var err error
 	if err = normalizeChannelMonitorV2CandyProbes(cfg.CandyProbes); err != nil {
@@ -833,7 +858,16 @@ func normalizeChannelMonitorV2Config(cfg *ChannelMonitorV2Config) error {
 	if cfg.RefreshIntervalSeconds != 60 && cfg.RefreshIntervalSeconds != 300 {
 		return fmt.Errorf("%w: refresh_interval_seconds must be 60 or 300", ErrChannelMonitorV2InvalidConfig)
 	}
+	mode := strings.ToLower(strings.TrimSpace(cfg.CardTimelineMode))
+	if mode != "" && mode != ChannelMonitorV2CardTimelineWindows && mode != ChannelMonitorV2CardTimelineSamples {
+		return fmt.Errorf("%w: card_timeline_mode must be windows or samples", ErrChannelMonitorV2InvalidConfig)
+	}
+	cfg.CardTimelineMode = NormalizeChannelMonitorV2CardTimelineMode(mode)
 	cfg.GroupIDs, err = normalizeChannelMonitorV2GroupIDs(cfg.GroupIDs)
+	if err != nil {
+		return err
+	}
+	cfg.GroupOrder, err = normalizeChannelMonitorV2GroupOrder(cfg.GroupOrder)
 	if err != nil {
 		return err
 	}
@@ -1079,6 +1113,24 @@ func normalizeInt64Set(values []int64) []int64 {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
+}
+
+// normalizeChannelMonitorV2GroupOrder keeps the submitted sequence. It does
+// not sort. Nil becomes an empty slice so a cleared order is stored as none.
+func normalizeChannelMonitorV2GroupOrder(values []int64) ([]int64, error) {
+	seen := make(map[int64]struct{}, len(values))
+	out := make([]int64, 0, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			return nil, fmt.Errorf("%w: group_order must be positive", ErrChannelMonitorV2InvalidConfig)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out, nil
 }
 
 func normalizeChannelMonitorV2GroupIDs(values []int64) ([]int64, error) {

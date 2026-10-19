@@ -667,6 +667,8 @@ export interface AdminGroup extends Group {
   free_openai_fast: boolean
   // 仅允许流式请求（管理端请求策略，用户侧分组不返回）
   stream_only: boolean
+  codex_cli_only?: boolean
+  block_subagents?: boolean
   model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
 	// Dynamic pricing is admin-only because it exposes upstream cost data.
 	dynamic_rate_enabled?: boolean
@@ -875,6 +877,8 @@ export interface CreateGroupRequest {
   force_openai_fast?: boolean
   free_openai_fast?: boolean
   stream_only?: boolean
+  codex_cli_only?: boolean
+  block_subagents?: boolean
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
@@ -945,6 +949,8 @@ export interface UpdateGroupRequest {
   force_openai_fast?: boolean
   free_openai_fast?: boolean
   stream_only?: boolean
+  codex_cli_only?: boolean
+  block_subagents?: boolean
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean

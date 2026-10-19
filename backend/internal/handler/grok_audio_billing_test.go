@@ -50,3 +50,20 @@ func TestGrokRealtimeBillingResultUsesForcedUniqueID(t *testing.T) {
 		t.Fatalf("unexpected audio usage: %#v", first.AudioUsage)
 	}
 }
+
+func TestGrokTTSStreamBillingResultBillsDeliveredCharacters(t *testing.T) {
+	if grokTTSStreamBillingResult(0, time.Second) != nil {
+		t.Fatal("a streaming TTS session that sent no text must not be billed")
+	}
+	first := grokTTSStreamBillingResult(1500, time.Second)
+	second := grokTTSStreamBillingResult(1500, time.Second)
+	if first == nil || second == nil {
+		t.Fatal("sessions that sent text should be billable")
+	}
+	if first.Model != "tts" || first.AudioUsage == nil || first.AudioUsage.Mode != "tts" || first.AudioUsage.DurationOrUnits != 0.0015 {
+		t.Fatalf("streaming TTS must bill like HTTP TTS (million characters): %#v %#v", first, first.AudioUsage)
+	}
+	if first.RequestID == "" || first.RequestID == second.RequestID {
+		t.Fatal("independent streaming TTS connections must not share a billing request ID")
+	}
+}

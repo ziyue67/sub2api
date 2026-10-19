@@ -106,8 +106,12 @@ export interface MonitorConfig {
   version: number
   enabled: boolean
   refresh_interval_seconds: 60 | 300
+  /** Operator choice for card bars. Omitted values use time windows. */
+  card_timeline_mode?: 'windows' | 'samples'
   platforms: Array<{ platform: string; enabled: boolean; models: string[] }>
   group_ids: number[]
+  /** Operator display order inside each platform. Empty means name, then id. */
+  group_order?: number[]
   health_thresholds: {
     minimum_sample: number
     warning_error_rate: number

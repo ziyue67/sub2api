@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from tools.openai_oauth_reauth_worker import _extract_chatgpt_session_token
 from tools.openai_totp_rotation import RotationError, login_web, rotate, totp, verify_pair
 
 OLD = 'JBSWY3DPEHPK3PXP'
@@ -111,12 +112,50 @@ class RotationTests(unittest.TestCase):
             with self.assertRaisesRegex(RotationError, 'verification_failed'):
                 login_web(self.api.config, self.claim, OLD)
 
+    def test_runner_password_rejection_has_a_specific_error_code(self):
+        with patch('tools.openai_totp_rotation.subprocess.run', return_value=SimpleNamespace(
+            returncode=1, stdout='[warn] Password was rejected. Enter it again.', stderr='')):
+            with self.assertRaisesRegex(RotationError, 'password_rejected'):
+                login_web(self.api.config, self.claim, OLD)
+
+    def test_runner_proxy_failure_has_a_specific_error_code(self):
+        claim = dict(self.claim, proxy_url='socks5h://127.0.0.1:7890')
+        with patch('tools.openai_totp_rotation.subprocess.run', return_value=SimpleNamespace(
+            returncode=1, stdout='', stderr='connect ECONNREFUSED 127.0.0.1:7890')):
+            with self.assertRaisesRegex(RotationError, 'proxy_unavailable'):
+                login_web(self.api.config, claim, OLD)
+
     def test_runner_secrets_are_not_process_arguments(self):
         with patch('tools.openai_totp_rotation.subprocess.run', return_value=SimpleNamespace(returncode=1, stdout='', stderr='')) as run:
             with self.assertRaises(RotationError): login_web(self.api.config, self.claim, OLD)
             self.assertNotIn(OLD, str(run.call_args.args))
             self.assertNotIn(self.claim['password'], str(run.call_args.args))
             self.assertNotIn('OPENAI_REAUTH_WORKER_TOKEN', run.call_args.kwargs['env'])
+
+    def test_session_token_extracts_single_cookie(self):
+        self.assertEqual(
+            _extract_chatgpt_session_token([
+                {'name': '__Secure-next-auth.session-token', 'value': 'session-value'},
+            ]),
+            'session-value',
+        )
+
+    def test_session_token_joins_contiguous_chunks(self):
+        self.assertEqual(
+            _extract_chatgpt_session_token([
+                {'name': '__Secure-next-auth.session-token.1', 'value': 'part-b'},
+                {'name': '__Secure-next-auth.session-token.0', 'value': 'part-a'},
+            ]),
+            'part-apart-b',
+        )
+
+    def test_session_token_rejects_missing_chunk(self):
+        self.assertEqual(
+            _extract_chatgpt_session_token([
+                {'name': '__Secure-next-auth.session-token.1', 'value': 'part-b'},
+            ]),
+            '',
+        )
 
 
 if __name__ == '__main__':

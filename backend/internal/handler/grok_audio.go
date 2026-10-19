@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -22,13 +23,73 @@ import (
 // GrokRealtime exposes xAI's native Voice Realtime WebSocket.
 // Only Grok-platform API keys may use this endpoint.
 func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
+	model := ""
+	if c != nil && c.Request != nil {
+		model = strings.TrimSpace(c.Query("model"))
+	}
+	if model == "" {
+		model = "grok-voice-latest"
+	}
+	h.serveGrokVoiceWebSocket(c, grokVoiceWebSocket{
+		name:     "realtime",
+		apiName:  "Realtime API",
+		inflight: service.InflightEstimateRequest{Model: model, Kind: service.InflightEstimateAudio, AudioMode: "realtime", AudioUnits: 1},
+		open: func(ctx context.Context, account *service.Account, token string) (*service.GrokRealtimeUpstream, error) {
+			return h.gatewayService.OpenGrokRealtime(ctx, account, token, model)
+		},
+		proxy: func(ctx context.Context, conn *coderws.Conn, upstream *service.GrokRealtimeUpstream) (*service.OpenAIForwardResult, error) {
+			started := time.Now()
+			audioObserved, err := h.gatewayService.ProxyGrokRealtimeConn(ctx, c, conn, upstream)
+			return grokRealtimeBillingResult(model, time.Since(started), audioObserved), err
+		},
+	})
+}
+
+// GrokTTSStream exposes xAI's streaming TTS WebSocket (GET /v1/tts with
+// Upgrade: websocket). Billing follows HTTP TTS: characters sent in text.delta.
+func (h *OpenAIGatewayHandler) GrokTTSStream(c *gin.Context) {
+	var query url.Values
+	if c != nil && c.Request != nil {
+		query = c.Request.URL.Query()
+	}
+	h.serveGrokVoiceWebSocket(c, grokVoiceWebSocket{
+		name:    "tts_stream",
+		apiName: "TTS streaming API",
+		// Characters are unknown until the client streams them; settle on the actual count.
+		inflight: service.InflightEstimateRequest{Model: "tts", Kind: service.InflightEstimateAudio, AudioMode: "tts"},
+		open: func(ctx context.Context, account *service.Account, token string) (*service.GrokRealtimeUpstream, error) {
+			return h.gatewayService.OpenGrokTTSStream(ctx, account, token, query)
+		},
+		proxy: func(ctx context.Context, conn *coderws.Conn, upstream *service.GrokRealtimeUpstream) (*service.OpenAIForwardResult, error) {
+			started := time.Now()
+			chars, err := h.gatewayService.ProxyGrokTTSStreamConn(ctx, conn, upstream)
+			return grokTTSStreamBillingResult(chars, time.Since(started)), err
+		},
+	})
+}
+
+// grokVoiceWebSocket describes one xAI Voice WebSocket endpoint relayed by
+// serveGrokVoiceWebSocket.
+type grokVoiceWebSocket struct {
+	name     string
+	apiName  string // used in client-facing errors
+	inflight service.InflightEstimateRequest
+	open     func(ctx context.Context, account *service.Account, token string) (*service.GrokRealtimeUpstream, error)
+	// proxy relays the accepted session and returns its billing result (nil = nothing to bill).
+	proxy func(ctx context.Context, conn *coderws.Conn, upstream *service.GrokRealtimeUpstream) (*service.OpenAIForwardResult, error)
+}
+
+// serveGrokVoiceWebSocket selects a Grok account, completes the upstream
+// handshake before accepting the client upgrade (so upstream failures stay
+// ordinary HTTP errors with failover), relays the session and bills it.
+func (h *OpenAIGatewayHandler) serveGrokVoiceWebSocket(c *gin.Context, ws grokVoiceWebSocket) {
 	if c == nil || c.Request == nil || !isOpenAIWSUpgradeRequest(c.Request) {
 		h.errorResponse(c, http.StatusUpgradeRequired, "invalid_request_error", "WebSocket upgrade required (Upgrade: websocket)")
 		return
 	}
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformGrok {
-		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Realtime API is not supported for this platform")
+		h.errorResponse(c, http.StatusNotFound, "not_found_error", ws.apiName+" is not supported for this platform")
 		return
 	}
 	if !h.ensureResponsesDependencies(c, nil) {
@@ -44,13 +105,9 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		return
 	}
 
-	reqLog := requestLogger(c, "handler.openai_gateway.grok_realtime")
-	model := c.Query("model")
-	if strings.TrimSpace(model) == "" {
-		model = "grok-voice-latest"
-	}
+	reqLog := requestLogger(c, "handler.openai_gateway.grok_"+ws.name)
 	// 余额模式在途预留（与计费同口径估算；计费任务扣减余额缓存后才释放）。
-	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, service.InflightEstimateRequest{Model: model, Kind: service.InflightEstimateAudio, AudioMode: "realtime", AudioUnits: 1})
+	inflightDone, inflightErr := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, ws.inflight)
 	if inflightErr != nil {
 		status, code, message, retryAfter := billingErrorDetails(inflightErr)
 		if retryAfter > 0 {
@@ -69,8 +126,8 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	}
 	defer keyRelease()
 
-	// Realtime is not an HTTP streaming response; using reqStream=true here would
-	// let the wait queue flush an SSE ping before the WebSocket handshake succeeds.
+	// A WebSocket session is not an HTTP streaming response; using reqStream=true
+	// here would let the wait queue flush an SSE ping before the handshake succeeds.
 	failed := map[int64]struct{}{}
 	var forbiddenBudget grokForbiddenFailoverBudget
 	upstreamSwitchCount := 0
@@ -80,11 +137,11 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	var upstream *service.GrokRealtimeUpstream
 	var candidateSeen bool
 	for attempts := 0; attempts < 4; attempts++ {
-		// Realtime's voice model is not a text-model capability. Passing a
-		// concrete text model here would reject accounts mapped only to an
-		// older/default text model before the upstream handshake can decide.
-		// An empty requested model keeps account selection capability-based;
-		// the actual voice model remains in the upstream WS query below.
+		// Voice models are not a text-model capability. Passing a concrete text
+		// model here would reject accounts mapped only to an older/default text
+		// model before the upstream handshake can decide. An empty requested
+		// model keeps account selection capability-based; the voice model (if
+		// any) stays in the upstream WS query.
 		candidate, _, selectErr := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(), apiKey.GroupID, "", "", "", failed,
 			service.OpenAIUpstreamTransportHTTPSSE,
@@ -122,10 +179,10 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 			continue
 		}
 		probeCtx, cancelProbe := context.WithTimeout(c.Request.Context(), service.DefaultGrokRealtimeDialTimeout)
-		candidateUpstream, openErr := h.gatewayService.OpenGrokRealtime(probeCtx, account, token, model)
+		candidateUpstream, openErr := ws.open(probeCtx, account, token)
 		cancelProbe()
 		if openErr != nil {
-			reqLog.Warn("grok_realtime.pre_accept_failed", zap.Int64("account_id", account.ID), zap.Error(openErr))
+			reqLog.Warn("grok_"+ws.name+".pre_accept_failed", zap.Int64("account_id", account.ID), zap.Error(openErr))
 			statusCode := http.StatusBadGateway
 			var responseBody []byte
 			var responseHeaders http.Header
@@ -153,7 +210,7 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 		if !candidateSeen {
 			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "No available Grok accounts")
 		} else {
-			h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Grok realtime upstream unavailable")
+			h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Grok "+strings.ReplaceAll(ws.name, "_", " ")+" upstream unavailable")
 		}
 		return
 	}
@@ -166,18 +223,31 @@ func (h *OpenAIGatewayHandler) GrokRealtime(c *gin.Context) {
 	}
 	defer func() { _ = conn.CloseNow() }()
 
-	started := time.Now()
-	audioObserved, proxyErr := h.gatewayService.ProxyGrokRealtimeConn(c.Request.Context(), c, conn, upstream)
-	elapsed := time.Since(started)
+	result, proxyErr := ws.proxy(c.Request.Context(), conn, upstream)
 	if proxyErr != nil {
-		reqLog.Info("grok_realtime.proxy_failed", zap.Error(proxyErr))
+		reqLog.Info("grok_"+ws.name+".proxy_failed", zap.Error(proxyErr))
 		if !isExpectedGrokRealtimeClose(proxyErr) {
-			_ = conn.Close(coderws.StatusInternalError, "upstream realtime websocket failed")
+			_ = conn.Close(coderws.StatusInternalError, "upstream voice websocket failed")
 			return
 		}
 	}
-	if result := grokRealtimeBillingResult(model, elapsed, audioObserved); result != nil {
-		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, "realtime", nil, result)
+	if result != nil {
+		h.recordGrokVoiceUsage(c, apiKey, selection.Account, subscription, ws.name, nil, result)
+	}
+}
+
+// grokTTSStreamBillingResult bills a streaming TTS session like HTTP TTS
+// (million characters); a session that sent no text bills nothing.
+func grokTTSStreamBillingResult(chars int64, elapsed time.Duration) *service.OpenAIForwardResult {
+	if chars <= 0 {
+		return nil
+	}
+	return &service.OpenAIForwardResult{
+		RequestID:     service.StableGrokAudioBillingRequestID(""),
+		Model:         "tts",
+		UpstreamModel: "tts",
+		Duration:      elapsed,
+		AudioUsage:    &service.AudioUsage{Mode: "tts", DurationOrUnits: float64(chars) / 1_000_000.0},
 	}
 }
 

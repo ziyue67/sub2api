@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import OpenAITOTPDialog from '../OpenAITOTPDialog.vue'
 
-const api = vi.hoisted(() => ({ status: vi.fn(), rotate: vi.fn(), verify: vi.fn(), export: vi.fn() }))
-vi.mock('@/api/admin/openaiTotp', () => ({ getTOTPRotation: api.status, rotateTOTP: api.rotate, verifyTOTP: api.verify, exportTOTP: api.export }))
-vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
+const api = vi.hoisted(() => ({ status: vi.fn(), rotate: vi.fn(), verify: vi.fn(), export: vi.fn(), session: vi.fn(), sessionStatus: vi.fn(), sessionDownload: vi.fn() }))
+vi.mock('@/api/admin/openaiTotp', () => ({ getTOTPRotation: api.status, rotateTOTP: api.rotate, verifyTOTP: api.verify, exportTOTP: api.export, exportChatGPTSession: api.session, getChatGPTSessionExportTask: api.sessionStatus, downloadChatGPTSession: api.sessionDownload }))
+vi.mock('vue-i18n', async (importOriginal) => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key, te: () => false }) }))
 vi.mock('qrcode', () => ({ default: { toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,synthetic') } }))
+vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { name: 'TotpStepUpDialog', props: ['controller'], template: '<div />' } }))
 let wrapper: VueWrapper
 const dialog = { props: ['show'], emits: ['close'], template: '<div v-if="show"><slot/><slot name="footer"/><button data-testid="close" @click="$emit(\'close\')">close</button></div>' }
 const exported = { email: 'owner@example.test', secret: 'SYNTHETIC-SECRET', otpauth_uri: 'otpauth://synthetic', source: 'current', state: 'succeeded' }
@@ -13,7 +14,7 @@ async function open() {
   wrapper = mount(OpenAITOTPDialog, { props: { accountId: 42, accountName: 'Test account', configured: true }, global: { stubs: { BaseDialog: dialog } } })
   await wrapper.get('[data-testid="totp-manage"]').trigger('click'); await flushPromises()
 }
-beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); api.status.mockResolvedValue(null); api.export.mockResolvedValue(exported) })
+beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); api.status.mockResolvedValue(null); api.export.mockResolvedValue(exported); api.session.mockResolvedValue({ id: 9, account_id: 42, status: 'queued', stage: 'queued', attempt: 1 }); api.sessionStatus.mockResolvedValue({ id: 9, account_id: 42, status: 'succeeded', stage: 'succeeded', attempt: 1 }); api.sessionDownload.mockResolvedValue({ accessToken: 'token', sessionToken: 'session' }) })
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers(); vi.restoreAllMocks() })
 
 describe('2FA rotation and credential export', () => {
@@ -55,5 +56,11 @@ describe('2FA rotation and credential export', () => {
     confirm.mockReturnValue(true); api.rotate.mockResolvedValue({ task_id: 7, state: 'queued' })
     await wrapper.get('[data-testid="totp-rotate"]').trigger('click'); await flushPromises()
     expect(api.rotate).toHaveBeenCalledOnce(); expect(wrapper.get('[data-testid="totp-rotate"]').attributes('disabled')).toBeDefined()
+  })
+  it('starts ChatGPT Session export from the 2FA management dialog', async () => {
+    await open()
+    expect(wrapper.get('[data-testid="session-export"]').text()).toBe('tokenGuardV2.totpManage.sessionExport.button')
+    await wrapper.get('[data-testid="session-export"]').trigger('click'); await flushPromises(); vi.advanceTimersByTime(1000); await flushPromises()
+    expect(api.session).toHaveBeenCalledWith(42); expect(api.sessionStatus).toHaveBeenCalledWith(42, 9); expect(api.sessionDownload).toHaveBeenCalledWith(42, 9)
   })
 })

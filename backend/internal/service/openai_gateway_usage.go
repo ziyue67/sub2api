@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -232,6 +233,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	pricingAt := openAIUsagePricingAt(input)
 	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, pricingAt)
 	videoMultiplier := resolveVideoRateMultiplier(apiKey, baseMultiplier)
+	if result.MiniMaxH3BaseCost != nil && apiKey.Group != nil {
+		videoMultiplier = math.Max(0, apiKey.Group.RateMultiplier)
+	}
 
 	var cost *CostBreakdown
 	billingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
@@ -437,6 +441,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if isVideoUsage {
 		usageLog.VideoCount = result.VideoCount
 		usageLog.VideoResolution = optionalTrimmedStringPtr(NormalizeVideoBillingResolutionOrDefault(result.VideoResolution))
+		if result.MiniMaxH3BaseCost != nil {
+			usageLog.VideoResolution = optionalTrimmedStringPtr(result.VideoResolution)
+		}
 		videoDurationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
 		usageLog.VideoDurationSeconds = &videoDurationSeconds
 	}
@@ -667,6 +674,10 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	pricingAt time.Time,
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
+	// MiniMax H3 video billing settles on its own create-time tariff snapshot.
+	if result != nil && result.MiniMaxH3BaseCost != nil && result.VideoCount > 0 {
+		return s.calculateOpenAIVideoCost(ctx, billingModel, apiKey, result, videoMultiplier), nil
+	}
 	var toolSurchargeCost *CostBreakdown
 	if result != nil && result.WebSearchCalls > 0 {
 		// OpenAI hosted web search is an additive per-call surcharge. The same
@@ -944,6 +955,9 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 	result *OpenAIForwardResult,
 	multiplier float64,
 ) *CostBreakdown {
+	if result.MiniMaxH3BaseCost != nil {
+		return &CostBreakdown{TotalCost: *result.MiniMaxH3BaseCost, ActualCost: *result.MiniMaxH3BaseCost * multiplier, BillingMode: string(BillingModeVideo)}
+	}
 	videoCount := result.VideoCount
 	if videoCount <= 0 {
 		videoCount = 1

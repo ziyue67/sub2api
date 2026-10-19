@@ -11,6 +11,26 @@ vi.mock('@/utils/format', () => ({ formatDateTime: (s: string) => s }))
 const row = (id: number) => ({ id, model: 'test', request_id: `r${id}`, first_token_ms: 6055, duration_ms: 6067, created_at: '2026-09-23' }) as AdminUsageLog
 const options = { global: { stubs: { BaseDialog: { template: '<section><slot /></section>' } } } }
 describe('Usage timing details', () => {
+  it('reacts to viewport changes between centered mobile and desktop drawer', async () => {
+    mocks.get.mockResolvedValue({ traces: [], retention_days: 30 })
+    const resize = async (width: number) => {
+      Object.defineProperty(window, 'innerWidth', { value: width, configurable: true })
+      window.dispatchEvent(new Event('resize'))
+      await flushPromises()
+    }
+    await resize(390)
+    const wrapper = mount(UsageTimingDialog, { attachTo: document.body, props: { record: row(1) }, global: { stubs: { Icon: true } } })
+    try {
+      await flushPromises()
+      expect(document.body.querySelector('.modal-overlay')?.classList.contains('drawer-overlay')).toBe(false)
+      await resize(1024)
+      expect(document.body.querySelector('.modal-overlay')?.classList.contains('drawer-overlay')).toBe(true)
+      await resize(320)
+      expect(document.body.querySelector('.modal-overlay')?.classList.contains('drawer-overlay')).toBe(false)
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      expect(wrapper.emitted('close')).toHaveLength(1)
+    } finally { wrapper.unmount(); await resize(1024) }
+  })
   it('keeps historical values and marks missing details instead of inventing zeros', async () => {
     mocks.get.mockResolvedValue({ traces: [], retention_days: 30 })
     const wrapper = mount(UsageTimingDialog, { props: { record: row(1) }, ...options })

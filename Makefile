@@ -1,6 +1,11 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/api/admin/__tests__/modelTrace.spec.ts \
+	src/components/admin/account/__tests__/ModelTracePanel.spec.ts \
+	src/components/admin/account/__tests__/IQTestModal.modelTrace.spec.ts \
+	src/components/admin/account/__tests__/OpenAISessionExportDialog.spec.ts \
+	src/components/admin/account/__tests__/AccountActionMenu.spark_shadow.spec.ts \
 	src/api/__tests__/groupCacheTest.spec.ts \
 	src/views/admin/__tests__/GroupCacheTestView.spec.ts \
 	src/components/account/__tests__/OpenAIRequestTimezoneField.spec.ts \

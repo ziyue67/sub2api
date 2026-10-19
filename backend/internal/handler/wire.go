@@ -16,6 +16,7 @@ func ProvideAdminHandlers(
 	userHandler *admin.UserHandler,
 	groupHandler *admin.GroupHandler,
 	accountHandler *admin.AccountHandler,
+	openaiOAuthReauthService *service.OpenAIOAuthReauthService,
 	announcementHandler *admin.AnnouncementHandler,
 	emailBroadcastHandler *admin.EmailBroadcastHandler,
 	dataManagementHandler *admin.DataManagementHandler,
@@ -70,6 +71,8 @@ func ProvideAdminHandlers(
 	accountHandler.SetCodexTicketSettings(settingService)
 	accountHandler.SetCodexHarvestService(codexHarvest)
 	accountHandler.SetOpenAIGatewayService(openAIGatewayService)
+	accountHandler.SetOpenCodeGoUsageService(opencodeGoUsage)
+	accountHandler.SetOpenAIOAuthReauthService(openaiOAuthReauthService)
 	accountHandler.SetClaudeResetCreditService(claudeResetCredits)
 	return &AdminHandlers{
 		RequestCapture:         requestCaptureHandler,

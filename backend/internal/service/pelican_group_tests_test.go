@@ -555,3 +555,91 @@ func TestPelicanGroupRouterPlatformsMirrorGatewayRoutes(t *testing.T) {
 		require.False(t, isOpenAIResponsesGatewayPlatform(platform), platform)
 	}
 }
+
+func TestPelicanGroupRouterRespectsAccountModelMapping(t *testing.T) {
+	for _, advanced := range []string{"false", "true"} {
+		t.Run("advanced="+advanced, func(t *testing.T) {
+			for _, tc := range []struct {
+				name        string
+				model       string
+				mapping     map[string]any
+				passthrough bool
+				allowed     bool
+			}{
+				{name: "unselected_alias_mode", model: "gpt-6-astra", mapping: map[string]any{"gpt-6-sol": "gpt-6-sol"}},
+				{name: "selected_exact", model: "gpt-6-astra", mapping: map[string]any{"gpt-6-astra": "gpt-6-astra"}, allowed: true},
+				{name: "selected_wildcard", model: "gpt-6-astra", mapping: map[string]any{"gpt-6-*": "gpt-6-astra"}, allowed: true},
+				{name: "selected_alias", model: "test-astra", mapping: map[string]any{"test-astra": "gpt-6-astra"}, allowed: true},
+				{name: "mapping_target_is_not_a_selected_model", model: "gpt-6-astra", mapping: map[string]any{"test-astra": "gpt-6-astra"}},
+				{name: "empty_mapping_unrestricted", model: "gpt-6-astra", allowed: true},
+				{name: "passthrough_does_not_bypass_selection", model: "gpt-6-astra", mapping: map[string]any{"gpt-6-sol": "gpt-6-sol"}, passthrough: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					resetOpenAIAdvancedSchedulerSettingCacheForTest()
+					t.Cleanup(resetOpenAIAdvancedSchedulerSettingCacheForTest)
+					ctx := context.Background()
+					group := &Group{ID: 4, Platform: PlatformOpenAI, Status: StatusActive}
+					account := Account{
+						ID: 11, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+						Status: StatusActive, Schedulable: true, Concurrency: 1,
+						GroupIDs: []int64{group.ID},
+						Credentials: map[string]any{
+							"model_mapping_mode": "aliases", "model_mapping": tc.mapping,
+						},
+						Extra: map[string]any{"openai_passthrough": tc.passthrough},
+					}
+					// Upstream support alone permits this account in ordinary traffic.
+					// A group test must additionally respect the configured selection.
+					allowed, reason := (&defaultOpenAIAccountScheduler{}).isAccountRequestCompatibleReason(ctx, &account,
+						OpenAIAccountScheduleRequest{GroupID: &group.ID, Platform: PlatformOpenAI, RequestedModel: tc.model})
+					require.True(t, allowed, reason)
+					accounts := []Account{account}
+					if !tc.allowed {
+						accounts = append(accounts, Account{
+							ID: 12, Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+							Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: 5,
+							GroupIDs:    []int64{group.ID},
+							Credentials: map[string]any{"model_mapping": map[string]any{tc.model: tc.model}},
+						})
+					}
+					acquired, released := []int64{}, []int64{}
+					cfg := &config.Config{}
+					cfg.Gateway.Scheduling.LoadBatchEnabled = true
+					concurrency := NewConcurrencyService(schedulerTestConcurrencyCache{acquiredIDs: &acquired, releasedIDs: &released})
+					openai := &OpenAIGatewayService{
+						accountRepo: schedulerTestOpenAIAccountRepo{accounts: accounts},
+						cache:       &schedulerTestGatewayCache{}, cfg: cfg,
+						rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService(advanced),
+						concurrencyService: concurrency,
+					}
+					router := &gatewayPelicanGroupRouter{openai: openai, concurrency: concurrency, slotWait: 50 * time.Millisecond}
+					route, err := router.route(ctx, group, tc.model, nil)
+					require.NoError(t, err)
+					wantID := int64(11)
+					if !tc.allowed {
+						wantID = 12
+					}
+					require.Equal(t, wantID, route.account.ID)
+					require.Equal(t, tc.model, route.model)
+					require.Equal(t, []int64{wantID}, acquired, "unselected accounts must be excluded before acquiring slots")
+					route.release()
+					require.Equal(t, []int64{wantID}, released)
+
+					if !tc.allowed {
+						acquired = nil
+						route, err = router.route(ctx, group, tc.model, map[int64]struct{}{12: {}})
+						require.ErrorIs(t, err, ErrNoAvailableAccounts)
+						require.Nil(t, route)
+						require.Empty(t, acquired, "no selected model means no account slot or upstream test")
+
+						selection, _, err := openai.SelectAccountWithSchedulerForCapability(ctx, &group.ID, "", "", tc.model,
+							map[int64]struct{}{12: {}}, OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, true)
+						require.NoError(t, err, "ordinary alias/passthrough traffic retains its existing policy")
+						require.Equal(t, int64(11), selection.Account.ID)
+						selection.ReleaseFunc()
+					}
+				})
+			}
+		})
+	}
+}

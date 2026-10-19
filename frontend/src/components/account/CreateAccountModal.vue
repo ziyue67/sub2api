@@ -3489,6 +3489,40 @@
         </div>
       </div>
 
+      <!-- Anthropic API Key 抹除 Claude Code 身份开关 -->
+      <div
+        v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.stripClaudeCodeIdentity') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.stripClaudeCodeIdentityDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="anthropicStripClaudeCodeIdentityEnabled"
+            :aria-label="t('admin.accounts.anthropic.stripClaudeCodeIdentity')"
+            data-testid="create-anthropic-strip-claude-code-identity"
+            @click="anthropicStripClaudeCodeIdentityEnabled = !anthropicStripClaudeCodeIdentityEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              anthropicStripClaudeCodeIdentityEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                anthropicStripClaudeCodeIdentityEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- Anthropic API Key 缓存创建按 1h 计费 -->
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
@@ -4970,6 +5004,7 @@ const anthropicPassthroughEnabled = ref(false)
 const forceAnthropicCacheTTL1hEnabled = ref(false)
 const cacheCreationBilling1hEnabled = ref(false)
 const anthropicToolResultImagesEnabled = ref(false)
+const anthropicStripClaudeCodeIdentityEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -5473,6 +5508,7 @@ watch(
       forceAnthropicCacheTTL1hEnabled.value = false
       cacheCreationBilling1hEnabled.value = false
       anthropicToolResultImagesEnabled.value = false
+      anthropicStripClaudeCodeIdentityEnabled.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
@@ -5506,6 +5542,7 @@ watch(
       forceAnthropicCacheTTL1hEnabled.value = false
       cacheCreationBilling1hEnabled.value = false
       anthropicToolResultImagesEnabled.value = false
+      anthropicStripClaudeCodeIdentityEnabled.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
@@ -5951,6 +5988,7 @@ const resetForm = () => {
   forceAnthropicCacheTTL1hEnabled.value = false
   cacheCreationBilling1hEnabled.value = false
   anthropicToolResultImagesEnabled.value = false
+  anthropicStripClaudeCodeIdentityEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   // Reset quota control state
@@ -6139,6 +6177,11 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
     extra.anthropic_tool_result_images = true
   } else {
     delete extra.anthropic_tool_result_images
+  }
+  if (anthropicStripClaudeCodeIdentityEnabled.value) {
+    extra.anthropic_strip_claude_code_identity = true
+  } else {
+    delete extra.anthropic_strip_claude_code_identity
   }
   if (anthropicAPIKeyAuthScheme.value === 'authorization_bearer') {
     extra.anthropic_apikey_auth_scheme = 'authorization_bearer'

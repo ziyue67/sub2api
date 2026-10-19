@@ -304,6 +304,8 @@ type CreateGroupInput struct {
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
 	StreamOnly                      bool // 仅允许流式请求
+	CodexCLIOnly                    bool // 仅允许 Codex 客户端
+	BlockSubagents                  bool // 禁止子代理请求
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64
 	ModelRoutingEnabled bool // 是否启用模型路由
@@ -389,6 +391,8 @@ type UpdateGroupInput struct {
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
 	StreamOnly                      *bool // 仅允许流式请求
+	CodexCLIOnly                    *bool // 仅允许 Codex 客户端
+	BlockSubagents                  *bool // 禁止子代理请求
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64
 	ModelRoutingEnabled *bool // 是否启用模型路由

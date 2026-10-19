@@ -945,6 +945,10 @@ export default {
         rpmLimit: 'Requests Per Minute (RPM)',
         rpmLimitPlaceholder: '0 = unlimited',
         rpmLimitHint: 'Max requests per minute for each user in this group; 0 = unlimited. Once set, it takes over per-user rate limiting in this group (overrides the user-level rpm_limit fallback).',
+        blockSubagents: 'Block subagents',
+        blockSubagentsHint: 'Reject employee requests with subagent or parent-thread markers, including automatic review agents. Main threads, admin tests and quality judging remain available. Clients that remove all markers cannot be reliably identified.',
+        codexCLIOnly: 'Codex clients only',
+        codexCLIOnlyHint: 'Restrict employee API requests using the global Codex client policy. Account connection tests, IQ tests and quality judging remain available.',
         streamOnly: 'Streaming requests only',
         streamOnlyHint: 'When on, this group only accepts streaming chat requests: Messages, Chat Completions and Responses requests without "stream": true, and Gemini generateContent, are rejected with 400. Token counting, model lists, embeddings, images and videos are not affected. Note: some clients check connectivity with non-streaming requests, and those checks will fail.',
         streamOnlyBadge: 'Stream only',
@@ -1118,6 +1122,16 @@ export default {
         notConfigured: 'Not configured'
       },
       videoPricing: {
+        h3Enable: 'Enable MiniMax-H3 video',
+        h3Mode: 'Billing mode',
+        h3PerSecond: 'Per second',
+        h3PerRequest: 'Per request',
+        h3Seconds: 'Video duration per request (1–15 seconds)',
+        h3SecondPrice: 'Price per second (USD/s)',
+        h3RequestPrice: 'Price per request (USD/request)',
+        h3Hint: 'Uniform USD pricing across resolutions. Final cost = base cost × current group multiplier. Successful jobs are settled when results are queried; failed jobs are not charged.',
+        h3DurationHint: 'Per-request billing only accepts the configured duration. Other durations are rejected before submission to the upstream.',
+        h3Preview: 'Current group multiplier {multiplier}, final price {price}',
         title: 'Video Generation Pricing',
         description:
           'Configure Grok video generation prices in USD per second of output video. Leave empty to use the default per-second rates (grok-imagine-video: $0.05/s 480p, $0.07/s 720p; video-1.5: $0.08/s 480p, $0.14/s 720p, $0.25/s 1080p).',

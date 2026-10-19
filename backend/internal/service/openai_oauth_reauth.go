@@ -199,6 +199,8 @@ type OpenAIOAuthReauthService struct {
 	encryptionKeyConfigured bool
 	tokenCacheInvalidator   TokenCacheInvalidator
 	runtimeBlocker          AccountRuntimeBlocker
+	sessionExportRepo       OpenAISessionExportRepository
+	sessionExportResults    *sessionExportResultStore
 	acquireMihomoProxy      func(context.Context, string) (string, func(), error)
 	mihomoLeaseMu           sync.Mutex
 	mihomoLeases            map[int64]func()
@@ -224,6 +226,7 @@ func NewOpenAIOAuthReauthService(
 		tokenCacheInvalidator:   tokenCacheInvalidator,
 		runtimeBlocker:          runtimeBlocker,
 		mihomoLeases:            make(map[int64]func()),
+		sessionExportResults:    newSessionExportResultStore(),
 		acquireMihomoProxy: func(ctx context.Context, scope string) (string, func(), error) {
 			lease, err := mihomo.AcquireBPSTransientLease(ctx, scope)
 			if err != nil {

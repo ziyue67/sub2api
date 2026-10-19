@@ -24,6 +24,7 @@
       </label>
       <label class="flex items-center gap-2 text-sm"><input v-model="includePassword" type="checkbox" @change="clearExport" />{{ t('tokenGuardV2.totpManage.includePassword') }}</label>
       <button type="button" class="btn btn-secondary" data-testid="totp-export" :disabled="busy || !loaded || (active && task?.state !== 'uncertain')" @click="reveal">{{ t('tokenGuardV2.totpManage.export') }}</button>
+      <button type="button" class="btn btn-secondary" data-testid="session-export" :disabled="busy || !configured" @click="sessionExportOpen = true">{{ t('tokenGuardV2.totpManage.sessionExport.button') }}</button>
       <div v-if="exported" class="space-y-3" data-testid="totp-export-result">
         <p v-if="exported.state === 'uncertain'" class="text-sm text-amber-700">{{ t('tokenGuardV2.totpManage.recoveryLabel') }}</p>
         <img v-if="qr" :src="qr" :alt="t('tokenGuardV2.totpManage.qr')" class="h-48 w-48 rounded bg-white" />
@@ -36,6 +37,7 @@
     </div>
     <template #footer><button type="button" class="btn btn-secondary" @click="close">{{ t('tokenGuardV2.totpManage.close') }}</button></template>
   </BaseDialog>
+  <OpenAISessionExportDialog v-if="sessionExportOpen" :account="sessionExportAccount" @close="sessionExportOpen = false" />
 </template>
 
 <script setup lang="ts">
@@ -44,6 +46,7 @@ import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import { BaseDialog } from '@/components/common'
 import { exportTOTP, getTOTPRotation, rotateTOTP, verifyTOTP, type TOTPExport, type TOTPExportSource, type TOTPRotation } from '@/api/admin/openaiTotp'
+import OpenAISessionExportDialog from '@/components/account/OpenAISessionExportDialog.vue'
 
 const props = defineProps<{ accountId: number; accountName: string; configured: boolean }>()
 const { t } = useI18n()
@@ -52,12 +55,14 @@ const task = ref<TOTPRotation | null>(null)
 const error = ref(''), qr = ref('')
 const source = ref<TOTPExportSource>('current'), includePassword = ref(false)
 const exported = ref<TOTPExport | null>(null)
+const sessionExportOpen = ref(false)
+const sessionExportAccount = computed(() => ({ id: props.accountId, name: props.accountName }))
 const active = computed(() => !!task.value && !['succeeded', 'failed'].includes(task.value.state))
 let timer: ReturnType<typeof setInterval> | undefined
 let generation = 0
 function clearExport() { exported.value = null; qr.value = '' }
 function close() {
-  generation++; opened.value = false; busy.value = false; loaded.value = false; includePassword.value = false
+  generation++; opened.value = false; busy.value = false; loaded.value = false; includePassword.value = false; sessionExportOpen.value = false
   clearExport(); error.value = ''; if (timer) clearInterval(timer); timer = undefined
 }
 async function refresh() {

@@ -670,6 +670,34 @@ func (_c *GroupCreate) SetNillableFallbackGroupIDOnInvalidRequest(v *int64) *Gro
 	return _c
 }
 
+// SetBlockSubagents sets the "block_subagents" field.
+func (_c *GroupCreate) SetBlockSubagents(v bool) *GroupCreate {
+	_c.mutation.SetBlockSubagents(v)
+	return _c
+}
+
+// SetNillableBlockSubagents sets the "block_subagents" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableBlockSubagents(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetBlockSubagents(*v)
+	}
+	return _c
+}
+
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (_c *GroupCreate) SetCodexCliOnly(v bool) *GroupCreate {
+	_c.mutation.SetCodexCliOnly(v)
+	return _c
+}
+
+// SetNillableCodexCliOnly sets the "codex_cli_only" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableCodexCliOnly(v *bool) *GroupCreate {
+	if v != nil {
+		_c.SetCodexCliOnly(*v)
+	}
+	return _c
+}
+
 // SetStreamOnly sets the "stream_only" field.
 func (_c *GroupCreate) SetStreamOnly(v bool) *GroupCreate {
 	_c.mutation.SetStreamOnly(v)
@@ -1205,6 +1233,14 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultClaudeCodeOnly
 		_c.mutation.SetClaudeCodeOnly(v)
 	}
+	if _, ok := _c.mutation.BlockSubagents(); !ok {
+		v := group.DefaultBlockSubagents
+		_c.mutation.SetBlockSubagents(v)
+	}
+	if _, ok := _c.mutation.CodexCliOnly(); !ok {
+		v := group.DefaultCodexCliOnly
+		_c.mutation.SetCodexCliOnly(v)
+	}
 	if _, ok := _c.mutation.StreamOnly(); !ok {
 		v := group.DefaultStreamOnly
 		_c.mutation.SetStreamOnly(v)
@@ -1433,6 +1469,12 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.ClaudeCodeOnly(); !ok {
 		return &ValidationError{Name: "claude_code_only", err: errors.New(`ent: missing required field "Group.claude_code_only"`)}
+	}
+	if _, ok := _c.mutation.BlockSubagents(); !ok {
+		return &ValidationError{Name: "block_subagents", err: errors.New(`ent: missing required field "Group.block_subagents"`)}
+	}
+	if _, ok := _c.mutation.CodexCliOnly(); !ok {
+		return &ValidationError{Name: "codex_cli_only", err: errors.New(`ent: missing required field "Group.codex_cli_only"`)}
 	}
 	if _, ok := _c.mutation.StreamOnly(); !ok {
 		return &ValidationError{Name: "stream_only", err: errors.New(`ent: missing required field "Group.stream_only"`)}
@@ -1733,6 +1775,14 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FallbackGroupIDOnInvalidRequest(); ok {
 		_spec.SetField(group.FieldFallbackGroupIDOnInvalidRequest, field.TypeInt64, value)
 		_node.FallbackGroupIDOnInvalidRequest = &value
+	}
+	if value, ok := _c.mutation.BlockSubagents(); ok {
+		_spec.SetField(group.FieldBlockSubagents, field.TypeBool, value)
+		_node.BlockSubagents = value
+	}
+	if value, ok := _c.mutation.CodexCliOnly(); ok {
+		_spec.SetField(group.FieldCodexCliOnly, field.TypeBool, value)
+		_node.CodexCliOnly = value
 	}
 	if value, ok := _c.mutation.StreamOnly(); ok {
 		_spec.SetField(group.FieldStreamOnly, field.TypeBool, value)
@@ -2801,6 +2851,30 @@ func (u *GroupUpsert) AddFallbackGroupIDOnInvalidRequest(v int64) *GroupUpsert {
 // ClearFallbackGroupIDOnInvalidRequest clears the value of the "fallback_group_id_on_invalid_request" field.
 func (u *GroupUpsert) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsert {
 	u.SetNull(group.FieldFallbackGroupIDOnInvalidRequest)
+	return u
+}
+
+// SetBlockSubagents sets the "block_subagents" field.
+func (u *GroupUpsert) SetBlockSubagents(v bool) *GroupUpsert {
+	u.Set(group.FieldBlockSubagents, v)
+	return u
+}
+
+// UpdateBlockSubagents sets the "block_subagents" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateBlockSubagents() *GroupUpsert {
+	u.SetExcluded(group.FieldBlockSubagents)
+	return u
+}
+
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (u *GroupUpsert) SetCodexCliOnly(v bool) *GroupUpsert {
+	u.Set(group.FieldCodexCliOnly, v)
+	return u
+}
+
+// UpdateCodexCliOnly sets the "codex_cli_only" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateCodexCliOnly() *GroupUpsert {
+	u.SetExcluded(group.FieldCodexCliOnly)
 	return u
 }
 
@@ -4114,6 +4188,34 @@ func (u *GroupUpsertOne) UpdateFallbackGroupIDOnInvalidRequest() *GroupUpsertOne
 func (u *GroupUpsertOne) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearFallbackGroupIDOnInvalidRequest()
+	})
+}
+
+// SetBlockSubagents sets the "block_subagents" field.
+func (u *GroupUpsertOne) SetBlockSubagents(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetBlockSubagents(v)
+	})
+}
+
+// UpdateBlockSubagents sets the "block_subagents" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateBlockSubagents() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateBlockSubagents()
+	})
+}
+
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (u *GroupUpsertOne) SetCodexCliOnly(v bool) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexCliOnly(v)
+	})
+}
+
+// UpdateCodexCliOnly sets the "codex_cli_only" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateCodexCliOnly() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexCliOnly()
 	})
 }
 
@@ -5644,6 +5746,34 @@ func (u *GroupUpsertBulk) UpdateFallbackGroupIDOnInvalidRequest() *GroupUpsertBu
 func (u *GroupUpsertBulk) ClearFallbackGroupIDOnInvalidRequest() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearFallbackGroupIDOnInvalidRequest()
+	})
+}
+
+// SetBlockSubagents sets the "block_subagents" field.
+func (u *GroupUpsertBulk) SetBlockSubagents(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetBlockSubagents(v)
+	})
+}
+
+// UpdateBlockSubagents sets the "block_subagents" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateBlockSubagents() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateBlockSubagents()
+	})
+}
+
+// SetCodexCliOnly sets the "codex_cli_only" field.
+func (u *GroupUpsertBulk) SetCodexCliOnly(v bool) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetCodexCliOnly(v)
+	})
+}
+
+// UpdateCodexCliOnly sets the "codex_cli_only" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateCodexCliOnly() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateCodexCliOnly()
 	})
 }
 

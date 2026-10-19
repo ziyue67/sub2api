@@ -244,7 +244,7 @@ import {
   type TokenGuardV2Task
 } from '@/api/admin/accountTokenGuardV2'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const encryptionReady = ref(false)
 const emptyStatus = (): TokenGuardV2Status => ({
   accounts: [],
@@ -391,7 +391,11 @@ const proxyLabel = (source: TokenGuardV2ProxySource = 'account', proxyId?: numbe
   return proxy ? proxyOptionLabel(proxy) : `#${proxyId}`
 }
 const probeClass = (state: string) => state === 'ok' ? 'ok' : state === 'auth' ? 'danger' : ''
-const taskLabel = (task: TokenGuardV2Task) => task.error ? `${task.status}: ${task.error}` : `${task.status} · ${task.stage}`
+const taskErrorLabel = (errorCode: string) => {
+  const path = `tokenGuardV2.reauthErrors.${errorCode}`
+  return te(path) ? t(path) : errorCode
+}
+const taskLabel = (task: TokenGuardV2Task) => task.error ? `${task.status}: ${taskErrorLabel(task.error)}` : `${task.status} · ${task.stage}`
 const configurationDetail = (item: TokenGuardV2Account) => {
   const config = item.login_config
   if (!config) return '-'

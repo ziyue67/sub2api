@@ -23,6 +23,8 @@
 
 [官方 manifest](https://bps.openai.com/basispoints/api/office/manifest.xml)指向的[前端 x-square-G80magJa.js](https://bps.openai.com/basispoints/extension/360590d7-f8f9-4d88-bf75-0edfe0a4b9f3/assets/x-square-G80magJa.js)公开了生产客户端 `app_fnr0pYvVwwFDocDumLG3H2Bp`、授权 scope、回调和刷新参数；2026-10-08 已独立核对。固定官方回调路径是协议依赖，将来变更时需要更新。没有修改凭证守护的密码/2FA 自动重登逻辑；不要将 Codex 自动重登流程绑定到 Excel 会话账号。
 
+密码/TOTP Worker 为 Excel 临时生成的登录运行副本，只向 OAuth 授权域 `auth.openai.com` 做代理预检，不再要求先通过 ChatGPT 首页检查；普通 Codex 登录仍使用原有预检。授权域预检或实际 authorize 返回安全检查、额外验证时仍会停止，不自动换出口重试。这个调整不保证 BPS 模型质量或延长票据寿命。
+
 ## 托管工具与原生回退策略
 
 账号编辑和批量编辑中可开启 **保持 BPS，省略不支持的托管工具**，对应账号配置 `extra.openai_excel_bps_omit_unsupported_tools: true`。默认关闭，无需数据库迁移，只影响该账号所选 BPS 模型。分组内有多个可调度账号时，应分别设置或使用批量编辑，避免不同账号采用不同策略。
@@ -139,6 +141,8 @@ English protocol details and client constraints:
 
 - 模型将单个工具写成 `functions.shell({"command":"pwd"})` 时, 适配器按完整调用解析工具名和一个 JSON 字面量参数. 允许可选的 `await` / `return` 和末尾分号, 工具必须已在客户端目录中声明. function 参数必须为 JSON 对象; custom 参数必须为 JSON 字符串, 解码后原样交给客户端. 此处不运行 JavaScript.
 - 不从脚本, 多调用, 数组, 未闭合调用或带尾随内容的字符串中截取工具对象. 这类返回会产生 `basispoints_protocol_error`, 不会先发送其中一个工具执行. 未带明确工具身份的原始代码仍会被拒绝.
+- 工具 schema 编译失败仍返回 HTTP 400 / `basispoints_request_invalid`，消息包含工具全名及 `local_reference_not_found`（本地引用不存在）、`external_reference_blocked`（外部引用被禁止）、`invalid_schema`（结构非法）或 `resource_limit`（超出校验预算）。`error.param` 标明目录位置和 schema 内的 JSON Pointer，例如 `tools[1].tools[0].parameters#/properties/rule/$ref`；动态目录保留 `input[N].tools[...]` 原始位置，schema 别名保留 `inputSchema` / `input_schema` 字段名。
+- 诊断只输出有界的工具名与字段路径；异常字符或过长名称脱敏，不回显 schema 值、引用目标 URL 或底层错误全文。多个引用无法唯一定位或特殊 schema 错误缺少精确位置时，退回具体工具的 schema 字段。合法本地引用和参数校验规则保持原样；修复客户端/MCP 生成的悬空引用后重新发送，不会自动修正 schema、跳过校验或加载外部资源。
 - `basispoints_request_invalid` 的内容错误附带分叉接收到的字段位置, 例如 `path=input[2].output[1]; type=input_file`. 位置同时覆盖消息内容和 function/custom 工具结果. `input_image` URL 校验失败也附带位置.
 - 错误仅显示固定的已知协议类型名称; 任意未知类型归类为 `unknown`, 缺失类型或非对象内容分别标记. 不回显正文, 图片字节, URL 或任意自定义 type 值. 不支持的文件, 音频或其他内容仍返回明确错误, 不会静默丢弃或伪装为文本.
 - `supports text and HTTPS input_image content only` 表示内容分块类型不被支持, 单凭这条错误不能判断为 base64 转换失败. 下游应保留完整错误消息及请求 ID, 以便定位字段而不需要保存客户正文.

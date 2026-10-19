@@ -8,6 +8,10 @@ export const MONITOR_CARD_SLOT_COUNT = 18
 export const MONITOR_CARD_SAMPLE_BUCKET_MS = 5 * 60 * 1000
 export type MonitorCardTimelineMode = 'windows' | 'samples'
 
+export function monitorCardTimelineMode(value: string | null | undefined): MonitorCardTimelineMode {
+  return value === 'samples' ? 'samples' : 'windows'
+}
+
 export function candyHistoryLimit(history: { history_limit?: number } | null | undefined): number {
   const limit = history?.history_limit
   if (typeof limit === 'number' && Number.isInteger(limit) && limit >= CANDY_HISTORY_LIMIT_MIN && limit <= CANDY_HISTORY_LIMIT_MAX) return limit
@@ -27,6 +31,18 @@ export function candyHistorySlots(history: MonitorCandyHistory): Array<MonitorCa
 
 export function hasMonitorSamples(metric: MonitorMetric): boolean {
   return metric.has_samples === true || metric.request_count > 0
+}
+
+// A recent-sample bar is a bucket the health score can use. Traffic below
+// minimum_sample is not a sample. Redacted payloads keep has_samples and a
+// scored band; overall "unknown" is the server's insufficient-sample result.
+export function meetsMonitorSampleMinimum(bucket: Pick<MonitorMatrixBucket, 'metrics' | 'health'>): boolean {
+  if (!bucket.metrics || !hasMonitorSamples(bucket.metrics)) return false
+  const minimum = bucket.health?.minimum_sample
+  const count = bucket.metrics.request_count
+  if (typeof minimum === 'number' && minimum > 0 && count > 0) return count >= minimum
+  if (count <= 0 && bucket.metrics.has_samples === true && bucket.health?.overall === 'unknown') return false
+  return true
 }
 
 export function monitorRefreshSeconds(configSeconds: number | undefined, rows: readonly MonitorMatrixRow[], bootstrap: boolean): number {
@@ -59,8 +75,8 @@ function coverageBounds(coverage: MonitorCoverage | undefined) {
   return { start, end }
 }
 
-// Latest buckets that actually have traffic. sample_buckets already ignores the
-// selected range. Older payloads only have range buckets, so those stay clipped.
+// Latest buckets that meet the minimum sample. sample_buckets already ignores
+// the selected range. Older payloads only have range buckets, so those stay clipped.
 export function monitorCardSampleTimeline(row: MonitorMatrixRow, coverage: MonitorCoverage | undefined): MonitorCardBar[] {
   const dedicated = Array.isArray(row.sample_buckets)
   const source = Array.isArray(row.sample_buckets) ? row.sample_buckets : row.buckets
@@ -68,7 +84,7 @@ export function monitorCardSampleTimeline(row: MonitorMatrixRow, coverage: Monit
   const widthMs = dedicated ? MONITOR_CARD_SAMPLE_BUCKET_MS : (coverage?.bucket_seconds && coverage.bucket_seconds > 0 ? coverage.bucket_seconds * 1000 : 0)
   return source
     .map(bucket => ({ bucket, at: Date.parse(bucket.bucket_start) }))
-    .filter(item => Number.isFinite(item.at) && hasMonitorSamples(item.bucket.metrics) && (!bounds || (item.at >= bounds.start && item.at < bounds.end)))
+    .filter(item => Number.isFinite(item.at) && meetsMonitorSampleMinimum(item.bucket) && (!bounds || (item.at >= bounds.start && item.at < bounds.end)))
     .sort((a, b) => a.at - b.at)
     .slice(-MONITOR_CARD_SLOT_COUNT)
     .map(item => ({

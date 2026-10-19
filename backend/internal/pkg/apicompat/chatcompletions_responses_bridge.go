@@ -1701,8 +1701,10 @@ type ChatCompletionsToResponsesStreamState struct {
 	// 尚未到达时延迟宣告，待名字可判定类型后再补发（见 announceChatToolItem）。
 	toolAnnounced map[int]bool
 
-	FinishReason string
-	Usage        *ResponsesUsage
+	// UpstreamError terminates a malformed stream before any tool is completed.
+	UpstreamError *ResponsesError
+	FinishReason  string
+	Usage         *ResponsesUsage
 }
 
 // NewChatCompletionsToResponsesStreamState returns an initialized stream state.
@@ -1875,6 +1877,17 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 	}
 	var events []ResponsesStreamEvent
 	events = append(events, ensureChatToResponsesCreated(state)...)
+
+	if state.UpstreamError != nil {
+		state.CompletedSent = true
+		return append(events, chatToResponsesEvent(state, "response.failed", &ResponsesStreamEvent{
+			Response: &ResponsesResponse{
+				ID: state.ResponseID, Object: "response", CreatedAt: state.Created,
+				Model: state.Model, Status: "failed", ServiceTier: state.ServiceTier,
+				Output: []ResponsesOutput{}, Usage: state.Usage, Error: state.UpstreamError,
+			},
+		}))
+	}
 
 	// Close a reasoning item that never transitioned to content (reasoning-only
 	// or empty completion).

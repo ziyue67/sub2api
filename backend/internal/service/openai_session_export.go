@@ -2,120 +2,368 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
-	"io"
 	"net/http"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-const chatGPTSessionURL = "https://chatgpt.com/api/auth/session"
+const (
+	OpenAISessionExportOperation                 = "chatgpt_session_export"
+	OpenAISessionExportStatusQueued              = "queued"
+	OpenAISessionExportStatusRunning             = "running"
+	OpenAISessionExportStatusSucceeded           = "succeeded"
+	OpenAISessionExportStatusFailed              = "failed"
+	OpenAISessionExportStatusExpired             = "expired"
+	OpenAISessionExportStageQueued               = "queued"
+	OpenAISessionExportStageStarting             = "starting"
+	OpenAISessionExportStageProtocolConnecting   = "protocol_connecting"
+	OpenAISessionExportStagePasswordSubmitted    = "password_submitted"
+	OpenAISessionExportStageMFASubmitted         = "mfa_submitted"
+	OpenAISessionExportStageSessionRequest       = "session_request"
+	OpenAISessionExportStageIdentityVerification = "identity_verification"
+	OpenAISessionExportStageSucceeded            = "succeeded"
+	OpenAISessionExportStageFailed               = "failed"
+)
 
-// ExportChatGPTSession fetches a real web session. OAuth tokens are not web
-// cookies; the caller supplies a temporary Cookie header, which is never saved.
-func (s *OpenAIOAuthService) ExportChatGPTSession(ctx context.Context, account *Account, cookie string) (json.RawMessage, error) {
-	fail := func(status int, code, message string) (json.RawMessage, error) {
-		return nil, infraerrors.New(status, code, message)
+const (
+	openAISessionExportResultTTL  = 10 * time.Minute
+	openAISessionExportTaskTTL    = 5 * time.Minute
+	openAISessionExportStaleAfter = 5 * time.Minute
+	openAISessionExportMaxBody    = 1 << 20
+)
+
+type OpenAISessionExportTask struct {
+	ID         int64      `json:"id"`
+	AccountID  int64      `json:"account_id"`
+	Status     string     `json:"status"`
+	Stage      string     `json:"stage"`
+	ErrorCode  string     `json:"error_code,omitempty"`
+	Attempt    int        `json:"attempt"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+type OpenAISessionExportTaskRecord struct {
+	OpenAISessionExportTask
+	WorkerID                string
+	ExpectedCredentialsHash string
+	ClaimedAt               *time.Time
+}
+
+type OpenAISessionExportClaim struct {
+	Operation      string `json:"operation"`
+	TaskID         int64  `json:"task_id"`
+	AccountID      int64  `json:"account_id"`
+	LoginEmail     string `json:"login_email"`
+	Password       string `json:"password"`
+	TOTPSecret     string `json:"totp_secret"`
+	ProxyURL       string `json:"proxy_url,omitempty"`
+	ExpectedUserID string `json:"expected_user_id,omitempty"`
+}
+
+type OpenAISessionExportRepository interface {
+	CreateSessionExportTask(context.Context, int64, string) (*OpenAISessionExportTaskRecord, error)
+	GetSessionExportTask(context.Context, int64) (*OpenAISessionExportTaskRecord, error)
+	ExpireActiveSessionExportTasks(context.Context) error
+	ClaimSessionExportTask(context.Context, string, time.Duration) (*OpenAISessionExportTaskRecord, error)
+	UpdateSessionExportStage(context.Context, int64, string, string) error
+	FinishSessionExportTask(context.Context, int64, string, string, string) error
+}
+
+type sessionExportResult struct {
+	body      json.RawMessage
+	expiresAt time.Time
+}
+
+type sessionExportResultStore struct {
+	mu      sync.Mutex
+	results map[int64]sessionExportResult
+}
+
+func newSessionExportResultStore() *sessionExportResultStore {
+	return &sessionExportResultStore{results: make(map[int64]sessionExportResult)}
+}
+
+func (s *sessionExportResultStore) put(taskID int64, body json.RawMessage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gcLocked(time.Now())
+	s.results[taskID] = sessionExportResult{body: append(json.RawMessage(nil), body...), expiresAt: time.Now().Add(openAISessionExportResultTTL)}
+}
+
+func (s *sessionExportResultStore) consume(taskID int64) (json.RawMessage, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gcLocked(time.Now())
+	result, ok := s.results[taskID]
+	if !ok {
+		return nil, false
 	}
-	if account == nil || account.Platform != PlatformOpenAI || account.Type != AccountTypeOAuth || account.ParentAccountID != nil {
-		return fail(http.StatusBadRequest, "OPENAI_SESSION_ACCOUNT_UNSUPPORTED", "Session export requires an OpenAI OAuth account with its own credentials")
-	}
-	cookie = strings.TrimSpace(cookie)
-	if cookie == "" {
-		return fail(http.StatusBadRequest, "OPENAI_SESSION_COOKIE_REQUIRED", "ChatGPT login Cookie is required; OAuth access tokens cannot replace it")
-	}
-	if len(cookie) > 16384 || strings.ContainsAny(cookie, "\r\n") {
-		return fail(http.StatusBadRequest, "OPENAI_SESSION_COOKIE_INVALID", "Invalid ChatGPT login Cookie")
-	}
-	parsed := (&http.Request{Header: http.Header{"Cookie": []string{cookie}}}).Cookies()
-	hasSession := false
-	for _, c := range parsed {
-		if c.Value != "" && (c.Name == "__Secure-next-auth.session-token" || strings.HasPrefix(c.Name, "__Secure-next-auth.session-token.")) {
-			hasSession = true
+	delete(s.results, taskID)
+	return append(json.RawMessage(nil), result.body...), true
+}
+
+func (s *sessionExportResultStore) gcLocked(now time.Time) {
+	for id, result := range s.results {
+		if !result.expiresAt.After(now) {
+			delete(s.results, id)
 		}
 	}
-	if !hasSession {
-		return fail(http.StatusBadRequest, "OPENAI_SESSION_COOKIE_REQUIRED", "Cookie must include __Secure-next-auth.session-token (or its numbered chunks)")
+}
+
+// The re-auth service owns the Worker authentication and credential decryptor;
+// Session export uses a separate task repository and never updates account OAuth
+// credentials.
+func (s *OpenAIOAuthReauthService) SetSessionExportRepository(repo OpenAISessionExportRepository) {
+	s.sessionExportRepo = repo
+	if s.sessionExportResults == nil {
+		s.sessionExportResults = newSessionExportResultStore()
 	}
-	if s == nil || s.privacyClientFactory == nil {
-		return fail(http.StatusServiceUnavailable, "OPENAI_SESSION_UNAVAILABLE", "Session export is unavailable")
+	// Results are process-local. Any task that was active before an API restart
+	// can no longer produce a downloadable result and must not remain claimable.
+	if repo != nil {
+		_ = repo.ExpireActiveSessionExportTasks(context.Background())
 	}
-	proxyURL := ""
-	if account.ProxyID != nil {
-		if s.proxyRepo == nil {
-			return fail(http.StatusServiceUnavailable, "OPENAI_SESSION_PROXY_UNAVAILABLE", "Account proxy is unavailable")
-		}
-		proxy, err := s.proxyRepo.GetByID(ctx, *account.ProxyID)
-		if err != nil || proxy == nil {
-			return fail(http.StatusServiceUnavailable, "OPENAI_SESSION_PROXY_UNAVAILABLE", "Account proxy is unavailable")
-		}
-		proxyURL = proxy.URL()
+}
+
+func (s *OpenAIOAuthReauthService) CreateSessionExportTask(ctx context.Context, accountID int64) (*OpenAISessionExportTask, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
 	}
-	client, err := s.privacyClientFactory(proxyURL)
-	if err != nil || client == nil {
-		return fail(http.StatusBadGateway, "OPENAI_SESSION_CLIENT_FAILED", "Could not create the Session export client")
+	if s.sessionExportRepo == nil {
+		return nil, infraerrors.ServiceUnavailable("OPENAI_SESSION_EXPORT_UNAVAILABLE", "ChatGPT Session export is unavailable")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, chatGPTSessionURL, nil)
+	if err := s.ensureDurableEncryption(); err != nil {
+		return nil, err
+	}
+	account, err := s.accountFor(ctx, accountID)
 	if err != nil {
-		return fail(http.StatusInternalServerError, "OPENAI_SESSION_REQUEST_FAILED", "Could not create the Session request")
+		return nil, err
 	}
-	request.Header = client.Headers.Clone()
-	if request.Header == nil {
-		request.Header = make(http.Header)
+	config, err := s.repo.GetConfig(ctx, accountID)
+	if err != nil || config == nil {
+		return nil, infraerrors.BadRequest("OPENAI_SESSION_EXPORT_CONFIG_REQUIRED", "Save the account password and TOTP secret in Credential Operations first")
 	}
-	request.Header.Del("Authorization")
-	request.Header.Set("Cookie", cookie)
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Sec-Fetch-Mode", "cors")
-	request.Header.Set("Sec-Fetch-Site", "same-origin")
-	request.Header.Set("Sec-Fetch-Dest", "empty")
-	request.Header.Del("Sec-Fetch-User")
-	request.Header.Del("Upgrade-Insecure-Requests")
-	request.Header.Set("Referer", "https://chatgpt.com/")
-	// Keep credentials on the fixed origin and do not share the factory's cookie jar.
-	httpClient := *client.GetClient()
-	httpClient.Jar = nil
-	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err := httpClient.Do(request)
+	if strings.TrimSpace(config.CredentialMode) != OpenAIOAuthReauthModePasswordTOTP ||
+		strings.TrimSpace(config.PasswordCiphertext) == "" || strings.TrimSpace(config.TOTPSecretCiphertext) == "" {
+		return nil, infraerrors.BadRequest("OPENAI_SESSION_EXPORT_CONFIG_REQUIRED", "Save the account password and TOTP secret in Credential Operations first")
+	}
+	if err := s.checkWorkerMode(OpenAIOAuthReauthModePasswordTOTP); err != nil {
+		return nil, err
+	}
+	hash, err := hashReauthCredentials(account.Credentials)
 	if err != nil {
-		return fail(http.StatusBadGateway, "OPENAI_SESSION_REQUEST_FAILED", "ChatGPT Session request failed or timed out")
+		return nil, infraerrors.InternalServer("OPENAI_SESSION_EXPORT_SNAPSHOT_FAILED", "Could not snapshot account credentials")
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fail(http.StatusBadGateway, "OPENAI_SESSION_UPSTREAM_REJECTED", "ChatGPT Session request returned HTTP "+strconv.Itoa(resp.StatusCode)+"; check login Cookie and account proxy")
+	record, err := s.sessionExportRepo.CreateSessionExportTask(ctx, accountID, hash)
+	if err != nil {
+		if infraerrors.Code(err) == http.StatusConflict {
+			return nil, err
+		}
+		return nil, infraerrors.InternalServer("OPENAI_SESSION_EXPORT_CREATE_FAILED", "Could not create Session export task")
 	}
-	const maxBody = 1 << 20
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
-	if err != nil || len(body) > maxBody {
-		return fail(http.StatusBadGateway, "OPENAI_SESSION_INVALID_RESPONSE", "ChatGPT returned an unreadable or oversized Session response")
+	return safeSessionExportTask(record), nil
+}
+
+func (s *OpenAIOAuthReauthService) GetSessionExportTask(ctx context.Context, accountID, taskID int64) (*OpenAISessionExportTask, error) {
+	if s == nil || s.sessionExportRepo == nil {
+		return nil, infraerrors.ServiceUnavailable("OPENAI_SESSION_EXPORT_UNAVAILABLE", "ChatGPT Session export is unavailable")
+	}
+	record, err := s.sessionExportRepo.GetSessionExportTask(ctx, taskID)
+	if err != nil || record == nil || record.AccountID != accountID {
+		return nil, infraerrors.NotFound("OPENAI_SESSION_EXPORT_TASK_NOT_FOUND", "Session export task was not found")
+	}
+	if (record.Status == OpenAISessionExportStatusRunning && time.Since(record.UpdatedAt) > openAISessionExportTaskTTL) ||
+		(record.Status == OpenAISessionExportStatusQueued && time.Since(record.CreatedAt) > openAISessionExportTaskTTL) {
+		_ = s.sessionExportRepo.FinishSessionExportTask(ctx, taskID, record.WorkerID, OpenAISessionExportStatusExpired, "worker_timeout")
+		record.Status = OpenAISessionExportStatusExpired
+		record.ErrorCode = "worker_timeout"
+	}
+	return safeSessionExportTask(record), nil
+}
+
+func (s *OpenAIOAuthReauthService) DownloadSessionExport(ctx context.Context, accountID, taskID int64) (json.RawMessage, error) {
+	task, err := s.GetSessionExportTask(ctx, accountID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if task.Status != OpenAISessionExportStatusSucceeded {
+		return nil, infraerrors.Conflict("OPENAI_SESSION_EXPORT_NOT_READY", "Session export is not ready")
+	}
+	if s.sessionExportResults == nil {
+		return nil, infraerrors.New(http.StatusGone, "OPENAI_SESSION_EXPORT_EXPIRED", "Session export has expired or was already downloaded")
+	}
+	body, ok := s.sessionExportResults.consume(taskID)
+	if !ok {
+		return nil, infraerrors.New(http.StatusGone, "OPENAI_SESSION_EXPORT_EXPIRED", "Session export has expired or was already downloaded")
+	}
+	return body, nil
+}
+
+func (s *OpenAIOAuthReauthService) ClaimSessionExportTask(ctx context.Context, workerID string, capabilities []string) (*OpenAISessionExportClaim, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
+	}
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" || len(workerID) > 128 {
+		return nil, infraerrors.BadRequest("OPENAI_REAUTH_WORKER_ID_INVALID", "worker id is required")
+	}
+	s.MarkWorkerSeen()
+	if s.sessionExportRepo == nil {
+		return nil, infraerrors.ServiceUnavailable("OPENAI_SESSION_EXPORT_UNAVAILABLE", "ChatGPT Session export is unavailable")
+	}
+	for _, capability := range capabilities {
+		if capability == OpenAISessionExportOperation {
+			record, err := s.sessionExportRepo.ClaimSessionExportTask(ctx, workerID, openAISessionExportStaleAfter)
+			if err != nil {
+				return nil, infraerrors.InternalServer("OPENAI_SESSION_EXPORT_CLAIM_FAILED", "Could not claim Session export task")
+			}
+			if record == nil {
+				return nil, nil
+			}
+			account, err := s.accountFor(ctx, record.AccountID)
+			if err != nil {
+				_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "account_invalid")
+				return nil, nil
+			}
+			config, err := s.repo.GetConfig(ctx, record.AccountID)
+			if err != nil || config == nil || config.CredentialMode != OpenAIOAuthReauthModePasswordTOTP {
+				_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "config_required")
+				return nil, nil
+			}
+			password, err := s.decryptReauthSecret(config.PasswordCiphertext, "login password cannot be decrypted")
+			if err != nil || password == "" {
+				_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "password_unavailable")
+				return nil, nil
+			}
+			totpSecret, err := s.decryptReauthSecret(config.TOTPSecretCiphertext, "TOTP secret cannot be decrypted")
+			if err != nil || totpSecret == "" {
+				_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "totp_unavailable")
+				return nil, nil
+			}
+			proxyURL, err := s.reauthProxyURL(ctx, account.ProxyID)
+			if err != nil {
+				_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "proxy_unavailable")
+				return nil, nil
+			}
+			expectedUserID := strings.TrimSpace(account.GetCredential("chatgpt_user_id"))
+			s.workerLastSeen.Store(time.Now().UnixNano())
+			return &OpenAISessionExportClaim{Operation: OpenAISessionExportOperation, TaskID: record.ID, AccountID: record.AccountID, LoginEmail: config.LoginEmail, Password: password, TOTPSecret: totpSecret, ProxyURL: proxyURL, ExpectedUserID: expectedUserID}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *OpenAIOAuthReauthService) UpdateSessionExportStage(ctx context.Context, taskID int64, workerID, stage string) error {
+	if !validSessionExportStage(stage) {
+		return infraerrors.BadRequest("OPENAI_SESSION_EXPORT_STAGE_INVALID", "Invalid Session export stage")
+	}
+	return s.sessionExportRepo.UpdateSessionExportStage(ctx, taskID, workerID, stage)
+}
+
+func (s *OpenAIOAuthReauthService) SubmitSessionExport(ctx context.Context, taskID int64, workerID string, body json.RawMessage) error {
+	if len(body) == 0 || len(body) > openAISessionExportMaxBody {
+		return s.failSessionExport(ctx, taskID, workerID, "invalid_response")
 	}
 	var session struct {
-		AccessToken string `json:"accessToken"`
-		Expires     string `json:"expires"`
-		User        struct {
+		AccessToken  string `json:"accessToken"`
+		SessionToken string `json:"sessionToken"`
+		Expires      string `json:"expires"`
+		User         struct {
 			ID    string `json:"id"`
 			Email string `json:"email"`
 		} `json:"user"`
 	}
-	if json.Unmarshal(body, &session) != nil || strings.TrimSpace(session.AccessToken) == "" {
-		return fail(http.StatusBadGateway, "OPENAI_SESSION_LOGIN_REQUIRED", "ChatGPT did not return a logged-in Session; renew the login Cookie or check for a browser challenge")
+	if json.Unmarshal(body, &session) != nil || strings.TrimSpace(session.AccessToken) == "" || strings.TrimSpace(session.SessionToken) == "" {
+		return s.failSessionExport(ctx, taskID, workerID, "invalid_response")
 	}
 	expires, err := time.Parse(time.RFC3339, session.Expires)
 	if err != nil || !expires.After(time.Now()) {
-		return fail(http.StatusBadGateway, "OPENAI_SESSION_EXPIRED", "ChatGPT returned an expired or invalid Session")
+		return s.failSessionExport(ctx, taskID, workerID, "session_expired")
 	}
-	userID, email := account.GetCredential("chatgpt_user_id"), account.GetCredential("email")
-	if userID != "" {
-		if session.User.ID != userID {
-			return fail(http.StatusBadRequest, "OPENAI_SESSION_IDENTITY_MISMATCH", "ChatGPT login Cookie belongs to a different user")
+	record, err := s.sessionExportRepo.GetSessionExportTask(ctx, taskID)
+	if err != nil || record == nil || record.WorkerID != workerID || record.Status != OpenAISessionExportStatusRunning {
+		return infraerrors.Conflict("OPENAI_SESSION_EXPORT_TASK_NOT_ACTIVE", "Session export task is no longer active")
+	}
+	account, err := s.accountFor(ctx, record.AccountID)
+	if err != nil {
+		return err
+	}
+	hash, err := hashReauthCredentials(account.Credentials)
+	if err != nil || subtle.ConstantTimeCompare([]byte(hash), []byte(record.ExpectedCredentialsHash)) != 1 {
+		return s.failSessionExport(ctx, taskID, workerID, "credentials_changed")
+	}
+	userID := strings.TrimSpace(account.GetCredential("chatgpt_user_id"))
+	if userID != "" && session.User.ID != userID {
+		return s.failSessionExport(ctx, taskID, workerID, "identity_mismatch")
+	}
+	if userID == "" {
+		sessionEmail := strings.TrimSpace(session.User.Email)
+		accountEmail := strings.TrimSpace(account.GetCredential("email"))
+		if sessionEmail == "" || accountEmail == "" || !strings.EqualFold(sessionEmail, accountEmail) {
+			return s.failSessionExport(ctx, taskID, workerID, "identity_mismatch")
 		}
-	} else if email == "" || !strings.EqualFold(session.User.Email, email) {
-		return fail(http.StatusBadRequest, "OPENAI_SESSION_IDENTITY_MISMATCH", "Cannot match the ChatGPT Session to this account; check login Cookie and account identity")
 	}
-	return json.RawMessage(body), nil
+	if s.sessionExportResults == nil {
+		s.sessionExportResults = newSessionExportResultStore()
+	}
+	// Validate the upstream response above, then expose only the two credentials
+	// consumed by the Session importer.
+	compactBody, err := compactSessionExportPayload(session.AccessToken, session.SessionToken)
+	if err != nil {
+		return s.failSessionExport(ctx, taskID, workerID, "invalid_response")
+	}
+	s.sessionExportResults.put(taskID, compactBody)
+	return s.sessionExportRepo.FinishSessionExportTask(ctx, taskID, workerID, OpenAISessionExportStatusSucceeded, "")
+}
+
+func compactSessionExportPayload(accessToken, sessionToken string) (json.RawMessage, error) {
+	return json.Marshal(struct {
+		AccessToken  string `json:"accessToken"`
+		SessionToken string `json:"sessionToken"`
+	}{
+		AccessToken:  accessToken,
+		SessionToken: sessionToken,
+	})
+}
+
+func (s *OpenAIOAuthReauthService) FailSessionExport(ctx context.Context, taskID int64, workerID, code string) error {
+	code = normalizeSessionExportErrorCode(code)
+	return s.failSessionExport(ctx, taskID, workerID, code)
+}
+
+func (s *OpenAIOAuthReauthService) failSessionExport(ctx context.Context, taskID int64, workerID, code string) error {
+	code = normalizeSessionExportErrorCode(code)
+	return s.sessionExportRepo.FinishSessionExportTask(ctx, taskID, workerID, OpenAISessionExportStatusFailed, code)
+}
+
+func normalizeSessionExportErrorCode(code string) string {
+	switch strings.TrimSpace(code) {
+	case "password_rejected", "totp_rejected", "identity_mismatch", "upstream_rejected", "worker_timeout", "worker_offline", "credentials_required", "account_invalid", "config_required", "password_unavailable", "totp_unavailable", "proxy_unavailable", "credentials_changed", "invalid_response", "session_expired", "session_token_missing":
+		return strings.TrimSpace(code)
+	default:
+		return "worker_failed"
+	}
+}
+
+func safeSessionExportTask(record *OpenAISessionExportTaskRecord) *OpenAISessionExportTask {
+	if record == nil {
+		return nil
+	}
+	return &record.OpenAISessionExportTask
+}
+
+func validSessionExportStage(stage string) bool {
+	switch stage {
+	case OpenAISessionExportStageStarting, OpenAISessionExportStageProtocolConnecting, OpenAISessionExportStagePasswordSubmitted, OpenAISessionExportStageMFASubmitted, OpenAISessionExportStageSessionRequest, OpenAISessionExportStageIdentityVerification:
+		return true
+	default:
+		return false
+	}
 }

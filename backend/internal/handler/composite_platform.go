@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func ensureCompositeTargetPlatform(c *gin.Context, apiKey *service.APIKey, model string) {
@@ -95,11 +96,15 @@ func anthropicReasoningEffortPolicyForRequest(c *gin.Context, apiKey *service.AP
 func anthropicCompatibleReasoningEffortPolicy(maxEffort string, mappings []service.ReasoningEffortMapping) (string, []service.ReasoningEffortMapping) {
 	if service.NormalizeMaxReasoningEffort(maxEffort) == "minimal" {
 		maxEffort = "low"
+	} else if service.NormalizeMaxReasoningEffort(maxEffort) == "ultra" {
+		maxEffort = "max"
 	}
 	normalizedMappings := append([]service.ReasoningEffortMapping(nil), mappings...)
 	for i := range normalizedMappings {
 		if service.NormalizeMaxReasoningEffort(normalizedMappings[i].To) == "minimal" {
 			normalizedMappings[i].To = "low"
+		} else if service.NormalizeMaxReasoningEffort(normalizedMappings[i].To) == "ultra" {
+			normalizedMappings[i].To = "max"
 		}
 	}
 	return maxEffort, normalizedMappings
@@ -134,12 +139,13 @@ func stampForwardRequestedReasoningEffort(result *service.ForwardResult, request
 }
 
 func applyOpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *service.APIKey, body []byte) ([]byte, bool, error) {
-	bindRequestedReasoningEffort(c, body, strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+	requestModel := clientRequestedModel(c, gjson.GetBytes(body, "model").String())
+	bindRequestedReasoningEffort(c, body, requestModel)
 	maxEffort, mappings, overLimit, ok := openAIReasoningEffortPolicyForRequest(c, apiKey)
 	if !ok {
 		return body, false, nil
 	}
-	return service.ApplyOpenAIReasoningEffortPolicy(body, maxEffort, mappings, overLimit)
+	return service.ApplyOpenAIReasoningEffortPolicy(body, maxEffort, mappings, overLimit, requestModel)
 }
 
 func respondOpenAIReasoningEffortPolicyError(c *gin.Context, err error, write func(*gin.Context, int, string, string)) {
@@ -158,21 +164,39 @@ func applyAnthropicReasoningEffortPolicyForRequest(c *gin.Context, apiKey *servi
 	return service.ApplyReasoningEffortPolicy(body, maxEffort, mappings, overLimit)
 }
 
-func bindOpenAIReasoningEffortPolicyForMessagesRequest(c *gin.Context, apiKey *service.APIKey, body []byte) {
+func prepareOpenAIReasoningEffortPolicyForMessagesRequest(c *gin.Context, apiKey *service.APIKey, body []byte) ([]byte, error) {
 	if c == nil || c.Request == nil {
-		return
+		return body, nil
 	}
-	bindRequestedReasoningEffort(c, body, strings.TrimSpace(gjson.GetBytes(body, "model").String()))
+	requestModel := clientRequestedModel(c, gjson.GetBytes(body, "model").String())
+	bindRequestedReasoningEffort(c, body, requestModel)
+	maxEffort, mappings, overLimit, ok := openAIReasoningEffortPolicyForRequest(c, apiKey)
+	if !ok {
+		return body, nil
+	}
 	// The Messages bridge synthesizes a default OpenAI effort when
 	// output_config.effort is omitted. Bind the group policy only for an
 	// explicit client value so the ceiling does not alter that default.
 	effort := gjson.GetBytes(body, "output_config.effort")
 	if !effort.Exists() || effort.Type != gjson.String || strings.TrimSpace(effort.String()) == "" {
-		return
+		// An explicit ultra model suffix is a client preference, not a bridge
+		// default. Enforce it before conversion or account/model normalization.
+		requested := service.CanonicalRequestedReasoningEffort(nil, requestModel)
+		if requested == nil || *requested != "ultra" {
+			return body, nil
+		}
+		payload, err := sjson.SetBytes(body, "output_config.effort", "ultra")
+		if err != nil {
+			return body, err
+		}
+		updated, changed, err := service.ApplyReasoningEffortPolicy(payload, maxEffort, mappings, overLimit, requestModel)
+		if err != nil || !changed {
+			return body, err
+		}
+		// Do not bind the policy again: a second mapping after conversion could
+		// turn ultra -> high -> low instead of applying one mapping.
+		return updated, nil
 	}
-	maxEffort, mappings, overLimit, ok := openAIReasoningEffortPolicyForRequest(c, apiKey)
-	if !ok {
-		return
-	}
-	c.Request = c.Request.WithContext(service.WithOpenAIReasoningEffortPolicy(c.Request.Context(), maxEffort, mappings, overLimit))
+	c.Request = c.Request.WithContext(service.WithOpenAIReasoningEffortPolicy(c.Request.Context(), maxEffort, mappings, overLimit, requestModel))
+	return body, nil
 }

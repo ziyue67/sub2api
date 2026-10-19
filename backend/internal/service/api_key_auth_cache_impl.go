@@ -14,9 +14,10 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-// v27: merge fork v25 (multi-group routes/profit controls/group Fast + upstream group model_allowlist)
-// with ranxi v26 (group stream_only and user-group denied models) and the API key concurrency limit.
-const apiKeyAuthSnapshotVersion = 27
+// v29: merge fork v27 (multi-group routes/profit controls/group Fast + upstream group
+// model_allowlist, ranxi v26 stream_only and user-group denied models, API key concurrency
+// limit) with ranxi v29 (group client and subagent admission policies).
+const apiKeyAuthSnapshotVersion = 29
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -439,6 +440,8 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: apiKey.Group.FallbackGroupIDOnInvalidRequest,
 			StreamOnly:                      apiKey.Group.StreamOnly,
+			CodexCLIOnly:                    apiKey.Group.CodexCLIOnly,
+			BlockSubagents:                  apiKey.Group.BlockSubagents,
 			ModelRouting:                    apiKey.Group.ModelRouting,
 			ModelRoutingEnabled:             apiKey.Group.ModelRoutingEnabled,
 			MCPXMLInject:                    apiKey.Group.MCPXMLInject,
@@ -545,6 +548,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: snapshot.Group.FallbackGroupIDOnInvalidRequest,
 			StreamOnly:                      snapshot.Group.StreamOnly,
+			CodexCLIOnly:                    snapshot.Group.CodexCLIOnly,
+			BlockSubagents:                  snapshot.Group.BlockSubagents,
 			ModelRouting:                    snapshot.Group.ModelRouting,
 			ModelRoutingEnabled:             snapshot.Group.ModelRoutingEnabled,
 			MCPXMLInject:                    snapshot.Group.MCPXMLInject,

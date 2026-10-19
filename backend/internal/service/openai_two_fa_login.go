@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/mail"
 	"strings"
 	"time"
@@ -76,6 +77,11 @@ func (s *AccountTokenGuardService) startTwoFALogin(ctx context.Context, entry Ac
 		}
 		if loginErr != nil {
 			// Neither provider errors nor request data may be reflected to clients.
+			slog.Warn("account_token_guard_two_fa_login_failed",
+				"job_id", job.ID,
+				"stage", "relogin",
+				"reason", safeTwoFALoginError(loginErr, entry),
+			)
 			job.Status = "failed"
 			return
 		}
@@ -83,6 +89,11 @@ func (s *AccountTokenGuardService) startTwoFALogin(ctx context.Context, entry Ac
 		// clears its password/MFA input. Never report success on a failed save.
 		if saveToLegacyGuard {
 			if err := s.saveTwoFALoginAccount(loginCtx, entry); err != nil {
+				slog.Warn("account_token_guard_two_fa_login_failed",
+					"job_id", job.ID,
+					"stage", "save_guard_credentials",
+					"reason", safeTwoFALoginError(err, entry),
+				)
 				job.Status = "failed"
 				return
 			}
@@ -91,6 +102,38 @@ func (s *AccountTokenGuardService) startTwoFALogin(ctx context.Context, entry Ac
 		job.Status = "succeeded"
 	}()
 	return &OpenAITwoFALoginJob{ID: job.ID, Status: job.Status}, nil
+}
+
+// safeTwoFALoginError keeps asynchronous login diagnostics useful without
+// allowing an upstream response or an accidentally wrapped secret to become a
+// log entry. The relogin path already reduces network and provider failures to
+// short error codes; this is a final redaction, length and control-character guard.
+func safeTwoFALoginError(err error, entry AccountTokenGuardReloginAccount) string {
+	if err == nil {
+		return "unknown"
+	}
+	reason := strings.TrimSpace(err.Error())
+	if reason == "" {
+		return "unknown"
+	}
+	for _, secret := range []string{entry.Email, entry.Password, entry.MFASecret} {
+		if secret != "" {
+			reason = strings.ReplaceAll(reason, secret, "[redacted]")
+		}
+	}
+	reason = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, reason)
+	if len(reason) > 160 {
+		return reason[:160] + "..."
+	}
+	return reason
 }
 
 // Merge into the latest persisted config, not the snapshot from login start:

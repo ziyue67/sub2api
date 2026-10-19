@@ -157,7 +157,11 @@
             <span class="text-gray-400">({{ formatImageBillingSize(row, t) }})</span>
           </div>
           <!-- Token 请求 -->
-          <div v-else class="flex items-center gap-1.5">
+          <button v-else type="button" class="group relative flex items-center gap-1.5 text-left focus-visible:outline focus-visible:outline-primary-500"
+            :aria-label="t('usage.tokenDetails')" :aria-expanded="tokenTooltipVisible && tokenTooltipData === row"
+            @mouseenter="!isMobile && showTokenTooltip($event, row)"
+            @mouseleave="!isMobile && scheduleHide(hideTokenTooltip)"
+            @click="showTokenTooltip($event, row)">
             <div class="space-y-1 text-sm">
               <div class="flex items-center gap-2">
                 <div class="inline-flex items-center gap-1">
@@ -196,21 +200,19 @@
               </div>
             </div>
             <!-- Token Detail Tooltip -->
-            <div
-              class="group relative"
-              @mouseenter="showTokenTooltip($event, row)"
-              @mouseleave="hideTokenTooltip"
-            >
-              <div class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50">
-                <Icon name="infoCircle" size="xs" class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400" />
-              </div>
-            </div>
-          </div>
+            <span class="flex h-4 w-4 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700" aria-hidden="true">
+              <Icon name="infoCircle" size="xs" class="text-gray-400" />
+            </span>
+          </button>
         </template>
 
         <template #cell-cost="{ row }">
-          <div class="text-sm">
-            <div class="flex items-center gap-1.5">
+          <button type="button" class="group relative text-left text-sm focus-visible:outline focus-visible:outline-primary-500"
+            :aria-label="t('usage.costDetails')" :aria-expanded="tooltipVisible && tooltipData === row"
+            @mouseenter="!isMobile && showTooltip($event, row)"
+            @mouseleave="!isMobile && scheduleHide(hideTooltip)"
+            @click="showTooltip($event, row)">
+            <span class="flex items-center gap-1.5">
               <span class="font-medium text-green-600 dark:text-green-400">${{ row.actual_cost?.toFixed(6) || '0.000000' }}</span>
               <span
                 v-if="showLongContextBadge && row.long_context_billing_applied"
@@ -219,19 +221,13 @@
                 class="inline-flex items-center rounded px-1 py-px text-[10px] font-semibold leading-tight bg-amber-100 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:ring-amber-500/30"
               >{{ t('admin.usage.longContext') }}</span>
               <!-- Cost Detail Tooltip -->
-              <div
-                class="group relative"
-                @mouseenter="showTooltip($event, row)"
-                @mouseleave="hideTooltip"
-              >
-                <div class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50">
-                  <Icon name="infoCircle" size="xs" class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400" />
-                </div>
-              </div>
-            </div>
-            <div v-if="showAccountBilling && row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
+              <span class="flex h-4 w-4 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-700" aria-hidden="true">
+                <Icon name="infoCircle" size="xs" class="text-gray-400" />
+              </span>
+            </span>
+            <span v-if="showAccountBilling && row.account_rate_multiplier != null" class="mt-0.5 block text-[11px] text-orange-500 dark:text-orange-400">
               A ${{ accountBilled(row).toFixed(6) }}
-            </div>
+            </span>
             <div
               v-for="(item, index) in billableToolSurcharges(row)"
               :key="`${item.name}-${index}`"
@@ -249,7 +245,7 @@
               <Icon v-else name="search" size="xs" class="h-3 w-3 shrink-0" />
               <span>{{ t('usage.toolSurchargeLine', { name: item.name, count: item.count, cost: item.cost.toFixed(6) }) }}</span>
             </div>
-          </div>
+          </button>
         </template>
 
         <!-- 状态列：首字/总耗时/TPS 用左侧色条表示健康度。缓存率百分数为绿色，色条延伸到这一行，但不改变上面三段的健康色。 -->
@@ -348,16 +344,9 @@
   </div>
 
   <!-- Token Tooltip Portal -->
-  <Teleport to="body">
-    <div
-      v-if="tokenTooltipVisible"
-      class="fixed z-[9999] pointer-events-none -translate-y-1/2"
-      :style="{
-        left: tokenTooltipPosition.x + 'px',
-        top: tokenTooltipPosition.y + 'px'
-      }"
-    >
-      <div class="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800">
+  <UsageDetailPopover :show="tokenTooltipVisible" :anchor="tokenTooltipAnchor" :title="t('usage.tokenDetails')"
+    @close="hideTokenTooltip" @mouseenter="cancelHide" @mouseleave="scheduleHide(hideTokenTooltip)">
+      <div class="max-w-[calc(100vw-1rem)] whitespace-normal rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800">
         <div class="space-y-1.5">
           <div>
             <div class="text-xs font-semibold text-gray-300 mb-1">{{ t('usage.tokenDetails') }}</div>
@@ -437,22 +426,13 @@
             <span class="font-semibold text-blue-400">{{ ((tokenTooltipData?.input_tokens || 0) + (tokenTooltipData?.output_tokens || 0) + (tokenTooltipData?.cache_creation_tokens || 0) + (tokenTooltipData?.cache_read_tokens || 0)).toLocaleString() }}</span>
           </div>
         </div>
-        <div class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"></div>
       </div>
-    </div>
-  </Teleport>
+  </UsageDetailPopover>
 
   <!-- Cost Tooltip Portal -->
-  <Teleport to="body">
-    <div
-      v-if="tooltipVisible"
-      class="fixed z-[9999] pointer-events-none -translate-y-1/2"
-      :style="{
-        left: tooltipPosition.x + 'px',
-        top: tooltipPosition.y + 'px'
-      }"
-    >
-      <div class="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800">
+  <UsageDetailPopover :show="tooltipVisible" :anchor="tooltipAnchor" :title="t('usage.costDetails')"
+    @close="hideTooltip" @mouseenter="cancelHide" @mouseleave="scheduleHide(hideTooltip)">
+      <div class="max-w-[calc(100vw-1rem)] whitespace-normal rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800">
         <div class="space-y-1.5">
           <!-- Cost Breakdown -->
           <div class="mb-2 border-b border-gray-700 pb-1.5">
@@ -592,15 +572,15 @@
             </div>
           </template>
         </div>
-        <div class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"></div>
       </div>
-    </div>
-  </Teleport>
+  </UsageDetailPopover>
   <UsageTimingDialog :record="timingRecord" @close="timingRecord = null" />
 </template>
 
 <script setup lang="ts">
-import { computed, ref, inject } from 'vue'
+import { computed, ref, inject, onUnmounted } from 'vue'
+import { useWindowSize } from '@vueuse/core'
+import UsageDetailPopover from './UsageDetailPopover.vue'
 import UsageTimingDialog from './UsageTimingDialog.vue'
 import { observerUsageContext } from './observerUsageContext'
 import { useI18n } from 'vue-i18n'
@@ -700,6 +680,8 @@ const emit = defineEmits<{
   ipGeoBatchFailed: []
 }>()
 const { t } = useI18n()
+const { width: viewportWidth } = useWindowSize()
+const isMobile = computed(() => viewportWidth.value < 768)
 const appStore = useAppStore()
 const copiedRequestId = ref<string | null>(null)
 const showAccountBilling = props.showAccountBilling
@@ -790,12 +772,12 @@ const copyUpstreamRequestId = (upstreamRequestId: string) =>
 
 // Tooltip state - cost
 const tooltipVisible = ref(false)
-const tooltipPosition = ref({ x: 0, y: 0 })
+const tooltipAnchor = ref<DOMRect | null>(null)
 const tooltipData = ref<AdminUsageLog | null>(null)
 
 // Tooltip state - token
 const tokenTooltipVisible = ref(false)
-const tokenTooltipPosition = ref({ x: 0, y: 0 })
+const tokenTooltipAnchor = ref<DOMRect | null>(null)
 const tokenTooltipData = ref<AdminUsageLog | null>(null)
 
 const getRequestTypeLabel = (row: AdminUsageLog): string => {
@@ -885,33 +867,26 @@ const cacheRateBarStyle = (row: AdminUsageLog): Record<string, string> | undefin
   }
 }
 
-// Cost tooltip functions
-const showTooltip = (event: MouseEvent, row: AdminUsageLog) => {
-  const target = event.currentTarget as HTMLElement
-  const rect = target.getBoundingClientRect()
+// Leave a small bridge between the trigger and the scrollable desktop popover.
+let hideTimer: ReturnType<typeof setTimeout> | undefined
+const cancelHide = () => { clearTimeout(hideTimer) }
+const scheduleHide = (hide: () => void) => { cancelHide(); hideTimer = setTimeout(hide, 120) }
+onUnmounted(cancelHide)
+
+const hideTooltip = () => { tooltipVisible.value = false; tooltipData.value = null }
+const hideTokenTooltip = () => { tokenTooltipVisible.value = false; tokenTooltipData.value = null }
+const showTooltip = (event: Event, row: AdminUsageLog) => {
+  cancelHide()
+  hideTokenTooltip()
+  tooltipAnchor.value = (event.currentTarget as HTMLElement).getBoundingClientRect()
   tooltipData.value = row
-  tooltipPosition.value.x = rect.right + 8
-  tooltipPosition.value.y = rect.top + rect.height / 2
   tooltipVisible.value = true
 }
-
-const hideTooltip = () => {
-  tooltipVisible.value = false
-  tooltipData.value = null
-}
-
-// Token tooltip functions
-const showTokenTooltip = (event: MouseEvent, row: AdminUsageLog) => {
-  const target = event.currentTarget as HTMLElement
-  const rect = target.getBoundingClientRect()
+const showTokenTooltip = (event: Event, row: AdminUsageLog) => {
+  cancelHide()
+  hideTooltip()
+  tokenTooltipAnchor.value = (event.currentTarget as HTMLElement).getBoundingClientRect()
   tokenTooltipData.value = row
-  tokenTooltipPosition.value.x = rect.right + 8
-  tokenTooltipPosition.value.y = rect.top + rect.height / 2
   tokenTooltipVisible.value = true
-}
-
-const hideTokenTooltip = () => {
-  tokenTooltipVisible.value = false
-  tokenTooltipData.value = null
 }
 </script>
