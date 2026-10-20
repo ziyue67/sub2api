@@ -1,0 +1,72 @@
+name: Test Image PR-112 (billing zero-overshoot)
+
+# 测试镜像构建:只为 PR #112(后付费零超发护栏)的测试分支出镜像。
+#
+# 与正式 dockerhub.yml 的隔离约定:
+#   - 只打 test 专用标签,绝不打 latest / <VERSION> / <VERSION>-amd64;
+#   - 不由 main 分支 push 触发,只在本测试分支 push 或手动 dispatch 时运行;
+#   - 不作为 sync-fork-release.yml 的 workflow_run 触发源(它只监听 dockerhub.yml);
+#   - 不参与正式版本:VERSION 形如 0.2.17-test.pr112.N,goreleaser 不会认这个 tag。
+#
+# 标签规则(固定):
+#   test-pr112            —— 该 PR 当前最新测试镜像(浮动)
+#   test-pr112-<sha7>     —— 按提交定格,便于回溯
+#   0.2.17-test.pr112.N   —— 与 backend/cmd/server/VERSION 对齐的语义化测试版本
+
+on:
+  push:
+    branches:
+      - test/pr-112-rebased
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read version
+        id: version
+        run: echo "value=$(tr -d '[:space:]' < backend/cmd/server/VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Short sha
+        id: sha
+        run: echo "value=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push (test tags only, never latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+            COMMIT=${{ github.sha }}
+            NODE_MAX_OLD_SPACE_SIZE=4096
+          tags: |
+            ghcr.io/ziyue67/sub2api:test-pr112
+            ghcr.io/ziyue67/sub2api:test-pr112-${{ steps.sha.outputs.value }}
+            ghcr.io/ziyue67/sub2api:${{ steps.version.outputs.value }}
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:test-pr112
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:test-pr112-${{ steps.sha.outputs.value }}
+            docker.io/${{ secrets.DOCKERHUB_USERNAME }}/sub2api:${{ steps.version.outputs.value }}

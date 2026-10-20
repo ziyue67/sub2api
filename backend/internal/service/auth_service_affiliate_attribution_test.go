@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -29,14 +30,17 @@ func TestValidateAffiliateAttributionToken(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(42), inviterID)
 
+	// 篡改样本必须**确定性地**破坏签名：JWT 签名是 32 字节，base64url 编码后最后一个
+	// 字符只有 4 个有效位(另 2 位被解码器忽略) —— 当它是 'w' 时改成 'x' 会解码出完全
+	// 相同的签名，校验照样通过、断言偶发失败（实测 2000 次里 118 次假通过 ≈ 5.9%，
+	// 在 CI 上表现为随机红）。改为翻转签名字节后重新编码。
 	parts := strings.Split(token, ".")
 	require.Len(t, parts, 3)
-	replacement := byte('A')
-	if parts[2][0] == replacement {
-		replacement = 'B'
-	}
-	parts[2] = string(replacement) + parts[2][1:]
-	tampered := strings.Join(parts, ".")
+	sig, decodeErr := base64.RawURLEncoding.DecodeString(parts[2])
+	require.NoError(t, decodeErr)
+	require.NotEmpty(t, sig)
+	sig[0] ^= 0xFF
+	tampered := parts[0] + "." + parts[1] + "." + base64.RawURLEncoding.EncodeToString(sig)
 	_, err = svc.ValidateAffiliateAttributionToken(tampered)
 	require.ErrorIs(t, err, ErrInvalidToken)
 }

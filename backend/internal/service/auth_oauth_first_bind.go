@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 
@@ -81,6 +84,11 @@ ON CONFLICT (user_id, provider_type, grant_reason) DO NOTHING`,
 		if err := client.User.UpdateOneID(userID).AddBalance(providerDefaults.Balance).Exec(ctx); err != nil {
 			return fmt.Errorf("apply first bind balance default: %w", err)
 		}
+		// 赠送余额是"余额增加"路径：必须失效余额缓存并清除"钱包已耗尽"标记，
+		// 否则一个已耗尽钱包的用户绑定 provider 拿到赠送额度后，仍会在标记 TTL
+		// （默认 6 分钟）内被预检 403（审计 H7）。
+		// 走脱离请求生命周期的 ctx：绑定流程结束/取消都不该让缓存修复失败。
+		s.invalidateBalanceCacheAfterFirstBindGrant(userID)
 	}
 	if providerDefaults.Concurrency != 0 {
 		if err := client.User.UpdateOneID(userID).AddConcurrency(providerDefaults.Concurrency).Exec(ctx); err != nil {
@@ -101,4 +109,26 @@ ON CONFLICT (user_id, provider_type, grant_reason) DO NOTHING`,
 	}
 
 	return nil
+}
+
+// invalidateBalanceCacheAfterFirstBindGrant 在首次绑定赠送余额后失效余额缓存并清
+// "钱包已耗尽"标记（审计 H7）。billingCache 由 promoService 注入（同一 BillingCacheService
+// 实例）；未装配时静默 no-op（与其它降级路径一致）。
+func (s *AuthService) invalidateBalanceCacheAfterFirstBindGrant(userID int64) {
+	if s == nil || s.promoService == nil || s.promoService.billingCacheService == nil {
+		return
+	}
+	cache := s.promoService.billingCacheService
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.LegacyPrintf("service.auth", "panic in first bind balance cache invalidation: %v", r)
+			}
+		}()
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := cache.InvalidateUserBalanceAfterCredit(cacheCtx, userID); err != nil {
+			logger.LegacyPrintf("service.auth", "invalidate balance cache after first bind grant failed: user_id=%d err=%v", userID, err)
+		}
+	}()
 }

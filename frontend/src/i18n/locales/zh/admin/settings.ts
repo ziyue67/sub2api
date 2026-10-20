@@ -484,6 +484,11 @@ export default {
         defaultConcurrencyHint: '新用户的最大并发请求数',
         defaultUserRpmLimit: '默认用户 RPM 限制',
         defaultUserRpmLimitHint: '新用户默认每分钟最大请求数，0 = 不限制；仅作用于新用户创建时初始化',
+        inflightReservationBudgetMultiplier: '在途预留预算倍数',
+        inflightReservationBudgetMultiplierHint:
+          '控制并发准入：1 = 严格（在途预留总额不得超过可花余额，零坏账，但高并发会被大量 403）；' +
+          '调高则放宽为「只要单笔最坏费用付得起就放行」，一直放到余额触及封底才拒绝，代价是允许少量坏账。' +
+          '仅在大上下文 + 高并发场景需要调高；<1 一律按 1 处理。',
         defaultSubscriptions: '默认订阅列表',
         defaultSubscriptionsHint: '新用户创建或注册时自动分配这些订阅',
         addDefaultSubscription: '添加默认订阅',

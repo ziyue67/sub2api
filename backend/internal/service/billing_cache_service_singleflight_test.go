@@ -100,6 +100,7 @@ type balanceLoadUserRepoStub struct {
 	calls   atomic.Int64
 	delay   time.Duration
 	balance float64
+	err     error
 }
 
 func (s *balanceLoadUserRepoStub) GetByID(ctx context.Context, id int64) (*User, error) {
@@ -110,6 +111,9 @@ func (s *balanceLoadUserRepoStub) GetByID(ctx context.Context, id int64) (*User,
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	}
+	if s.err != nil {
+		return nil, s.err
 	}
 	return &User{ID: id, Balance: s.balance}, nil
 }

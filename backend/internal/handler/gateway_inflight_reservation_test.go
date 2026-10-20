@@ -45,10 +45,13 @@ func TestHostedWebSearchInflightEstimate_DetectsOnlyProviderTools(t *testing.T) 
 }
 
 type countingEstimator struct {
-	calls  int
-	cost   float64
-	priced bool
+	calls    int
+	cost     float64
+	priced   bool
+	fallback float64
 }
+
+func (e *countingEstimator) UnpricedReservationFallbackUSD() float64 { return e.fallback }
 
 func (e *countingEstimator) EstimateInflightReservation(context.Context, *service.APIKey, service.InflightEstimateRequest) (float64, bool) {
 	e.calls++
@@ -106,10 +109,43 @@ type handlerInflightCache struct {
 	mu      sync.Mutex
 	balance float64
 	res     map[string]float64
+	// scoped 是新版在途预留账本（scope -> requestID -> amount）。
+	scoped map[string]map[string]float64
 }
 
 func newHandlerInflightCache(balance float64) *handlerInflightCache {
-	return &handlerInflightCache{balance: balance, res: map[string]float64{}}
+	return &handlerInflightCache{balance: balance, res: map[string]float64{}, scoped: map[string]map[string]float64{}}
+}
+
+func (m *handlerInflightCache) ReserveUserBalance(_ context.Context, scope, id string, amount float64, _ time.Duration) (float64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.scoped[scope] == nil {
+		m.scoped[scope] = map[string]float64{}
+	}
+	m.scoped[scope][id] = amount
+	total := 0.0
+	for _, v := range m.scoped[scope] {
+		total += v
+	}
+	return total, nil
+}
+
+func (m *handlerInflightCache) ReleaseUserBalanceReservation(_ context.Context, scope, id string, _ float64, _ time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.scoped[scope], id)
+	return nil
+}
+
+func (m *handlerInflightCache) scopedCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, items := range m.scoped {
+		n += len(items)
+	}
+	return n
 }
 
 func (m *handlerInflightCache) GetUserBalance(context.Context, int64) (float64, error) {
@@ -203,10 +239,12 @@ func TestWebSearch_RejectsWhenInflightExceedsBalance(t *testing.T) {
 		Group: &service.Group{ID: groupID, Platform: service.PlatformGrok, RateMultiplier: 1, SearchPricePer1k: &perK},
 	}
 
-	// Another in-flight request of this user already holds $1.
-	held, err := billingCache.ReserveInflight(context.Background(), apiKey.User, apiKey.Group, nil, 1.0)
-	require.NoError(t, err)
-	defer held.HandlerDone()
+	// Another in-flight request of this user already holds $1 (same admission path).
+	var held service.BillingReservationSlot
+	require.NoError(t, billingCache.CheckBillingEligibility(context.Background(), apiKey.User, apiKey, apiKey.Group, nil, "",
+		service.WithMaxRequestSpend(1.0), service.WithBalanceReservation(&held)))
+	defer held.Release(context.Background())
+	require.Equal(t, 1, cache.scopedCount())
 
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -219,5 +257,53 @@ func TestWebSearch_RejectsWhenInflightExceedsBalance(t *testing.T) {
 
 	require.NotEqual(t, http.StatusOK, w.Code)
 	require.Contains(t, w.Body.String(), "balance")
-	require.Equal(t, 1, cache.count(), "rejected request must not leave a reservation behind")
+	require.Equal(t, 1, cache.scopedCount(), "rejected request must not leave a reservation behind")
+	require.Equal(t, 0, cache.count(), "legacy wallet-only reservation is no longer used by this endpoint")
+}
+
+// WebSocket 按 turn 的预留：同 turn 重新准入替换旧预留；take 后交给结算任务；
+// 会话结束时 releaseAll 只归还未移交（未 HandOff）的预留。
+func TestOpenAIWSTurnReservations_ReplaceTakeAndReleaseAll(t *testing.T) {
+	cache := newHandlerInflightCache(100)
+	billingCache := service.NewBillingCacheService(cache, nil, nil, nil, nil, nil, &config.Config{}, nil)
+	t.Cleanup(billingCache.Stop)
+	user := &service.User{ID: 7}
+	admit := func() *service.BillingReservationSlot {
+		slot := &service.BillingReservationSlot{}
+		require.NoError(t, billingCache.CheckBillingEligibility(context.Background(), user, nil, nil, nil, "",
+			service.WithMaxRequestSpend(1), service.WithBalanceReservation(slot), service.WithoutRPMCheck()))
+		return slot
+	}
+	ctx := context.Background()
+	r := newOpenAIWSTurnReservations()
+
+	r.put(ctx, 1, admit())
+	r.put(ctx, 1, admit()) // 首帧换号重试：旧预留立即归还
+	require.Equal(t, 1, cache.scopedCount())
+
+	r.put(ctx, 2, admit())
+	require.Equal(t, 2, cache.scopedCount())
+
+	settling := r.take(1)
+	settling.HandOff() // 已提交结算任务
+	r.release(ctx, 2)  // turn 2 失败：立即归还
+	require.Equal(t, 1, cache.scopedCount())
+
+	r.put(ctx, 3, admit())
+	r.releaseAll(ctx) // 会话结束：只归还未移交的 turn 3
+	require.Equal(t, 1, cache.scopedCount(), "handed-off reservation stays until its billing task releases it")
+	settling.Release(ctx)
+	require.Equal(t, 0, cache.scopedCount())
+}
+
+// 审计 H3：两套估算都无法定价时按配置的保守金额预留，而不是 0（0 会跳过全部预留）。
+func TestAdmissionWorstSpend_UnpricedUsesConfiguredFallback(t *testing.T) {
+	apiKey := &service.APIKey{User: &service.User{ID: 1}}
+	req := tokenInflightEstimate("unpriced-alias", nil)
+	require.Zero(t, admissionWorstSpend(context.Background(), &countingEstimator{}, apiKey, 0, req),
+		"no fallback configured keeps the legacy behavior")
+	require.InDelta(t, 2.5, admissionWorstSpend(context.Background(), &countingEstimator{fallback: 2.5}, apiKey, 0, req), 1e-12)
+	// 任一估算能定价时不使用兜底金额。
+	require.InDelta(t, 0.3, admissionWorstSpend(context.Background(), &countingEstimator{fallback: 2.5}, apiKey, 0.3, req), 1e-12)
+	require.InDelta(t, 0.7, admissionWorstSpend(context.Background(), &countingEstimator{cost: 0.7, priced: true, fallback: 2.5}, apiKey, 0.3, req), 1e-12)
 }

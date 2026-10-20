@@ -60,6 +60,14 @@ func TestIncrementUserPlatformQuotaUsage_SyncCallsCache(t *testing.T) {
 
 // ── T6 tests: checkUserPlatformQuotaEligibility ──────────────────────────────
 
+// checkUserPlatformQuotaEligibility 是测试侧的薄封装：生产代码里只保留返回快照的
+// loadUserPlatformQuotaEligibility（预检需要快照来建立在途预留），这里按"只看结论"
+// 的方式调用它，保持用例可读。
+func checkUserPlatformQuotaEligibility(svc *BillingCacheService, userID int64, platform string) error {
+	_, err := svc.loadUserPlatformQuotaEligibility(context.Background(), userID, platform)
+	return err
+}
+
 // fakeQuotaRepo 实现 UserPlatformQuotaRepository 最小子集
 type fakeQuotaRepo struct {
 	rec *UserPlatformQuotaRecord
@@ -239,7 +247,7 @@ func TestCheckUserPlatformQuotaEligibility_AllowsWhenUnderLimit(t *testing.T) {
 		SchemaVersion:    UserPlatformQuotaCacheSchemaV1,
 	}}
 	s := newServiceForPreflight(t, repo, cache)
-	if err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic"); err != nil {
+	if err := checkUserPlatformQuotaEligibility(s, 1, "anthropic"); err != nil {
 		t.Errorf("expected nil, got %v", err)
 	}
 }
@@ -256,7 +264,7 @@ func TestCheckUserPlatformQuotaEligibility_DailyExhausted(t *testing.T) {
 		SchemaVersion:    UserPlatformQuotaCacheSchemaV1,
 	}}
 	s := newServiceForPreflight(t, repo, cache)
-	err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic")
+	err := checkUserPlatformQuotaEligibility(s, 1, "anthropic")
 	if !errors.Is(err, ErrUserPlatformDailyQuotaExhausted) {
 		t.Errorf("expected ErrUserPlatformDailyQuotaExhausted, got %v", err)
 	}
@@ -273,7 +281,7 @@ func TestCheckUserPlatformQuotaEligibility_NilLimitMeansUnlimited(t *testing.T) 
 		// DailyLimitUSD nil → 无限额
 	}}
 	s := newServiceForPreflight(t, repo, cache)
-	if err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic"); err != nil {
+	if err := checkUserPlatformQuotaEligibility(s, 1, "anthropic"); err != nil {
 		t.Errorf("nil limits should be unlimited, got %v", err)
 	}
 }
@@ -290,7 +298,7 @@ func TestCheckUserPlatformQuotaEligibility_ZeroLimitImmediateBlock(t *testing.T)
 		SchemaVersion:    UserPlatformQuotaCacheSchemaV1,
 	}}
 	s := newServiceForPreflight(t, repo, cache)
-	err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic")
+	err := checkUserPlatformQuotaEligibility(s, 1, "anthropic")
 	if !errors.Is(err, ErrUserPlatformDailyQuotaExhausted) {
 		t.Errorf("expected daily exhausted for limit=0, got %v", err)
 	}
@@ -300,7 +308,7 @@ func TestCheckUserPlatformQuotaEligibility_NoRecordMeansUnlimited(t *testing.T) 
 	repo := &fakeQuotaRepo{rec: nil}
 	cache := &fakeFullCache{}
 	s := newServiceForPreflight(t, repo, cache)
-	if err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic"); err != nil {
+	if err := checkUserPlatformQuotaEligibility(s, 1, "anthropic"); err != nil {
 		t.Errorf("no record = unlimited, got %v", err)
 	}
 }
@@ -318,7 +326,7 @@ func TestCheckUserPlatformQuotaEligibility_OldSchemaCacheMissTriggersDB(t *testi
 	// SchemaVersion=0（旧 entry），应走 DB 路径
 	cache := &fakeFullCache{entry: &UserPlatformQuotaCacheEntry{DailyUsageUSD: 1.0}}
 	s := newServiceForPreflight(t, repo, cache)
-	err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic")
+	err := checkUserPlatformQuotaEligibility(s, 1, "anthropic")
 	if !errors.Is(err, ErrUserPlatformDailyQuotaExhausted) {
 		t.Errorf("旧版 entry 应走 DB 路径并报 daily exhausted, got %v", err)
 	}
@@ -338,7 +346,7 @@ func TestCheckUserPlatformQuotaEligibility_WindowExpiredInCache(t *testing.T) {
 		SchemaVersion:    UserPlatformQuotaCacheSchemaV1,
 	}}
 	s := newServiceForPreflight(t, repo, cache)
-	err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic")
+	err := checkUserPlatformQuotaEligibility(s, 1, "anthropic")
 	if err != nil {
 		t.Errorf("过期窗口应归零放行, got %v", err)
 	}
@@ -365,7 +373,7 @@ func TestCheckUserPlatformQuotaEligibility_WindowExpiredRefreshesCache(t *testin
 	s := newServiceForPreflight(t, repo, cache)
 
 	// 本次 check 应放行(本地清零后 usage=0 < limit=5)
-	err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic")
+	err := checkUserPlatformQuotaEligibility(s, 1, "anthropic")
 	if err != nil {
 		t.Errorf("过期窗口应归零放行, got %v", err)
 	}
@@ -551,7 +559,7 @@ func TestCheckUserPlatformQuotaEligibility_StandardMode_BlocksWhenLimitZero(t *t
 		cfg:                   cfg,
 		userPlatformQuotaRepo: &fakeQuotaRepo{},
 	}
-	err := s.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic")
+	err := checkUserPlatformQuotaEligibility(s, 1, "anthropic")
 	if !errors.Is(err, ErrUserPlatformDailyQuotaExhausted) {
 		t.Errorf("standard mode with limit=0 should return ErrUserPlatformDailyQuotaExhausted, got: %v", err)
 	}
@@ -605,7 +613,7 @@ func TestCheckBillingEligibility_NonSubscriptionGroup_AppliesQuota(t *testing.T)
 		cfg:                   cfg,
 		userPlatformQuotaRepo: &fakeQuotaRepo{},
 	}
-	err := s.checkUserPlatformQuotaEligibility(context.Background(), 99, "openai")
+	err := checkUserPlatformQuotaEligibility(s, 99, "openai")
 	if !errors.Is(err, ErrUserPlatformDailyQuotaExhausted) {
 		t.Errorf("non-subscription mode quota check should block, got: %v", err)
 	}
@@ -678,7 +686,7 @@ func TestCheckUserPlatformQuotaEligibility_NoRow_WritesSentinel(t *testing.T) {
 	svc := newServiceForPreflight(t, repo, cache)
 	svc.cfg.Billing.UserPlatformQuotaSentinelTTLSeconds = 3600
 
-	if err := svc.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic"); err != nil {
+	if err := checkUserPlatformQuotaEligibility(svc, 1, "anthropic"); err != nil {
 		t.Fatalf("expected nil (fail-open), got %v", err)
 	}
 	if cache.getSetCalls() != 1 {
@@ -710,7 +718,7 @@ func TestCheckUserPlatformQuotaEligibility_RedisGetError_NoSentinelBackfill(t *t
 	svc := newServiceForPreflight(t, repo, cache)
 	svc.cfg.Billing.UserPlatformQuotaSentinelTTLSeconds = 3600
 
-	if err := svc.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic"); err != nil {
+	if err := checkUserPlatformQuotaEligibility(svc, 1, "anthropic"); err != nil {
 		t.Fatalf("redis 故障应 fail-open, got %v", err)
 	}
 	if cache.getSetCalls() != 0 {
@@ -727,7 +735,7 @@ func TestCheckUserPlatformQuotaEligibility_NoRow_SentinelSetFailsFailOpen(t *tes
 	svc := newServiceForPreflight(t, repo, cache)
 	svc.cfg.Billing.UserPlatformQuotaSentinelTTLSeconds = 3600
 
-	if err := svc.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic"); err != nil {
+	if err := checkUserPlatformQuotaEligibility(svc, 1, "anthropic"); err != nil {
 		t.Fatalf("sentinel set 失败应 fail-open, got %v", err)
 	}
 	if cache.getSetCalls() != 1 {
@@ -755,7 +763,7 @@ func TestCheckUserPlatformQuotaEligibility_SentinelCrossDay_NoRefresh(t *testing
 	cache := &fakeFullCache{entry: sentinel} // entry 非 nil → Get HIT
 	svc := newServiceForPreflight(t, &fakeQuotaRepo{}, cache)
 
-	if err := svc.checkUserPlatformQuotaEligibility(context.Background(), 1, "anthropic"); err != nil {
+	if err := checkUserPlatformQuotaEligibility(svc, 1, "anthropic"); err != nil {
 		t.Fatalf("sentinel = no limit, expected nil, got %v", err)
 	}
 	if cache.getSetCalls() != 0 {

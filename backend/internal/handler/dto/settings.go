@@ -183,6 +183,9 @@ type SystemSettings struct {
 	AdminRechargeRebateEnabled   bool                         `json:"affiliate_admin_recharge_enabled"`
 	DefaultUserRPMLimit          int                          `json:"default_user_rpm_limit"`
 	DefaultSubscriptions         []DefaultSubscriptionSetting `json:"default_subscriptions"`
+	// InflightReservationBudgetMultiplier 在途预留聚合闸门预算倍数：1 = 严格（零坏账），
+	// 调高则允许并发准入一直放到余额触及封底，代价是允许 shortfall 坏账。
+	InflightReservationBudgetMultiplier float64 `json:"inflight_reservation_budget_multiplier"`
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`

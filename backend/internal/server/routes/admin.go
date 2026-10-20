@@ -290,6 +290,11 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/ingress-rejections/health", h.Admin.Ops.GetIngressRejectHealth)
 		ops.GET("/auth-cache-invalidation/health", h.Admin.Ops.GetAuthCacheInvalidationHealth)
 
+		// Billing zero-overshoot guard health (in-process counters, no DB).
+		// 见 handler/admin/ops_billing_guard_handler.go：write-off / 预检拒绝原因 /
+		// 在途预留 / 降级与 fail-open 的累计量，供 ops 面板按斜率告警。
+		ops.GET("/billing-guard", h.Admin.Ops.GetBillingGuardStats)
+
 		// Upstream errors (independent upstream failures)
 		ops.GET("/upstream-errors", h.Admin.Ops.ListUpstreamErrors)
 		ops.GET("/upstream-errors/:id", h.Admin.Ops.GetUpstreamError)
