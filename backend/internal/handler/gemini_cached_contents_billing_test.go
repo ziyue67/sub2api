@@ -267,7 +267,9 @@ func (r *cachedBillingUserRepo) GetByID(_ context.Context, id int64) (*service.U
 	return &service.User{ID: id, Balance: r.balance}, nil
 }
 
-func (r *cachedBillingUserRepo) DeductBalance(context.Context, int64, float64) error { return nil }
+func (r *cachedBillingUserRepo) DeductBalance(context.Context, int64, float64, ...float64) error {
+	return nil
+}
 
 type cachedBillingUsageRepo struct {
 	service.UsageLogRepository
