@@ -4,8 +4,8 @@
 护栏是否真的在跑、以及升级时的注意事项**。适用代码：`backend/internal/service/billing_cache_service.go`、
 `backend/internal/service/gateway_request_spend_estimate.go`、`backend/internal/repository/billing_cache.go`、
 `backend/internal/repository/billing_reservation_db.go`、`backend/internal/repository/usage_billing_repo.go`；
-DB 兜底迁移为 `272_billing_balance_reservations.sql` / `273_billing_scope_reservations.sql` /
-`274_billing_reservation_fallback_state.sql`。
+DB 兜底迁移为 `291_billing_balance_reservations.sql` / `292_billing_scope_reservations.sql` /
+`293_billing_reservation_fallback_state.sql`。
 
 ## 1. 问题背景
 
