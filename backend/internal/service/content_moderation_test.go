@@ -1567,18 +1567,19 @@ func TestContentModerationAutoBanDisablesRegularUserAtThreshold(t *testing.T) {
 	cfg.ViolationWindowHours = 24
 
 	userID := int64(1001)
-	repo := &contentModerationTestRepo{}
-	require.NoError(t, repo.CreateLog(context.Background(), newContentModerationFlaggedLog(userID)))
+	baseRepo := &contentModerationTestRepo{}
+	require.NoError(t, baseRepo.CreateLog(context.Background(), newContentModerationFlaggedLog(userID)))
 	userRepo := &contentModerationTestUserRepo{user: &User{ID: userID, Role: RoleUser, Status: StatusActive}}
 	invalidator := &contentModerationTestAuthCacheInvalidator{}
+	repo := &moderationRecoveryRepo{contentModerationTestRepo: baseRepo, user: userRepo.user}
 	svc := NewContentModerationService(nil, repo, nil, nil, userRepo, nil, invalidator, nil)
 
 	svc.persistContentModerationLog(context.Background(), cfg, newContentModerationFlaggedLog(userID), "", false, true)
 
-	logs := requireContentModerationLogCount(t, repo, 2)
+	logs := requireContentModerationLogCount(t, baseRepo, 2)
 	require.Equal(t, 2, logs[1].ViolationCount)
 	require.True(t, logs[1].AutoBanned)
-	require.Len(t, userRepo.updated, 1)
+	require.Empty(t, userRepo.updated) // The transactional moderation repository owns the status write.
 	require.Equal(t, StatusDisabled, userRepo.user.Status)
 	require.Equal(t, []int64{userID}, invalidator.userIDs)
 }
@@ -1605,13 +1606,15 @@ func TestContentModerationAdminBelowBanThresholdRecordsViolationOnly(t *testing.
 }
 
 func newContentModerationFlaggedLog(userID int64) *ContentModerationLog {
+	version := int64(0)
 	return &ContentModerationLog{
-		UserID:          &userID,
-		Action:          ContentModerationActionBlock,
-		Flagged:         true,
-		HighestCategory: "sexual",
-		HighestScore:    0.9,
-		CreatedAt:       time.Now(),
+		moderationVersion: &version,
+		UserID:            &userID,
+		Action:            ContentModerationActionBlock,
+		Flagged:           true,
+		HighestCategory:   "sexual",
+		HighestScore:      0.9,
+		CreatedAt:         time.Now(),
 	}
 }
 
@@ -1799,34 +1802,23 @@ func TestBuildContentModerationAccountDisabledEmailBody_ContainsBanDetails(t *te
 	require.Contains(t, body, "Sub2API &lt;Admin&gt;")
 }
 
-func TestContentModerationUnbanUser_ActivatesUserAndInvalidatesAuthCache(t *testing.T) {
-	userRepo := &contentModerationTestUserRepo{user: &User{ID: 1001, Email: "user@example.com", Status: StatusDisabled}}
+func TestContentModerationUnbanUser_RequiresConfirmedSourceScopedAction(t *testing.T) {
+	userRepo := &contentModerationTestUserRepo{user: &User{ID: 1001, Status: StatusDisabled}}
 	invalidator := &contentModerationTestAuthCacheInvalidator{}
-	repo := &contentModerationTestRepo{}
-	svc := NewContentModerationService(nil, repo, nil, nil, userRepo, nil, invalidator, nil)
-
-	result, err := svc.UnbanUser(context.Background(), 1001)
-
-	require.NoError(t, err)
-	require.Equal(t, int64(1001), result.UserID)
-	require.Equal(t, StatusActive, result.Status)
-	require.Len(t, userRepo.updated, 1)
-	require.Equal(t, StatusActive, userRepo.updated[0].Status)
-	require.Equal(t, []int64{1001}, invalidator.userIDs)
-}
-
-func TestContentModerationUnbanUser_ActiveUserOnlyInvalidatesAuthCache(t *testing.T) {
-	userRepo := &contentModerationTestUserRepo{user: &User{ID: 1001, Email: "user@example.com", Status: StatusActive}}
-	invalidator := &contentModerationTestAuthCacheInvalidator{}
-	repo := &contentModerationTestRepo{}
-	svc := NewContentModerationService(nil, repo, nil, nil, userRepo, nil, invalidator, nil)
-
-	result, err := svc.UnbanUser(context.Background(), 1001)
-
-	require.NoError(t, err)
-	require.Equal(t, StatusActive, result.Status)
+	svc := NewContentModerationService(nil, &contentModerationTestRepo{}, nil, nil, userRepo, nil, invalidator, nil)
+	_, err := svc.UnbanUser(context.Background(), 1001)
+	require.Error(t, err)
+	require.Equal(t, StatusDisabled, userRepo.user.Status)
 	require.Empty(t, userRepo.updated)
-	require.Equal(t, []int64{1001}, invalidator.userIDs)
+	require.Empty(t, invalidator.userIDs)
+}
+func TestContentModerationUnbanUser_ActiveUserStillRequiresConfirmation(t *testing.T) {
+	userRepo := &contentModerationTestUserRepo{user: &User{ID: 1001, Status: StatusActive}}
+	svc := NewContentModerationService(nil, &contentModerationTestRepo{}, nil, nil, userRepo, nil, nil, nil)
+	_, err := svc.UnbanUser(context.Background(), 1001)
+	require.Error(t, err)
+	require.Equal(t, StatusActive, userRepo.user.Status)
+	require.Empty(t, userRepo.updated)
 }
 
 func contentModerationIntPtr(v int) *int {

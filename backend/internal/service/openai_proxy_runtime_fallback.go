@@ -146,6 +146,8 @@ func (s *OpenAIGatewayService) doOpenAIProxyAttempt(req *http.Request, account *
 	if err := controlledSubmission(req.Context(), "native_http"); err != nil {
 		return nil, err
 	}
+	observeAttempt := s.observePriorityAttempt(req, account)
+	defer func() { observeAttempt(resp, err) }()
 	defer func() { s.rateLimitService.observeQualityResponse(req.Context(), account, resp, err) }()
 	defer func() { controlledHTTPResponse(req.Context(), resp) }()
 	req, timingTrace := requesttiming.StartAttempt(req, account.ID, target.proxyID)

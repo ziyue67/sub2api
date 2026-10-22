@@ -59,6 +59,29 @@ const billingData = {
 }
 
 describe('UpstreamBillingRateCell', () => {
+  it('shows every upstream group rate and pauses scalar synchronization', async () => {
+    const now = Date.parse('2026-07-13T00:30:00Z')
+    const wrapper = mount(UpstreamBillingRateCell, { props: {
+      account: makeAccount({ extra: { upstream_billing_probe: {
+        status: 'ok', received_at: '2026-07-13T00:00:00Z', fresh_until: '2026-07-13T01:00:00Z',
+        last_attempt_at: '2026-07-13T00:00:00Z', next_probe_at: '2026-07-13T00:30:00Z',
+        data: { object: 'sub2api.key_billing', schema_version: 2, billing_scope: 'token', billing_mode: 'multi_group', observed_at: billingData.observed_at,
+          groups: [
+            { ...billingData, group_id: 1, group_name: 'Astra', platform: 'openai', status: 'active' },
+            { ...billingData, group_id: 2, group_name: 'Economy', platform: 'openai', status: 'active', peak_rate_enabled: false, group_rate_multiplier: 0.18, resolved_rate_multiplier: 0.18, effective_rate_multiplier: 0.18 }
+          ] }
+      } } }), now
+    } })
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.18–0.60x')
+    const details = wrapper.get('[data-testid="upstream-billing-groups"]')
+    expect(details.text()).toContain('Astra')
+    expect(details.text()).toContain('Economy')
+    expect(details.text()).toContain('admin.accounts.upstreamBilling.multiGroupSyncPaused')
+    await wrapper.setProps({ now: Date.parse('2026-07-13T02:00:00Z') })
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('admin.accounts.upstreamBilling.stale')
+    expect(wrapper.get('[data-testid="upstream-billing-groups"]').text()).toContain('Astra')
+  })
+
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-13T00:30:00Z'))

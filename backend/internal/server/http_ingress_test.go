@@ -60,6 +60,8 @@ func TestConfigureTrustedProxies(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  config.ServerConfig
+		peer string
+		xff  string
 		want string
 	}{
 		{
@@ -85,6 +87,58 @@ func TestConfigureTrustedProxies(t *testing.T) {
 			},
 			want: "9.9.9.9",
 		},
+		{
+			name: "unconfigured IPv4 loopback resolves local nginx client",
+			peer: "127.0.0.1:12345", want: "1.2.3.4",
+		},
+		{
+			name: "unconfigured IPv6 loopback resolves local nginx client",
+			peer: "[::1]:12345", want: "1.2.3.4",
+		},
+		{
+			name: "unconfigured mapped loopback resolves local nginx client",
+			peer: "[::ffff:127.0.0.1]:12345", want: "1.2.3.4",
+		},
+		{
+			name: "nginx appended client wins over spoofed prefix and real IP",
+			peer: "127.0.0.1:12345", xff: "203.0.113.99, 198.51.100.10", want: "198.51.100.10",
+		},
+		{
+			name: "local nginx forwards IPv6 visitor",
+			peer: "127.0.0.1:12345", xff: "2001:db8::10", want: "2001:db8::10",
+		},
+		{
+			name: "unconfigured public peer cannot spoof forwarding headers",
+			peer: "198.51.100.10:12345", want: "198.51.100.10",
+		},
+		{
+			name: "unconfigured docker peer is not implicitly trusted",
+			peer: "172.18.0.1:12345", want: "172.18.0.1",
+		},
+		{
+			name: "other loopback addresses require explicit trust",
+			peer: "127.0.0.2:12345", want: "127.0.0.2",
+		},
+		{
+			name: "explicit empty list does not trust local nginx",
+			cfg:  config.ServerConfig{TrustedProxiesConfigured: true},
+			peer: "127.0.0.1:12345", want: "127.0.0.1",
+		},
+		{
+			name: "explicit proxy list replaces loopback defaults",
+			cfg:  config.ServerConfig{TrustedProxiesConfigured: true, TrustedProxies: []string{"9.9.9.9/32"}},
+			peer: "127.0.0.1:12345", want: "127.0.0.1",
+		},
+		{
+			name: "invalid mixed list cannot fall back to loopback trust",
+			cfg:  config.ServerConfig{TrustedProxiesConfigured: true, TrustedProxies: []string{"127.0.0.1/32", "invalid"}},
+			peer: "127.0.0.1:12345", want: "127.0.0.1",
+		},
+		{
+			name: "whitespace in explicit list fails closed",
+			cfg:  config.ServerConfig{TrustedProxiesConfigured: true, TrustedProxies: []string{" 127.0.0.1 "}},
+			peer: "127.0.0.1:12345", want: "127.0.0.1",
+		},
 	}
 
 	for _, tc := range tests {
@@ -95,10 +149,47 @@ func TestConfigureTrustedProxies(t *testing.T) {
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/t", nil)
-			req.RemoteAddr = "9.9.9.9:12345"
-			req.Header.Set("X-Forwarded-For", "1.2.3.4")
+			req.RemoteAddr = tc.peer
+			if req.RemoteAddr == "" {
+				req.RemoteAddr = "9.9.9.9:12345"
+			}
+			xff := tc.xff
+			if xff == "" {
+				xff = "1.2.3.4"
+			}
+			req.Header.Set("X-Forwarded-For", xff)
+			req.Header.Set("X-Real-IP", "203.0.113.99")
+			req.Header.Set("CF-Connecting-IP", "203.0.113.99")
 			r.ServeHTTP(w, req)
 
+			require.Equal(t, http.StatusOK, w.Code)
+			require.Equal(t, tc.want, w.Body.String())
+		})
+	}
+}
+
+func TestLocalProxyForwardedHeaderFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name, xff, realIP, cfIP, want string
+	}{
+		{name: "no headers keeps local peer", want: "127.0.0.1"},
+		{name: "real IP fallback", realIP: "198.51.100.10", want: "198.51.100.10"},
+		{name: "CF header alone is not trusted", cfIP: "198.51.100.10", want: "127.0.0.1"},
+		{name: "malformed XFF falls back to real IP", xff: "invalid", realIP: "198.51.100.10", want: "198.51.100.10"},
+		{name: "invalid headers keep peer", xff: "invalid", realIP: "invalid", cfIP: "198.51.100.10", want: "127.0.0.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := gin.New()
+			configureTrustedProxies(r, config.ServerConfig{})
+			r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, c.ClientIP()) })
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = "127.0.0.1:12345"
+			req.Header.Set("X-Forwarded-For", tc.xff)
+			req.Header.Set("X-Real-IP", tc.realIP)
+			req.Header.Set("CF-Connecting-IP", tc.cfIP)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
 			require.Equal(t, http.StatusOK, w.Code)
 			require.Equal(t, tc.want, w.Body.String())
 		})

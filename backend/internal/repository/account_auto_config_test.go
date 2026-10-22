@@ -40,10 +40,10 @@ func TestAutoConfigRepositoryTransaction(t *testing.T) {
 			if tc.stale {
 				expected.Revision = "old"
 			} else {
-				rows := sqlmock.NewRows([]string{"concurrency", "extra", "name", "platform"})
+				rows := sqlmock.NewRows([]string{"concurrency", "extra", "name", "platform", "admission"})
 				if tc.scope {
 					state, _ := json.Marshal(service.AutoConfigConcurrencyState{Revision: "r1", Concurrency: 3, Successes: tc.count})
-					rows.AddRow(3, state, "test-account", "openai")
+					rows.AddRow(3, state, "test-account", "openai", "null")
 				}
 				m.ExpectQuery("SELECT concurrency.*FOR UPDATE").WithArgs(int64(7), sqlmock.AnyArg(), tc.success).WillReturnRows(rows)
 				if tc.scope {
@@ -82,10 +82,56 @@ func TestAutoConfigRepositoryLogsNewRevisionFailure(t *testing.T) {
 	require.NoError(t, err)
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(string(raw)))
-	mock.ExpectQuery("SELECT concurrency.*FOR UPDATE").WillReturnRows(sqlmock.NewRows([]string{"concurrency", "extra", "name", "platform"}).AddRow(3, state, "example", "openai"))
+	mock.ExpectQuery("SELECT concurrency.*FOR UPDATE").WillReturnRows(sqlmock.NewRows([]string{"concurrency", "extra", "name", "platform", "admission"}).AddRow(3, state, "example", "openai", "null"))
 	mock.ExpectExec("UPDATE accounts SET concurrency").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO account_auto_config_events").WithArgs(int64(7), "example", "openai", service.AutoConfigEventCooldown, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	require.NoError(t, (&accountRepository{sql: db}).RecordConcurrencyResult(context.Background(), service.AccountConcurrencyResult{AccountID: 7, StartedAt: now, Success: false}, cfg))
 	require.NoError(t, mock.ExpectationsWereMet(), "a saved rule starts a new cycle even if the previous rule was cooling down")
+}
+
+func TestAutoConfigRepositoryAdmissionGate(t *testing.T) {
+	approved := time.Now().UTC().Add(-time.Minute)
+	for _, tc := range []struct {
+		name        string
+		phase       string
+		approvedAt  *time.Time
+		beforePass  bool
+		shouldCount bool
+	}{
+		{name: "pending", phase: "pending"},
+		{name: "isolated after pass", phase: "isolated", approvedAt: &approved},
+		{name: "isolation pending", phase: "isolation_pending", approvedAt: &approved},
+		{name: "missing approval time", phase: "passed"},
+		{name: "request started before pass", phase: "passed", approvedAt: &approved, beforePass: true},
+		{name: "request started after pass", phase: "passed", approvedAt: &approved, shouldCount: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			cfg := service.DefaultOAuthAutoConfig()
+			cfg.UpgradeEnabled, cfg.UpgradeGroupIDs, cfg.Revision = true, []int64{5}, "admission-gate"
+			raw, err := json.Marshal(cfg)
+			require.NoError(t, err)
+			gate, err := json.Marshal(service.OpenAITwoFAAdmissionState{Phase: tc.phase, ApprovedAt: tc.approvedAt})
+			require.NoError(t, err)
+			started := approved.Add(time.Second)
+			if tc.beforePass {
+				started = approved.Add(-time.Second)
+			}
+			mock.ExpectBegin()
+			mock.ExpectQuery("SELECT value FROM settings").WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(string(raw)))
+			mock.ExpectQuery("SELECT concurrency.*FOR UPDATE").WillReturnRows(sqlmock.NewRows([]string{"concurrency", "extra", "name", "platform", "admission"}).AddRow(3, []byte("{}"), "admission-account", "openai", gate))
+			if tc.shouldCount {
+				mock.ExpectExec("UPDATE accounts SET concurrency").WithArgs(int64(7), 3, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			} else {
+				mock.ExpectRollback()
+			}
+			err = (&accountRepository{sql: db}).RecordConcurrencyResult(t.Context(), service.AccountConcurrencyResult{AccountID: 7, StartedAt: started, Success: true}, cfg)
+			require.NoError(t, err)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
 }

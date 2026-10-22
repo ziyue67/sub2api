@@ -25,7 +25,7 @@ vi.mock('@/api/admin/groups', () => ({ getModelAllowlistCandidates: vi.fn().mock
 vi.mock('@/components/account/ModelWhitelistSelector.vue', () => ({ default: { props: ['modelValue'], template: '<div data-testid="model-selector">{{ modelValue.join(",") }}</div>' } }))
 const mountView = () => mount(AccountQualityView, { global: { plugins: [createPinia()], stubs: { Teleport: true, AppLayout: { template: '<main><slot /></main>' } } } })
 describe('quality operations', () => {
-  beforeEach(() => { vi.clearAllMocks(); useAuthStore().user!.id = 1; vi.mocked(scheduledTests.delete).mockReset().mockResolvedValue(undefined); vi.mocked(scheduledTests.update).mockReset(); vi.mocked(accountsAPI.list).mockReset().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 } as any); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({items:[],next_cursor:0})
+  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); useAuthStore().user!.id = 1; vi.mocked(scheduledTests.delete).mockReset().mockResolvedValue(undefined); vi.mocked(scheduledTests.update).mockReset(); vi.mocked(accountsAPI.list).mockReset().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 } as any); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({items:[],next_cursor:0})
     vi.mocked(listQualityTemplates).mockReset().mockResolvedValue([])
     vi.mocked(createQualityTemplate).mockReset().mockResolvedValue({ template: groupRule(), created: 0 })
     vi.mocked(updateQualityTemplate).mockReset().mockResolvedValue({ template: groupRule(), updated: 0, failed: 0, created: 0 })
@@ -42,6 +42,122 @@ describe('quality operations', () => {
     pelican_config: { question_kind: 'state_probe', prompt: '', reasoning_effort: 'high', parallel_count: 1,
       quality: { expected_answer: '', action: 'remove_groups', remove_group_ids: [id], auto_restore: false } },
   }))
+
+  it('adds built-in shortcuts without duplicates, reuses blank rows and saves the selected models', async () => {
+    const plan = rules()[0]
+    plan.model_id = 'gpt-6-astra'
+    plan.pelican_config!.question_kind = 'candy'
+    plan.pelican_config!.prompt = 'question'
+    plan.pelican_config!.quality!.expected_answer = '21'
+    plan.pelican_config!.quality!.judge = { group_id: 21, model_id: 'test-judge', prompt: 'Grade' }
+    vi.mocked(listQualityPlans).mockResolvedValue([plan])
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('.rule-actions button:nth-child(2)').trigger('click'); await flushPromises()
+    const shortcuts = () => wrapper.findAll('[data-testid="quality-model-shortcut"]')
+    expect(shortcuts().map(button => button.text())).toEqual(['gpt-6-astra', 'gpt-6.1-sol', 'gpt-5.6-sol'])
+    expect(shortcuts()[0].attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-add-model"]').trigger('click')
+    await shortcuts()[1].trigger('click')
+    await shortcuts()[1].trigger('click')
+    await shortcuts()[2].trigger('click')
+    expect(wrapper.findAll('[data-testid="quality-extra-model"]')).toHaveLength(2)
+    expect((wrapper.vm as any).form.pelican_config.model_ids).toEqual(['gpt-6.1-sol', 'gpt-5.6-sol'])
+    await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
+    expect(scheduledTests.update).toHaveBeenCalledWith(1, expect.objectContaining({
+      model_id: 'gpt-6-astra', pelican_config: expect.objectContaining({ model_ids: ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-5.6-sol'] }),
+    }))
+    wrapper.unmount()
+  })
+
+  it('persists batch custom shortcuts for later editing and removes labels independently of selected models', async () => {
+    let wrapper = mountView(); await flushPromises()
+    ;(wrapper.vm as any).newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-model-shortcuts-input"]').setValue(' custom-a,custom-b\ncustom-a；gpt-6-astra，custom-c ')
+    await wrapper.get('[data-testid="quality-save-model-shortcuts"]').trigger('click')
+    expect(JSON.parse(localStorage.getItem('sub2api-quality-model-shortcuts:1')!)).toEqual(['custom-a', 'custom-b', 'custom-c'])
+    expect((wrapper.vm as any).form.pelican_config.model_ids).toEqual([])
+    wrapper.unmount()
+
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    wrapper = mountView(); await flushPromises()
+    await wrapper.get('.rule-actions button:nth-child(2)').trigger('click'); await flushPromises()
+    const custom = wrapper.findAll('[data-testid="quality-model-shortcut"]').find(button => button.text() === 'custom-a')!
+    await custom.trigger('click')
+    expect((wrapper.vm as any).form.model_id).toBe('custom-a')
+    await wrapper.findAll('[data-testid="quality-remove-model-shortcut"]')[0].trigger('click')
+    expect((wrapper.vm as any).form.model_id).toBe('custom-a')
+    expect(JSON.parse(localStorage.getItem('sub2api-quality-model-shortcuts:1')!)).toEqual(['custom-b', 'custom-c'])
+    wrapper.unmount()
+  })
+
+  it('keeps custom shortcuts scoped to the current administrator', async () => {
+    localStorage.setItem('sub2api-quality-model-shortcuts:1', JSON.stringify(['private-model']))
+    const wrapper = mountView(); await flushPromises()
+    ;(wrapper.vm as any).newPlan(); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-model-shortcuts"]').text()).toContain('private-model')
+    useAuthStore().user!.id = 2; await flushPromises()
+    // Changing identity closes the editor; reopen it as the new administrator.
+    expect(wrapper.find('[data-testid="quality-model-shortcuts"]').exists()).toBe(false)
+    ;(wrapper.vm as any).newPlan(); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-model-shortcuts"]').text()).not.toContain('private-model')
+    expect(wrapper.findAll('[data-testid="quality-model-shortcut"]')).toHaveLength(3)
+    wrapper.unmount()
+  })
+
+  it('replaces the only model for state probes when a shortcut is clicked', async () => {
+    const wrapper = mountView(); await flushPromises()
+    ;(wrapper.vm as any).newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-question-kind"]').setValue('state_probe')
+    await wrapper.findAll('[data-testid="quality-model-shortcut"]')[1].trigger('click')
+    expect((wrapper.vm as any).form.model_id).toBe('gpt-6.1-sol')
+    expect((wrapper.vm as any).form.pelican_config.model_ids).toEqual([])
+    expect(wrapper.find('[data-testid="quality-extra-model"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('enforces the 50-model limit while allowing empty model slots to be filled', async () => {
+    const wrapper = mountView(); await flushPromises()
+    const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    vm.form.pelican_config.model_ids = Array.from({ length: 49 }, (_, index) => `model-${index}`)
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="quality-model-shortcut"]').every(button => button.attributes('disabled') !== undefined)).toBe(true)
+    vm.form.pelican_config.model_ids[20] = ' '
+    await flushPromises()
+    await wrapper.findAll('[data-testid="quality-model-shortcut"]')[1].trigger('click')
+    expect(vm.form.pelican_config.model_ids).toHaveLength(49)
+    expect(vm.form.pelican_config.model_ids[20]).toBe('gpt-6.1-sol')
+    vm.form.model_id = ''; await flushPromises()
+    await wrapper.findAll('[data-testid="quality-model-shortcut"]')[0].trigger('click')
+    expect(vm.form.model_id).toBe('gpt-6-astra')
+    expect(vm.form.pelican_config.model_ids).toHaveLength(49)
+    wrapper.unmount()
+  })
+
+  it('rejects overlong custom model names and tolerates invalid saved shortcut data', async () => {
+    localStorage.setItem('sub2api-quality-model-shortcuts:1', '{invalid json')
+    const wrapper = mountView(); await flushPromises()
+    ;(wrapper.vm as any).newPlan(); await flushPromises()
+    expect(wrapper.findAll('[data-testid="quality-model-shortcut"]')).toHaveLength(3)
+    expect(wrapper.get('[data-testid="quality-model-shortcuts-error"]').text()).toBe('qualityOps.modelShortcutsLoadFailed')
+    await wrapper.get('[data-testid="quality-model-shortcuts-input"]').setValue(`valid-model,${'x'.repeat(101)}`)
+    await wrapper.get('[data-testid="quality-save-model-shortcuts"]').trigger('click')
+    expect(wrapper.get('[data-testid="quality-model-shortcuts-error"]').text()).toBe('qualityOps.modelShortcutTooLong')
+    expect(wrapper.findAll('[data-testid="quality-model-shortcut"]')).toHaveLength(3)
+    wrapper.unmount()
+  })
+
+  it('keeps shortcuts usable and reports when browser persistence fails', async () => {
+    const wrapper = mountView(); await flushPromises()
+    ;(wrapper.vm as any).newPlan(); await flushPromises()
+    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage blocked') })
+    try {
+      await wrapper.get('[data-testid="quality-model-shortcuts-input"]').setValue('custom-model')
+      await wrapper.get('[data-testid="quality-save-model-shortcuts"]').trigger('click')
+      expect(wrapper.get('[data-testid="quality-model-shortcuts-error"]').text()).toBe('qualityOps.modelShortcutsSaveFailed')
+      expect(wrapper.findAll('[data-testid="quality-model-shortcut"]').map(button => button.text())).toContain('custom-model')
+    } finally { save.mockRestore(); wrapper.unmount() }
+  })
 
   it('switches to generated reasoning without saving a fixed question or answer', async () => {
     const plan = rules()[0]

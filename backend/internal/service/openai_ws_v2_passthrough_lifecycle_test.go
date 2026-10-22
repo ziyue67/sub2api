@@ -219,57 +219,115 @@ func startPassthroughLifecycleServerWithHooks(
 }
 
 func TestPassthroughLifecycle_LaterTurnPreOutputRateLimitRequestsReconnect(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	controlCtx, cancelControl := context.WithCancelCause(context.Background())
-	defer cancelControl(context.Canceled)
-	upstream := newStagedPassthroughConn()
-	account := passthroughLifecycleAccount()
-	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*account}}}
-	svc := newPassthroughLifecycleService(passthroughLifecycleConfig(), upstream)
-	svc.accountRepo = repo
-	svc.rateLimitService = &RateLimitService{accountRepo: repo}
+	for _, accountType := range []string{AccountTypeAPIKey, AccountTypeOAuth, AccountTypeSetupToken} {
+		t.Run(accountType, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			controlCtx, cancelControl := context.WithCancelCause(context.Background())
+			defer cancelControl(context.Canceled)
+			upstream := newStagedPassthroughConn()
+			account := passthroughLifecycleAccount()
+			account.Type = accountType
+			account.Credentials = openAIWSQuotaTestCredentials(accountType, "")
+			if account.IsOpenAIOAuthLike() {
+				account.Extra = map[string]any{"openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough}
+			}
+			repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{*account}}}
+			cfg := passthroughLifecycleConfig()
+			cfg.Gateway.OpenAIWS.OAuthEnabled = true
+			svc := newPassthroughLifecycleService(cfg, upstream)
+			svc.accountRepo = repo
+			svc.rateLimitService = &RateLimitService{accountRepo: repo}
 
-	server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account)
-	defer server.Close()
-	clientConn := dialPassthroughLifecycleClient(t, server)
-	defer func() { _ = clientConn.CloseNow() }()
-	firstRequest := requirePassthroughUpstreamWrite(t, upstream, time.Second)
-	require.Equal(t, "response.create", gjson.GetBytes(firstRequest, "type").String())
+			svc.rateLimitService.SetAccountRuntimeBlocker(svc)
+			type turnSettlement struct {
+				turn           int
+				result         *OpenAIForwardResult
+				err            error
+				upstreamClosed bool
+			}
+			settlements := make(chan turnSettlement, 3)
+			admissions := make(chan int, 2)
+			var heldSlots atomic.Int32
+			// The ingress handler has already admitted the first turn.
+			heldSlots.Store(1)
+			hooks := &OpenAIWSIngressHooks{
+				BeforeTurn: func(turn int) error {
+					heldSlots.Add(1)
+					admissions <- turn
+					return nil
+				},
+				AfterTurn: func(turn int, result *OpenAIForwardResult, err error) {
+					heldSlots.Add(-1)
+					closed := false
+					select {
+					case <-upstream.closed:
+						closed = true
+					default:
+					}
+					settlements <- turnSettlement{turn, result, err, closed}
+				},
+			}
+			server, serverErr := startPassthroughLifecycleServer(t, controlCtx, svc, account, hooks)
+			defer server.Close()
+			clientConn := dialPassthroughLifecycleClient(t, server)
+			defer func() { _ = clientConn.CloseNow() }()
+			firstRequest := requirePassthroughUpstreamWrite(t, upstream, time.Second)
+			require.Equal(t, "response.create", gjson.GetBytes(firstRequest, "type").String())
 
-	upstream.Send(`{"type":"response.completed","response":{"id":"resp_first","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
-	completed, err := readPassthroughLifecycleFrame(t, clientConn, time.Second)
-	require.NoError(t, err)
-	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
+			upstream.Send(`{"type":"response.completed","response":{"id":"resp_first","model":"gpt-5.1","usage":{"input_tokens":1,"output_tokens":1}}}`)
+			completed, err := readPassthroughLifecycleFrame(t, clientConn, time.Second)
+			require.NoError(t, err)
+			require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
 
-	writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false}`))
-	cancelWrite()
-	require.NoError(t, err)
-	secondRequest := requirePassthroughUpstreamWrite(t, upstream, time.Second)
-	require.Equal(t, "response.create", gjson.GetBytes(secondRequest, "type").String())
+			writeCtx, cancelWrite := context.WithTimeout(context.Background(), time.Second)
+			err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false}`))
+			cancelWrite()
+			require.NoError(t, err)
+			secondRequest := requirePassthroughUpstreamWrite(t, upstream, time.Second)
+			require.Equal(t, "response.create", gjson.GetBytes(secondRequest, "type").String())
 
-	resetAt := time.Now().Add(90 * time.Minute).Unix()
-	upstream.Send(fmt.Sprintf(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":%d}}`, resetAt))
-	_, err = readPassthroughLifecycleFrame(t, clientConn, time.Second)
-	var websocketCloseErr coderws.CloseError
-	require.ErrorAs(t, err, &websocketCloseErr)
-	require.Equal(t, coderws.StatusTryAgainLater, websocketCloseErr.Code)
-	require.Equal(t, "upstream rate limit exceeded; please reconnect", websocketCloseErr.Reason)
-	require.Len(t, repo.rateLimitCalls, 1)
-	require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)
+			resetAt := time.Now().Add(90 * time.Minute).Unix()
+			before := time.Now()
+			upstream.Send(fmt.Sprintf(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":%d}}`, resetAt))
+			_, err = readPassthroughLifecycleFrame(t, clientConn, time.Second)
+			var websocketCloseErr coderws.CloseError
+			require.ErrorAs(t, err, &websocketCloseErr)
+			require.Equal(t, coderws.StatusTryAgainLater, websocketCloseErr.Code)
+			require.Equal(t, "upstream rate limit exceeded; please reconnect", websocketCloseErr.Reason)
 
-	select {
-	case err := <-serverErr:
-		var closeErr *OpenAIWSClientCloseError
-		require.ErrorAs(t, err, &closeErr)
-		require.Equal(t, coderws.StatusTryAgainLater, closeErr.StatusCode())
-	case <-time.After(time.Second):
-		t.Fatal("later-turn rate limit did not terminate passthrough")
-	}
-	select {
-	case replay := <-upstream.writes:
-		t.Fatalf("later-turn reconnect must not replay the retained first request: %s", replay)
-	default:
+			select {
+			case err := <-serverErr:
+				var closeErr *OpenAIWSClientCloseError
+				require.ErrorAs(t, err, &closeErr)
+				require.Equal(t, coderws.StatusTryAgainLater, closeErr.StatusCode())
+			case <-time.After(time.Second):
+				t.Fatal("later-turn rate limit did not terminate passthrough")
+			}
+			after := time.Now()
+			require.Len(t, repo.rateLimitCalls, 1)
+			requireOpenAIWSQuotaCooldown(t, accountType, repo.rateLimitCalls[0], before, after, time.Unix(resetAt, 0))
+			require.Empty(t, repo.updateExtra, "body-only 429 must not invent a Codex snapshot")
+			requireOpenAIWSQuotaRuntimeBlock(t, svc, account, repo.rateLimitCalls[0])
+			require.Len(t, admissions, 1, "only the second turn may consume another admission")
+			require.Equal(t, 2, <-admissions)
+			require.Zero(t, heldSlots.Load(), "both admitted turns must release their concurrency slots")
+			require.Len(t, settlements, 2, "each admitted turn must settle exactly once")
+			first := <-settlements
+			require.Equal(t, 1, first.turn)
+			require.NoError(t, first.err)
+			require.NotNil(t, first.result)
+			require.Equal(t, OpenAIUsage{InputTokens: 1, OutputTokens: 1}, first.result.Usage)
+			second := <-settlements
+			require.Equal(t, 2, second.turn)
+			require.Error(t, second.err)
+			require.Nil(t, second.result, "rejected pre-output turn must not reuse the first turn's usage")
+			require.True(t, second.upstreamClosed, "close upstream before releasing the rejected turn's slots")
+			select {
+			case replay := <-upstream.writes:
+				t.Fatalf("later-turn reconnect must not replay the retained first request: %s", replay)
+			default:
+			}
+		})
 	}
 }
 

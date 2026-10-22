@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,6 +21,7 @@ const (
 )
 
 type prioritySignalEntry struct {
+	windowEnd                              time.Time
 	signals                                map[int64]PrioritySchedulingSignal
 	accounts                               map[int64]time.Time
 	expires, observed, lastUsed, attempted time.Time
@@ -34,6 +37,7 @@ type prioritySchedulingState struct {
 }
 
 type priorityHistoryResult struct {
+	windowEnd  *time.Time
 	signals    map[int64]PrioritySchedulingSignal
 	status     string
 	observed   *time.Time
@@ -156,7 +160,7 @@ func (s *OpenAIGatewayService) priorityHistory(req OpenAIAccountScheduleRequest,
 			value := *req.GroupID
 			group = &value
 		}
-		query := PrioritySchedulingQuery{AccountIDs: ids, Model: req.RequestedModel, GroupID: group, UsageSince: now.Add(-time.Duration(c.WindowMinutes) * time.Minute), QualitySince: now.Add(-time.Duration(c.QualityMaxAgeHours) * time.Hour)}
+		query := PrioritySchedulingQuery{LatencyPercentile: c.LatencyPercentile, LatencyMeasurement: c.LatencyMeasurement, TargetTTFTMs: c.TargetTTFTMs, AccountIDs: ids, Model: req.RequestedModel, GroupID: group, UsageUntil: now, UsageSince: now.Add(-time.Duration(c.WindowMinutes) * time.Minute), QualitySince: now.Add(-time.Duration(c.QualityMaxAgeHours) * time.Hour)}
 		entry.refreshing = true
 		entry.attempted = now
 		state.active++
@@ -196,6 +200,7 @@ func (s *OpenAIGatewayService) priorityHistory(req OpenAIAccountScheduleRequest,
 				}
 			}
 			entry.failure = ""
+			entry.windowEnd = query.UsageUntil
 			entry.observed = time.Now()
 			entry.expires = entry.observed.Add(priorityHistoryTTL)
 		}()
@@ -204,6 +209,8 @@ func (s *OpenAIGatewayService) priorityHistory(req OpenAIAccountScheduleRequest,
 	if !entry.observed.IsZero() && now.Sub(entry.observed) <= priorityHistoryMaxAge {
 		observed := entry.observed
 		h.observed = &observed
+		windowEnd := entry.windowEnd
+		h.windowEnd = &windowEnd
 		for id := range wanted {
 			if signal, exists := entry.signals[id]; exists {
 				h.signals[id] = signal
@@ -245,5 +252,11 @@ func (s *OpenAIGatewayService) cachedPriorityHistory(req OpenAIAccountScheduleRe
 }
 
 func priorityHistoryKey(req OpenAIAccountScheduleRequest, c PrioritySchedulingConfig) string {
-	return fmt.Sprintf("%q/%d/%t/%d/%d", req.RequestedModel, derefGroupID(req.GroupID), req.GroupID != nil, c.WindowMinutes, c.QualityMaxAgeHours)
+	return fmt.Sprintf("%q/%d/%t/%d/%d", req.RequestedModel, derefGroupID(req.GroupID), req.GroupID != nil, c.WindowMinutes, c.QualityMaxAgeHours) + "/" + priorityConfigRevision(c)
+}
+
+// Include every scoring setting so stale scopes never mix targets or semantics.
+func priorityConfigRevision(c PrioritySchedulingConfig) string {
+	b, _ := json.Marshal(c)
+	return fmt.Sprintf("%x", sha256.Sum256(b))[:16]
 }

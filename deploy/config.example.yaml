@@ -53,11 +53,14 @@ server:
   # Trusted proxies used by auth IP abuse guards, and by other IP consumers when
   # security.trust_forwarded_ip_for_api_key_acl is false.
   # List only the exact proxy addresses that connect directly to Sub2API.
+  # When omitted, only 127.0.0.1/32 and ::1/128 are trusted (local Nginx/1Panel).
+  # Local processes can supply forwarding headers within this trust boundary.
   # Set [] explicitly to disable forwarded-IP trust in high-security mode.
   # 网页注册额度/登录封禁始终使用本可信代理链；其他 IP 使用方在
   # security.trust_forwarded_ip_for_api_key_acl=false 时使用。
   # 只填写直接连接 Sub2API 的精确代理地址；显式设置 [] 可在高安全模式下
   # 禁用转发 IP 信任。
+  # 未配置时仅信任 127.0.0.1/32 和 ::1/128；Docker 桥接/远程代理需显式配置。
   trusted_proxies:
     - 127.0.0.1/32
     - ::1/128
@@ -270,6 +273,11 @@ gateway:
   # Pre-output attempt staging is capped at 8 MiB; overflow fails over without exposing partial SSE data.
   # 首次输出前的单次尝试暂存上限为 8 MiB；溢出时切号且不暴露不完整 SSE 数据。
   openai_first_output_timeout_seconds: 0
+  # Opt-in HTTP upload/submission deadline shared across account/proxy retries.
+  # accounts.extra.openai_upload_timeout_seconds overrides it (0 disables).
+  openai_upload_timeout_seconds: 0
+  # Shared HTTP time budget until model output; does not cap normal long SSE.
+  openai_pre_output_budget_seconds: 0
   # Optional high/xhigh/max override (seconds, 0=use the standard timeout)
   openai_high_effort_first_output_timeout_seconds: 0
   # Max request body size in bytes (default: 256MB)
@@ -794,14 +802,14 @@ api_key_auth_cache:
   # Maximum concurrent database lookups for authentication cache misses
   # 认证缓存未命中时允许并发回源数据库的最大数量
   lookup_concurrency: 64
-  # Process-local invalid-auth abuse protection. Counts only missing, malformed,
-  # deprecated-query, and confirmed invalid credentials; valid requests and
-  # Redis/DB failures do not consume the budget.
-  # 本机无效鉴权防护：仅统计缺失、格式错误、废弃 query 及确认无效的凭据。
+  # Legacy process-local invalid-auth protection, applied only after credential
+  # failure classification so a valid key behind the same NAT is never denied.
+  # The admin IP risk anonymous_api setting (off by default) supersedes it when enabled.
+  # 本机旧防护仅在确认凭据失败后生效；后台匿名 API 防护启用时接管惩罚。
   invalid_abuse:
     enabled: true
-    # Invalid attempts per trusted client IP (IPv6 grouped by /64) per window.
-    # 每个可信客户端 IP（IPv6 按 /64 聚合）在窗口内允许的无效次数。
+    # Invalid attempts per exact trusted public client IP per window.
+    # 每个可信公网客户端 IP（IPv6 精确地址）在窗口内允许的无效次数。
     threshold: 120
     window_seconds: 60
     block_seconds: 60

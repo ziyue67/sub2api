@@ -276,6 +276,43 @@ func TestAdminService_BulkUpdateAccounts_MixedChannelPreCheckBlocksOnExistingCon
 	require.Empty(t, repo.bindGroupsCalls)
 }
 
+func TestAdminServiceBulkUpdateAccounts_RejectsUnscopedGroupUpdates(t *testing.T) {
+	for _, filters := range []*BulkUpdateAccountFilters{
+		{},
+		{Platform: " ", Type: "\t", Status: " ", Group: " ", Search: " ", PrivacyMode: "\n"},
+	} {
+		repo := &accountRepoStubForBulkUpdate{listData: []Account{{ID: 7}, {ID: 11}, {ID: 99}}}
+		svc := &adminServiceImpl{accountRepo: repo}
+		groupIDs := []int64{24, 15, 11}
+		result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+			Filters: filters, GroupIDs: &groupIDs,
+		})
+		require.Nil(t, result)
+		requireApplicationErrorReason(t, err, "BULK_UPDATE_SCOPE_REQUIRED")
+		require.False(t, repo.listCalled, "empty filters must fail before resolving the whole inventory")
+		require.Zero(t, repo.bulkUpdateCalls)
+		require.Empty(t, repo.bindGroupsCalls)
+	}
+}
+
+func TestAdminServiceBulkUpdateAccounts_ExplicitOAuthIDsDoNotExpandToFilters(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{listData: []Account{{ID: 7}, {ID: 11}, {ID: 99}}}
+	svc := &adminServiceImpl{
+		accountRepo: repo,
+		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "target"}},
+	}
+	groupIDs := []int64{10}
+	result, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+		AccountIDs: []int64{7, 11}, Filters: &BulkUpdateAccountFilters{},
+		GroupIDs: &groupIDs, SkipMixedChannelCheck: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []int64{7, 11}, result.SuccessIDs)
+	require.Equal(t, []int64{7, 11}, repo.bindGroupsCalls)
+	require.False(t, repo.listCalled)
+	require.NotContains(t, repo.bindGroupsByAccount, int64(99))
+}
+
 func TestAdminServiceBulkUpdateAccounts_ResolvesIDsFromFilters(t *testing.T) {
 	repo := &accountRepoStubForBulkUpdate{
 		listData: []Account{

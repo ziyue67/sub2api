@@ -27,6 +27,42 @@ func qualityUnsupportedModelKey(model string) string {
 	return fmt.Sprintf("quality_unsupported_model_%x", sha256.Sum256([]byte(model)))
 }
 
+// A successful explicit sync allows a previously rejected model to be tested
+// again. Match the execution target, since observations use public names while
+// the live catalog uses upstream IDs. Missing models retain their protection.
+func (s *AccountTestService) resetSyncedQualityModelRejections(ctx context.Context, account *Account, models []string) error {
+	if account == nil || account.ID <= 0 || s.accountRepo == nil {
+		return nil
+	}
+	live := make(map[string]bool, len(models))
+	for _, model := range models {
+		live[model] = true
+	}
+	updates := make(map[string]any)
+	for key, value := range account.Extra {
+		model, ok := value.(string)
+		if !ok || key != qualityUnsupportedModelKey(model) {
+			continue
+		}
+		target := account.GetMappedModel(model)
+		if live[target] {
+			// UpdateExtra atomically merges JSON null, which both quality model
+			// checks already treat as an inactive observation after a reload.
+			updates[key] = nil
+		}
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	if err := s.accountRepo.UpdateExtra(ctx, account.ID, updates); err != nil {
+		return err
+	}
+	for key := range updates {
+		account.Extra[key] = nil
+	}
+	return nil
+}
+
 // Discovery is shared with the account test picker. An unavailable catalog is
 // an error, never evidence that the account does not support a model.
 func (s *ScheduledTestService) accountQualityModels(ctx context.Context, id int64) ([]string, error) {

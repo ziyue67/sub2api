@@ -164,6 +164,7 @@ func applyQualityIsolation(ctx context.Context, tx *sql.Tx, plan *service.Schedu
 		anyPassed = anyPassed || decision.outcome == "passed"
 	}
 	if q.AutoRestore && anyPassed && status != "active" {
+		state.RestoreDiagnostic = qualityRestoreConflict("account_not_active")
 		return "restore_conflict", nil
 	}
 	if state.Models == nil {
@@ -175,6 +176,7 @@ func applyQualityIsolation(ctx context.Context, tx *sql.Tx, plan *service.Schedu
 		return "", err
 	}
 	if action == "action_conflict" || action == "restore_conflict" {
+		state.RestoreDiagnostic = state.Models.RestoreDiagnostic
 		return action, nil
 	}
 	if action == "models_cooled" || action == "model_cooldown_refreshed" {
@@ -199,6 +201,10 @@ func applyQualityIsolation(ctx context.Context, tx *sql.Tx, plan *service.Schedu
 			return "", e
 		}
 		if conflict {
+			state.RestoreDiagnostic = state.Groups.RestoreDiagnostic
+			// A present group does not mean model isolation was released: this
+			// composed transaction will roll back all model changes as well.
+			state.RestoreDiagnostic.Disposition = "manual_required"
 			return "restore_conflict", nil
 		}
 		removed = state.Groups.Removed

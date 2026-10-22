@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
+	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 	pluginv1 "github.com/Wei-Shaw/sub2api/pkg/pluginapi/v1"
 )
 
@@ -952,6 +954,12 @@ func (m *PluginManager) RoundTripOpenAIOAuth(ctx context.Context, request *http.
 	if route == nil {
 		return nil, false, nil
 	}
+	diagnosticRoute := transportdiag.RouteFromContext(ctx)
+	diagnosticRoute.Mode, diagnosticRoute.Upstream = "plugin", "plugin"
+	if request != nil && request.URL != nil {
+		diagnosticRoute.Endpoint = transportdiag.EndpointCategory(request.URL.Path)
+	}
+	requesttiming.SetRoute(ctx, diagnosticRoute)
 	if route.runtime == nil {
 		return nil, true, fmt.Errorf("OpenAI OAuth 插件不可用: %s", route.unavailable)
 	}

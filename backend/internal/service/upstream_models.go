@@ -319,6 +319,14 @@ func (s *AccountTestService) SyncUpstreamModelCatalog(ctx context.Context, accou
 			})
 		}
 	}
+	// Capability metadata may be incomplete even when the live ID list is
+	// authoritative. Only that live list can invalidate old quality rejections;
+	// configured-model fallback after an unsupported endpoint must not do so.
+	if liveListAvailable {
+		if err := s.resetSyncedQualityModelRejections(ctx, account, models); err != nil {
+			return nil, newUpstreamModelSyncInternalError("Failed to reset synced quality model rejections", err)
+		}
+	}
 	return catalog, nil
 }
 

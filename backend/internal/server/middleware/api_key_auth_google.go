@@ -24,25 +24,29 @@ func APIKeyAuthGoogle(apiKeyService *service.APIKeyService, cfg *config.Config) 
 // It is intended for Gemini native endpoints (/v1beta) to match Gemini SDK expectations.
 func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subscriptionService *service.SubscriptionService, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if rejectInvalidAuthAbuse(c, apiKeyService) {
-			abortWithGoogleError(c, 429, "Too many invalid authentication attempts; retry later")
-			return
-		}
+
 		if apiKeyHeadersTooLarge(c) {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "malformed", true) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			abortWithGoogleError(c, 401, "Invalid API key")
 			return
 		}
 		if v := strings.TrimSpace(c.Query("api_key")); v != "" {
-			recordInvalidAuthFailure(c, apiKeyService)
 			MarkIngressRejected(c, IngressRejectQueryAPIKeyDeprecated)
 			abortWithGoogleError(c, 400, "Query parameter api_key is deprecated. Use Authorization header or key instead.")
 			return
 		}
 		apiKeyString := extractAPIKeyForGoogle(c)
 		if apiKeyString == "" {
-			recordInvalidAuthFailure(c, apiKeyService)
+			reason := "missing"
+			if hasAPIKeyCredentialInput(c) {
+				reason = "malformed"
+			}
+			if rejectAnonymousCredentialFailure(c, apiKeyService, reason, true) {
+				return
+			}
 			if hasAPIKeyCredentialInput(c) {
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			} else {
@@ -52,7 +56,9 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			return
 		}
 		if len(apiKeyString) > service.MaxAPIKeyCredentialBytes {
-			recordInvalidAuthFailure(c, apiKeyService)
+			if rejectAnonymousCredentialFailure(c, apiKeyService, "malformed", true) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 			abortWithGoogleError(c, 401, "Invalid API key")
 			return
@@ -60,8 +66,14 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 
 		apiKey, err := apiKeyService.GetByKey(c.Request.Context(), apiKeyString)
 		if err != nil {
+			if errors.Is(err, service.ErrUserNotFound) {
+				abortWithGoogleError(c, 401, "User associated with API key not found")
+				return
+			}
 			if errors.Is(err, service.ErrAPIKeyNotFound) {
-				recordInvalidAuthFailure(c, apiKeyService)
+				if rejectAnonymousCredentialFailure(c, apiKeyService, "unknown", true) {
+					return
+				}
 				MarkIngressRejected(c, IngressRejectInvalidAPIKey)
 				abortWithGoogleError(c, 401, "Invalid API key")
 				return
@@ -84,6 +96,9 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		if !apiKey.IsActive() &&
 			apiKey.Status != service.StatusAPIKeyExpired &&
 			apiKey.Status != service.StatusAPIKeyQuotaExhausted {
+			if apiKey.Status == service.StatusAPIKeyDisabled && rejectAnonymousCredentialFailure(c, apiKeyService, "disabled", true) {
+				return
+			}
 			MarkIngressRejected(c, IngressRejectAPIKeyDisabled)
 			abortWithGoogleError(c, 401, "API key is disabled")
 			return
@@ -111,6 +126,11 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 		if !apiKey.User.IsActive() {
 			MarkIngressRejected(c, IngressRejectUserInactive)
 			abortWithGoogleError(c, 401, "User account is not active")
+			return
+		}
+		anonymousCredentialSuccess(c)
+		apiKey, err = selectAPIKeyRequestGroup(c, apiKeyService, subscriptionService, cfg, apiKey, true)
+		if err != nil || c.IsAborted() {
 			return
 		}
 		if code, message, ok := validateAPIKeyGroupAvailable(apiKey); !ok {
@@ -205,6 +225,7 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			c.Set(string(ContextKeySubscription), subscription)
 		} else if !modelListRead {
 			if apiKeyBalanceBelowAuthThreshold(apiKey.User.Balance, cfg) {
+				apiKeyService.NotifyBalanceRejected(apiKey.User)
 				abortWithGoogleError(c, 403, service.InsufficientUserBalanceMessage)
 				return
 			}

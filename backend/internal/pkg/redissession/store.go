@@ -123,3 +123,29 @@ func (s *Store) TryConsume(ctx context.Context, id string) (bool, error) {
 	}
 	return true, nil
 }
+
+// Take atomically retrieves and removes a session. A lost response or invalid
+// payload consumes the entry too: never retry an authorization-code exchange.
+func (s *Store) Take(ctx context.Context, id string, dest any) (bool, error) {
+	if s == nil || s.rdb == nil {
+		return false, ErrNotConfigured
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := s.rdb.GetDel(ctx, s.dataKey(id)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err = json.Unmarshal(raw, dest); err != nil {
+		return false, err
+	}
+	return true, nil
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -16,6 +17,10 @@ import (
 )
 
 func newAuthRoutesTestRouter(redisClient *redis.Client, fixtures ...*handler.Handlers) *gin.Engine {
+	return newAuthRoutesTestRouterWithSettings(redisClient, nil, fixtures...)
+}
+
+func newAuthRoutesTestRouterWithSettings(redisClient *redis.Client, settings *service.SettingService, fixtures ...*handler.Handlers) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	v1 := router.Group("/api/v1")
@@ -37,7 +42,7 @@ func newAuthRoutesTestRouter(redisClient *redis.Client, fixtures ...*handler.Han
 			c.Next()
 		}),
 		redisClient,
-		nil,
+		settings,
 		nil,
 	)
 

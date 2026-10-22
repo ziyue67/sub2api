@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // Shared by standalone group quarantine and composed model isolation. Callers
@@ -39,14 +41,28 @@ func removeQualityGroups(ctx context.Context, tx *sql.Tx, accountID int64, targe
 func restoreQualityGroups(ctx context.Context, tx *sql.Tx, accountID int64, state *qualityState) (bool, error) {
 	// Validate the entire restore before inserting anything. A manual membership
 	// replacement must never be silently claimed as a successful rule restore.
+	diagnostic := qualityRestoreConflict("membership_already_present")
+	conflict, allPresent := false, len(state.Removed) > 0
 	for _, group := range state.Removed {
 		var exists, replaced bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM groups WHERE id=$1 AND deleted_at IS NULL),EXISTS(SELECT 1 FROM account_groups WHERE account_id=$2 AND group_id=$1)`, group.GroupID, accountID).Scan(&exists, &replaced); err != nil {
 			return false, err
 		}
-		if !exists || replaced {
-			return true, nil
+		diagnostic.Groups = append(diagnostic.Groups, service.QualityRestoreGroupEvidence{GroupID: group.GroupID, GroupExists: exists, MembershipPresent: replaced})
+		allPresent = allPresent && exists && replaced
+		if !exists {
+			diagnostic.Reason = "group_missing"
 		}
+		conflict = conflict || !exists || replaced
+	}
+	if conflict {
+		// Presence only: priority, model limits and the creator belong to the
+		// external writer. Do not claim its membership or clear our snapshot.
+		if allPresent {
+			diagnostic.Disposition = "external_membership_present"
+		}
+		state.RestoreDiagnostic = diagnostic
+		return true, nil
 	}
 	for _, group := range state.Removed {
 		var allowed any

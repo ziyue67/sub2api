@@ -12,6 +12,9 @@ func (s *OpenAIGatewayService) guardExcelBPSProgress(ctx context.Context, respon
 	if response == nil || response.Body == nil {
 		return
 	}
+	if _, observed := response.Body.(*priorityAttemptBody); observed {
+		return
+	}
 	idle := 120 * time.Second
 	if s.cfg != nil {
 		idle = time.Duration(s.cfg.Gateway.ExcelBPSStreamDataIntervalTimeout) * time.Second

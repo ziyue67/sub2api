@@ -1,4 +1,43 @@
 export default {
+  admission: {
+    "pending": "Awaiting admission: 21 streak {count}/{required}",
+    "passed": "Admission passed",
+    "isolated": "Isolated: automatic upgrades stopped",
+    "isolationPending": "Isolation group unavailable; customer scheduling paused until isolation can finish",
+    "streak29": "29 streak {count}/{required}",
+    "outcomes": {
+        "admission_passed": "Admission passed; scheduling enabled",
+        "admission_isolated": "Moved to isolation group",
+        "admission_conflict": "Admission snapshot mismatch; account unchanged",
+        "admission_isolation_pending": "Isolation group unavailable; customer scheduling paused"
+    },
+    "title": "Verify new OpenAI 2FA accounts before scheduling",
+    "hint": "Applies only to applicable accounts newly created through 2FA import after saving. They start at concurrency 1 with customer scheduling off; background tests continue. Relogin and duplicate imports never reinitialize them.",
+    "model": "Test model",
+    "effort": "Reasoning effort",
+    "wait_seconds": "Wait after completion (seconds)",
+    "pass_count": "Consecutive complete answers of 21",
+    "passed_concurrency": "Concurrency after passing",
+    "isolation_count": "Consecutive complete answers of 29",
+    "group": "Isolation target group",
+    "chooseGroup": "Select an active OpenAI group",
+    "unavailableGroup": "Group #{id} is unavailable; choose another",
+    "active": "Active",
+    "passHint": "After {count} complete answers of 21 in a row, set concurrency to {concurrency} and enable scheduling. Normal upgrades count customer successes starting after admission.",
+    "isolationRule": "After {count} complete answers of 29 in a row, move to the selected isolation group.",
+    "isolationHint": "Isolation removes all original groups, preserves the proxy and current concurrency, and stops automatic upgrades. Tests continue, but later correct answers never restore the account automatically. Saved changes apply only to new accounts; existing accounts keep their imported policy. Other answers, errors and incomplete responses break both streaks.",
+    "invalid": "Enter a valid test model, effort, positive counts/concurrency/interval, and select an active OpenAI isolation group.",
+    "efforts": {
+        "none": "None",
+        "minimal": "Minimal",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "Extra high",
+        "max": "Maximum",
+        "ultra": "Ultra"
+    }
+},
   quality: {
   "title": "Initial quality operations rule",
   "hint": "Copy an existing quality rule to new OAuth accounts on the selected platform. Leave empty to skip.",

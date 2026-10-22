@@ -43,6 +43,7 @@ type CreateAPIKeyRequest struct {
 	Quota            *float64                  `json:"quota"`           // 配额限制 (USD)
 	ExpiresInDays    *int                      `json:"expires_in_days"` // 过期天数
 	GroupRoutes      []domain.APIKeyGroupRoute `json:"group_routes"`
+	GroupIDs         []int64                   `json:"group_ids"`
 
 	// Rate limit fields (0 = unlimited)
 	RateLimit5h *float64 `json:"rate_limit_5h"`
@@ -62,6 +63,7 @@ type UpdateAPIKeyRequest struct {
 	ExpiresAt        *string                    `json:"expires_at"`   // 过期时间 (ISO 8601)
 	ResetQuota       *bool                      `json:"reset_quota"`  // 重置已用配额
 	GroupRoutes      *[]domain.APIKeyGroupRoute `json:"group_routes"`
+	GroupIDs         *[]int64                   `json:"group_ids"`
 
 	// Rate limit fields (nil = no change, 0 = unlimited)
 	RateLimit5h         *float64 `json:"rate_limit_5h"`
@@ -205,6 +207,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	svcReq := service.CreateAPIKeyRequest{
 		ConcurrencyLimit: req.ConcurrencyLimit,
 		Name:             req.Name,
+		GroupIDs:         req.GroupIDs,
 		GroupID:          req.GroupID,
 		CustomKey:        req.CustomKey,
 		IPWhitelist:      req.IPWhitelist,
@@ -274,6 +277,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	if req.Name != "" {
 		svcReq.Name = &req.Name
 	}
+	svcReq.GroupIDs = req.GroupIDs
 	svcReq.GroupID = req.GroupID
 	if req.Status != "" {
 		svcReq.Status = &req.Status

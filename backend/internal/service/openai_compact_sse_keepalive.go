@@ -127,7 +127,10 @@ func (k *openAICompactSSEKeepalive) beat() bool {
 		k.stopped = true
 		return false
 	}
-	k.writer.Flush()
+	if err := FlushGatewayResponse(k.writer); err != nil {
+		k.markStoppedLocked()
+		return false
+	}
 	return true
 }
 

@@ -10,6 +10,36 @@ vi.mock('vue-i18n', () => ({
 }))
 
 describe('AccountBulkActionsBar', () => {
+  it('only edits the checked selection while OAuth rows are selected', async () => {
+    const wrapper = mount(AccountBulkActionsBar, {
+      props: { selectedIds: [7, 11], totalResults: 105, selectingAll: false, allResultsSelected: false }
+    })
+    expect(wrapper.findAll('button').some(button => button.text() === 'admin.accounts.bulkActions.editFiltered')).toBe(false)
+    const edit = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.bulkActions.edit')
+    await edit!.trigger('click')
+    expect(wrapper.emitted('edit-selected')).toHaveLength(1)
+    expect(wrapper.emitted('edit-filtered')).toBeUndefined()
+
+    await wrapper.setProps({ selectedIds: [] })
+    const filteredEdit = wrapper.findAll('button').find(button => button.text() === 'admin.accounts.bulkActions.editFiltered')
+    expect(filteredEdit).toBeDefined()
+    await filteredEdit!.trigger('click')
+    expect(wrapper.emitted('edit-filtered')).toHaveLength(1)
+  })
+
+  it('only offers 2FA export with permission and a selection', async () => {
+    const wrapper = mount(AccountBulkActionsBar, {
+      props: { selectedIds: [1], totalResults: 45, selectingAll: false, allResultsSelected: false }
+    })
+    const exportButton = () => wrapper.findAll('button').find(item => item.text() === 'admin.accounts.bulkExport2fa.title')
+    expect(exportButton()).toBeUndefined()
+    await wrapper.setProps({ canExport2fa: true })
+    await exportButton()!.trigger('click')
+    expect(wrapper.emitted('export-2fa')).toHaveLength(1)
+    await wrapper.setProps({ selectedIds: [] })
+    expect(exportButton()).toBeUndefined()
+  })
+
   it('allows selecting all results before any row is selected', async () => {
     const wrapper = mount(AccountBulkActionsBar, {
       props: {

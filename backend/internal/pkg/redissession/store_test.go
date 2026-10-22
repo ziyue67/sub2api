@@ -38,3 +38,44 @@ func TestStoreRoundTripAndSingleUse(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 }
+
+func TestStoreTakeAcrossReplicasIsAtomic(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = rdb.Close() }()
+	first := New(rdb, "oauth:take", time.Minute)
+	second := New(rdb, "oauth:take", time.Minute)
+	ctx := context.Background()
+	require.NoError(t, first.Set(ctx, "sid", "ciphertext"))
+	results := make(chan bool, 16)
+	for i := 0; i < 16; i++ {
+		go func() {
+			var got string
+			ok, err := second.Take(ctx, "sid", &got)
+			results <- ok && err == nil && got == "ciphertext"
+		}()
+	}
+	consumed := 0
+	for i := 0; i < 16; i++ {
+		if <-results {
+			consumed++
+		}
+	}
+	require.Equal(t, 1, consumed)
+	var got string
+	ok, err := first.Get(ctx, "sid", &got)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.NoError(t, first.Set(ctx, "expired", "ciphertext"))
+	mr.FastForward(time.Minute + time.Second)
+	ok, err = second.Take(ctx, "expired", &got)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.NoError(t, first.Set(ctx, "invalid", map[string]string{"wrong": "shape"}))
+	ok, err = second.Take(ctx, "invalid", &got)
+	require.Error(t, err)
+	require.False(t, ok)
+	ok, err = second.Take(ctx, "invalid", &got)
+	require.NoError(t, err)
+	require.False(t, ok)
+}

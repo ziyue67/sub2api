@@ -200,10 +200,16 @@ func TestRecordCyberPolicyEvent_RespectsContentModerationScope(t *testing.T) {
 		},
 	}
 
+	version := int64(1)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &banCountArgsTestRepo{}
+			baseRepo := &banCountArgsTestRepo{}
 			userRepo := &contentModerationTestUserRepo{user: &User{ID: 1, Role: RoleUser, Status: StatusActive}}
+			var repo ContentModerationRepository = baseRepo
+			if tt.wantBanned {
+				// Bans require the source-scoped transactional repository and a captured version.
+				repo = &cyberScopeTxRepo{banCountArgsTestRepo: baseRepo, user: userRepo.user}
+			}
 			svc := NewContentModerationService(
 				&contentModerationTestSettingRepo{values: map[string]string{
 					SettingKeyRiskControlEnabled:      "true",
@@ -213,23 +219,22 @@ func TestRecordCyberPolicyEvent_RespectsContentModerationScope(t *testing.T) {
 			)
 
 			svc.RecordCyberPolicyEvent(context.Background(), CyberPolicyRecordInput{
-				UserID:  1,
-				GroupID: tt.groupID,
-				Model:   tt.model,
+				ModerationVersion: &version,
+				UserID:            1,
+				GroupID:           tt.groupID,
+				Model:             tt.model,
 			})
 
 			if tt.wantCalls == nil {
-				require.Empty(t, repo.snapshotCountCalls())
+				require.Empty(t, baseRepo.snapshotCountCalls())
 			} else {
-				require.Equal(t, tt.wantCalls, repo.snapshotCountCalls())
+				require.Equal(t, tt.wantCalls, baseRepo.snapshotCountCalls())
 			}
-			require.Len(t, repo.snapshotLogs(), tt.wantLogs)
+			require.Len(t, baseRepo.snapshotLogs(), tt.wantLogs)
 			require.Equal(t, tt.wantBanned, userRepo.user.Status == StatusDisabled)
-			if tt.wantBanned {
-				require.Len(t, userRepo.updated, 1)
-			} else {
-				require.Empty(t, userRepo.updated)
-			}
+			// The source-scoped transactional repository owns the disable write;
+			// the legacy userRepo.Update path must not run for a cyber hit.
+			require.Empty(t, userRepo.updated)
 		})
 	}
 }
@@ -361,6 +366,35 @@ func (r *banCountArgsTestRepo) snapshotCountCalls() []bool {
 	out := make([]bool, len(r.countCalls))
 	copy(out, r.countCalls)
 	return out
+}
+
+// cyberScopeTxRepo models the production transactional moderation repository so
+// cyber events with a captured version can still ban within the configured scope.
+type cyberScopeTxRepo struct {
+	*banCountArgsTestRepo
+	user *User
+}
+
+func (r *cyberScopeTxRepo) GetModerationUser(_ context.Context, id int64, _ time.Time, _ bool) (*ModerationUserState, error) {
+	return &ModerationUserState{UserID: id}, nil
+}
+func (r *cyberScopeTxRepo) ListModerationUsers(context.Context, int, int, string, int64, time.Time, bool) ([]ModerationUserState, int64, error) {
+	return nil, 0, nil
+}
+func (r *cyberScopeTxRepo) ManageModerationUser(context.Context, int64, ModerationUserAction) error {
+	return nil
+}
+func (r *cyberScopeTxRepo) ApplyModerationHit(ctx context.Context, in ModerationHit) (ModerationHitResult, error) {
+	count, err := r.CountFlaggedByUserSince(ctx, in.UserID, in.Since, in.ExcludeCyber)
+	if err != nil {
+		return ModerationHitResult{}, err
+	}
+	count++
+	ban := in.AutoBan && count >= in.Threshold && r.user != nil && r.user.Status == StatusActive && !r.user.IsAdmin()
+	if ban {
+		r.user.Status = StatusDisabled
+	}
+	return ModerationHitResult{Accepted: true, Count: count, BanApplied: ban, OwnedDisable: ban}, nil
 }
 
 func TestApplyFlaggedAccountSideEffects_PassesExcludeCyberFlag(t *testing.T) {

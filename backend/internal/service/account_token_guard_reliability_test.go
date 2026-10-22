@@ -151,15 +151,34 @@ func TestRunCycleIgnoresCallerCancellationAfterAcceptance(t *testing.T) {
 }
 
 func TestStartRunDeduplicatesAndCanCancel(t *testing.T) {
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	releaseHandler := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
+		// Drain the POST body before signaling readiness so net/http can watch
+		// the connection for cancellation while the handler is blocked.
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read probe request body: %v", err)
+			return
+		}
+		close(requestStarted)
+		select {
+		case <-r.Context().Done():
+			close(requestCanceled)
+		case <-releaseHandler:
+		}
 	}))
-	defer server.Close()
+	defer func() {
+		close(releaseHandler)
+		server.Close()
+	}()
 
 	repo := &guardMemoryRepo{}
 	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "token"}}}}
 	svc := NewAccountTokenGuardService(nil, repo, accounts, nil, nil)
+	svc.httpClient = server.Client()
+	defer svc.httpClient.CloseIdleConnections()
 	cfg := defaultAccountTokenGuardConfig()
 	cfg.ProbeEndpoint = server.URL
 	cfg.ProbeConcurrency = 1
@@ -170,6 +189,15 @@ func TestStartRunDeduplicatesAndCanCancel(t *testing.T) {
 	first, err := svc.StartRun(true)
 	if err != nil {
 		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = svc.CancelRun(first.ID)
+		svc.wg.Wait()
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe request did not start")
 	}
 	second, err := svc.StartRun(true)
 	if !errors.Is(err, ErrAccountTokenGuardRunning) || second == nil || second.ID != first.ID {
@@ -182,6 +210,11 @@ func TestStartRunDeduplicatesAndCanCancel(t *testing.T) {
 	for time.Now().Before(deadline) {
 		job, ok := svc.Job(first.ID)
 		if ok && job.Status == AccountTokenGuardJobCanceled {
+			select {
+			case <-requestCanceled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("probe handler did not observe request cancellation")
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

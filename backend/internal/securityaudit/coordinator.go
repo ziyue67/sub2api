@@ -3,6 +3,7 @@ package securityaudit
 import (
 	"context"
 	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"net/http"
 	"sync"
 )
@@ -18,17 +19,57 @@ type PromptEngine interface {
 }
 
 type Coordinator struct {
-	legacy LegacyEngine
-	prompt PromptEngine
+	legacy    LegacyEngine
+	prompt    PromptEngine
+	penalties *service.SecurityPenaltyService
 }
 
 func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {
 	return &Coordinator{legacy: legacy, prompt: prompt}
 }
 
-func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
+func (c *Coordinator) Check(ctx context.Context, req Request) (decision Decision) {
 	if c == nil {
 		return allowDecision(nil, nil)
+	}
+	if c.penalties != nil {
+		cfg, err := c.penalties.GetConfig(ctx)
+		if err != nil {
+			return penaltyUnavailableDecision()
+		}
+		if cfg.Applies(req.UserID) && !req.PenaltyContext.Exempt {
+			groupID := req.GroupID
+			if req.PenaltyContext.OriginalGroupID != nil {
+				groupID = req.PenaltyContext.OriginalGroupID
+			}
+			if cfg.IncludesGroup(groupID) {
+				ctx = service.WithSecurityPenaltyEnforcement(ctx)
+			}
+			admission, err := c.penalties.Admission(ctx, req.UserID, req.PenaltyContext.SessionKey)
+			if err != nil {
+				return penaltyUnavailableDecision()
+			}
+			if admission.Blocked {
+				return penaltyBlockedDecision()
+			}
+			if admission.TargetGroupID != nil && (req.GroupID == nil || *req.GroupID != *admission.TargetGroupID) {
+				result := penaltyBlockedDecision()
+				result.ErrorCode = "security_penalty_reconnect_required"
+				result.ClientMessage = "会话已转入受限分组，请使用同一会话标识请求头重新连接"
+				return result
+			}
+			defer func() {
+				if decision.Kind == DecisionBlock {
+					c.recordPenaltyFinding(ctx, req, decision)
+				}
+			}()
+		}
+	}
+	// Punishment changes account routing, not which source group's audit policy
+	// applies. Keep auditing/counting the original group after a restricted route.
+	if req.PenaltyContext.OriginalGroupID != nil {
+		req.GroupID = cloneInt64Ptr(req.PenaltyContext.OriginalGroupID)
+		req.GroupName = req.PenaltyContext.OriginalGroupName
 	}
 	mode := ModeOff
 	if c.prompt != nil {

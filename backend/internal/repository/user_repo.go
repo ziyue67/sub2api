@@ -589,7 +589,7 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 		// 注意：SoftDeleteMixin 的拦截器不会自动下沉到 HasAPIKeysWith 子查询，
 		// 必须显式加 apikey.DeletedAtIsNil()，否则已软删除的 key 会污染过滤结果。
 		q = q.Where(dbuser.HasAPIKeysWith(
-			apikey.GroupIDEQ(filters.APIKeyGroupID),
+			apiKeyInGroup(filters.APIKeyGroupID),
 			apikey.DeletedAtIsNil(),
 		))
 	}

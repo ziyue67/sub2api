@@ -83,7 +83,7 @@ the final response locally. This does not provide upstream constrained decoding.
 - Treat this as bounded model correction, not constrained upstream decoding or
   a guarantee that arbitrary malformed model output will always recover.
 
-# First-turn unknown-target correction
+# Unknown-target correction
 
 The gateway separately permits one regeneration when the first tool interaction ends in exactly one undeclared run_officejs target at the end of a completed response. It must have no prior tool calls/results and no dispatched client tool. This path reuses the prepared request, current catalog, account, model, proxy and attachment IDs; it does not append a fabricated executed tool result. Its corrected response must pass the current catalog, argument schema, identity and parallel-call checks. A second unknown target, invalid arguments or incomplete response fails without dispatching tools. Both attempts' reported usage is retained, including progressive usage if the correction disconnects before its terminal event.
 
@@ -96,6 +96,29 @@ dispatch or another generation. Empty lifecycle events and opaque reasoning alon
 do not block regeneration; non-streaming requests remain buffered and retain their
 one correction attempt. Known-target formatting corrections still preserve the
 original text and replace only withheld tool slots.
+
+On later turns, the first-turn regeneration guard remains in place. A separate
+one-attempt continuation is allowed only when the expanded tool history consists
+of complete call/result pairs, the completed response ends in exactly one
+identifiable run_officejs call, and no visible stream content or client tool has
+been dispatched. The rejected native call is appended with an `executed: false`
+tool result. Previously completed history, account, model, effort, proxy and
+attachment IDs are retained; the original request is never regenerated. The
+replacement must pass current catalog/schema checks and may not reuse historical
+tool identities or repeat an identical completed client operation. A second
+unknown target, changed batch, incomplete correction or invalid schema fails
+without dispatch. This conservative rule also rejects repeated read operations
+during automatic recovery; it does not attempt to infer semantic equivalence of
+different commands. A successful recovery is not guaranteed.
+
+Local conversion failures retain `basispoints_protocol_error` and add bounded
+`failure_stage`, `rejected_tool` and `repair_skipped_reason` diagnostics where
+applicable. `upstream_terminal_event=response.completed` is included only when
+that terminal was actually observed. Tool arguments and business text are not
+added to diagnostics. Ops assigns these failures to `gateway` / `platform`,
+records a logical 502 while preserving the actual upstream HTTP status, and
+does not interpret them as provider HTTP rejections or account cooling signals.
+Existing request-capture formats and database schema are unchanged.
 
 # Optional inline image limit policies
 

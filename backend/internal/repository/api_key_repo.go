@@ -43,7 +43,14 @@ func (r *apiKeyRepository) activeQuery() *dbent.APIKeyQuery {
 }
 
 func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) error {
-	builder := r.client.APIKey.Create().
+	if len(key.GroupIDs) > 1 {
+		return r.mutateWithGroups(ctx, key, func(ctx context.Context) error { return r.create(ctx, key) })
+	}
+	return r.create(ctx, key)
+}
+
+func (r *apiKeyRepository) create(ctx context.Context, key *service.APIKey) error {
+	builder := clientFromContext(ctx, r.client).APIKey.Create().
 		SetUserID(key.UserID).
 		SetConcurrencyLimit(key.ConcurrencyLimit).
 		SetKey(key.Key).
@@ -88,7 +95,7 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.entityWithGroupIDs(ctx, m)
 }
 
 // GetKeyAndOwnerID 根据 API Key ID 获取其 key 与所有者（用户）ID。
@@ -126,7 +133,7 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.entityWithGroupIDs(ctx, m)
 }
 
 func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
@@ -246,10 +253,17 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 		}
 		return nil, err
 	}
-	return apiKeyEntityToService(m), nil
+	return r.entityWithGroupIDs(ctx, m)
 }
 
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
+	if fields.GroupID {
+		return r.mutateWithGroups(ctx, key, func(ctx context.Context) error { return r.update(ctx, key, fields) })
+	}
+	return r.update(ctx, key, fields)
+}
+
+func (r *apiKeyRepository) update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
 	// 空掩码代表调用方不改任何列，直接返回，避免产生一次无意义的整行写。
 	if fields.IsEmpty() {
 		return nil
@@ -461,7 +475,7 @@ func (r *apiKeyRepository) apiKeyListByUserIDQuery(userID int64, filters service
 		if *filters.GroupID == 0 {
 			q = q.Where(apikey.GroupIDIsNil())
 		} else {
-			q = q.Where(apikey.GroupIDEQ(*filters.GroupID))
+			q = q.Where(apiKeyInGroup(*filters.GroupID))
 		}
 	}
 
@@ -493,6 +507,9 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
+	if err := r.attachGroupIDs(ctx, outKeys); err != nil {
+		return nil, nil, err
+	}
 	if err := r.attachLastUsedIPs(ctx, outKeys); err != nil {
 		return nil, nil, err
 	}
@@ -512,6 +529,9 @@ func (r *apiKeyRepository) ListAllByUserID(ctx context.Context, userID int64, fi
 	outKeys := make([]service.APIKey, 0, len(keys))
 	for i := range keys {
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
+	}
+	if err := r.attachGroupIDs(ctx, outKeys); err != nil {
+		return nil, err
 	}
 	if err := r.attachLastUsedIPs(ctx, outKeys); err != nil {
 		return nil, err
@@ -633,7 +653,7 @@ func (r *apiKeyRepository) ExistsByKey(ctx context.Context, key string) (bool, e
 }
 
 func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.APIKey, *pagination.PaginationResult, error) {
-	q := r.activeQuery().Where(apikey.GroupIDEQ(groupID))
+	q := r.activeQuery().Where(apiKeyInGroup(groupID))
 
 	total, err := q.Count(ctx)
 	if err != nil {
@@ -658,6 +678,9 @@ func (r *apiKeyRepository) ListByGroupID(ctx context.Context, groupID int64, par
 		outKeys = append(outKeys, *apiKeyEntityToService(keys[i]))
 	}
 
+	if err := r.attachGroupIDs(ctx, outKeys); err != nil {
+		return nil, nil, err
+	}
 	return outKeys, paginationResultFromTotal(int64(total), params), nil
 }
 
@@ -733,26 +756,49 @@ func (r *apiKeyRepository) SearchAPIKeys(ctx context.Context, userID int64, keyw
 
 // ClearGroupIDByGroupID 将指定分组的所有 API Key 的 group_id 设为 nil
 func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	n, err := r.client.APIKey.Update().
-		Where(apikey.GroupIDEQ(groupID), apikey.DeletedAtIsNil()).
-		ClearGroupID().
-		Save(ctx)
-	return int64(n), err
+	client := clientFromContext(ctx, r.client)
+	res, err := client.ExecContext(ctx, `
+		WITH removed AS (
+			DELETE FROM api_key_groups WHERE group_id = $1
+		)
+		UPDATE api_keys k SET group_id = (
+			SELECT MIN(g.group_id) FROM api_key_groups g WHERE g.api_key_id = k.id AND g.group_id <> $1
+		), updated_at = NOW()
+		WHERE k.group_id = $1 AND k.deleted_at IS NULL`, groupID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
-// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID
+// UpdateGroupIDByUserAndGroup also migrates additional bindings. CTEs share
+// the row lock and statement snapshot so no intermediate selection is exposed.
 func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
-	n, err := client.APIKey.Update().
-		Where(apikey.UserIDEQ(userID), apikey.GroupIDEQ(oldGroupID), apikey.DeletedAtIsNil()).
-		SetGroupID(newGroupID).
-		Save(ctx)
-	return int64(n), err
+	res, err := client.ExecContext(ctx, `
+		WITH candidates AS MATERIALIZED (
+			SELECT k.id, k.group_id FROM api_keys k
+			WHERE k.user_id = $1 AND k.deleted_at IS NULL AND
+			(k.group_id = $2 OR EXISTS (SELECT 1 FROM api_key_groups g WHERE g.api_key_id = k.id AND g.group_id = $2))
+			FOR UPDATE
+		), removed AS (
+			DELETE FROM api_key_groups g USING candidates c WHERE g.api_key_id = c.id AND g.group_id = $2
+		), inserted AS (
+			INSERT INTO api_key_groups (api_key_id, group_id)
+			SELECT id, $3 FROM candidates WHERE group_id IS DISTINCT FROM $2 AND group_id IS DISTINCT FROM $3
+			ON CONFLICT DO NOTHING
+		)
+		UPDATE api_keys k SET group_id = CASE WHEN k.group_id = $2 THEN $3 ELSE k.group_id END, updated_at = NOW()
+		WHERE k.id IN (SELECT id FROM candidates)`, userID, oldGroupID, newGroupID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // CountByGroupID 获取分组的 API Key 数量
 func (r *apiKeyRepository) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	count, err := r.activeQuery().Where(apikey.GroupIDEQ(groupID)).Count(ctx)
+	count, err := r.activeQuery().Where(apiKeyInGroup(groupID)).Count(ctx)
 	return int64(count), err
 }
 
@@ -769,7 +815,7 @@ func (r *apiKeyRepository) ListKeysByUserID(ctx context.Context, userID int64) (
 
 func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	keys, err := r.activeQuery().
-		Where(apikey.GroupIDEQ(groupID)).
+		Where(apiKeyInGroup(groupID)).
 		Select(apikey.FieldKey).
 		Strings(ctx)
 	if err != nil {

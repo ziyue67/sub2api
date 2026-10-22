@@ -40,19 +40,28 @@ func (r *accountRepository) RecordConcurrencyResult(ctx context.Context, event s
 	}
 	var current int
 	var accountName, platform string
-	var extra []byte
-	err = tx.QueryRowContext(ctx, `SELECT concurrency,COALESCE(extra->'auto_config_concurrency','{}'::jsonb),name,platform FROM accounts a
+	var extra, admission []byte
+	err = tx.QueryRowContext(ctx, `SELECT concurrency,COALESCE(extra->'auto_config_concurrency','{}'::jsonb),name,platform,COALESCE(extra->'openai_two_fa_admission','null'::jsonb) FROM accounts a
  WHERE id=$1 AND deleted_at IS NULL AND parent_account_id IS NULL
  AND concurrency>0 AND (NOT $3 OR (status='active' AND schedulable=true))
  AND (NOT $3 OR ((rate_limit_reset_at IS NULL OR rate_limit_reset_at<=NOW()) AND (overload_until IS NULL OR overload_until<=NOW()) AND (temp_unschedulable_until IS NULL OR temp_unschedulable_until<=NOW())))
  AND (expires_at IS NULL OR NOT auto_pause_on_expired OR expires_at>NOW())
  AND EXISTS(SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id WHERE ag.account_id=a.id AND ag.group_id=ANY($2) AND g.deleted_at IS NULL AND g.status='active')
- FOR UPDATE`, event.AccountID, pq.Array(actual.UpgradeGroupIDs), event.Success).Scan(&current, &extra, &accountName, &platform)
+ FOR UPDATE`, event.AccountID, pq.Array(actual.UpgradeGroupIDs), event.Success).Scan(&current, &extra, &accountName, &platform, &admission)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if string(admission) != "null" {
+		var gate service.OpenAITwoFAAdmissionState
+		if err := json.Unmarshal(admission, &gate); err != nil {
+			return err
+		}
+		if gate.Phase != "passed" || gate.ApprovedAt == nil || event.StartedAt.Before(*gate.ApprovedAt) {
+			return nil
+		}
 	}
 	state := service.AutoConfigConcurrencyState{}
 	if err = json.Unmarshal(extra, &state); err != nil {

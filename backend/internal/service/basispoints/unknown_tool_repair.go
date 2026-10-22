@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"strings"
 )
 
-type unknownClientToolError struct{}
+type unknownClientToolError struct{ name string }
 
 func (unknownClientToolError) Error() string {
 	return "basispoints returned a tool outside the client's catalog"
@@ -36,6 +37,101 @@ func (b *Bridge) canRepair(response object, err error) bool {
 		}
 	}
 	return count == 1
+}
+
+// Continuations must never regenerate the original request. Only a complete,
+// unexecuted native call can be returned to BPS as an executed:false result.
+func (b *Bridge) canRepairUnknownContinuation(response object, err error) bool {
+	var unknown unknownClientToolError
+	if !b.hasToolHistory || b.structured != nil || len(b.completedToolHistory) == 0 || len(b.tools) == 0 || !errors.As(err, &unknown) || text(response["status"]) != "completed" {
+		return false
+	}
+	items, ok := repairableTools(response)
+	output, _ := response["output"].([]any)
+	if !ok || len(items) != 1 || len(output) == 0 {
+		return false
+	}
+	last, _ := output[len(output)-1].(object)
+	return isTool(last) && !b.completedToolHistory["call/"+text(items[0]["call_id"])] && text(items[0]["id"]) != "" && !b.completedToolHistory["item/"+text(items[0]["id"])]
+}
+
+// A missing, duplicate or out-of-order result leaves continuation recovery off.
+// Inspect expanded native history so replay cache recovery is accounted for.
+func (b *Bridge) completeToolHistory(input []any) map[string]bool {
+	seen, pending := make(map[string]bool), make(map[string]bool)
+	check := *b
+	check.replay = nil
+	for _, raw := range input {
+		item, _ := raw.(object)
+		call := text(item["call_id"])
+		if isTool(item) {
+			if call == "" || seen["call/"+call] {
+				return nil
+			}
+			seen["call/"+call], pending[call] = true, true
+			if id := text(item["id"]); id != "" {
+				seen["item/"+id] = true
+			}
+			if translated, err := check.translateCall(item); err == nil {
+				translated["call_id"] = "compare"
+				seen["operation/"+historyCallFingerprint(translated)] = true
+			}
+		} else if strings.HasSuffix(text(item["type"]), "_call_output") {
+			if !pending[call] {
+				return nil
+			}
+			delete(pending, call)
+		}
+	}
+	if len(pending) != 0 {
+		return nil
+	}
+	return seen
+}
+
+func (b *Bridge) repairUnknownContinuation(ctx context.Context, original object, repair ToolRepairFunc, validation error) (object, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, -1, err
+	}
+	corrected, err := repair(ctx, original, validation)
+	first, _ := original["usage"].(object)
+	second, _ := corrected["usage"].(object)
+	original["usage"] = mergeUsage(first, second)
+	if err != nil {
+		return nil, -1, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, -1, err
+	}
+	items, ok := repairableTools(corrected)
+	if !ok || text(corrected["status"]) != "completed" || len(items) != 1 {
+		return nil, -1, fmt.Errorf("basispoints unknown tool correction changed the tool batch; no tool was executed")
+	}
+	if text(items[0]["id"]) == "" || b.completedToolHistory["call/"+text(items[0]["call_id"])] || b.completedToolHistory["item/"+text(items[0]["id"])] {
+		return nil, -1, fmt.Errorf("basispoints unknown tool correction reused a historical tool identity")
+	}
+	check := *b
+	check.replay = nil
+	translated, err := check.translateCall(items[0])
+	if err != nil {
+		return nil, -1, err
+	}
+	translated["call_id"] = "compare"
+	if b.completedToolHistory["operation/"+historyCallFingerprint(translated)] {
+		return nil, -1, fmt.Errorf("basispoints unknown tool correction repeated a completed historical operation")
+	}
+	output, _ := original["output"].([]any)
+	replacement, _ := corrected["output"].([]any)
+	index := len(output) - 1
+	merged := make(object, len(original))
+	for key, value := range original {
+		merged[key] = value
+	}
+	merged["output"] = append(append([]any{}, output[:index]...), replacement...)
+	if err := b.translateResponse(merged); err != nil {
+		return nil, -1, err
+	}
+	return merged, index, nil
 }
 
 // The correction reuses the already prepared body, including uploaded file IDs,

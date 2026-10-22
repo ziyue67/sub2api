@@ -183,7 +183,7 @@ func prepareQualityTemplate(t *QualityRuleTemplate) error {
 		return err
 	}
 	t.AccountFilter = filter
-	if t.PelicanConfig == nil || t.PelicanConfig.Quality == nil {
+	if t.PelicanConfig == nil || t.PelicanConfig.Quality == nil || t.PelicanConfig.Quality.Action == QualityActionOpenAITwoFAAdmission {
 		return fmt.Errorf("group rules must be quality rules")
 	}
 	sample := t.planFor(0)

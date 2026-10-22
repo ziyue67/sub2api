@@ -5,16 +5,23 @@ import (
 	"encoding/json"
 	"reflect"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 	"github.com/tidwall/gjson"
 )
 
 // WSRequest begins one actual upstream frame/attempt. RawMessage avoids an extra
 // encoding allocation. Other values must reserve a conservative encoding bound.
 func (s *Session) WSRequest(account int64, value any) int {
+	return s.WSRequestWithRoute(account, value, transportdiag.Route{})
+}
+
+func (s *Session) WSRequestWithRoute(account int64, value any, route transportdiag.Route) int {
 	if s == nil {
 		return 0
 	}
-	n := s.BeginAttempt(account)
+	route.Upstream = "websocket"
+	route.ResponseFormat = "websocket_frames"
+	n := s.BeginRoutedAttempt(account, route)
 	var payload []byte
 	switch v := value.(type) {
 	case json.RawMessage:

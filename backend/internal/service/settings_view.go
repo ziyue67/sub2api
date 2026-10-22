@@ -18,8 +18,11 @@ type SystemSettings struct {
 	OpenAICodexTicketFailClosed         bool
 	OpenAICodexTicketStrategy           string
 	RegistrationEnabled                 bool
+	LoginRateLimitEnabled               bool // 登录频率限制与失败 IP 封禁（默认开启）
+	RegistrationIPLimitEnabled          bool // 同一 IP 最多注册两个账号（默认开启）
 	EmailVerifyEnabled                  bool
 	RegistrationEmailSuffixWhitelist    []string
+	RegistrationEmailAliasBlockEnabled  bool // 屏蔽 Gmail 点号、+标签及域名尾点注册（默认开启）
 	RegistrationEmailDomainQuotaEnabled bool // 白名单非空时放行非白名单域名限量注册（默认关闭）
 	PromoCodeEnabled                    bool
 	PasswordResetEnabled                bool
@@ -352,24 +355,25 @@ type SystemSettings struct {
 	RequestCaptureQuotaMiB      int64
 	RequestCaptureRetentionDays int
 	// 使用详情中长上下文计费 x2 徽标的展示开关（默认开启）
-	ExcelBPSImageMode             string
-	UsageShowLongContextBadge     bool
-	UsageShowCacheRate            bool
-	UsageShowCacheRateToUsers     bool
-	ExcelBPSImageRelayEnabled     bool
-	ExcelBPSImageBaseURL          string
-	ExcelBPSImageBodyLimitMiB     int
-	ExcelBPSImageBudgetMiB        int
-	ExcelBPSImageMaxRequests      int
-	ExcelBPSImageMaxImageMiB      int
-	ExcelBPSImageMaxImages        int
-	ExcelBPSImageLimitPolicy      string
-	ExcelBPSImageWarningRemaining int
-	ExcelBPSImageCompactReserve   int
-	ExcelBPSImageMaxTotalMiB      int
-	ExcelBPSImageStorageMiB       int
-	ExcelBPSImageStorageEntries   int
-	ExcelBPSImageTTLMinutes       int
+	ExcelBPSImageMode                     string
+	UsageShowLongContextBadge             bool
+	UsageShowCacheRate                    bool
+	UsageShowCacheRateToUsers             bool
+	UsageShowUpstreamResponseModelToUsers bool
+	ExcelBPSImageRelayEnabled             bool
+	ExcelBPSImageBaseURL                  string
+	ExcelBPSImageBodyLimitMiB             int
+	ExcelBPSImageBudgetMiB                int
+	ExcelBPSImageMaxRequests              int
+	ExcelBPSImageMaxImageMiB              int
+	ExcelBPSImageMaxImages                int
+	ExcelBPSImageLimitPolicy              string
+	ExcelBPSImageWarningRemaining         int
+	ExcelBPSImageCompactReserve           int
+	ExcelBPSImageMaxTotalMiB              int
+	ExcelBPSImageStorageMiB               int
+	ExcelBPSImageStorageEntries           int
+	ExcelBPSImageTTLMinutes               int
 }
 
 type DefaultSubscriptionSetting struct {
@@ -489,6 +493,9 @@ type PublicSettings struct {
 	// 使用记录单条缓存率。功能默认开启；向用户展示默认关闭。
 	UsageShowCacheRate        bool `json:"usage_show_cache_rate"`
 	UsageShowCacheRateToUsers bool `json:"usage_show_cache_rate_to_users"`
+
+	// 是否向终端用户展示上游响应里声明的实际模型。默认关闭。
+	UsageShowUpstreamResponseModelToUsers bool `json:"usage_show_upstream_response_model_to_users"`
 }
 
 type LoginAgreementDocument struct {

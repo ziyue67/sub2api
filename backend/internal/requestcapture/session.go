@@ -264,6 +264,19 @@ func (s *Session) ClientFrame(body []byte) {
 	_ = stream.Close()
 }
 func (s *Session) BeginAttempt(account int64) int {
+	return s.BeginRoutedAttempt(account, transportdiag.Route{})
+}
+
+// BeginRoutedAttempt snapshots route metadata at the actual attempt boundary.
+func (s *Session) BeginRoutedAttempt(account int64, route transportdiag.Route) int {
+	return s.beginAttempt(account, route, "request")
+}
+
+func (s *Session) BeginHandshake(account int64, route transportdiag.Route) int {
+	return s.beginAttempt(account, route, "websocket_handshake")
+}
+
+func (s *Session) beginAttempt(account int64, route transportdiag.Route, phase string) int {
 	if s == nil {
 		return 0
 	}
@@ -279,7 +292,7 @@ func (s *Session) BeginAttempt(account int64) int {
 		return 0
 	}
 	n := len(s.attempts) + 1
-	s.attempts = append(s.attempts, Attempt{Number: n, AccountID: account, StartedAt: time.Now().UTC()})
+	s.attempts = append(s.attempts, Attempt{Number: n, AccountID: account, StartedAt: time.Now().UTC(), Route: route, Phase: phase})
 	s.bindAccountLocked(account)
 	return n
 }
@@ -328,6 +341,13 @@ func (s *Session) AttemptResponse(n, status int, h http.Header, err error) {
 	}
 	a := &s.attempts[n-1]
 	a.Status = status
+	if a.Phase == "websocket_handshake" {
+		ms := float64(time.Since(a.StartedAt)) / float64(time.Millisecond)
+		a.HandshakeMS = &ms
+	}
+	if a.Route.Upstream == "http" {
+		a.Route.ResponseFormat = transportdiag.ResponseFormat(h)
+	}
 	a.UpstreamRequestID = bounded(h.Get("x-request-id"), 128)
 	if a.UpstreamRequestID == "" {
 		a.UpstreamRequestID = bounded(h.Get("request-id"), 128)
@@ -336,6 +356,9 @@ func (s *Session) AttemptResponse(n, status int, h http.Header, err error) {
 	if err != nil {
 		a.Error = transportdiag.Classify(err)
 		a.ErrorStage = "transport"
+		if a.Phase == "websocket_handshake" {
+			a.ErrorStage = "websocket_handshake"
+		}
 	}
 }
 func (s *Session) Finish(status int) {
@@ -530,7 +553,12 @@ func (st *Stream) observeOutcomeLocked() {
 		}
 	}
 	if st.part.Stage == "upstream_response" && st.part.Attempt > 0 && st.part.Attempt <= len(st.s.attempts) {
-		st.s.attempts[st.part.Attempt-1].ResponseTerminal = st.terminal
+		a := &st.s.attempts[st.part.Attempt-1]
+		a.ResponseTerminal = st.terminal
+		if a.Phase != "websocket_handshake" && st.observer.sawEvent && a.FirstEventMS == nil {
+			ms := float64(time.Since(a.StartedAt)) / float64(time.Millisecond)
+			a.FirstEventMS = &ms
+		}
 	}
 }
 func (s *Session) failCapture(reason string) {
@@ -1137,7 +1165,13 @@ func (s *Session) ObserveHTTPRequest(req *http.Request, account int64) (int, fun
 		return 0, func(*http.Response, error) {}
 	}
 	diagnostics := traceCaptureRequest(req)
-	n := s.BeginAttempt(account)
+	route := transportdiag.HTTPRoute(req)
+	if route.Downstream == "" {
+		s.mu.Lock()
+		route.Downstream = s.meta.Protocol
+		s.mu.Unlock()
+	}
+	n := s.BeginRoutedAttempt(account, route)
 	st := s.NewStream("upstream_request", n, 0, req.Header.Get("Content-Type"), req.Header)
 	st.part.URL = SafeURL(req.URL.String())
 	req.Body = ObserveBody(req.Body, st)

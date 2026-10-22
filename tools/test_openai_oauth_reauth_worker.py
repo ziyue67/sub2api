@@ -23,6 +23,7 @@ from tools.openai_oauth_reauth_worker import (
     _is_local_codex_callback,
     _safe_openai_endpoint,
     _workspace_id_from_auth_payload,
+    _siwc_password_failure,
     process_claim,
     process_password_claim,
     _wait_for_otp,
@@ -48,11 +49,53 @@ class OTPHandler(BaseHTTPRequestHandler):
 
 
 class OpenAIOAuthReauthWorkerTest(unittest.TestCase):
+    def test_siwc_failures_use_fixed_stage_and_reason_without_external_output(self):
+        cases = (
+            ("[1/5] Password accepted TOTP 2FA challenge reached 2FA verification accepted SIWC_INTERACTION_REQUIRED", "mfa_accepted", "browser_interaction_required"),
+            ("Password was rejected SIWC_INTERACTION_REQUIRED", "starting", "password_rejected"),
+            ("2FA key was rejected SIWC_INTERACTION_REQUIRED", "starting", "totp_rejected"),
+            ("SIWC_WORKSPACE_MISMATCH", "starting", "workspace_mismatch"),
+            ("SIWC_AUTH_URL_INVALID", "starting", "invalid_auth_url"),
+            ("PROXY_RISK_CONTROL", "starting", "security_check"),
+            ("[proxy] 代理检测失败：HTTP 403，返回安全校验页面\n[error] 代理检测失败：HTTP 403，返回安全校验页面", "starting", "security_check"),
+            ("ERR_MODULE_NOT_FOUND", "starting", "runtime_error"),
+            ("ECONNREFUSED", "starting", "transport_error"),
+            ("unknown upstream response", "starting", "protocol_error"),
+        )
+        for output, stage, reason in cases:
+            with self.subTest(reason=reason):
+                result = _siwc_password_failure(output + " synthetic-password synthetic-totp https://example.test/?code=secret", 1)
+                self.assertIn(f"stage={stage}, reason={reason}, exit=1", result)
+                self.assertIn("credentials retained", result)
+                self.assertNotIn("synthetic", result)
+                self.assertNotIn("secret", result)
+                self.assertNotIn("https://", result)
+                self.assertEqual("use browser authorization" in result, reason in {"browser_interaction_required", "security_check"})
+
     def test_parent_death_terminates_managed_protocol_descendants(self):
         with patch("os.getpgrp", return_value=123), patch("os.getpid", return_value=123), patch("os.killpg") as kill:
             with self.assertRaises(SystemExit):
                 terminate_worker(15, None)
             kill.assert_called_once_with(123, 9)
+
+    def test_siwc_runner_reports_browser_handoff_after_successful_mfa_without_exposing_output(self):
+        api = SimpleNamespace(config=SimpleNamespace(tosub2_root=Path("synthetic-tosub2")), progress=lambda *_args: None)
+        result = SimpleNamespace(returncode=1, stdout="Password accepted\n2FA verification accepted\nsynthetic-secret",
+                                 stderr="SIWC_INTERACTION_REQUIRED https://example.test/?code=synthetic-code")
+        with patch("tools.openai_oauth_reauth_worker.shutil.which", return_value="node"), patch.object(
+            Path, "is_file", return_value=True
+        ), patch("tools.openai_siwc_oauth_adapter.prepare_siwc_runtime", return_value=Path("synthetic-runner.mjs")), patch(
+            "tools.openai_oauth_reauth_worker.subprocess.run", return_value=result
+        ) as runner:
+            with self.assertRaises(WorkerError) as failure:
+                process_password_claim(api, dict(task_id=7, account_id=42, login_email="demo@example.test",
+                                                password="synthetic-secret", oauth_profile="siwc",
+                                                auth_url="https://auth.openai.com/api/accounts/authorize?state=synthetic"))
+        self.assertIn("stage=mfa_accepted, reason=browser_interaction_required", str(failure.exception))
+        self.assertIn("use browser authorization", str(failure.exception))
+        self.assertNotIn("synthetic", str(failure.exception))
+        self.assertEqual(runner.call_count, 1)
+        self.assertEqual(runner.call_args.kwargs["timeout"], 600)
 
     def test_external_worker_does_not_signal_unrelated_process_group(self):
         with patch("os.getpgrp", return_value=100), patch("os.getpid", return_value=123), patch("os.killpg") as kill:

@@ -21,6 +21,9 @@ import (
 
 func normalizeOpenAIWSLogValue(value string) string {
 	trimmed := strings.TrimSpace(value)
+	if trimmed != "invalid_encrypted_content" && trimmed != "thinking_signature_invalid" {
+		trimmed = redactOpenAIEncryptedDiagnostic(trimmed)
+	}
 	if trimmed == "" {
 		return "-"
 	}
@@ -225,6 +228,9 @@ func parseOpenAIWSErrorEventFields(message []byte) (code string, errType string,
 func summarizeOpenAIWSErrorEventFieldsFromRaw(codeRaw, errTypeRaw, errMessageRaw string) (code string, errType string, errMessage string) {
 	code = truncateOpenAIWSLogValue(codeRaw, openAIWSLogValueMaxLen)
 	errType = truncateOpenAIWSLogValue(errTypeRaw, openAIWSLogValueMaxLen)
+	if openAIEncryptedErrorCode(codeRaw) {
+		errMessageRaw = openAIEncryptedErrorRedacted
+	}
 	errMessage = truncateOpenAIWSLogValue(errMessageRaw, openAIWSLogValueMaxLen)
 	return code, errType, errMessage
 }

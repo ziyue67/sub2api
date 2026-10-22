@@ -85,3 +85,19 @@ func OutputFlushed(ctx context.Context) {
 	}
 	c.event("first_output_flush", time.Now())
 }
+
+// TerminalFlushed records successful local write/flush completion, not receipt
+// or parsing by a remote client. The upstream terminal remains a separate fact.
+func TerminalFlushed(ctx context.Context, terminal string) {
+	c := From(ctx)
+	if c == nil || terminal == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finished || c.data.DownstreamError {
+		return
+	}
+	c.data.TerminalFlushed = terminal
+	c.event("terminal_output_flush", time.Now())
+}

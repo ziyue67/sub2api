@@ -58,7 +58,22 @@ func applyQualityBPSOutcome(ctx context.Context, tx *sql.Tx, plan *service.Sched
 			return "bps_kept_usage", nil
 		}
 		// 只还原本规则写入的值：账号被人改过 BPS（或 403 自动关了）就交给管理员处理。
-		if status != "active" || !qualityBPSSnapshotEqual(qualityBPSSnapshot(extra), state.BPSApplied) {
+		if status != "active" {
+			plan.QualityRestoreDiagnostic = qualityRestoreConflict("account_not_active")
+			return "restore_conflict", nil
+		}
+		current := qualityBPSSnapshot(extra)
+		if !qualityBPSSnapshotEqual(current, state.BPSApplied) {
+			diagnostic := qualityRestoreConflict("bps_fields_changed")
+			for _, key := range service.QualityBPSManagedKeys {
+				if current[key] == nil && state.BPSApplied[key] == nil {
+					continue
+				}
+				if !qualityBPSSnapshotEqual(map[string]json.RawMessage{key: current[key]}, map[string]json.RawMessage{key: state.BPSApplied[key]}) {
+					diagnostic.ChangedFields = append(diagnostic.ChangedFields, key)
+				}
+			}
+			plan.QualityRestoreDiagnostic = diagnostic
 			return "restore_conflict", nil
 		}
 		set := make(map[string]json.RawMessage, len(state.BPSPrevious))

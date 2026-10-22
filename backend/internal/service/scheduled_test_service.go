@@ -33,6 +33,9 @@ func NewScheduledTestService(
 
 // CreatePlan validates the cron expression, computes next_run_at, and persists the plan.
 func (s *ScheduledTestService) CreatePlan(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error) {
+	if plan.PelicanConfig != nil && plan.PelicanConfig.Quality != nil && plan.PelicanConfig.Quality.Action == QualityActionOpenAITwoFAAdmission {
+		return nil, fmt.Errorf("OpenAI 2FA admission plans are created only during account import")
+	}
 	nextRun, err := nextPlanRun(plan, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("invalid test schedule: %w", err)
@@ -61,6 +64,9 @@ func (s *ScheduledTestService) ListPlansByAccount(ctx context.Context, accountID
 
 // UpdatePlan validates cron and updates the plan.
 func (s *ScheduledTestService) UpdatePlan(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error) {
+	if plan.PelicanConfig != nil && plan.PelicanConfig.Quality != nil && plan.PelicanConfig.Quality.Action == QualityActionOpenAITwoFAAdmission {
+		return nil, fmt.Errorf("imported OpenAI 2FA admission rules keep their enrollment snapshot")
+	}
 	nextRun, err := nextPlanRun(plan, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("invalid test schedule: %w", err)
@@ -108,6 +114,7 @@ func computeNextRun(cronExpr string, from time.Time) (time.Time, error) {
 
 func nextPlanRun(plan *ScheduledTestPlan, now time.Time) (time.Time, error) {
 	if cfg := plan.PelicanConfig; cfg != nil {
+		cfg.QualityRestoreDiagnostic = nil
 		cfg.QualityModelOutcomes = nil
 		cfg.QualityModelActions = nil
 		cfg.RandomQuestion = nil

@@ -11,7 +11,7 @@
 - 支付成功后充值
 - 用户查询
 - 人工余额修正
-- 前端购买页参数透传
+- 自定义嵌入页面的非认证参数与安全边界
 
 ### 基础地址
 - 生产：`https://<your-domain>`
@@ -99,18 +99,26 @@ curl -X POST "${BASE}/api/v1/admin/users/123/balance" \
   }'
 ```
 
-### 4) 购买页 / 自定义页面 URL Query 透传（iframe / 新窗口一致）
-当 Sub2API 打开 `purchase_subscription_url` 或用户侧自定义页面 iframe URL 时，会统一追加：
-- `user_id`
-- `token`
+### 4) 自定义页面嵌入参数与认证边界（iframe / 新窗口一致）
+用户侧自定义页面通过 `buildEmbeddedUrl` 构造嵌入地址，iframe 和“在新窗口打开”使用相同 URL。参数包括：
+
+- `user_id`（当前用户 ID，存在时添加）
 - `theme`（`light` / `dark`）
-- `lang`（例如 `zh` / `en`，用于向嵌入页传递当前界面语言）
+- `lang`（当前界面语言，存在时添加）
 - `ui_mode`（固定 `embedded`）
+- `src_host`（浏览器中来源页的 origin）
+- `src_url`（浏览器中来源页的地址，移除 query 和 fragment）
+
+**不再透传主登录 JWT。**构造地址时会移除历史保留的 `token` 查询参数（包括同名重复项），其余目标业务参数和锚点保留。iframe 使用 `referrerpolicy="no-referrer"`；新窗口链接使用 `noopener noreferrer`。
 
 示例：
 ```text
-https://pay.example.com/pay?user_id=123&token=<jwt>&theme=light&lang=zh&ui_mode=embedded
+https://pay.example.com/pay?user_id=123&theme=light&lang=zh&ui_mode=embedded&src_host=https%3A%2F%2Fsub.example.com&src_url=https%3A%2F%2Fsub.example.com%2Fcustom%2Fpay
 ```
+
+这些参数仅提供显示和来源上下文，**不能作为身份或授权凭据**；`user_id` 可以被访问者改写。外部系统必须独立验证身份并在服务端执行授权，Admin API Key 只能保存在受信任后端，不能放进 URL 或浏览器页面。
+
+依赖旧 `token` 参数的集成需要迁移到独立认证流程。如需免登录，应另行实现限定接收方、权限和有效期的专用票据交换；当前嵌入路径未提供自动 SSO 或票据交换接口，不应继续向第三方传递主登录 JWT。
 
 ### 5) 失败处理建议
 - 支付成功与充值成功分状态落库
@@ -131,7 +139,7 @@ This document describes the minimal Sub2API Admin API surface for external payme
 - Recharge after payment success
 - User lookup
 - Manual balance correction
-- Purchase page query parameter forwarding
+- Non-authentication parameters and security boundaries for embedded custom pages
 
 ### Base URL
 - Production: `https://<your-domain>`
@@ -219,18 +227,26 @@ curl -X POST "${BASE}/api/v1/admin/users/123/balance" \
   }'
 ```
 
-### 4) Purchase / Custom Page URL query forwarding (iframe and new tab)
-When Sub2API opens `purchase_subscription_url` or a user-facing custom page iframe URL, it appends:
-- `user_id`
-- `token`
+### 4) Custom page parameters and authentication boundaries (iframe and new tab)
+User-facing custom pages use `buildEmbeddedUrl` to construct the embedded URL. The iframe and "Open in new tab" link use the same URL, with these parameters:
+
+- `user_id` (the current user ID, when available)
 - `theme` (`light` / `dark`)
-- `lang` (for example `zh` / `en`, used to pass the current UI language to the embedded page)
+- `lang` (the current UI language, when available)
 - `ui_mode` (fixed: `embedded`)
+- `src_host` (the source page's origin, in the browser)
+- `src_url` (the source page's URL with its query and fragment removed, in the browser)
+
+**The main login JWT is no longer forwarded.** URL construction removes the legacy reserved `token` query parameter, including duplicate entries, while preserving other target business parameters and the target fragment. The iframe uses `referrerpolicy="no-referrer"`; the new-tab link uses `noopener noreferrer`.
 
 Example:
 ```text
-https://pay.example.com/pay?user_id=123&token=<jwt>&theme=light&lang=zh&ui_mode=embedded
+https://pay.example.com/pay?user_id=123&theme=light&lang=zh&ui_mode=embedded&src_host=https%3A%2F%2Fsub.example.com&src_url=https%3A%2F%2Fsub.example.com%2Fcustom%2Fpay
 ```
+
+These parameters provide presentation and source context only; **they are not proof of identity or authorization**. Visitors can modify `user_id`. External systems must authenticate users independently and enforce authorization on the server. Keep Admin API Keys on trusted backends only, never in URLs or browser pages.
+
+Integrations that depend on the old `token` parameter must migrate to an independent authentication flow. If seamless sign-in is needed, implement a separate ticket exchange restricted by recipient, permissions, and lifetime. This embedding path does not provide automatic SSO or a ticket-exchange endpoint, and must not continue forwarding the main login JWT to third parties.
 
 ### 5) Failure handling recommendations
 - Persist payment success and recharge success as separate states

@@ -1,6 +1,7 @@
 <template>
   <AppLayout>
-    <div class="mx-auto max-w-[1600px]" :class="activeTab === 'config' && draft ? 'pb-28' : 'pb-8'">
+    <div class="w-full min-w-0" :class="activeTab === 'config' && draft ? 'pb-28' : 'pb-8'">
+      <SecurityAuditNav active="/admin/prompt-audit" />
       <header class="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary-600 dark:text-primary-400">{{ t('nav.securityAudit') }}</p>
@@ -18,7 +19,7 @@
         <button type="button" class="btn btn-secondary btn-sm mt-3" @click="loadConfig">{{ t('admin.promptAudit.actions.retry') }}</button>
       </div>
 
-      <template v-else>
+      <div>
         <div class="mb-4" role="tablist" :aria-label="t('admin.promptAudit.title')">
           <div class="tabs inline-flex">
             <button
@@ -30,7 +31,7 @@
               :class="{ 'tab-active': activeTab === tab.id }"
               :aria-selected="activeTab === tab.id"
               :data-test="`tab-${tab.id}`"
-              @click="activeTab = tab.id"
+              @click="selectTab(tab.id)"
             >
               {{ tab.label }}
             </button>
@@ -52,6 +53,7 @@
               <div v-if="loadErrors.groups" role="alert" class="mt-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{{ loadErrors.groups }}</div>
               <PolicyPanel :draft="draft" :groups="groups" @update:draft="replaceDraft" />
             </template>
+            <PenaltyPolicyPanel />
           </div>
 
           <div v-show="activeTab === 'events'" data-test="tab-panel-events">
@@ -62,7 +64,7 @@
               class="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200"
             >
               <span>{{ t('admin.promptAudit.events.passEventsDisabled') }}</span>
-              <button type="button" class="btn btn-secondary btn-sm" @click="activeTab = 'config'">
+              <button type="button" class="btn btn-secondary btn-sm" @click="selectTab('config')">
                 {{ t('admin.promptAudit.events.openConfiguration') }}
               </button>
             </div>
@@ -87,11 +89,11 @@
             />
           </div>
         </main>
-      </template>
+      </div>
     </div>
 
     <div v-if="draft && activeTab === 'config'" class="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-12px_35px_rgba(15,23,42,0.08)] backdrop-blur dark:border-dark-700/80 dark:bg-dark-900/95 dark:shadow-[0_-12px_35px_rgba(0,0,0,0.35)] lg:left-64">
-      <div class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3">
+      <div class="flex w-full flex-wrap items-center justify-between gap-3">
         <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
           <SaveToggle :label="t('admin.promptAudit.saveBar.enabled')" :model-value="draft.enabled" data-test="enabled-toggle" @update:model-value="setEnabled" />
           <SaveToggle :label="t('admin.promptAudit.saveBar.blocking')" :model-value="draft.blocking_enabled" :disabled="!draft.enabled" data-test="blocking-toggle" @update:model-value="setBlocking" />
@@ -144,7 +146,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
+import SecurityAuditNav from '@/components/admin/security/SecurityAuditNav.vue'
+import { routeLocationKey, routerKey } from 'vue-router'
+import PenaltyPolicyPanel from '@/features/security-penalties/PenaltyPolicyPanel.vue'
+import { computed, defineComponent, h, inject, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -174,7 +179,14 @@ import { buildUpdateRequest, cloneData, configToDraft, draftFingerprint, emptyEv
 const { t, locale } = useI18n()
 const appStore = useAppStore()
 type PromptAuditPageTab = 'config' | 'events'
-const activeTab = ref<PromptAuditPageTab>('events')
+const promptTab = (value: unknown): PromptAuditPageTab => value === 'config' ? 'config' : 'events'
+const route = inject(routeLocationKey, null), router = inject(routerKey, null)
+const activeTab = ref<PromptAuditPageTab>(promptTab(route?.query.tab))
+watch(() => route?.query.tab, value => { activeTab.value = promptTab(value) })
+function selectTab(value: PromptAuditPageTab) {
+  activeTab.value = value
+  if (router && route) void router.push({ query: { ...route.query, tab: value }, hash: route.hash })
+}
 const pageTabs = computed(() => [
   { id: 'events' as const, label: t('admin.promptAudit.tabs.events') },
   { id: 'config' as const, label: t('admin.promptAudit.tabs.config') },

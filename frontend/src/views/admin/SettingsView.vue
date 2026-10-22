@@ -1553,6 +1553,25 @@
                 </p>
               </div>
 
+              <!-- Email Alias Registration -->
+              <div class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700">
+                <div>
+                  <label for="registration-email-alias-block" class="font-medium text-gray-900 dark:text-white">{{
+                    t("admin.settings.registration.emailAliasBlock")
+                  }}</label>
+                  <p id="registration-email-alias-block-hint" class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.registration.emailAliasBlockHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  id="registration-email-alias-block"
+                  v-model="form.registration_email_alias_block_enabled"
+                  :aria-label="t('admin.settings.registration.emailAliasBlock')"
+                  aria-describedby="registration-email-alias-block-hint"
+                  data-testid="registration-email-alias-block-toggle"
+                />
+              </div>
+
               <!-- Email Domain Quota -->
               <div
                 class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
@@ -1635,6 +1654,44 @@
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                   {{ t("admin.settings.registration.frontendUrlHint") }}
                 </p>
+              </div>
+
+              <!-- Registration IP quota is independent of login protection. -->
+              <div
+                class="flex items-start justify-between gap-4 border-t border-gray-100 pt-4 dark:border-dark-700"
+              >
+                <div>
+                  <label id="registration-ip-limit-label" class="font-medium text-gray-900 dark:text-white">
+                    {{ t("admin.settings.security.registrationIPLimit") }}
+                  </label>
+                  <p id="registration-ip-limit-hint" class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.security.registrationIPLimitHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.registration_ip_limit_enabled"
+                  aria-labelledby="registration-ip-limit-label"
+                  aria-describedby="registration-ip-limit-hint"
+                  data-testid="registration-ip-limit-toggle"
+                />
+              </div>
+
+              <!-- Login rate limits -->
+              <div
+                class="flex items-start justify-between gap-4 border-t border-gray-100 pt-4 dark:border-dark-700"
+              >
+                <div>
+                  <label class="font-medium text-gray-900 dark:text-white">
+                    {{ t("admin.settings.security.loginRateLimit") }}
+                  </label>
+                  <p class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.security.loginRateLimitHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.login_rate_limit_enabled"
+                  data-testid="login-rate-limit-toggle"
+                />
               </div>
 
               <!-- TOTP 2FA -->
@@ -6490,6 +6547,25 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.upstream_response_model_to_users.label') }}
+                </label>
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.upstream_response_model_to_users.description') }}
+                </p>
+              </div>
+              <label class="toggle">
+                <input
+                  v-model="form.usage_show_upstream_response_model_to_users"
+                  data-testid="usage-show-upstream-response-model-to-users"
+                  type="checkbox"
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
           </div>
         </div>
         </div>
@@ -10217,8 +10293,11 @@ const form = reactive<SettingsForm>({
   prism_browser_api_key_configured: false,
   prism_browser_api_key: "",
   registration_enabled: true,
+  login_rate_limit_enabled: true,
+  registration_ip_limit_enabled: true,
   email_verify_enabled: false,
   registration_email_suffix_whitelist: [],
+  registration_email_alias_block_enabled: true,
   registration_email_domain_quota_enabled: false,
   promo_code_enabled: true,
   invitation_code_enabled: false,
@@ -10524,6 +10603,7 @@ const form = reactive<SettingsForm>({
   usage_show_long_context_badge: true,
   usage_show_cache_rate: true,
   usage_show_cache_rate_to_users: false,
+  usage_show_upstream_response_model_to_users: false,
   request_capture_enabled: false,
   request_capture_quota_mib: 1024,
   request_capture_retention_days: 7,
@@ -12013,11 +12093,14 @@ async function saveSettings() {
       prism_browser_base_url: form.prism_browser_base_url,
       ...(form.prism_browser_api_key ? { prism_browser_api_key: form.prism_browser_api_key } : {}),
       registration_enabled: form.registration_enabled,
+      login_rate_limit_enabled: form.login_rate_limit_enabled,
+      registration_ip_limit_enabled: form.registration_ip_limit_enabled,
       email_verify_enabled: form.email_verify_enabled,
       registration_email_suffix_whitelist:
         registrationEmailSuffixWhitelistTags.value.map((suffix) =>
           suffix.startsWith("*.") ? suffix : `@${suffix}`,
         ),
+      registration_email_alias_block_enabled: form.registration_email_alias_block_enabled,
       registration_email_domain_quota_enabled:
         form.registration_email_domain_quota_enabled,
       promo_code_enabled: form.promo_code_enabled,
@@ -12357,6 +12440,7 @@ async function saveSettings() {
       usage_show_long_context_badge: form.usage_show_long_context_badge,
       usage_show_cache_rate: form.usage_show_cache_rate,
       usage_show_cache_rate_to_users: form.usage_show_cache_rate_to_users,
+      usage_show_upstream_response_model_to_users: form.usage_show_upstream_response_model_to_users,
       request_capture_enabled: form.request_capture_enabled,
       request_capture_quota_mib: form.request_capture_quota_mib,
       request_capture_retention_days: form.request_capture_retention_days,

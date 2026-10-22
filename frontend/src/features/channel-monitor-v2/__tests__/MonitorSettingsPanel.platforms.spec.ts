@@ -61,6 +61,7 @@ it('adds supported and custom platforms, reorders them, and deletes only a disab
   const rows = () => wrapper.findAll('[data-testid="monitor-v2-platform-row"]').map((row) => row.attributes('data-platform'))
   expect(rows().slice(-2)).toEqual(['deepseek', 'custom_gw'])
   expect(wrapper.find('[data-platform="openai"]').find('[data-testid="monitor-v2-delete-platform"]').exists()).toBe(false)
+  expect(wrapper.get('[data-platform="openai"]').element.lastElementChild?.querySelector('[data-testid="monitor-v2-move-up"]')).toBeTruthy()
   expect(wrapper.get('[data-platform="custom_gw"]').get('[data-testid="monitor-v2-delete-platform"]').attributes('disabled')).toBeDefined()
 
   await wrapper.get('[data-platform="custom_gw"]').get('[data-testid="monitor-v2-move-up"]').trigger('click')
@@ -98,6 +99,7 @@ it('moves groups inside one platform and saves that display order', async () => 
   const section = (platform: string) => wrapper.get(`[data-testid="monitor-v2-group-platform"][data-platform="${platform}"]`)
   const ids = () => section('openai').findAll('[data-testid="monitor-v2-group-row"]').map((row) => row.attributes('data-group-id'))
   expect(ids()).toEqual(['8', '3'])
+  expect(section('openai').get('[data-testid="monitor-v2-group-row"]').element.lastElementChild?.querySelector('[data-testid="monitor-v2-group-move-up"]')).toBeTruthy()
   await section('openai').findAll('[data-testid="monitor-v2-group-move-down"]')[0].trigger('click')
   expect(ids()).toEqual(['3', '8'])
   expect(section('anthropic').get('[data-testid="monitor-v2-group-row"]').attributes('data-group-id')).toBe('1')

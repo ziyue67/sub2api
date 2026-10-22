@@ -88,6 +88,7 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		UserID:             k.UserID,
 		Key:                k.Key,
 		Name:               k.Name,
+		GroupIDs:           k.ConfiguredGroupIDs(),
 		GroupID:            k.GroupID,
 		GroupRoutes:        k.GroupRoutes,
 		Status:             k.Status,
@@ -790,11 +791,29 @@ func toolSurchargesFromService(items []service.ToolSurcharge) []ToolSurcharge {
 // UsageLogFromService converts a service UsageLog to DTO for regular users.
 // It excludes admin-only account/upstream internals while keeping user billing and request metadata.
 func UsageLogFromService(l *service.UsageLog) *UsageLog {
+	return UsageLogFromServiceForUser(l, false)
+}
+
+// UsageLogFromServiceForUser converts a usage log for an end user.
+// showUpstreamResponseModel reveals only the model declared by the upstream
+// response. Mapped request models, mismatch flags, and account internals stay hidden.
+func UsageLogFromServiceForUser(l *service.UsageLog, showUpstreamResponseModel bool) *UsageLog {
 	if l == nil {
 		return nil
 	}
 	u := usageLogFromServiceUser(l)
+	if showUpstreamResponseModel {
+		u.UpstreamResponseModel = visibleUpstreamResponseModel(l.UpstreamResponseModel)
+	}
 	return &u
+}
+
+func visibleUpstreamResponseModel(value *string) *string {
+	trimmed := strings.TrimSpace(derefString(value))
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 // UsageLogFromServiceAdmin converts a service UsageLog to DTO for admin users.

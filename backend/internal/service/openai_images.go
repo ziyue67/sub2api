@@ -627,6 +627,9 @@ func (s *OpenAIGatewayService) ForwardImages(
 		return nil, admissionErr
 	}
 	account = latest
+	if account.IsSIWCEnabled() {
+		return nil, fmt.Errorf("SIWC does not support image generation; select Codex for this account")
+	}
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)

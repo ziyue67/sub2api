@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
@@ -11,25 +13,100 @@ import (
 // TTFTs and failed placeholders are not zero-latency successes. Quality rounds
 // count once regardless of the number of probes; inconclusive rounds are absent.
 func (r *usageLogRepository) ReadPrioritySchedulingSignals(ctx context.Context, query service.PrioritySchedulingQuery) (map[int64]service.PrioritySchedulingSignal, error) {
+	if query.LatencyPercentile == 0 {
+		query.LatencyPercentile = 90
+	}
+	if query.LatencyMeasurement == "" {
+		query.LatencyMeasurement = "legacy_forward"
+	}
+	if query.TargetTTFTMs == 0 {
+		query.TargetTTFTMs = 15000
+	}
+	if query.UsageUntil.IsZero() {
+		query.UsageUntil = time.Now()
+	}
+	cfg := service.DefaultPrioritySchedulingConfig()
+	cfg.LatencyPercentile, cfg.LatencyMeasurement, cfg.TargetTTFTMs = query.LatencyPercentile, query.LatencyMeasurement, query.TargetTTFTMs
+	if err := service.ValidatePrioritySchedulingConfig(cfg); err != nil {
+		return nil, fmt.Errorf("priority signal query: %w", err)
+	}
 	rows, err := r.sql.QueryContext(ctx, `
  WITH base_usage AS (
-  SELECT account_id, created_at, stream, first_token_ms, actual_cost,
+  SELECT id, account_id, created_at, stream, first_token_ms, actual_cost,
    COALESCE(account_stats_cost,total_cost) AS base_cost
   FROM usage_logs
-  WHERE account_id=ANY($1) AND created_at >= $3 AND created_at <= NOW()
+  WHERE account_id=ANY($1) AND created_at >= $3 AND created_at <= $9
    AND COALESCE(NULLIF(requested_model,''),model)=$2
    AND group_id IS NOT DISTINCT FROM $5::bigint
    AND (actual_cost>0 OR total_cost>0 OR account_stats_cost>0
     OR input_tokens+output_tokens+cache_read_tokens+cache_creation_tokens>0)
+ ), traces AS (
+  SELECT b.*, d.detail, a.attempt
+  FROM base_usage b
+  -- Multiple traces for one billed row are ambiguous; inspect at most two.
+  LEFT JOIN LATERAL (
+   SELECT (array_agg(detail))[1] AS detail FROM (
+    SELECT detail FROM request_timing_details WHERE usage_log_id=b.id LIMIT 2
+   ) bounded_traces HAVING COUNT(*)=1
+  ) d ON true
+  -- The final recorded attempt must be physical HTTP, across ALL accounts.
+  -- A later uninstrumented parent makes attribution unknown too; never
+  -- substitute a successful parent or an earlier retry.
+  LEFT JOIN LATERAL (
+   SELECT value AS attempt FROM jsonb_array_elements(
+    CASE WHEN jsonb_typeof(d.detail->'attempts')='array' THEN d.detail->'attempts' ELSE '[]'::jsonb END
+   ) WITH ORDINALITY a(value,n)
+   WHERE value->>'kind'='http' AND n=jsonb_array_length(
+    CASE WHEN jsonb_typeof(d.detail->'attempts')='array' THEN d.detail->'attempts' ELSE '[]'::jsonb END
+   ) LIMIT 1
+  ) a ON true
+ ), timings AS (
+  SELECT *,
+   CASE WHEN jsonb_typeof(attempt->'start_ms')='number'
+    AND length((attempt->'start_ms')::text)<32
+    THEN (attempt->>'start_ms')::double precision END AS attempt_start_ms,
+   CASE WHEN jsonb_typeof(attempt->'events'->'first_semantic')='number'
+    AND length((attempt->'events'->'first_semantic')::text)<32
+    THEN (attempt->'events'->>'first_semantic')::double precision END AS semantic_ms,
+   CASE WHEN jsonb_typeof(detail->'events'->'first_write')='number'
+    AND length((detail->'events'->'first_write')::text)<32
+    THEN (detail->'events'->>'first_write')::double precision END AS first_write_ms,
+   CASE WHEN jsonb_typeof(detail->'events'->'first_visible')='number'
+    AND length((detail->'events'->'first_visible')::text)<32
+    THEN (detail->'events'->>'first_visible')::double precision END AS visible_ms
+  FROM traces
+ ), measured AS (
+  SELECT *, CASE WHEN $7='legacy_forward' THEN first_token_ms::double precision
+   WHEN detail->>'version'='1' AND detail->>'outcome'='success'
+    AND detail->>'terminal'='completed' AND detail->>'status'='200'
+    AND detail->>'truncated'='false' AND detail->>'canceled'='false'
+    AND detail->>'client_disconnect'='false' AND detail->>'downstream_error'='false'
+    AND detail->>'body_complete'='true'
+    AND attempt->>'account_id'=account_id::text
+    AND attempt->>'status'='200' AND COALESCE(attempt->>'error','')=''
+    AND attempt->>'terminal'='completed'
+    AND attempt_start_ms>=0 AND semantic_ms>attempt_start_ms
+    -- Earlier writes can block parsing before semantic output. Without a
+    -- separable interval such a sample stays unknown, not an account penalty.
+    AND (detail->'events'->'first_write' IS NULL OR first_write_ms>=semantic_ms)
+    THEN semantic_ms-attempt_start_ms END AS latency_ms,
+   CASE WHEN detail->>'version'='1' AND detail->>'truncated'='false'
+    THEN visible_ms END AS experience_ms
+  FROM timings
  ), usage AS (
   SELECT account_id,
-   COUNT(*) FILTER (WHERE stream AND first_token_ms>0) AS samples,
-   percentile_cont(0.9) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE stream AND first_token_ms>0) AS p90,
-   MAX(created_at) FILTER (WHERE stream AND first_token_ms>0) AS latest_latency_at,
+   COUNT(*) FILTER (WHERE stream AND latency_ms>0) AS samples,
+   percentile_cont(ARRAY[.5,.7,.9,.95]) WITHIN GROUP (ORDER BY latency_ms)
+    FILTER (WHERE stream AND latency_ms>0) AS quantiles,
+   MAX(created_at) FILTER (WHERE stream AND latency_ms>0) AS latest_latency_at,
+   MAX(created_at) FILTER (WHERE stream AND latency_ms>$8) AS latest_bad_latency_at,
+   COUNT(*) FILTER (WHERE stream AND (latency_ms IS NULL OR latency_ms<=0)) AS unknown_samples,
+   COUNT(*) FILTER (WHERE stream AND experience_ms>0) AS experience_samples,
+   percentile_cont(.9) WITHIN GROUP (ORDER BY experience_ms) FILTER (WHERE stream AND experience_ms>0) AS experience_p90,
    COUNT(*) FILTER (WHERE actual_cost>=0 AND base_cost>=0 AND actual_cost+base_cost>0) AS profit_samples,
    SUM(actual_cost) FILTER (WHERE actual_cost>=0 AND base_cost>=0 AND actual_cost+base_cost>0) AS revenue,
    SUM(base_cost) FILTER (WHERE actual_cost>=0 AND base_cost>=0 AND actual_cost+base_cost>0) AS base_cost
-  FROM base_usage GROUP BY account_id
+  FROM measured GROUP BY account_id
  ), rounds AS (
   SELECT p.account_id, r.quality_round_id, MAX(r.created_at) AS observed_at,
    bool_or(r.quality_judgment->>'verdict'='incorrect' AND r.status='failed'
@@ -55,12 +132,15 @@ func (r *usageLogRepository) ReadPrioritySchedulingSignals(ctx context.Context, 
    COUNT(*) FILTER (WHERE passed OR failed) AS samples
   FROM rounds GROUP BY account_id
  )
- SELECT ids.id, COALESCE(u.samples,0),COALESCE(u.p90,0),COALESCE(q.passed,0),COALESCE(q.samples,0),
- COALESCE(u.profit_samples,0),COALESCE(u.revenue,0),COALESCE(u.base_cost,0),lq.passed,u.latest_latency_at
+ SELECT ids.id, COALESCE(u.samples,0),COALESCE(u.quantiles[3],0),COALESCE(q.passed,0),COALESCE(q.samples,0),
+ COALESCE(u.profit_samples,0),COALESCE(u.revenue,0),COALESCE(u.base_cost,0),lq.passed,u.latest_latency_at,
+ COALESCE(u.quantiles[1],0), COALESCE(u.quantiles[2],0), COALESCE(u.quantiles[4],0),
+ u.quantiles[CASE $6::int WHEN 50 THEN 1 WHEN 70 THEN 2 WHEN 90 THEN 3 WHEN 95 THEN 4 END],
+ u.latest_bad_latency_at, COALESCE(u.unknown_samples,0), COALESCE(u.experience_samples,0), COALESCE(u.experience_p90,0)
  FROM unnest($1::bigint[]) ids(id)
  LEFT JOIN usage u ON u.account_id=ids.id LEFT JOIN quality q ON q.account_id=ids.id
  LEFT JOIN latest_quality lq ON lq.account_id=ids.id
- `, pq.Array(query.AccountIDs), query.Model, query.UsageSince, query.QualitySince, query.GroupID)
+ `, pq.Array(query.AccountIDs), query.Model, query.UsageSince, query.QualitySince, query.GroupID, query.LatencyPercentile, query.LatencyMeasurement, query.TargetTTFTMs, query.UsageUntil)
 	if err != nil {
 		return nil, err
 	}
@@ -69,9 +149,10 @@ func (r *usageLogRepository) ReadPrioritySchedulingSignals(ctx context.Context, 
 	for rows.Next() {
 		var id int64
 		var signal service.PrioritySchedulingSignal
-		if err := rows.Scan(&id, &signal.Samples, &signal.P90TTFTMs, &signal.QualityPassed, &signal.QualitySamples, &signal.ProfitSamples, &signal.Revenue, &signal.BaseCost, &signal.LatestQualityPassed, &signal.LatestLatencyAt); err != nil {
+		if err := rows.Scan(&id, &signal.Samples, &signal.P90TTFTMs, &signal.QualityPassed, &signal.QualitySamples, &signal.ProfitSamples, &signal.Revenue, &signal.BaseCost, &signal.LatestQualityPassed, &signal.LatestLatencyAt, &signal.P50TTFTMs, &signal.P70TTFTMs, &signal.P95TTFTMs, &signal.SelectedTTFTMs, &signal.LatestBadLatencyAt, &signal.LatencyUnknownSamples, &signal.ExperienceSamples, &signal.ExperienceP90Ms); err != nil {
 			return nil, err
 		}
+		signal.LatencyPercentile, signal.LatencyMeasurement, signal.LatencyEvidenceVersion = query.LatencyPercentile, query.LatencyMeasurement, 1
 		out[id] = signal
 	}
 	return out, rows.Err()

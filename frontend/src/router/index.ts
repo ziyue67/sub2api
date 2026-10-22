@@ -819,6 +819,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/security-records', name: 'SecurityRecords',
+    component: () => import('@/features/security-penalties/SecurityRecordsView.vue'),
+    meta: { requiresAuth: true, title: 'Security records', titleKey: 'securityRecords.title' }
+  },
+  {
+    path: '/admin/ip-audit',
+    name: 'AdminIPAudit',
+    component: () => import('@/features/ip-audit/IPAuditView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'ipAudit.title' }
+  },
+  {
     path: '/admin/prompt-audit',
     name: 'AdminPromptAudit',
     component: () => import('@/features/prompt-audit/PromptAuditView.vue'),
@@ -1028,6 +1039,22 @@ router.beforeEach(async (to, _from, next) => {
   if (!authInitialized) {
     authStore.checkAuth()
     authInitialized = true
+  }
+
+  // Old IP tabs are now a separate page. Normalize before auth/feature checks
+  // so refresh, same-route query navigation and login return URLs agree.
+  if (to.path === '/admin/prompt-audit' && to.query.tab === 'ip') {
+    const query = { ...to.query }
+    delete query.tab
+    next({ path: '/admin/ip-audit', query, hash: to.hash, replace: true })
+    return
+  }
+
+  // The former settings form now lives on IP Audit. Match the exact anchor
+  // so unrelated Security settings and their deep links stay on Settings.
+  if (to.path === '/admin/settings' && to.hash === '#ip-risk-settings') {
+    next({ path: '/admin/ip-audit', query: { ...to.query, tab: 'config' }, hash: to.hash, replace: true })
+    return
   }
 
   // Set page title

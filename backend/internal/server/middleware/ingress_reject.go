@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/iprisk"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/gin-gonic/gin"
 )
 
@@ -41,7 +43,11 @@ type IngressRejectRecorder interface {
 }
 
 func invalidAuthClientKey(c *gin.Context) string {
-	return normalizeIngressRejectIP(SecurityClientIP(c))
+	network := iprisk.AnonymousNetwork(ip.GetTrustedClientIP(c))
+	if network == "" {
+		return ""
+	}
+	return netip.MustParsePrefix(network).Addr().String()
 }
 
 func rejectInvalidAuthAbuse(c *gin.Context, apiKeyService interface {

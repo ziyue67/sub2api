@@ -48,6 +48,12 @@ const (
 
 // OAuthSession stores OAuth flow state for OpenAI
 type OAuthSession struct {
+	SIWCAccountID           int64
+	SIWCNonce               string
+	SIWCHostID              string
+	SIWCPreviousGrant       string
+	SIWCExpectedCredentials map[string]any
+
 	State        string    `json:"state"`
 	CodeVerifier string    `json:"code_verifier"`
 	ClientID     string    `json:"client_id,omitempty"`
@@ -92,6 +98,18 @@ func (s *SessionStore) Get(sessionID string) (*OAuthSession, bool) {
 	}
 	// Check if expired
 	if time.Since(session.CreatedAt) > SessionTTL {
+		return nil, false
+	}
+	return session, true
+}
+
+// Take atomically consumes a session for one authorization exchange.
+func (s *SessionStore) Take(id string) (*OAuthSession, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[id]
+	delete(s.sessions, id)
+	if !ok || time.Since(session.CreatedAt) > SessionTTL {
 		return nil, false
 	}
 	return session, true

@@ -38,6 +38,36 @@ func (r *settingRepository) SetContentModerationConfig(ctx context.Context, valu
 	return nil
 }
 
+// CompareAndSetContentModerationConfig prevents stale JSON writes across instances.
+// Group locks keep the existing deletion lock order; the conditional UPDATE is atomic.
+func (r *settingRepository) CompareAndSetContentModerationConfig(ctx context.Context, value, previous string, groupIDs []int64) error {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
+	if err := lockLiveGroups(ctx, client, groupIDs); err != nil {
+		return err
+	}
+	if previous == "" {
+		// Initialize only an absent setting; Ignore preserves any concurrently created row.
+		if err := client.Setting.Create().SetKey(service.SettingKeyContentModerationConfig).SetValue("").
+			OnConflictColumns(setting.FieldKey).Ignore().Exec(ctx); err != nil {
+			return err
+		}
+	}
+	count, err := client.Setting.Update().Where(setting.KeyEQ(service.SettingKeyContentModerationConfig), setting.ValueEQ(previous)).
+		SetValue(value).SetUpdatedAt(time.Now()).Save(ctx)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return service.ErrContentModerationConfigConflict
+	}
+	return tx.Commit()
+}
+
 type settingRepository struct {
 	client *ent.Client
 }

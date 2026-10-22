@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
@@ -69,6 +70,9 @@ func (h *OpenAIGatewayHandler) checkSecurityAuditStage(c *gin.Context, reqLog *z
 func runSecurityAudit(c *gin.Context, reqLog *zap.Logger, coordinator *securityaudit.Coordinator, legacy *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol, model string, body []byte, stage string) *securityaudit.Decision {
 	if c == nil || c.Request == nil {
 		return nil
+	}
+	if legacy != nil {
+		c.Set("content_moderation.user_version", legacy.CaptureModerationUserVersion(c.Request.Context(), subject.UserID))
 	}
 	defer requesttiming.Observe(c.Request.Context(), "security_audit")()
 	cacheCompletion := cachesSecurityAuditCompletion(stage)
@@ -175,6 +179,39 @@ func buildSecurityAuditRequest(c *gin.Context, apiKey *service.APIKey, subject m
 	}
 	if request.Stage == "" {
 		request.Stage = "http"
+	}
+	if apiKey != nil && apiKey.User != nil && apiKey.User.IsAdmin() {
+		request.PenaltyContext.Exempt = true
+	}
+	identity := service.ResolveCyberSessionIdentity(request.APIKeyID, c, body)
+	if isSecurityAuditWebSocketStage(request.Stage) {
+		const bindingKey = "security_penalty.ws_session"
+		switch identity.Metadata.Status {
+		case service.OpenAIClientSessionIdentityResolved:
+			c.Set(bindingKey, identity.BlockKey)
+		case service.OpenAIClientSessionIdentityMissing:
+			// A frame may omit identity after an explicit earlier frame. Reuse
+			// only this authenticated connection's previously resolved hash.
+			if bound, ok := c.Get(bindingKey); ok {
+				if hash, ok := bound.(string); ok {
+					identity.BlockKey = hash
+				}
+			}
+		}
+	}
+	request.PenaltyContext = securityaudit.PenaltyRequestContext{Exempt: request.PenaltyContext.Exempt, SessionKey: identity.BlockKey, RequestID: request.RequestID, OriginalGroupID: cloneSecurityAuditGroupID(request.GroupID)}
+	if original, ok := c.Get("security_penalty.original_group_id"); ok {
+		if id, ok := original.(int64); ok {
+			request.PenaltyContext.OriginalGroupID = &id
+		}
+	}
+	if name, ok := c.Get("security_penalty.original_group_name"); ok {
+		if name, ok := name.(string); ok {
+			request.PenaltyContext.OriginalGroupName = name
+		}
+	}
+	if turn, ok := securityAuditWSTurn(c); ok {
+		request.PenaltyContext.RequestID += ":" + request.Stage + ":" + strconv.Itoa(turn)
 	}
 	return request
 }

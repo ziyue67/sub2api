@@ -242,6 +242,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { getGranularityForRange, getLast24HourRange, toDateInputValue } from '@/utils/dateRange'
 import { formatUsageCacheRate, showUsageCacheRate } from '@/utils/usageCacheRate'
+import { showUpstreamResponseModelToUsers } from '@/utils/upstreamResponseModel'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
@@ -348,6 +349,7 @@ const endpointDistributionSource = ref<EndpointSource>('inbound')
 const activeTab = ref<'usage' | 'errors'>('usage')
 const errorViewEnabled = computed(() => appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false)
 const includeCacheRate = computed(() => showUsageCacheRate(appStore.cachedPublicSettings, 'user'))
+const includeUpstreamResponseModel = computed(() => showUpstreamResponseModelToUsers(appStore.cachedPublicSettings))
 
 const filters = ref<UsageQueryParams>({
   start_date: startDate.value,
@@ -661,6 +663,7 @@ const exportToCSV = async () => {
       'Time',
       'API Key Name',
       'Model',
+      ...(includeUpstreamResponseModel.value ? ['Upstream Response Model'] : []),
       'Reasoning Effort',
       'Inbound Endpoint',
       'IP Address',
@@ -683,6 +686,7 @@ const exportToCSV = async () => {
       log.created_at,
       log.api_key?.name || '',
       log.model,
+      ...(includeUpstreamResponseModel.value ? [log.upstream_response_model?.trim() || ''] : []),
       formatReasoningEffort(log.reasoning_effort),
       log.inbound_endpoint || '',
       log.ip_address || '',

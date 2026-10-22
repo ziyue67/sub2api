@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 )
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
@@ -16,6 +18,38 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (result *http.Response, resultErr error) {
 	if request != nil {
 		request = request.WithContext(WithSelectedAccountProxyLane(request.Context(), account))
+	}
+	var phaseGuard *openAIHTTPPhaseGuard
+	request, phaseGuard = s.guardOpenAIHTTPRequest(request, account)
+	defer func() {
+		if result != nil && result.Request == nil {
+			result.Request = request
+		}
+		result, resultErr = phaseGuard.finish(result, resultErr)
+	}()
+	if phaseGuard != nil && phaseGuard.ctx.Err() != nil {
+		return nil, context.Cause(phaseGuard.ctx)
+	}
+	if account.IsSIWCEnabled() {
+		if request.URL == nil || request.URL.Scheme != "https" || request.URL.Host != "api.openai.com" || request.URL.Path != "/v1/responses" {
+			return nil, fmt.Errorf("SIWC request must use the official Responses endpoint")
+		}
+		// Compatibility adapters can add internal headers after building a request.
+		// Enforce SIWC headers at the final send boundary as well.
+		authorization := request.Header.Get("Authorization")
+		applySIWCRequestHeaders(request)
+		request.Host = ""
+		observeAttempt := s.observePriorityAttempt(request, account)
+		resp, err := s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
+		observeAttempt(resp, err)
+		if err == nil && resp != nil && resp.StatusCode == http.StatusUnauthorized && s.excelOAuthReauth != nil {
+			var cache OpenAITokenCache
+			if s.openAITokenProvider != nil {
+				cache = s.openAITokenProvider.tokenCache
+			}
+			s.excelOAuthReauth.rejectSIWCAccessToken(request.Context(), account, strings.TrimPrefix(authorization, "Bearer "), cache)
+		}
+		return resp, err
 	}
 	request = s.stickBoundCodexTicketRequest(request, account)
 	boundTicket := s.codexTicketRequestBound(request, account)

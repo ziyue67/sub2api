@@ -465,3 +465,15 @@ func TestNormalizeOpenAIResponsesWebSocketReasoningStatusScopedToOpenAI(t *testi
 	require.False(t, changed)
 	require.Equal(t, body, normalized)
 }
+
+func TestTrimOpenAIEncryptedReasoningItemsDoesNotGuessRejectedItem(t *testing.T) {
+	for _, input := range []any{
+		[]any{map[string]any{"type": "reasoning", "encrypted_content": "one"}, map[string]any{"type": "reasoning", "encrypted_content": "two"}},
+		[]map[string]any{{"type": "reasoning", "encrypted_content": "one"}, {"type": "compaction", "encrypted_content": "history"}},
+		map[string]any{"type": "compaction_summary", "encrypted_content": "history"},
+	} {
+		body := map[string]any{"input": input}
+		require.False(t, trimOpenAIEncryptedReasoningItemsForRecovery(body))
+		require.Equal(t, input, body["input"])
+	}
+}

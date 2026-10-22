@@ -2173,13 +2173,24 @@ func (p *openAIWSConnPool) dialConn(ctx context.Context, req openAIWSAcquireRequ
 	if req.timezoneBinding != nil {
 		ctx = context.WithValue(ctx, requestTimezoneEgressKey{}, req.timezoneBinding)
 	}
+	accountIDForCapture := int64(0)
+	if req.Account != nil {
+		accountIDForCapture = req.Account.ID
+	}
+	finishCapture := captureOpenAIWSHandshake(ctx, accountIDForCapture, req.WSURL)
 	conn, status, handshakeHeaders, err := p.clientDialer.Dial(ctx, req.WSURL, headers, req.ProxyURL)
+	captureErr := err
+	if captureErr == nil && conn == nil {
+		captureErr = errors.New("openai ws dialer returned nil connection")
+	}
+	finishCapture(status, handshakeHeaders, captureErr)
 	if err != nil {
 		var handshakeErr *openAIWSHandshakeError
 		var responseBody []byte
 		if errors.As(err, &handshakeErr) && handshakeErr != nil {
 			responseBody = append([]byte(nil), handshakeErr.Body...)
 		}
+		captureOpenAIWSHandshakeBody(ctx, responseBody, handshakeHeaders)
 		return nil, &openAIWSDialError{
 			StatusCode:      status,
 			ResponseHeaders: cloneHeader(handshakeHeaders),

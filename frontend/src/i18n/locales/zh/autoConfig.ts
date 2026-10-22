@@ -1,4 +1,43 @@
 export default {
+  admission: {
+    "pending": "待准入：21 连续 {count}/{required}",
+    "passed": "准入已通过",
+    "isolated": "已隔离：停止自动升档",
+    "isolationPending": "隔离分组不可用，已暂停客户调度并等待隔离",
+    "streak29": "29 连续 {count}/{required}",
+    "outcomes": {
+        "admission_passed": "准入通过，已开放调度",
+        "admission_isolated": "已移入隔离分组",
+        "admission_conflict": "准入快照不匹配，未修改账号",
+        "admission_isolation_pending": "隔离分组不可用，已暂停客户调度"
+    },
+    "title": "新 OpenAI 2FA 账号先验证再开放调度",
+    "hint": "仅作用于后续通过 2FA 导入新建的适用账号；导入后固定 1 并发并关闭客户调度，后台测试继续。重登和重复导入不会重新初始化。",
+    "model": "测试模型",
+    "effort": "思考等级",
+    "wait_seconds": "完成后等待（秒）",
+    "pass_count": "连续答对 21 次数",
+    "passed_concurrency": "通过后并发",
+    "isolation_count": "连续回答 29 次数",
+    "group": "隔离目标分组",
+    "chooseGroup": "请选择启用的 OpenAI 分组",
+    "unavailableGroup": "分组 #{id} 不可用，请重新选择",
+    "active": "启用",
+    "passHint": "连续 {count} 次完整答对 21 后，自动升至 {concurrency} 并发并打开调度。普通并发升档从通过后开始计客户成功请求。",
+    "isolationRule": "连续 {count} 次完整回答 29，移入所选隔离分组。",
+    "isolationHint": "隔离会移出全部原分组，保留代理和当前并发、停止自动升档；测试继续，后续答对不会自动恢复。此处配置保存后用于新账号，已有账号沿用导入时规则。其他答案、报错或不完整回复会打断连续计数。",
+    "invalid": "请填写有效的测试模型、思考等级、正整数次数/并发/间隔，并选择启用的 OpenAI 隔离分组。",
+    "efforts": {
+        "none": "无",
+        "minimal": "极低",
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "xhigh": "极高",
+        "max": "最大",
+        "ultra": "超高"
+    }
+},
   quality: {
   "title": "首次加入质量运维",
   "hint": "选择已有质量规则，为所选平台的新 OAuth 账号复制一份。留空则不自动创建。",

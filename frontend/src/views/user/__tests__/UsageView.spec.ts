@@ -172,6 +172,7 @@ function mountUsageView() {
 
 describe('user UsageView', () => {
   beforeEach(() => {
+    appStoreState.cachedPublicSettings = { allow_user_view_error_requests: true }
     query.mockReset()
     getStats.mockReset()
     getDashboardModels.mockReset()
@@ -491,6 +492,42 @@ describe('user UsageView', () => {
 
     expect(csvContent).toContain('Cache Rate')
     expect(csvContent).toContain('98.6%')
+    expect(csvContent).not.toContain('Upstream Response Model')
+    appStoreState.cachedPublicSettings = { allow_user_view_error_requests: true }
+    window.URL.createObjectURL = originalCreateObjectURL
+    window.URL.revokeObjectURL = originalRevokeObjectURL
+    vi.unstubAllGlobals()
+    clickSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('includes the upstream response model in csv only when users are allowed to see it', async () => {
+    query.mockResolvedValue({
+      items: [{ ...usageLog, upstream_response_model: 'gpt-5.4-actual' }],
+      total: 1,
+      pages: 1,
+    })
+    appStoreState.cachedPublicSettings = { usage_show_upstream_response_model_to_users: true }
+    const wrapper = mountUsageView()
+    await flushPromises()
+
+    let csvContent = ''
+    const OriginalBlob = globalThis.Blob
+    vi.stubGlobal('Blob', vi.fn((parts: BlobPart[], options?: BlobPropertyBag) => {
+      csvContent = parts.map((part) => String(part)).join('')
+      return new OriginalBlob(parts, options)
+    }))
+    const originalCreateObjectURL = window.URL.createObjectURL
+    const originalRevokeObjectURL = window.URL.revokeObjectURL
+    window.URL.createObjectURL = vi.fn(() => 'blob:usage-export') as typeof window.URL.createObjectURL
+    window.URL.revokeObjectURL = vi.fn(() => {}) as typeof window.URL.revokeObjectURL
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    await (wrapper.vm as any).exportToCSV()
+
+    expect(csvContent).toContain('Upstream Response Model')
+    expect(csvContent).toContain('gpt-5.4,gpt-5.4-actual,')
+    expect(csvContent).not.toContain('upstream_model')
     appStoreState.cachedPublicSettings = { allow_user_view_error_requests: true }
     window.URL.createObjectURL = originalCreateObjectURL
     window.URL.revokeObjectURL = originalRevokeObjectURL

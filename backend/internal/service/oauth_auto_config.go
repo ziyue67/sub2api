@@ -18,31 +18,35 @@ const AutoConfigConcurrencyExtraKey = "auto_config_concurrency"
 
 // Initial account fields, BPS defaults, model billing and concurrency upgrades are independent.
 type OAuthAutoConfig struct {
-	QualityRule      *OAuthInitialQualityRule `json:"quality_rule,omitempty"`
-	ModelMappings    []OAuthModelMappingRule  `json:"model_mappings"`
-	ModelBilling     ModelBillingConfig       `json:"model_billing"`
-	ExcelBPS         ExcelBPSDefaults         `json:"excel_bps"`
-	UpdatedAt        time.Time                `json:"updated_at"`
-	Enabled          bool                     `json:"enabled"`
-	Platform         string                   `json:"platform"`
-	Priority         int                      `json:"priority"`
-	LoadFactor       int                      `json:"load_factor"`
-	Concurrency      int                      `json:"concurrency"`
-	GroupIDs         []int64                  `json:"group_ids"`
-	UpgradeEnabled   bool                     `json:"upgrade_enabled"`
-	UpgradeGroupIDs  []int64                  `json:"upgrade_group_ids"`
-	SuccessesPerStep int                      `json:"successes_per_step"`
-	UpgradeStep      int                      `json:"upgrade_step"`
-	MaxConcurrency   int                      `json:"max_concurrency"`
-	CooldownSeconds  int                      `json:"cooldown_seconds"`
-	CostMultiplier   float64                  `json:"cost_multiplier"`
-	Revision         string                   `json:"revision"`
+	OpenAITwoFAAdmission OpenAITwoFAAdmissionConfig `json:"openai_two_fa_admission"`
+	QualityRule          *OAuthInitialQualityRule   `json:"quality_rule,omitempty"`
+	ModelMappings        []OAuthModelMappingRule    `json:"model_mappings"`
+	ModelBilling         ModelBillingConfig         `json:"model_billing"`
+	ExcelBPS             ExcelBPSDefaults           `json:"excel_bps"`
+	UpdatedAt            time.Time                  `json:"updated_at"`
+	Enabled              bool                       `json:"enabled"`
+	Platform             string                     `json:"platform"`
+	Priority             int                        `json:"priority"`
+	LoadFactor           int                        `json:"load_factor"`
+	Concurrency          int                        `json:"concurrency"`
+	GroupIDs             []int64                    `json:"group_ids"`
+	UpgradeEnabled       bool                       `json:"upgrade_enabled"`
+	UpgradeGroupIDs      []int64                    `json:"upgrade_group_ids"`
+	SuccessesPerStep     int                        `json:"successes_per_step"`
+	UpgradeStep          int                        `json:"upgrade_step"`
+	MaxConcurrency       int                        `json:"max_concurrency"`
+	CooldownSeconds      int                        `json:"cooldown_seconds"`
+	CostMultiplier       float64                    `json:"cost_multiplier"`
+	Revision             string                     `json:"revision"`
 }
 
 func DefaultOAuthAutoConfig() OAuthAutoConfig {
-	return OAuthAutoConfig{ModelMappings: defaultOAuthModelMappings(PlatformOpenAI), ModelBilling: DefaultModelBillingConfig(), ExcelBPS: DefaultExcelBPSDefaults(), Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, CostMultiplier: 0.07, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
+	return OAuthAutoConfig{OpenAITwoFAAdmission: DefaultOpenAITwoFAAdmissionConfig(), ModelMappings: defaultOAuthModelMappings(PlatformOpenAI), ModelBilling: DefaultModelBillingConfig(), ExcelBPS: DefaultExcelBPSDefaults(), Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, CostMultiplier: 0.07, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
 }
 func ValidateOAuthAutoConfig(c OAuthAutoConfig) error {
+	if err := c.OpenAITwoFAAdmission.Validate(); err != nil {
+		return infraerrors.BadRequest("AUTO_CONFIG_ADMISSION_INVALID", err.Error())
+	}
 	if _, err := c.QualityRule.plan(c.Platform); err != nil {
 		return err
 	}
@@ -131,9 +135,11 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 		return ErrAccountNilInput
 	}
 	input.InitialQualityPlan = nil
+	input.InitialAdmissionPlan = nil
 	// Imported/user-supplied markers must not fabricate automatic-configuration history.
 	input.Extra = maps.Clone(input.Extra)
 	delete(input.Extra, "auto_config_initial_revision")
+	delete(input.Extra, OpenAITwoFAAdmissionExtraKey)
 	// Global initialization is an administrator policy. Observers explicitly
 	// choose their own groups and must not inherit global groups or field overrides.
 	if _, observer := ObserverGroupIDs(ctx); observer {
@@ -226,6 +232,15 @@ func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAuto
 			if g.Status != StatusActive {
 				return c, infraerrors.BadRequest("AUTO_CONFIG_GROUP_INVALID", "select active upgrade groups")
 			}
+		}
+	}
+	if c.OpenAITwoFAAdmission.Enabled {
+		g, err := s.autoGroups.GetByID(ctx, c.OpenAITwoFAAdmission.IsolationGroupID)
+		if err != nil {
+			return c, err
+		}
+		if g.Status != StatusActive || g.Platform != PlatformOpenAI {
+			return c, infraerrors.BadRequest("AUTO_CONFIG_ADMISSION_GROUP_INVALID", "select an active OpenAI isolation group")
 		}
 	}
 	if c.ExcelBPS.AutoMoveOn403 {

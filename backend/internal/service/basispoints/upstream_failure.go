@@ -23,6 +23,9 @@ func (f *UpstreamFailure) Details() map[string]any {
 // ParseUpstreamFailure recognizes failure terminals only. Unknown identifiers
 // and free-form upstream messages never enter client responses or diagnostics.
 func ParseUpstreamFailure(raw []byte) *UpstreamFailure {
+	if ParseBridgeFailure(raw) != nil {
+		return nil
+	}
 	var payload object
 	if decode(raw, &payload) != nil {
 		return nil

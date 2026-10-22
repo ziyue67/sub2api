@@ -576,7 +576,7 @@ func (b *Bridge) translateCall(native object) (object, error) {
 	}
 	info, allowed := b.tools[toolName]
 	if !allowed {
-		return nil, unknownClientToolError{}
+		return nil, unknownClientToolError{name: safeSchemaName(toolName)}
 	}
 	result, err := b.finishClientToolCall(native, info, envelope, rawCustom, !rawCmd)
 	if err != nil {

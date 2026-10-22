@@ -14,10 +14,11 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-// v29: merge fork v27 (multi-group routes/profit controls/group Fast + upstream group
-// model_allowlist, ranxi v26 stream_only and user-group denied models, API key concurrency
-// limit) with ranxi v29 (group client and subagent admission policies).
-const apiKeyAuthSnapshotVersion = 29
+// v30: 合并 fork v29(multi-group routes/profit controls/group Fast + upstream group
+// model_allowlist, ranxi v26 stream_only and user-group denied models, API key
+// concurrency limit, group client and subagent admission policies)与
+// ranxi v30(include configured API key groups)。
+const apiKeyAuthSnapshotVersion = 30
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -295,7 +296,9 @@ func (s *APIKeyService) loadAuthCacheEntry(ctx context.Context, key, cacheKey st
 	}
 	snapshot := s.snapshotFromAPIKey(ctx, apiKey)
 	if snapshot == nil {
-		return nil, fmt.Errorf("get api key: %w", ErrAPIKeyNotFound)
+		// A known key with a missing owner is an identity/business failure,
+		// never proof of an unknown anonymous credential. Do not negative-cache it.
+		return nil, fmt.Errorf("get api key: %w", ErrUserNotFound)
 	}
 	entry := &APIKeyAuthCacheEntry{Snapshot: snapshot}
 	s.setAuthCacheEntry(ctx, cacheKey, entry, s.authCfg.l2TTL)
@@ -363,6 +366,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		Version:          apiKeyAuthSnapshotVersion,
 		APIKeyID:         apiKey.ID,
 		UserID:           apiKey.UserID,
+		GroupIDs:         append([]int64(nil), apiKey.GroupIDs...),
 		GroupID:          apiKey.GroupID,
 		GroupRoutes:      apiKey.GroupRoutes,
 		Name:             apiKey.Name,
@@ -477,6 +481,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 	apiKey := &APIKey{
 		ID:               snapshot.APIKeyID,
 		UserID:           snapshot.UserID,
+		GroupIDs:         append([]int64(nil), snapshot.GroupIDs...),
 		GroupID:          snapshot.GroupID,
 		GroupRoutes:      snapshot.GroupRoutes,
 		Key:              key,

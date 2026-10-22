@@ -33,6 +33,7 @@ type APIKey struct {
 	UserID      int64
 	Key         string
 	Name        string
+	GroupIDs    []int64 // Configured groups; GroupID is the selected group for a request.
 	GroupID     *int64
 	GroupRoutes []domain.APIKeyGroupRoute
 	Status      string

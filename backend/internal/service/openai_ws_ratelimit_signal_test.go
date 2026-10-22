@@ -84,159 +84,189 @@ func (r *openAICodexExtraListRepo) ListWithFilters(_ context.Context, params pag
 }
 
 func TestOpenAIGatewayService_Forward_WSv2ErrorEventUsageLimitPersistsRateLimit(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	for _, accountType := range []string{AccountTypeAPIKey, AccountTypeOAuth, AccountTypeSetupToken} {
+		t.Run(accountType, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
 
-	resetAt := time.Now().Add(2 * time.Hour).Unix()
-	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			t.Errorf("upgrade websocket failed: %v", err)
-			return
-		}
-		defer func() { _ = conn.Close() }()
+			resetAt := time.Now().Add(2 * time.Hour).Unix()
+			upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+			wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					t.Errorf("upgrade websocket failed: %v", err)
+					return
+				}
+				defer func() { _ = conn.Close() }()
 
-		var req map[string]any
-		if err := conn.ReadJSON(&req); err != nil {
-			t.Errorf("read ws request failed: %v", err)
-			return
-		}
-		_ = conn.WriteJSON(map[string]any{
-			"type": "error",
-			"error": map[string]any{
-				"code":      "rate_limit_exceeded",
-				"type":      "usage_limit_reached",
-				"message":   "The usage limit has been reached",
-				"resets_at": resetAt,
-			},
+				var req map[string]any
+				if err := conn.ReadJSON(&req); err != nil {
+					t.Errorf("read ws request failed: %v", err)
+					return
+				}
+				_ = conn.WriteJSON(map[string]any{
+					"type": "error",
+					"error": map[string]any{
+						"code":      "rate_limit_exceeded",
+						"type":      "usage_limit_reached",
+						"message":   "The usage limit has been reached",
+						"resets_at": resetAt,
+					},
+				})
+			}))
+			defer wsServer.Close()
+
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+			c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+
+			upstream := &httpUpstreamRecorder{
+				resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"id":"resp_http_should_not_run"}`)),
+				},
+			}
+
+			cfg := newOpenAIWSV2TestConfig()
+			cfg.Security.URLAllowlist.Enabled = false
+			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+
+			account := Account{
+				ID:          501,
+				Name:        "openai-ws-rate-limit-event",
+				Platform:    PlatformOpenAI,
+				Type:        accountType,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: openAIWSQuotaTestCredentials(accountType, wsServer.URL),
+				Extra: map[string]any{
+					"responses_websockets_v2_enabled": true,
+				},
+			}
+			repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+			rateSvc := &RateLimitService{accountRepo: repo}
+			svc := &OpenAIGatewayService{
+				accountRepo:      repo,
+				rateLimitService: rateSvc,
+				httpUpstream:     upstream,
+				cache:            &stubGatewayCache{},
+				cfg:              cfg,
+				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+				toolCorrector:    NewCodexToolCorrector(),
+			}
+
+			pool := newOpenAIWSConnPool(cfg)
+			defer pool.Close()
+			pool.setClientDialerForTest(&openAIWSQuotaLocalDialer{url: "ws" + strings.TrimPrefix(wsServer.URL, "http")})
+			svc.openaiWSPool = pool
+			rateSvc.SetAccountRuntimeBlocker(svc)
+
+			body := []byte(`{"model":"gpt-5.1","stream":false,"input":[{"type":"input_text","text":"hello"}]}`)
+			before := time.Now()
+			result, err := svc.Forward(context.Background(), c, &account, body)
+			after := time.Now()
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.Equal(t, http.StatusTooManyRequests, rec.Code)
+			require.Nil(t, upstream.lastReq, "WS 限流 error event 不应回退到同账号 HTTP")
+			require.Len(t, repo.rateLimitCalls, 1)
+			requireOpenAIWSQuotaCooldown(t, accountType, repo.rateLimitCalls[0], before, after, time.Unix(resetAt, 0))
+			require.Empty(t, repo.updateExtra, "body-only errors have no Codex snapshot")
+			requireOpenAIWSQuotaRuntimeBlock(t, svc, &account, repo.rateLimitCalls[0])
 		})
-	}))
-	defer wsServer.Close()
-
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
-
-	upstream := &httpUpstreamRecorder{
-		resp: &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_http_should_not_run"}`)),
-		},
 	}
-
-	cfg := newOpenAIWSV2TestConfig()
-	cfg.Security.URLAllowlist.Enabled = false
-	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
-
-	account := Account{
-		ID:          501,
-		Name:        "openai-ws-rate-limit-event",
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Status:      StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
-		Credentials: map[string]any{
-			"api_key":  "sk-test",
-			"base_url": wsServer.URL,
-		},
-		Extra: map[string]any{
-			"responses_websockets_v2_enabled": true,
-		},
-	}
-	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
-	rateSvc := &RateLimitService{accountRepo: repo}
-	svc := &OpenAIGatewayService{
-		accountRepo:      repo,
-		rateLimitService: rateSvc,
-		httpUpstream:     upstream,
-		cache:            &stubGatewayCache{},
-		cfg:              cfg,
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
-	}
-
-	body := []byte(`{"model":"gpt-5.1","stream":false,"input":[{"type":"input_text","text":"hello"}]}`)
-	result, err := svc.Forward(context.Background(), c, &account, body)
-	require.Error(t, err)
-	require.Nil(t, result)
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
-	require.Nil(t, upstream.lastReq, "WS 限流 error event 不应回退到同账号 HTTP")
-	require.Len(t, repo.rateLimitCalls, 1)
-	require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)
 }
 
 func TestOpenAIGatewayService_Forward_WSv2Handshake429PersistsRateLimit(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	for _, accountType := range []string{AccountTypeAPIKey, AccountTypeOAuth, AccountTypeSetupToken} {
+		t.Run(accountType, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("x-codex-primary-used-percent", "100")
-		w.Header().Set("x-codex-primary-reset-after-seconds", "7200")
-		w.Header().Set("x-codex-primary-window-minutes", "10080")
-		w.Header().Set("x-codex-secondary-used-percent", "3")
-		w.Header().Set("x-codex-secondary-reset-after-seconds", "1800")
-		w.Header().Set("x-codex-secondary-window-minutes", "300")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_exceeded","message":"rate limited"}}`))
-	}))
-	defer server.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("x-codex-primary-used-percent", "100")
+				w.Header().Set("x-codex-primary-reset-after-seconds", "7200")
+				w.Header().Set("x-codex-primary-window-minutes", "10080")
+				w.Header().Set("x-codex-secondary-used-percent", "3")
+				w.Header().Set("x-codex-secondary-reset-after-seconds", "1800")
+				w.Header().Set("x-codex-secondary-window-minutes", "300")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_exceeded","message":"rate limited"}}`))
+			}))
+			defer server.Close()
 
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
+			c.Request.Header.Set("User-Agent", "unit-test-agent/1.0")
 
-	upstream := &httpUpstreamRecorder{
-		resp: &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_http_should_not_run"}`)),
-		},
+			upstream := &httpUpstreamRecorder{
+				resp: &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"id":"resp_http_should_not_run"}`)),
+				},
+			}
+
+			cfg := newOpenAIWSV2TestConfig()
+			cfg.Security.URLAllowlist.Enabled = false
+			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+
+			account := Account{
+				ID:          502,
+				Name:        "openai-ws-rate-limit-handshake",
+				Platform:    PlatformOpenAI,
+				Type:        accountType,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: openAIWSQuotaTestCredentials(accountType, server.URL),
+				Extra: map[string]any{
+					"responses_websockets_v2_enabled": true,
+				},
+			}
+			repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+			rateSvc := &RateLimitService{accountRepo: repo}
+			svc := &OpenAIGatewayService{
+				accountRepo:      repo,
+				rateLimitService: rateSvc,
+				httpUpstream:     upstream,
+				cache:            &stubGatewayCache{},
+				cfg:              cfg,
+				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+				toolCorrector:    NewCodexToolCorrector(),
+			}
+
+			pool := newOpenAIWSConnPool(cfg)
+			defer pool.Close()
+			pool.setClientDialerForTest(&openAIWSQuotaLocalDialer{url: "ws" + strings.TrimPrefix(server.URL, "http")})
+			svc.openaiWSPool = pool
+			rateSvc.SetAccountRuntimeBlocker(svc)
+
+			body := []byte(`{"model":"gpt-5.1","stream":false,"input":[{"type":"input_text","text":"hello"}]}`)
+			before := time.Now()
+			result, err := svc.Forward(context.Background(), c, &account, body)
+			after := time.Now()
+			require.Error(t, err)
+			require.Nil(t, result)
+			require.Equal(t, http.StatusTooManyRequests, rec.Code)
+			require.Nil(t, upstream.lastReq, "WS 握手 429 不应回退到同账号 HTTP")
+			require.Len(t, repo.rateLimitCalls, 1)
+			if accountType == AccountTypeAPIKey {
+				requireOpenAIWSQuotaCooldown(t, accountType, repo.rateLimitCalls[0], before, after, time.Time{})
+				require.Empty(t, repo.updateExtra, "relayed Codex quota must not become the key's snapshot")
+			} else {
+				require.False(t, repo.rateLimitCalls[0].Before(before.Add(2*time.Hour-time.Second)))
+				require.False(t, repo.rateLimitCalls[0].After(after.Add(2*time.Hour)))
+				require.NotEmpty(t, repo.updateExtra, "OAuth-like handshake 429 must persist its real quota snapshot")
+				require.Contains(t, repo.updateExtra[0], "codex_usage_updated_at")
+				require.Equal(t, 100.0, repo.updateExtra[0]["codex_7d_used_percent"])
+				require.Equal(t, 3.0, repo.updateExtra[0]["codex_5h_used_percent"])
+			}
+			requireOpenAIWSQuotaRuntimeBlock(t, svc, &account, repo.rateLimitCalls[0])
+		})
 	}
-
-	cfg := newOpenAIWSV2TestConfig()
-	cfg.Security.URLAllowlist.Enabled = false
-	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
-
-	account := Account{
-		ID:          502,
-		Name:        "openai-ws-rate-limit-handshake",
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Status:      StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
-		Credentials: map[string]any{
-			"api_key":  "sk-test",
-			"base_url": server.URL,
-		},
-		Extra: map[string]any{
-			"responses_websockets_v2_enabled": true,
-		},
-	}
-	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
-	rateSvc := &RateLimitService{accountRepo: repo}
-	svc := &OpenAIGatewayService{
-		accountRepo:      repo,
-		rateLimitService: rateSvc,
-		httpUpstream:     upstream,
-		cache:            &stubGatewayCache{},
-		cfg:              cfg,
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
-	}
-
-	body := []byte(`{"model":"gpt-5.1","stream":false,"input":[{"type":"input_text","text":"hello"}]}`)
-	result, err := svc.Forward(context.Background(), c, &account, body)
-	require.Error(t, err)
-	require.Nil(t, result)
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
-	require.Nil(t, upstream.lastReq, "WS 握手 429 不应回退到同账号 HTTP")
-	require.Len(t, repo.rateLimitCalls, 1)
-	require.NotEmpty(t, repo.updateExtra, "握手 429 的 x-codex 头应立即落库")
-	require.Contains(t, repo.updateExtra[0], "codex_usage_updated_at")
 }
 
 func TestOpenAIGatewayService_Forward_WSv2Handshake502RecordsModelTransient(t *testing.T) {
@@ -286,111 +316,120 @@ func TestOpenAIGatewayService_Forward_WSv2Handshake502RecordsModelTransient(t *t
 }
 
 func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_ErrorEventUsageLimitPersistsRateLimit(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	for _, accountType := range []string{AccountTypeAPIKey, AccountTypeOAuth, AccountTypeSetupToken} {
+		t.Run(accountType, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
 
-	cfg := newOpenAIWSV2TestConfig()
-	cfg.Security.URLAllowlist.Enabled = false
-	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
-	cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
-	cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
-	cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
-	cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
-	cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
-	cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
-	cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
+			cfg := newOpenAIWSV2TestConfig()
+			cfg.Security.URLAllowlist.Enabled = false
+			cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+			cfg.Gateway.OpenAIWS.MaxConnsPerAccount = 1
+			cfg.Gateway.OpenAIWS.MinIdlePerAccount = 0
+			cfg.Gateway.OpenAIWS.MaxIdlePerAccount = 1
+			cfg.Gateway.OpenAIWS.QueueLimitPerConn = 8
+			cfg.Gateway.OpenAIWS.DialTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.ReadTimeoutSeconds = 3
+			cfg.Gateway.OpenAIWS.WriteTimeoutSeconds = 3
 
-	resetAt := time.Now().Add(90 * time.Minute).Unix()
-	captureConn := &openAIWSCaptureConn{
-		events: [][]byte{
-			[]byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":PLACEHOLDER}}`),
-		},
-	}
-	captureConn.events[0] = []byte(strings.ReplaceAll(string(captureConn.events[0]), "PLACEHOLDER", strconv.FormatInt(resetAt, 10)))
-	captureDialer := &openAIWSCaptureDialer{conn: captureConn}
-	pool := newOpenAIWSConnPool(cfg)
-	pool.setClientDialerForTest(captureDialer)
+			resetAt := time.Now().Add(90 * time.Minute).Unix()
+			captureConn := &openAIWSCaptureConn{
+				events: [][]byte{
+					[]byte(`{"type":"error","error":{"code":"rate_limit_exceeded","type":"usage_limit_reached","message":"The usage limit has been reached","resets_at":PLACEHOLDER}}`),
+				},
+			}
+			captureConn.events[0] = []byte(strings.ReplaceAll(string(captureConn.events[0]), "PLACEHOLDER", strconv.FormatInt(resetAt, 10)))
+			captureDialer := &openAIWSCaptureDialer{conn: captureConn}
+			pool := newOpenAIWSConnPool(cfg)
+			pool.setClientDialerForTest(captureDialer)
+			defer pool.Close()
 
-	account := Account{
-		ID:          503,
-		Name:        "openai-ingress-rate-limit",
-		Platform:    PlatformOpenAI,
-		Type:        AccountTypeAPIKey,
-		Status:      StatusActive,
-		Schedulable: true,
-		Concurrency: 1,
-		Credentials: map[string]any{
-			"api_key": "sk-test",
-		},
-		Extra: map[string]any{
-			"responses_websockets_v2_enabled": true,
-		},
-	}
-	repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
-	rateSvc := &RateLimitService{accountRepo: repo}
-	svc := &OpenAIGatewayService{
-		accountRepo:      repo,
-		rateLimitService: rateSvc,
-		httpUpstream:     &httpUpstreamRecorder{},
-		cache:            &stubGatewayCache{},
-		cfg:              cfg,
-		openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
-		toolCorrector:    NewCodexToolCorrector(),
-		openaiWSPool:     pool,
-	}
+			account := Account{
+				ID:          503,
+				Name:        "openai-ingress-rate-limit",
+				Platform:    PlatformOpenAI,
+				Type:        accountType,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: openAIWSQuotaTestCredentials(accountType, ""),
+				Extra: map[string]any{
+					"responses_websockets_v2_enabled": true,
+				},
+			}
+			repo := &openAIWSRateLimitSignalRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}}}
+			rateSvc := &RateLimitService{accountRepo: repo}
+			svc := &OpenAIGatewayService{
+				accountRepo:      repo,
+				rateLimitService: rateSvc,
+				httpUpstream:     &httpUpstreamRecorder{},
+				cache:            &stubGatewayCache{},
+				cfg:              cfg,
+				openaiWSResolver: NewOpenAIWSProtocolResolver(cfg),
+				toolCorrector:    NewCodexToolCorrector(),
+				openaiWSPool:     pool,
+			}
 
-	serverErrCh := make(chan error, 1)
-	wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
-		if err != nil {
-			serverErrCh <- err
-			return
-		}
-		defer func() { _ = conn.CloseNow() }()
+			rateSvc.SetAccountRuntimeBlocker(svc)
 
-		rec := httptest.NewRecorder()
-		ginCtx, _ := gin.CreateTestContext(rec)
-		req := r.Clone(r.Context())
-		req.Header = req.Header.Clone()
-		req.Header.Set("User-Agent", "unit-test-agent/1.0")
-		ginCtx.Request = req
+			serverErrCh := make(chan error, 1)
+			wsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := coderws.Accept(w, r, &coderws.AcceptOptions{CompressionMode: coderws.CompressionContextTakeover})
+				if err != nil {
+					serverErrCh <- err
+					return
+				}
+				defer func() { _ = conn.CloseNow() }()
 
-		readCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		msgType, firstMessage, readErr := conn.Read(readCtx)
-		cancel()
-		if readErr != nil {
-			serverErrCh <- readErr
-			return
-		}
-		if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
-			serverErrCh <- io.ErrUnexpectedEOF
-			return
-		}
+				rec := httptest.NewRecorder()
+				ginCtx, _ := gin.CreateTestContext(rec)
+				req := r.Clone(r.Context())
+				req.Header = req.Header.Clone()
+				req.Header.Set("User-Agent", "unit-test-agent/1.0")
+				ginCtx.Request = req
 
-		serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, &account, "sk-test", firstMessage, nil)
-	}))
-	defer wsServer.Close()
+				readCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+				msgType, firstMessage, readErr := conn.Read(readCtx)
+				cancel()
+				if readErr != nil {
+					serverErrCh <- readErr
+					return
+				}
+				if msgType != coderws.MessageText && msgType != coderws.MessageBinary {
+					serverErrCh <- io.ErrUnexpectedEOF
+					return
+				}
 
-	dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
-	clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
-	cancelDial()
-	require.NoError(t, err)
-	defer func() { _ = clientConn.CloseNow() }()
+				serverErrCh <- svc.ProxyResponsesWebSocketFromClient(r.Context(), ginCtx, conn, &account, "sk-test", firstMessage, nil)
+			}))
+			defer wsServer.Close()
 
-	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false}`))
-	cancelWrite()
-	require.NoError(t, err)
+			before := time.Now()
+			dialCtx, cancelDial := context.WithTimeout(context.Background(), 3*time.Second)
+			clientConn, _, err := coderws.Dial(dialCtx, "ws"+strings.TrimPrefix(wsServer.URL, "http"), nil)
+			cancelDial()
+			require.NoError(t, err)
+			defer func() { _ = clientConn.CloseNow() }()
 
-	select {
-	case serverErr := <-serverErrCh:
-		require.Error(t, serverErr)
-		var failoverErr *UpstreamFailoverError
-		require.ErrorAs(t, serverErr, &failoverErr)
-		require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
-		require.Len(t, repo.rateLimitCalls, 1)
-		require.WithinDuration(t, time.Unix(resetAt, 0), repo.rateLimitCalls[0], 2*time.Second)
-	case <-time.After(5 * time.Second):
-		t.Fatal("等待 ingress websocket 结束超时")
+			writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
+			err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1","stream":false}`))
+			cancelWrite()
+			require.NoError(t, err)
+
+			select {
+			case serverErr := <-serverErrCh:
+				after := time.Now()
+				require.Error(t, serverErr)
+				var failoverErr *UpstreamFailoverError
+				require.ErrorAs(t, serverErr, &failoverErr)
+				require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
+				require.Len(t, repo.rateLimitCalls, 1)
+				requireOpenAIWSQuotaCooldown(t, accountType, repo.rateLimitCalls[0], before, after, time.Unix(resetAt, 0))
+				require.Empty(t, repo.updateExtra, "body-only errors have no Codex snapshot")
+				requireOpenAIWSQuotaRuntimeBlock(t, svc, &account, repo.rateLimitCalls[0])
+			case <-time.After(5 * time.Second):
+				t.Fatal("等待 ingress websocket 结束超时")
+			}
+		})
 	}
 }
 
@@ -578,4 +617,41 @@ func TestOpenAIWSRateLimitFailoverError_OAuthKeepsSameAccountDeadline(t *testing
 	require.False(t, apiKeyErr.RetryableOnSameAccount)
 	require.True(t, apiKeyErr.SameAccountRetryDeadline.IsZero())
 	require.Zero(t, apiKeyErr.SameAccountRetryDelay)
+}
+
+// openAIWSQuotaLocalDialer routes every dial to the test server, including
+// OAuth-like accounts whose normal endpoint cannot be overridden by base_url.
+type openAIWSQuotaLocalDialer struct{ url string }
+
+func (d *openAIWSQuotaLocalDialer) Dial(ctx context.Context, _ string, headers http.Header, _ string) (openAIWSClientConn, int, http.Header, error) {
+	return newDefaultOpenAIWSClientDialer().Dial(ctx, d.url, headers, "")
+}
+
+func openAIWSQuotaTestCredentials(accountType, baseURL string) map[string]any {
+	credentials := map[string]any{"base_url": baseURL}
+	if accountType == AccountTypeAPIKey {
+		credentials["api_key"] = "sk-test"
+	} else {
+		credentials["access_token"] = "test-access-token"
+		credentials["chatgpt_account_id"] = "test-chatgpt-account"
+	}
+	return credentials
+}
+
+func requireOpenAIWSQuotaCooldown(t *testing.T, accountType string, got, before, after, quotaReset time.Time) {
+	t.Helper()
+	if accountType == AccountTypeAPIKey {
+		cooldown := time.Duration(defaultRateLimit429CooldownSeconds) * time.Second
+		require.False(t, got.Before(before.Add(cooldown)), "API key must receive the configured fallback cooldown")
+		require.False(t, got.After(after.Add(cooldown)), "API key must not inherit a relayed quota window")
+	} else {
+		require.Equal(t, quotaReset, got, "OAuth-like credentials must retain their real quota reset")
+	}
+}
+
+func requireOpenAIWSQuotaRuntimeBlock(t *testing.T, svc *OpenAIGatewayService, account *Account, resetAt time.Time) {
+	t.Helper()
+	until, ok := svc.openaiAccountRuntimeBlockUntil.Load(account.ID)
+	require.True(t, ok, "429 must block scheduling at runtime as well as in the repository")
+	require.Equal(t, resetAt, until)
 }

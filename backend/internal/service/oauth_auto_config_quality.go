@@ -23,7 +23,7 @@ func (r *OAuthInitialQualityRule) plan(platform string) (*ScheduledTestPlan, err
 	bad := func(message string) (*ScheduledTestPlan, error) {
 		return nil, infraerrors.BadRequest("AUTO_CONFIG_QUALITY_INVALID", message)
 	}
-	if r.PelicanConfig == nil || r.PelicanConfig.Quality == nil {
+	if r.PelicanConfig == nil || r.PelicanConfig.Quality == nil || r.PelicanConfig.Quality.Action == QualityActionOpenAITwoFAAdmission {
 		return bad("select a quality operations rule")
 	}
 	if isOpenAICodexStateProbePlan(r.PelicanConfig) && platform != PlatformOpenAI {

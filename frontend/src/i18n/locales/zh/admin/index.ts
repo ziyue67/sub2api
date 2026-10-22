@@ -1,3 +1,4 @@
+import moderationUsers from './moderationUsers'
 import groupCacheTest from './groupCacheTest'
 import requestCapture from './requestCapture'
 import astraGateway from './astraGateway'
@@ -14,6 +15,7 @@ import plugins from './plugins'
 import harvestFlow from './harvestFlow'
 
 export default {
+  ...moderationUsers,
   ...groupCacheTest,
   ...requestCapture,
   ...astraGateway,

@@ -126,6 +126,28 @@ func isGmailFamilyDomain(domain string) bool {
 	return ok
 }
 
+// IsRegistrationEmailAlias detects alias syntax without treating dots on non-Gmail
+// domains as aliases. Those dots can identify distinct mailboxes.
+func IsRegistrationEmailAlias(email string) bool {
+	local, domain, ok := splitEmailForAliasDedup(email)
+	if !ok {
+		return false
+	}
+	return strings.HasSuffix(strings.TrimSpace(email), ".") ||
+		strings.IndexByte(local, '+') > 0 ||
+		(isGmailFamilyDomain(domain) && strings.Contains(local, "."))
+}
+
+func (s *AuthService) validateRegistrationEmailAlias(ctx context.Context, email string) error {
+	if s == nil {
+		return ErrServiceUnavailable
+	}
+	if IsRegistrationEmailAlias(email) && (s.settingService == nil || s.settingService.IsRegistrationEmailAliasBlockEnabled(ctx)) {
+		return ErrEmailAliasNotAllowed
+	}
+	return nil
+}
+
 // existsByEmailOrAlias reports whether an email — or any alias variant that
 // resolves to the same inbox — is already registered.
 //

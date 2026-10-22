@@ -327,14 +327,34 @@ func BuildToolRepairRequest(prepared []byte, failed map[string]any, validation e
 	if !ok {
 		return nil, fmt.Errorf("basispoints correction requires expanded history")
 	}
+	var trigger any
+	if len(input) > 0 {
+		last, _ := input[len(input)-1].(object)
+		if text(last["type"]) == "compaction_trigger" {
+			trigger = input[len(input)-1]
+			input = input[:len(input)-1]
+		}
+	}
 	output, _ := failed["output"].([]any)
 	input = append(input, output...)
-	feedback, _ := json.Marshal(object{"executed": false, "error": object{"code": "invalid_client_tool_transport", "message": validation.Error()}})
+	detail := object{"code": "invalid_client_tool_transport", "message": validation.Error()}
+	var unknown unknownClientToolError
+	if errors.As(validation, &unknown) {
+		detail["code"], detail["rejected_tool"] = "unknown_client_tool", unknown.name
+	}
+	feedback, _ := json.Marshal(object{"executed": false, "error": detail})
 	for _, item := range items {
 		call := text(item["call_id"])
 		input = append(input, object{"type": "function_call_output", "id": "fc_" + fingerprint([]any{call, len(input)}), "call_id": call, "output": string(feedback)})
 	}
-	input = append(input, message("developer", fmt.Sprintf("The preceding tool batch failed transport validation before any client tool was executed. Correct only its transport formatting and return exactly %d run_officejs calls in the same order, preserving the intended operations and exact raw code. Use the existing client catalog: FUNCTION needs one JSON envelope with object arguments; CUSTOM needs summary=codex2api.custom/CATALOG_NAME and raw input in code; FUNCTION_CODE and FUNCTION_CMD need their declared markers and metadata JSON in extended_summary. Calls that already passed validation must remain unchanged. Do not execute Office code, infer an undeclared target, add operations, or repeat commentary.", len(items))))
+	if errors.As(validation, &unknown) {
+		input = append(input, message("developer", "The preceding native call selected a tool absent from the current client catalog and was NOT executed. Continue the original task with exactly one declared client tool using its documented run_officejs transport and argument schema. Do not repeat historical operations, invent capabilities or treat the rejected call as executed. If no declared tool can perform the task, stop and explain the limitation. Do not repeat commentary."))
+	} else {
+		input = append(input, message("developer", fmt.Sprintf("The preceding tool batch failed transport validation before any client tool was executed. Correct only its transport formatting and return exactly %d run_officejs calls in the same order, preserving the intended operations and exact raw code. Use the existing client catalog: FUNCTION needs one JSON envelope with object arguments; CUSTOM needs summary=codex2api.custom/CATALOG_NAME and raw input in code; FUNCTION_CODE and FUNCTION_CMD need their declared markers and metadata JSON in extended_summary. Calls that already passed validation must remain unchanged. Do not execute Office code, infer an undeclared target, add operations, or repeat commentary.", len(items))))
+	}
+	if trigger != nil {
+		input = append(input, trigger)
+	}
 	request["input"] = input
 	metadata, _ := request["metadata"].(object)
 	if metadata == nil {
@@ -352,6 +372,7 @@ func BuildToolRepairRequest(prepared []byte, failed map[string]any, validation e
 // Only the terminal native response is authoritative, as in the primary stream.
 func ReadToolRepairResponse(reader io.Reader) (map[string]any, error) {
 	var response object
+	var observedUsage object
 	var terminalError error
 	pending := make(map[string]bool)
 	err := readEvents(io.LimitReader(reader, 32<<20), func(event string, data []byte) error {
@@ -361,6 +382,14 @@ func ReadToolRepairResponse(reader io.Reader) (map[string]any, error) {
 		var payload object
 		if decode(data, &payload) != nil || payload == nil {
 			return fmt.Errorf("invalid Basispoints correction SSE event")
+		}
+		if current, ok := payload["response"].(object); ok {
+			if usage, ok := current["usage"].(object); ok {
+				observedUsage = maxReportedUsage(observedUsage, usage)
+			}
+		}
+		if usage, ok := payload["usage"].(object); ok {
+			observedUsage = maxReportedUsage(observedUsage, usage)
 		}
 		kind := text(payload["type"])
 		if kind == "" {
@@ -398,14 +427,20 @@ func ReadToolRepairResponse(reader io.Reader) (map[string]any, error) {
 		}
 		return nil
 	})
+	hasTerminalResponse := response != nil
+	if response == nil && observedUsage != nil {
+		response = object{"usage": observedUsage}
+	} else if response != nil && response["usage"] == nil {
+		response["usage"] = observedUsage
+	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return response, err
 	}
 	if terminalError != nil {
 		return response, terminalError
 	}
-	if response == nil {
-		return nil, io.ErrUnexpectedEOF
+	if !hasTerminalResponse {
+		return response, io.ErrUnexpectedEOF
 	}
 	return response, nil
 }

@@ -12,6 +12,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNewSystemOneRequestEditableURL(t *testing.T) {
+	for _, tc := range []struct{ name, base, want string }{
+		{"empty default", "", DefaultBaseURL + SystemOnePath},
+		{"whitespace default", "  ", DefaultBaseURL + SystemOnePath},
+		{"default", DefaultBaseURL, DefaultBaseURL + SystemOnePath},
+		{"trailing slashes", " https://relay.example/// ", "https://relay.example/v1/systemone"},
+		{"api base", "https://relay.example/v1/", "https://relay.example/v1/systemone"},
+		{"legacy uppercase version", "https://relay.example/V1/", "https://relay.example/v1/systemone"},
+		{"full endpoint", "https://relay.example/v1/systemone/", "https://relay.example/v1/systemone"},
+		{"proxy prefix", "https://relay.example/typesafe/", "https://relay.example/typesafe/v1/systemone"},
+		{"prefixed api base", "https://relay.example/typesafe/v1/", "https://relay.example/typesafe/v1/systemone"},
+		{"prefixed endpoint", "https://relay.example/typesafe/v1/systemone/", "https://relay.example/typesafe/v1/systemone"},
+		{"version-like prefix", "https://relay.example/apiv1", "https://relay.example/apiv1/v1/systemone"},
+		{"escaped prefix", "https://relay.example/my%20relay/v1", "https://relay.example/my%20relay/v1/systemone"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := NewSystemOneRequest(context.Background(), tc.base, "fixture-key", []byte(`{}`))
+			require.NoError(t, err)
+			require.Equal(t, tc.want, req.URL.String())
+			require.Equal(t, http.MethodPost, req.Method)
+		})
+	}
+}
+
+func TestNewSystemOneRequestRejectsUnsafeURLSyntax(t *testing.T) {
+	for _, raw := range []string{
+		"/v1", "//relay.example", "ftp://relay.example", "file:///etc/hosts",
+		"https://user:fixture-password@relay.example", "https://relay.example?token=fixture-secret",
+		"https://relay.example?", "https://relay.example#fragment", "https://relay.example:99999",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			req, err := NewSystemOneRequest(context.Background(), raw, "fixture-key", []byte(`{}`))
+			require.Error(t, err)
+			require.Nil(t, req)
+			require.NotContains(t, err.Error(), "fixture-")
+		})
+	}
+}
+
+func TestEvaluateDoesNotDisableTLSVerificationForCustomURL(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("untrusted TLS endpoint must not receive a request")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	result, status, err := Evaluate(context.Background(), &http.Client{Timeout: time.Second}, server.URL+"/v1/", "fixture-key", Request{})
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Zero(t, status)
+}
+
 func TestEvaluateContract(t *testing.T) {
 	questions := map[string]Question{"sexual": {Type: "noul", Instructions: "Evaluate sexual content"}, "illicit": {Type: "noul", Instructions: "Evaluate illegal assistance"}}
 	for _, tc := range []struct {

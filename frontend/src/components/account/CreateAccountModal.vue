@@ -7181,6 +7181,7 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
   const credentialExtras = buildOpenAICodexImportCredentialExtras()
   if (credentialExtras === null) throw new Error('invalid_account_settings')
   const result = await adminAPI.accounts.importCodexSession({
+    initialize_openai_two_fa: true,
     content: JSON.stringify(credential),
     name: form.name.trim() ? `${form.name.trim()} (${email})` : email,
     notes: form.notes || null,

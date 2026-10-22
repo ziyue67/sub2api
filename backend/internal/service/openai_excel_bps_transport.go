@@ -213,7 +213,7 @@ func (s *OpenAIGatewayService) doExcelBPSRequestTo(ctx context.Context, c *gin.C
 			return nil, nil, proxy, err
 		}
 		evidence := &excelBPSWriteEvidence{}
-		resp, err := s.httpUpstream.Do(evidence.request(req), proxy, account.ID, account.Concurrency)
+		resp, err := s.doPriorityObservedHTTP(evidence.request(req), proxy, account)
 		controlledHTTPResponse(ctx, resp)
 		s.rateLimitService.observeQualityResponse(req.Context(), account, resp, err)
 		if err == nil {

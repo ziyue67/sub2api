@@ -154,6 +154,14 @@ func TestUsageLogFromService_UsesRequestedModelAndKeepsUpstreamAdminOnly(t *test
 	require.NotContains(t, string(userJSON), "upstream_response_model")
 	require.NotContains(t, string(userJSON), "upstream_model_mismatch")
 
+	visible := UsageLogFromServiceForUser(log, true)
+	visibleJSON, err := json.Marshal(visible)
+	require.NoError(t, err)
+	require.Contains(t, string(visibleJSON), `"upstream_response_model":"claude-sonnet-4-20250513"`)
+	require.NotContains(t, string(visibleJSON), `"upstream_model"`)
+	require.NotContains(t, string(visibleJSON), "upstream_model_mismatch")
+	require.NotContains(t, string(visibleJSON), "model_mapping_chain")
+
 	adminJSON, err := json.Marshal(adminDTO)
 	require.NoError(t, err)
 	require.Contains(t, string(adminJSON), `"upstream_model":"claude-sonnet-4-20250514"`)

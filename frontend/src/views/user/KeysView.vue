@@ -50,12 +50,12 @@
       <template #actions>
         <div class="flex justify-end gap-3">
           <button
-            @click="loadApiKeys"
-            :disabled="loading"
+            @click="refreshPage"
+            :disabled="loading || groupPricingLoading"
             class="btn btn-secondary"
             :title="t('common.refresh')"
           >
-            <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+            <Icon name="refresh" size="md" :class="loading || groupPricingLoading ? 'animate-spin' : ''" />
           </button>
           <div class="relative" ref="columnDropdownRef">
             <button
@@ -161,7 +161,7 @@
             <div class="group/dropdown relative">
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
-                @click="openGroupSelector(row)"
+                @click="(row.group_ids?.length ?? 0) > 1 ? editKey(row) : openGroupSelector(row)"
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="t('keys.clickToChangeGroup')"
               >
@@ -180,7 +180,8 @@
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
+                <span v-if="(row.group_ids?.length ?? 0) > 1" class="text-xs text-primary-600">{{ t('keys.multiGroupCount', { count: row.group_ids.length }) }}</span>
+                <span v-else class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
                 <svg
                   class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
                   fill="none"
@@ -645,6 +646,19 @@
               />
             </template>
           </Select>
+          <fieldset class="mt-3 space-y-2" data-testid="key-additional-groups">
+            <legend class="input-label">{{ t('keys.additionalGroups') }}</legend>
+            <p class="input-hint">{{ t('keys.multiGroupHint') }}</p>
+            <div class="max-h-48 space-y-2 overflow-y-auto">
+              <label v-for="option in groupOptions.filter(item => item.value !== null && item.value !== formData.group_id)"
+                :key="String(option.value)" class="flex items-center gap-2 text-sm">
+                <input v-model="formData.group_ids" type="checkbox" :value="option.value" :disabled="!formData.group_ids.includes(Number(option.value)) && selectedFormGroupIDs().length >= 20" />
+                <GroupBadge :name="option.label" :platform="option.platform"
+                  :subscription-type="option.subscriptionType" :rate-multiplier="option.rate"
+                  :user-rate-multiplier="option.userRate" />
+              </label>
+            </div>
+          </fieldset>
         </div>
 
         <div class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-700">
@@ -1689,6 +1703,7 @@ const formData = ref({
   group_id: null as number | null,
   enable_group_routes: false,
   group_routes: [] as ApiKeyGroupRoute[],
+  group_ids: [] as number[],
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1978,21 +1993,37 @@ const loadApiKeys = async () => {
   }
 }
 
-const loadGroups = async () => {
+const groupPricingLoading = ref(false)
+let groupPricingGeneration = 0
+
+const loadGroupPricing = async () => {
+  const generation = ++groupPricingGeneration
+  groupPricingLoading.value = true
   try {
-    groups.value = await userGroupsAPI.getAvailable()
+    const [availableGroups, rates] = await Promise.all([
+      userGroupsAPI.getAvailable(),
+      userGroupsAPI.getUserGroupRates()
+    ])
+    if (disposed || generation !== groupPricingGeneration) return
+    // Apply both together so a failed refresh cannot mix new defaults with old overrides.
+    groups.value = availableGroups
+    userGroupRates.value = rates
   } catch (error) {
-    console.error('Failed to load groups:', error)
+    if (disposed || generation !== groupPricingGeneration) return
+    console.error('Failed to load group pricing:', error)
+    appStore.showError(t('keys.failedToLoad'))
+  } finally {
+    if (generation === groupPricingGeneration) groupPricingLoading.value = false
   }
 }
 
-const loadUserGroupRates = async () => {
-  try {
-    userGroupRates.value = await userGroupsAPI.getUserGroupRates()
-  } catch (error) {
-    console.error('Failed to load user group rates:', error)
-  }
+const refreshPage = async () => {
+  await Promise.all([loadApiKeys(), loadGroupPricing()])
 }
+
+watch([showCreateModal, showEditModal], ([creating, editing]) => {
+  if (creating || editing) void loadGroupPricing()
+})
 
 const loadPublicSettings = async () => {
   try {
@@ -2043,6 +2074,11 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   loadApiKeys()
 }
 
+const selectedFormGroupIDs = (): number[] => [...new Set([
+  ...(formData.value.group_id === null ? [] : [formData.value.group_id]),
+  ...formData.value.group_ids.filter(id => id !== formData.value.group_id)
+])]
+
 const editKey = (key: ApiKey) => {
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
@@ -2054,6 +2090,7 @@ const editKey = (key: ApiKey) => {
     group_id: key.group_id,
     enable_group_routes: groupRoutes.length > 0,
     group_routes: groupRoutes,
+    group_ids: (key.group_ids ?? []).filter(id => id !== key.group_id),
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -2091,6 +2128,7 @@ const openGroupSelector = (key: ApiKey) => {
     groupSelectorKeyId.value = null
     dropdownPosition.value = null
   } else {
+    void loadGroupPricing()
     const buttonEl = groupButtonRefs.value.get(key.id)
     if (buttonEl) {
       const rect = buttonEl.getBoundingClientRect()
@@ -2129,7 +2167,7 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
     const groupRoutes = key.group_routes?.length
       ? syncPrimaryGroupRoute(newGroupId, key.group_routes)
       : undefined
-    const updates: UpdateApiKeyRequest = { group_id: newGroupId }
+    const updates: UpdateApiKeyRequest = { group_id: newGroupId, group_ids: newGroupId === null ? [] : [newGroupId] }
     if (groupRoutes) updates.group_routes = groupRoutes
     const updatedKey = await keysAPI.update(key.id, updates)
     const rowIndex = apiKeys.value.findIndex((item) => item.id === key.id)
@@ -2232,6 +2270,7 @@ const handleSubmit = async () => {
         name: formData.value.name,
         concurrency_limit: concurrencyLimit,
         group_id: formData.value.group_id,
+        group_ids: selectedFormGroupIDs(),
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -2258,7 +2297,8 @@ const handleSubmit = async () => {
         expiresInDays,
         rateLimitData,
         concurrencyLimit,
-        formData.value.enable_group_routes ? formData.value.group_routes : []
+        formData.value.enable_group_routes ? formData.value.group_routes : [],
+        ...selectedFormGroupIDs()
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -2307,6 +2347,7 @@ const closeModals = () => {
     group_id: null,
     enable_group_routes: false,
     group_routes: [],
+    group_ids: [],
     status: 'active',
     use_custom_key: false,
     custom_key: '',
@@ -2462,8 +2503,7 @@ function formatResetTime(resetAt: string | null): string {
 onMounted(() => {
   loadSavedColumns()
   loadApiKeys()
-  loadGroups()
-  loadUserGroupRates()
+  loadGroupPricing()
   loadPublicSettings()
   document.addEventListener('click', closeGroupSelector)
   document.addEventListener('visibilitychange', handleConcurrencyVisibility)

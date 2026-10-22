@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -16,7 +17,7 @@ func newPlazaService(channels []Channel, groups []Group, pricing *PricingService
 	repo := &mockChannelRepository{
 		listAllFn: func(ctx context.Context) ([]Channel, error) { return channels, nil },
 	}
-	return NewModelPlazaService(repo, &stubGroupRepoForAvailable{activeGroups: groups}, pricing, nil, nil)
+	return NewModelPlazaService(repo, &stubGroupRepoForAvailable{activeGroups: groups}, pricing, nil, nil, nil)
 }
 
 func plazaPricedChannel(id int64, name string, groupIDs []int64, platform string, models ...string) Channel {
@@ -330,7 +331,7 @@ func TestListPlazaGroups_RepoErrorsPropagate(t *testing.T) {
 	repo := &mockChannelRepository{
 		listAllFn: func(ctx context.Context) ([]Channel, error) { return nil, sentinel },
 	}
-	svc := NewModelPlazaService(repo, &stubGroupRepoForAvailable{}, nil, nil, nil)
+	svc := NewModelPlazaService(repo, &stubGroupRepoForAvailable{}, nil, nil, nil, nil)
 	out, err := svc.ListGroups(context.Background())
 	require.Nil(t, out)
 	require.ErrorIs(t, err, sentinel)
@@ -338,7 +339,7 @@ func TestListPlazaGroups_RepoErrorsPropagate(t *testing.T) {
 	svc2 := NewModelPlazaService(
 		&mockChannelRepository{listAllFn: func(ctx context.Context) ([]Channel, error) { return nil, nil }},
 		&stubGroupRepoForAvailable{listActiveErr: sentinel},
-		nil, nil, nil,
+		nil, nil, nil, nil,
 	)
 	out2, err2 := svc2.ListGroups(context.Background())
 	require.Nil(t, out2)
@@ -355,7 +356,7 @@ func newPlazaServiceWithBilling(channels []Channel, groups []Group, groupPlatfor
 	}
 	cs := NewChannelService(repo, nil, nil, nil, nil)
 	bs := NewBillingService(&config.Config{}, catalog)
-	return NewModelPlazaService(repo, &stubGroupRepoForAvailable{activeGroups: groups}, catalog, bs, NewModelPricingResolver(cs, bs))
+	return NewModelPlazaService(repo, &stubGroupRepoForAvailable{activeGroups: groups}, catalog, bs, NewModelPricingResolver(cs, bs), nil)
 }
 
 func plazaModelsByName(models []PlazaModel) map[string]PlazaModel {
@@ -508,4 +509,197 @@ func TestListGroups_TimePricingPassthrough(t *testing.T) {
 	require.InDelta(t, 0.5, m.TimePricing.Periods[0].Multiplier, 1e-12)
 	// 展示单价为标准时段价
 	require.InDelta(t, 0.28e-6, *m.Pricing.InputPrice, 1e-15)
+}
+
+func TestListPlazaGroups_AccountRepoErrorPropagates(t *testing.T) {
+	sentinel := errors.New("account repository unavailable")
+	svc := newPlazaService(nil, []Group{{ID: 10, Platform: PlatformOpenAI}}, nil)
+	svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{err: sentinel}}
+	out, err := svc.ListGroups(context.Background())
+	require.Nil(t, out)
+	require.ErrorIs(t, err, sentinel)
+}
+
+func TestListPlazaGroups_AccountModelsWithoutChannels(t *testing.T) {
+	groups := []Group{
+		{ID: 10, Platform: PlatformOpenAI},
+		{ID: 20, Platform: PlatformAnthropic},
+		{ID: 30, Platform: PlatformOpenAI}, // no accounts
+	}
+	svc := newPlazaService(nil, groups, nil)
+	svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{
+		10: {{ID: 1, Platform: PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"gpt-6-astra": "gpt-6-astra"}}}},
+		20: {{ID: 2, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"claude-opus-4-8": "claude-opus-4-8"}}}},
+	}}}
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	require.Equal(t, int64(10), out[0].ID)
+	require.Equal(t, "gpt-6-astra", out[0].Models[0].Name)
+	require.Equal(t, int64(20), out[1].ID)
+	require.Equal(t, "claude-opus-4-8", out[1].Models[0].Name)
+}
+
+func TestListPlazaGroups_AccountCatalogHonorsGroupAllowlistAndPlatform(t *testing.T) {
+	g := Group{ID: 10, Platform: PlatformOpenAI, ModelAllowlist: GroupModelAllowlist{Enabled: true, Models: []string{"gpt-6-astra"}}}
+	ch := plazaPricedChannel(1, "ch", []int64{10}, PlatformOpenAI, "blocked-channel-model")
+	svc := newPlazaService([]Channel{ch}, []Group{g}, nil)
+	svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{
+		10: {
+			{ID: 1, Platform: PlatformOpenAI, Credentials: map[string]any{"model_mapping": map[string]any{"gpt-6-astra": "gpt-6-astra", "blocked-account-model": "upstream"}}},
+			{ID: 2, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"claude-opus-4-8": "upstream"}}},
+		},
+	}}}
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Len(t, out[0].Models, 1)
+	require.Equal(t, "gpt-6-astra", out[0].Models[0].Name)
+}
+
+func TestListPlazaGroups_AccountCatalogKeepsChannelPricing(t *testing.T) {
+	ch := Channel{ID: 1, Name: "video", Status: StatusActive, GroupIDs: []int64{10}, ModelPricing: []ChannelModelPricing{
+		{Platform: PlatformGrok, Models: []string{"grok-imagine-video"}, BillingMode: BillingModePerRequest, PerRequestPrice: testPtrFloat64(1.5)},
+	}}
+	svc := newPlazaService([]Channel{ch}, []Group{{ID: 10, Platform: PlatformGrok}}, nil)
+	svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{
+		10: {{ID: 1, Platform: PlatformGrok, Credentials: map[string]any{"model_mapping": map[string]any{"grok-imagine-video": "upstream", "grok-4.5": "upstream"}}}},
+	}}}
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Len(t, out[0].Models, 2)
+	models := plazaModelsByName(out[0].Models)
+	require.Equal(t, BillingModePerRequest, models["grok-imagine-video"].Pricing.BillingMode)
+	require.Equal(t, 1.5, *models["grok-imagine-video"].Pricing.PerRequestPrice)
+}
+
+func TestListPlazaGroups_UnmappedAccountsUseGatewayCatalogs(t *testing.T) {
+	svc := newPlazaService(nil, []Group{
+		{ID: 10, Platform: PlatformOpenAI},
+		{ID: 20, Platform: PlatformAnthropic},
+		{ID: 30, Platform: PlatformDeepseek},
+	}, nil)
+	svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{
+		10: {{ID: 1, Platform: PlatformOpenAI}},
+		20: {{ID: 2, Platform: PlatformAnthropic}},
+		30: {{ID: 3, Platform: PlatformDeepseek}},
+	}}}
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 2, "CN provider without mapped models must not advertise Claude defaults")
+	require.Contains(t, plazaModelsByName(out[0].Models), "gpt-6-astra")
+	require.Contains(t, plazaModelsByName(out[1].Models), "claude-opus-4-8")
+}
+
+func TestListPlazaGroups_WildcardsAreNotModelCards(t *testing.T) {
+	svc := newPlazaService(nil, []Group{{ID: 10, Platform: PlatformAnthropic}}, nil)
+	svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{
+		10: {{ID: 1, Platform: PlatformAnthropic, Credentials: map[string]any{"model_mapping": map[string]any{"claude-*": "*", "claude-opus-4-8": "upstream"}}}},
+	}}}
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Len(t, out[0].Models, 1)
+	require.Equal(t, "claude-opus-4-8", out[0].Models[0].Name)
+}
+
+func TestListPlazaGroups_MixedGeminiAccounts(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		t.Run(fmt.Sprint(mixed), func(t *testing.T) {
+			svc := newPlazaService(nil, []Group{{ID: 10, Platform: PlatformGemini}}, nil)
+			svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{
+				10: {{ID: 1, Platform: PlatformAntigravity,
+					Extra: map[string]any{"mixed_scheduling": mixed},
+					Credentials: map[string]any{"model_mapping": map[string]any{
+						"gemini-3-pro-preview": "upstream", "claude-opus-4-8": "upstream",
+					}},
+				}},
+			}}}
+			out, err := svc.ListGroups(context.Background())
+			require.NoError(t, err)
+			if !mixed {
+				require.Empty(t, out)
+				return
+			}
+			require.Len(t, out, 1)
+			require.Contains(t, plazaModelsByName(out[0].Models), "gemini-3-pro-preview")
+			require.NotContains(t, plazaModelsByName(out[0].Models), "claude-opus-4-8")
+			for _, model := range out[0].Models {
+				require.Equal(t, PlatformGemini, model.Platform)
+			}
+		})
+	}
+}
+
+func TestListPlazaGroups_DefaultCatalogHonorsAccountGroupLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		platform       string
+		allowed        []string
+		groupAllowlist GroupModelAllowlist
+		wantEmpty      bool
+	}{
+		{name: "wildcard restriction", platform: PlatformAnthropic, allowed: []string{"claude-haiku-*"}},
+		{name: "composite restriction", platform: PlatformComposite, allowed: []string{"claude-haiku-*"}},
+		{
+			name: "group allowlist cannot restore blocked models", platform: PlatformAnthropic,
+			allowed:        []string{"claude-haiku-*"},
+			groupAllowlist: GroupModelAllowlist{Enabled: true, Models: []string{"claude-haiku-4-5-20251001", "claude-opus-4-8"}},
+		},
+		{name: "no matching defaults", platform: PlatformAnthropic, allowed: []string{"unknown-*"}, wantEmpty: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := Group{ID: 10, Platform: tc.platform, ModelAllowlist: tc.groupAllowlist}
+			svc := newPlazaService(nil, []Group{g}, nil)
+			svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{
+				10: {{ID: 1, Platform: PlatformAnthropic, AccountGroups: []AccountGroup{{GroupID: 10, AllowedModels: tc.allowed}}}},
+			}}}
+			out, err := svc.ListGroups(context.Background())
+			require.NoError(t, err)
+			if tc.wantEmpty {
+				require.Empty(t, out)
+				return
+			}
+			require.Len(t, out, 1)
+			models := plazaModelsByName(out[0].Models)
+			require.Contains(t, models, "claude-haiku-4-5-20251001")
+			require.NotContains(t, models, "claude-opus-4-8")
+			require.NotContains(t, models, "claude-sonnet-4-6")
+			for _, model := range out[0].Models {
+				require.Contains(t, model.Name, "claude-haiku-")
+				require.Equal(t, PlatformAnthropic, model.Platform)
+			}
+		})
+	}
+}
+
+func TestListPlazaGroups_AccountGroupLimitsPreserveOtherAccountsAndChannels(t *testing.T) {
+	g := Group{ID: 10, Platform: PlatformAnthropic, ModelAllowlist: GroupModelAllowlist{Enabled: true, Models: []string{"claude-*", "channel-only"}}}
+	ch := plazaPricedChannel(1, "channel", []int64{10}, PlatformAnthropic, "channel-only")
+	svc := newPlazaService([]Channel{ch}, []Group{g}, nil)
+	svc.gatewayService = &GatewayService{accountRepo: &modelsListAccountRepoStub{byGroup: map[int64][]Account{
+		10: {
+			{
+				ID: 1, Platform: PlatformAnthropic,
+				Credentials:   map[string]any{"model_mapping": map[string]any{"claude-haiku-4-5-20251001": "upstream"}},
+				AccountGroups: []AccountGroup{{GroupID: 10, AllowedModels: []string{"claude-haiku-*"}}},
+			},
+			{
+				ID: 2, Platform: PlatformAnthropic,
+				Credentials:   map[string]any{"model_mapping": map[string]any{"claude-sonnet-4-6": "upstream"}},
+				AccountGroups: []AccountGroup{{GroupID: 10, AllowedModels: []string{"claude-sonnet-*"}}},
+			},
+			{ID: 3, Platform: PlatformOpenAI}, // another platform cannot authorize Claude defaults
+		},
+	}}}
+	out, err := svc.ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	models := plazaModelsByName(out[0].Models)
+	require.Len(t, models, 3)
+	require.Contains(t, models, "claude-haiku-4-5-20251001")
+	require.Contains(t, models, "claude-sonnet-4-6")
+	require.Contains(t, models, "channel-only")
+	require.NotContains(t, models, "claude-opus-4-8")
 }

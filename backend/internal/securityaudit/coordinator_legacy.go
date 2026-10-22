@@ -30,6 +30,6 @@ func (a *LegacyModerationAdapter) Check(ctx context.Context, req Request) (*Lega
 	return &LegacyDecision{
 		Allowed: decision.Allowed, Blocked: decision.Blocked, Flagged: decision.Flagged,
 		Message: decision.Message, StatusCode: decision.StatusCode,
-		ErrorCode: "content_policy_violation", Action: decision.Action,
+		ErrorCode: "content_policy_violation", Action: decision.Action, Category: decision.HighestCategory,
 	}, nil
 }

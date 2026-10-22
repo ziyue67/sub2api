@@ -31,6 +31,9 @@ func applyAstraScheduling(ctx context.Context, repo AccountRepository, a *Accoun
 	return AstraSchedulingActionResult{Changed: err == nil, Allowed: ready, Action: "account"}, err
 }
 func astraSchedulingAppliesToRequest(s config.AstraRoutingSettings, a *Account, model string, group int64) bool {
+	if a.IsSIWCEnabled() {
+		return false
+	}
 	switch s.EffectiveSchedulingMode() {
 	case "model":
 		return strings.EqualFold(model, "gpt-6-astra") || (a != nil && strings.EqualFold(a.GetMappedModel(model), "gpt-6-astra"))

@@ -12,6 +12,7 @@ type APIKeyAuthSnapshot struct {
 	Version          int                       `json:"version"`
 	APIKeyID         int64                     `json:"api_key_id"`
 	UserID           int64                     `json:"user_id"`
+	GroupIDs         []int64                   `json:"group_ids,omitempty"`
 	GroupID          *int64                    `json:"group_id,omitempty"`
 	GroupRoutes      []domain.APIKeyGroupRoute `json:"group_routes,omitempty"`
 	Name             string                    `json:"name"`
