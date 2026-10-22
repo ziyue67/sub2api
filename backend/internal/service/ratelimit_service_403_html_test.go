@@ -155,6 +155,18 @@ func TestHandleUpstreamError_AnthropicSafeguardPolicy403DoesNotPenalizeAccount(t
 }
 
 func TestHandleUpstreamError_AnthropicOther403StillPenalizesAccount(t *testing.T) {
+	repo := &rateLimitAccountRepoStub{}
+	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	account := &Account{ID: 603, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+
+	shouldDisable := svc.HandleUpstreamError(
+		context.Background(), account, http.StatusForbidden, http.Header{}, []byte(`{"error":{"message":"Organization access has been revoked"}}`),
+	)
+
+	require.True(t, shouldDisable)
+	require.Equal(t, 1, repo.setErrorCalls)
+}
+
 func TestHandleUpstreamError_Cloudflare1010JSONDoesNotPenalizeAccount(t *testing.T) {
 	for _, body := range []string{
 		`{"cloudflare_error":true,"error_code":1010,"error_name":"browser_signature_banned","detail":"blocked"}`,

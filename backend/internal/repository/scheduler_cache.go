@@ -1173,33 +1173,6 @@ func marshalSchedulerCacheAccount(account service.Account) ([]byte, []byte, erro
 	return fullPayload, metaPayload, nil
 }
 
-// mgetSnapshotFields pipelines metadata and the independently updated LRU
-// side keys. Each command retains the configured key limit; only one pair
-// is in flight at a time to bound the queued reply size.
-func (c *schedulerCache) mgetSnapshotFields(ctx context.Context, keys, lastUsedKeys []string) ([]any, []any, error) {
-	if len(keys) != len(lastUsedKeys) {
-		return nil, nil, fmt.Errorf("scheduler snapshot field count mismatch")
-	}
-	values := make([]any, 0, len(keys))
-	lastUsed := make([]any, 0, len(keys))
-	chunkSize := c.mgetChunkSize
-	if chunkSize <= 0 {
-		chunkSize = defaultSchedulerSnapshotMGetChunkSize
-	}
-	for start := 0; start < len(keys); start += chunkSize {
-		end := min(start+chunkSize, len(keys))
-		pipe := c.rdb.Pipeline()
-		metaCmd := pipe.MGet(ctx, keys[start:end]...)
-		lastUsedCmd := pipe.MGet(ctx, lastUsedKeys[start:end]...)
-		if _, err := pipe.Exec(ctx); err != nil {
-			return nil, nil, err
-		}
-		values = append(values, metaCmd.Val()...)
-		lastUsed = append(lastUsed, lastUsedCmd.Val()...)
-	}
-	return values, lastUsed, nil
-}
-
 func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any, error) {
 	if len(keys) == 0 {
 		return []any{}, nil
