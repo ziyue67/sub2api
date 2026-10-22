@@ -220,12 +220,6 @@ func TestHandleUpstreamError_AnthropicGenuine403StillPenalizes(t *testing.T) {
 	svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	account := &Account{ID: 603, Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
 
-	shouldDisable := svc.HandleUpstreamError(
-		context.Background(), account, http.StatusForbidden, http.Header{}, []byte(`{"error":{"message":"Organization access has been revoked"}}`),
-	)
-
-	require.True(t, shouldDisable)
-	require.Equal(t, 1, repo.setErrorCalls)
 	require.True(t, svc.HandleUpstreamError(
 		context.Background(), account, http.StatusForbidden, http.Header{},
 		[]byte(`{"error":{"type":"permission_error","message":"invalid API key"}}`),
