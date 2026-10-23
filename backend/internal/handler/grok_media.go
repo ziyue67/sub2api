@@ -477,7 +477,18 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			if endpoint.IsMiniMaxH3() {
 				return h.gatewayService.ForwardMiniMaxH3(requestCtx, c, account, endpoint, requestID, body)
 			}
-			return h.gatewayService.ForwardGrokMedia(requestCtx, c, account, endpoint, requestID, body, contentType)
+			var capture *service.ImageArchiveCapture
+			if endpoint == service.GrokMediaEndpointImagesGenerations || endpoint == service.GrokMediaEndpointImagesEdits {
+				info := service.ParseGrokMediaRequest(contentType, body)
+				capture = h.imageArchive.Begin(c, subject.UserID, apiKey.ID, apiKey.GroupID, account.ID, &service.OpenAIImagesRequest{
+					Endpoint: c.Request.URL.Path, Model: info.Model, Prompt: info.Prompt, N: info.N, Size: info.Size,
+					Body: body, Multipart: isMultipartImagesContentType(contentType),
+					InputImageURLs: info.InputImageURLs, MaskImageURL: info.MaskImageURL, Uploads: info.Uploads, MaskUpload: info.MaskUpload,
+				})
+			}
+			result, err := h.gatewayService.ForwardGrokMedia(requestCtx, c, account, endpoint, requestID, body, contentType)
+			capture.Finish(c, result)
+			return result, err
 		}()
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()

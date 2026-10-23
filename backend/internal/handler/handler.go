@@ -52,6 +52,7 @@ type AdminHandlers struct {
 	Compliance             *admin.ComplianceHandler
 	AuditLog               *admin.AuditLogHandler
 	ImageCreatorStorage    *admin.ImageCreatorStorageGovernanceHandler
+	ImageArchive           *admin.ImageArchiveHandler
 }
 
 // Handlers contains all HTTP handlers

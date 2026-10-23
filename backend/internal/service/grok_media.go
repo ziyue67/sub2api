@@ -1442,6 +1442,9 @@ func writeGrokMediaResponse(c *gin.Context, resp *http.Response, body []byte, fi
 	if c == nil || resp == nil {
 		return
 	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		ObserveImageArchiveJSON(c, body)
+	}
 	writeOpenAIPassthroughResponseHeaders(c.Writer.Header(), resp.Header, filter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if contentType == "" {

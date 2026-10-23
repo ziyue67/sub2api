@@ -105,6 +105,7 @@ var ProviderSet = wire.NewSet(
 	NewStudioBridgeStore,
 	NewPromptFavoriteRepository,
 	NewImageCreatorStorageGovernanceRepository,
+	NewImageArchiveRepository,
 	NewGeminiCachedContentRepository,
 	NewIdempotencyRepository,
 	NewUsageCleanupRepository,

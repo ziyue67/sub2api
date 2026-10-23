@@ -57,6 +57,7 @@ func ProvideAdminHandlers(
 	complianceHandler *admin.ComplianceHandler,
 	auditLogHandler *admin.AuditLogHandler,
 	imageCreatorStorageHandler *admin.ImageCreatorStorageGovernanceHandler,
+	imageArchiveHandler *admin.ImageArchiveHandler,
 	upstreamBillingProbe *service.UpstreamBillingProbeService,
 	ollamaCloudUsage *service.OllamaCloudUsageService,
 	opencodeGoUsage *service.OpenCodeGoUsageService,
@@ -120,6 +121,7 @@ func ProvideAdminHandlers(
 		Compliance:             complianceHandler,
 		AuditLog:               auditLogHandler,
 		ImageCreatorStorage:    imageCreatorStorageHandler,
+		ImageArchive:           imageArchiveHandler,
 	}
 }
 
@@ -152,6 +154,7 @@ func ProvideGatewayHandler(
 
 func ProvideOpenAIGatewayHandler(
 	gatewayService *service.OpenAIGatewayService,
+	imageArchive *service.ImageArchiveService,
 	pluginManager *service.PluginManager,
 	concurrencyService *service.ConcurrencyService,
 	billingCacheService *service.BillingCacheService,
@@ -171,6 +174,7 @@ func ProvideOpenAIGatewayHandler(
 	h.compositeResolver = compositeResolver
 	h.securityAuditCoordinator = coordinator
 	h.grokMediaEligibilityProber = grokQuotaService
+	h.imageArchive = imageArchive
 	return h
 }
 
@@ -353,6 +357,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewComplianceHandler,
 	admin.NewAuditLogHandler,
 	admin.NewImageCreatorStorageGovernanceHandler,
+	admin.NewImageArchiveHandler,
 	admin.NewRequestCaptureHandler,
 
 	// AdminHandlers and Handlers constructors

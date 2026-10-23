@@ -166,6 +166,7 @@ func RegisterAdminRoutes(
 
 		// 生图存储治理
 		registerImageCreatorStorageGovernanceRoutes(admin, h)
+		registerImageArchiveRoutes(admin, h)
 	}
 }
 
@@ -986,6 +987,18 @@ func registerPelicanShowcaseRoutes(admin *gin.RouterGroup, h *handler.Handlers) 
 	admin.POST("/pelican-group-tests/:id/run", h.Admin.PelicanGroupTest.RunPlan)
 	admin.GET("/pelican-group-test-results", h.Admin.PelicanGroupTest.ListResults)
 	admin.GET("/pelican-group-test-results/:id", h.Admin.PelicanGroupTest.GetResult)
+}
+
+func registerImageArchiveRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if h.Admin.ImageArchive == nil {
+		return
+	}
+	archive := admin.Group("/image-archive")
+	archive.GET("", h.Admin.ImageArchive.List)
+	archive.GET("/stats", h.Admin.ImageArchive.Stats)
+	archive.PUT("/config", h.Admin.ImageArchive.UpdateConfig)
+	archive.GET("/:id", h.Admin.ImageArchive.Get)
+	archive.GET("/:id/files/:file", h.Admin.ImageArchive.File)
 }
 
 func registerErrorPassthroughRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

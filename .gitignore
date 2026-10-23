@@ -136,6 +136,7 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/image-request-archive.md
 !docs/multi-host-session-owner.md
 !docs/security-penalties.md
 !docs/ip-risk-control.md

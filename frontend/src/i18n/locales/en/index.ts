@@ -23,6 +23,7 @@ import leaderboard from './leaderboard'
 import chatImageStudio from './chatImageStudio'
 import imageCreator from './imageCreator'
 import imageManager from './imageManager'
+import imageArchive from './imageArchive'
 import canvas from './canvas'
 import chatStudio from './chatStudio'
 
@@ -58,6 +59,7 @@ export default {
   chatImageStudio,
   imageCreator,
   imageManager,
+  imageArchive,
   canvas,
   chatStudio,
 }
