@@ -17,7 +17,7 @@ import (
 func TestImageArchiveRepositoryFiltersAndPagination(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewImageArchiveRepository(db)
 	from := time.Now().Add(-time.Hour)
 	to := time.Now()
@@ -41,7 +41,7 @@ func TestImageArchiveRepositoryFiltersAndPagination(t *testing.T) {
 func TestImageArchiveRepositoryWriteAndStorageLock(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := NewImageArchiveRepository(db)
 	ctx := context.Background()
 	mock.ExpectBegin()

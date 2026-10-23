@@ -123,7 +123,7 @@ func TestImageArchiveScopeAndAttemptIsolation(t *testing.T) {
 	require.WithinDuration(t, v.CreatedAt.Add(30*24*time.Hour), v.ExpiresAt, time.Second)
 	file, mimeType, err := s.OpenFile(context.Background(), v.ID, 1, false)
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(file)
 	require.NoError(t, err)
 	require.Equal(t, archiveTestImage(t), data)
@@ -139,7 +139,7 @@ func TestImageArchiveMultipartReferenceAndMask(t *testing.T) {
 	c, _ := archiveTestContext()
 	c.Request.URL.Path = "/v1/images/edits"
 	bodyBytes, contentType := archiveMultipartRequest(t, archiveTestImage(t))
-	body.Write(bodyBytes)
+	_, _ = body.Write(bodyBytes)
 	c.Request.Header.Set("Content-Type", contentType)
 	gateway := newOpenAIImagesTestService(nil)
 	parsed, err := gateway.ParseOpenAIImagesRequest(c, body.Bytes())
