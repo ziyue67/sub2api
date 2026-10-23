@@ -91,7 +91,7 @@ defineEmits([
   'refresh-token',
   'probe-upstream-billing',
   'probe-upstream-usage',
-  'test-connection'
+  'test-connection',
   'export-2fa'
 ])
 

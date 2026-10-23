@@ -55,7 +55,7 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"cache_billing_1h_before": {}, "cache_billing_1h_after": {},
 	"source": {}, "reason_code": {}, "readback": {}, "remaining_count": {}, "target_user_id": {},
 	"anonymous_api_enabled": {},
-	"result": {}, "error_code": {}, "enabled": {}, "blocking_enabled": {},
+	"result":                {}, "error_code": {}, "enabled": {}, "blocking_enabled": {},
 	"config_version": {}, "endpoint_count": {}, "scanner_count": {},
 	"all_groups": {}, "group_count": {}, "guard_endpoint_id": {},
 	"http_status": {}, "latency_ms": {}, "token_applied": {}, "retryable": {},

@@ -527,6 +527,14 @@ const applyFilters = () => {
     errRows.value = []
   }
 }
+// Drill down from the per-user token ranking: scope the whole usage view to
+// that user and jump to the usage-detail tab so the drill-down is visible.
+const handleRankingSelectUser = (userId: number, email: string) => {
+  filters.value = { ...filters.value, user_id: userId }
+  usageFiltersRef.value?.setUserKeyword?.(email || '')
+  activeTab.value = 'usage'
+  applyFilters()
+}
 const refreshRollingRange = () => {
   if (activeRangePreset.value !== 'last24Hours') return
   const range = getLast24HourRange()

@@ -2298,7 +2298,7 @@ const handleSubmit = async () => {
         rateLimitData,
         concurrencyLimit,
         formData.value.enable_group_routes ? formData.value.group_routes : [],
-        ...selectedFormGroupIDs()
+        selectedFormGroupIDs()
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded

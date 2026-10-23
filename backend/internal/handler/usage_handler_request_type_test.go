@@ -465,7 +465,7 @@ func TestUserUsageListIncludesUpstreamResponseModelOnlyWhenEnabled(t *testing.T)
 	settings := service.NewSettingService(&settingHandlerPublicRepoStub{values: map[string]string{
 		service.SettingKeyUsageShowUpstreamResponseModelToUsers: "true",
 	}}, nil)
-	router := newUserUsageRequestTypeTestRouterWithSettings(repo, settings)
+	router := newUserUsageRequestTypeTestRouterWithSettings(repo, service.RoleUser, settings)
 
 	req := httptest.NewRequest(http.MethodGet, "/usage", nil)
 	rec := httptest.NewRecorder()
