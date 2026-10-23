@@ -122,6 +122,24 @@ export type QualityRuleDraft = {
   pelican_config: PelicanTestConfig & { quality: QualityPolicy }
 }
 
+// Compare only the business fields owned by each bulk checkbox. Dependencies
+// between fields must be confirmed too when importing a configuration.
+export function qualityRuleFieldValue(rule: Pick<ScheduledTestPlan, 'model_id' | 'cron_expression' | 'enabled' | 'pelican_config'>, field: QualityRuleField): unknown {
+  const cfg = rule.pelican_config, q = cfg?.quality, b = q?.bps
+  switch (field) {
+    case 'model': return [...new Set([rule.model_id, ...(cfg?.model_ids || [])])]
+    case 'schedule': return rule.cron_expression
+    case 'enabled': return rule.enabled
+    case 'test': return [cfg?.question_kind, cfg?.test_channel || 'account', cfg?.prompt, cfg?.reasoning_effort, cfg?.parallel_count,
+      q?.expected_answer, q?.judge?.group_id, q?.judge?.model_id, q?.judge?.prompt]
+    case 'restore': return [q?.auto_restore, b?.pass_threshold, b?.hold_on_usage]
+    case 'action': return [q?.action, q?.remove_group_ids || [], q?.remove_models || [], q?.recovery_concurrency,
+      b ? [b.failure_threshold, b.usage_percent, b.require_all, b.all_models, b.models || [], b.omit_unsupported_tools,
+        b.ignore_encrypted_content, b.auto_disable_on_403, b.auto_recover_on_403, b.recovery_interval_minutes,
+        b.auto_move_on_403, b.target_group_id, b.session_proxy, b.proxy_source, b.cache_creation_as_input] : null]
+  }
+}
+
 // The API replaces pelican_config as a whole. Merge selected fields into each
 // rule's own configuration, never into a shared copy of the first rule.
 export function buildQualityRulePatch(

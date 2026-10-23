@@ -12,7 +12,9 @@ from pathlib import Path
 import secrets
 import shutil
 import socket
+import threading
 import unittest
+from decimal import Decimal
 
 import test_fullapp_bootstrap as bootstrap
 
@@ -537,6 +539,305 @@ class FullApplicationConcurrentFailureTest(FullApplicationInflightDrainTest):
         self.phase("concurrent-failure-peer-completed-once-unique-billing-all-leases-clean")
 
 
+class FullApplicationConcurrentSuccessTest(FullApplicationConcurrentFailureTest):
+    def test_two_held_successes_release_together_and_preserve_both_settlements(self):
+        first_connection, first_response = self.model_post("concurrent-success-first", hold=True)
+        self.read_live_delta(first_response)
+        second_connection, second_response = self.model_post("concurrent-success-second", hold=True)
+        self.read_live_delta(second_response)
+        self.assertEqual({first_response.getheader("X-Fixture-Target"),
+                          second_response.getheader("X-Fixture-Target")},
+                         {app + ":8080" for app in self.apps},
+                         "two successful in-flight requests must belong to different real applications")
+        self.assertEqual(self.model_stats(), {"accepted": 2, "completed": 0, "active": 2})
+        status = self.fixture_command("status")
+        self.assertEqual((status["user_slots"], status["account_slots"], status["api_key_slots"]), (2, 2, 2))
+        self.assertEqual((status["usage_rows"], status["dedup_rows"]), (0, 0))
+        self.assertEqual((status["input_tokens"], status["output_tokens"]), (0, 0))
+        self.assertEqual(status["balance"], 10)
+        self.phase("two-real-app-successful-streams-held-shared-slots-two-before-settlement")
+
+        # A single existing control releases both independently held upstreams.
+        # Read order below does not serialize upstream completion or app usage
+        # workers, but no claim is made that SQL transactions overlap exactly.
+        self.release_model()
+        for connection, response in ((first_connection, first_response), (second_connection, second_response)):
+            payload = response.read(65536)
+            self.assertIn(b'"response.completed"', payload)
+            response.close()
+            connection.close()
+        self.phase("single-release-allows-both-original-app-streams-to-complete-without-replay")
+
+        # Fixture rate=1: each response has 7 input + 2 output tokens, priced at
+        # 0.000001 and 0.000002. Compare decimal values at the real ledger scale;
+        # a broad nonzero-debit check would miss a lost or repeated balance write.
+        per_request = Decimal(7) * Decimal("0.000001") + Decimal(2) * Decimal("0.000002")
+        expected_balance = Decimal("10") - 2 * per_request
+
+        def both_settled():
+            status = self.fixture_command("status")
+            return (self.model_stats() == {"accepted": 2, "completed": 2, "active": 0}
+                    and status["usage_rows"] == status["dedup_rows"] == 2
+                    and status["input_tokens"] == 14 and status["output_tokens"] == 4
+                    and Decimal(str(status["balance"])) == expected_balance
+                    and status["user_slots"] == status["account_slots"] == status["api_key_slots"] == 0)
+
+        bootstrap.eventually(both_settled, 12, "both app settlements preserve exact cumulative debit and release slots")
+        self.assertTrue(all(self.state(app)["Running"] for app in self.apps))
+        self.report["concurrent_success_verification"] = {"authenticated_posts": 2, "accepted": 2,
+                                                          "completed": 2, "usage_rows": 2, "dedup_rows": 2,
+                                                          "input_tokens": 14, "output_tokens": 4,
+                                                          "balance_before": 10,
+                                                          "balance_expected": str(expected_balance),
+                                                          "balance_final": self.fixture_command("status")["balance"],
+                                                          "slots_before_release": 2, "slots_final": 0,
+                                                          "requests_replayed": False,
+                                                          "scope": "two held successes released together; not forced SQL transaction overlap"}
+        self.phase("both-successful-app-requests-settled-once-exact-debit-all-slots-clean")
+
+
+class FullApplicationMultiAccountEOFTest(FullApplicationAcceptedEOFTest):
+    def fixture_command(self, operation):
+        mapped = {"seed": "seed-multi", "status": "status-multi"}.get(operation, operation)
+        value = super().fixture_command(mapped)
+        if operation == "seed":
+            self.assertGreater(value["peer_account_id"], 0)
+            self.assertNotEqual(value["peer_account_id"], value["account_id"])
+            self.fixture_input["peer_account_id"] = value["peer_account_id"]
+        return value
+
+    def multi_stats(self):
+        connection = http.client.HTTPConnection(*self.model_endpoint, timeout=2)
+        try:
+            connection.request("GET", "/fixture/multi-stats")
+            response = connection.getresponse()
+            self.addCleanup(response.close)
+            self.assertEqual(response.status, 200)
+            result = json.loads(response.read(4096))
+            response.close()
+            attempts = {"primary_http_attempts": result.pop("primary_http_attempts"),
+                        "peer_http_attempts": result.pop("peer_http_attempts")}
+            self.assertEqual(attempts["primary_http_attempts"], result["primary_accepted"],
+                             "all observed primary HTTP attempts in this fixture must be accounted for")
+            self.assertEqual(attempts["peer_http_attempts"], result["peer_accepted"],
+                             "all observed peer HTTP attempts in this fixture must be accounted for")
+            observation = {**attempts, **result,
+                           "scope": "synthetic upstream HTTP arrivals; excludes pre-arrival network failures"}
+            self.report["observed_multi_account_http_attempts"] = observation
+            if getattr(self, "last_attempt_observation", None) != observation:
+                print("isolated multi-account attempt observation: " + json.dumps(observation), flush=True)
+                self.last_attempt_observation = observation
+            return result
+        finally:
+            connection.close()
+
+    def test_existing_multi_account_failover_can_accept_again_after_ambiguous_eof(self):
+        self.assertEqual(self.multi_stats(), {"primary_accepted": 0, "peer_accepted": 0,
+                                             "primary_completed": 0, "peer_completed": 0})
+        # Exactly ONE client POST. Whichever legal account is selected first
+        # fully accepts it then closes before any response. The next distinct
+        # account completes under the existing unmodified application policy.
+        # This characterizes reacceptance; it must never be labeled no replay.
+        code, target, payload = self.post_model("fixture-multi-account-accepted-eof", "multi-account-eof-once")
+        self.assertEqual(code, 200)
+        self.assertIn(target, {app + ":8080" for app in self.apps})
+        self.assertIn(b'"response.completed"', payload)
+        self.phase("one-client-post-existing-failover-completes-after-first-accepted-response-eof")
+
+        def settled():
+            counts = self.multi_stats()
+            status = self.fixture_command("status")
+            return (self.model_stats() == {"accepted": 2, "completed": 1, "active": 0}
+                    and counts["primary_accepted"] == counts["peer_accepted"] == 1
+                    and counts["primary_completed"] + counts["peer_completed"] == 1
+                    and status["usage_rows"] == counts["primary_completed"]
+                    and status["peer_usage_rows"] == counts["peer_completed"]
+                    and status["dedup_rows"] == 1
+                    and status["input_tokens"] == 7 * counts["primary_completed"]
+                    and status["output_tokens"] == 2 * counts["primary_completed"]
+                    and status["peer_input_tokens"] == 7 * counts["peer_completed"]
+                    and status["peer_output_tokens"] == 2 * counts["peer_completed"]
+                    and status["balance"] == 9.999989
+                    and status["user_slots"] == status["api_key_slots"] == 0
+                    and status["account_slots"] == status["peer_account_slots"] == 0)
+
+        bootstrap.eventually(settled, 12, "existing two-account failover reaccepts once and settles observed usage only")
+        self.assertTrue(all(self.state(app)["Running"] for app in self.apps))
+        counts = self.multi_stats()
+        status = self.fixture_command("status")
+        self.report["multi_account_eof_verification"] = {"authenticated_client_posts": 1,
+                                                        "eligible_upstream_accounts": 2,
+                                                        "upstream_acceptances": 2, "observed_completions": 1,
+                                                        "primary_accepted": counts["primary_accepted"],
+                                                        "peer_accepted": counts["peer_accepted"],
+                                                        "primary_completed": counts["primary_completed"],
+                                                        "peer_completed": counts["peer_completed"],
+                                                        "primary_usage_rows": status["usage_rows"],
+                                                        "peer_usage_rows": status["peer_usage_rows"],
+                                                        "dedup_rows": 1, "input_tokens": 7, "output_tokens": 2,
+                                                        "balance_final": status["balance"], "all_slots_final": 0,
+                                                        "automatic_account_reacceptance_observed": True,
+                                                        "first_attempt_external_billing": "not modeled; cannot infer from local usage",
+                                                        "scope": "existing failover characterization; not an at-most-once guarantee"}
+        self.phase("two-distinct-accounts-accepted-one-client-post-observed-local-settlement-slots-clean")
+
+
+
+class FullApplicationMultiAccountPartialEOFTest(FullApplicationMultiAccountEOFTest):
+    def test_existing_multi_account_policy_stops_after_partial_semantic_output_eof(self):
+        self.assertEqual(self.multi_stats(), {"primary_accepted": 0, "peer_accepted": 0,
+                                             "primary_completed": 0, "peer_completed": 0})
+        # The same two eligible account pool as the pre-response EOF case, but
+        # this upstream flushes semantic output first. No policy is toggled to
+        # manufacture a no-failover result; one client POST is the whole case.
+        code, target, partial = self.post_model("fixture-multi-account-partial-eof", "multi-account-partial-once")
+        self.assertEqual(code, 200)
+        self.assertIn(target, {app + ":8080" for app in self.apps})
+        self.assertIn(b'"response.output_text.delta"', partial)
+        self.assertIn(b"OK", partial)
+        self.assertNotIn(b'"response.completed"', partial)
+        self.assertNotIn(b"data: [DONE]", partial)
+        self.phase("multi-account-partial-eof-client-received-real-delta-without-terminal")
+
+        def settled():
+            counts = self.multi_stats()
+            status = self.fixture_command("status")
+            return (self.model_stats() == {"accepted": 1, "completed": 0, "active": 0}
+                    and counts["primary_accepted"] + counts["peer_accepted"] == 1
+                    and counts["primary_completed"] == counts["peer_completed"] == 0
+                    and status["usage_rows"] == status["peer_usage_rows"] == status["dedup_rows"] == 0
+                    and status["input_tokens"] == status["output_tokens"] == 0
+                    and status["peer_input_tokens"] == status["peer_output_tokens"] == 0
+                    and status["balance"] == 10
+                    and status["user_slots"] == status["api_key_slots"] == 0
+                    and status["account_slots"] == status["peer_account_slots"] == 0)
+
+        bootstrap.eventually(settled, 12, "semantic partial EOF does not switch to second eligible account or settle success")
+        self.assertTrue(all(self.state(app)["Running"] for app in self.apps))
+        counts = self.multi_stats()
+        self.report["multi_account_partial_eof_verification"] = {"authenticated_client_posts": 1,
+                                                                "eligible_upstream_accounts": 2,
+                                                                "upstream_acceptances": 1, "observed_completions": 0,
+                                                                "primary_accepted": counts["primary_accepted"],
+                                                                "peer_accepted": counts["peer_accepted"],
+                                                                "primary_usage_rows": 0, "peer_usage_rows": 0,
+                                                                "dedup_rows": 0, "input_tokens": 0, "output_tokens": 0,
+                                                                "balance_final": self.fixture_command("status")["balance"],
+                                                                "all_slots_final": 0,
+                                                                "automatic_account_reacceptance_observed": False,
+                                                                "first_attempt_external_billing": "not modeled; cannot infer from local usage",
+                                                                "scope": "existing semantic-output boundary; not a universal at-most-once guarantee"}
+        self.phase("partial-semantic-output-eof-one-account-accepted-no-local-success-settlement-slots-clean")
+
+
+
+class FullApplicationQueuedCancelTest(FullApplicationConcurrentSuccessTest):
+    def test_third_queued_client_cancels_before_generation_without_releasing_two_active_peers(self):
+        first_connection, first_response = self.model_post("queue-active-first", hold=True)
+        self.read_live_delta(first_response)
+        second_connection, second_response = self.model_post("queue-active-second", hold=True)
+        self.read_live_delta(second_response)
+        self.assertEqual({first_response.getheader("X-Fixture-Target"), second_response.getheader("X-Fixture-Target")},
+                         {app + ":8080" for app in self.apps})
+        self.assertEqual(self.model_stats(), {"accepted": 2, "completed": 0, "active": 2})
+        status = self.fixture_command("status")
+        self.assertEqual((status["user_slots"], status["account_slots"], status["api_key_slots"]), (2, 2, 2))
+        self.assertEqual((status["api_key_queue_active"], status["api_key_queue_waiting"]), (2, 0))
+        self.phase("two-real-app-held-streams-fill-key-user-account-capacity-before-third-request")
+
+        queued = http.client.HTTPConnection(*self.edge_port, timeout=8)
+        outcome = {"returned_response": False, "disconnected": False}
+        reader = None
+
+        def cancel_and_join():
+            # Run before container teardown, including any assertion/timeout
+            # failure. No daemon thread may retain a response/socket silently.
+            if queued.sock is not None:
+                try:
+                    queued.sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass  # The canceled peer may already have closed it.
+            queued.close()
+            if reader is not None:
+                reader.join(timeout=2)
+                self.assertFalse(reader.is_alive(), "queued response reader cleanup exceeded budget")
+
+        self.addCleanup(cancel_and_join)
+        queued.request("POST", "/v1/responses", body=json.dumps({
+            "model": "gpt-6.1-sol", "input": "synthetic queued request must never reach model", "stream": True}),
+            headers={"Host": "api.fixture.invalid", "Content-Type": "application/json",
+                     "Authorization": "Bearer " + self.key, "X-Client-Request-ID": "queue-cancel-third"})
+
+        def receive_queued_response():
+            try:
+                response = queued.getresponse()
+                outcome["returned_response"] = True
+                response.close()
+            except (OSError, http.client.HTTPException):
+                # Export only fixed facts, never connection/error details.
+                outcome["disconnected"] = True
+            finally:
+                queued.close()
+
+        reader = threading.Thread(target=receive_queued_response, daemon=True)
+        reader.start()
+
+        def third_waiting():
+            status = self.fixture_command("status")
+            return (self.model_stats() == {"accepted": 2, "completed": 0, "active": 2}
+                    and status["api_key_queue_active"] == 2 and status["api_key_queue_waiting"] == 1
+                    and status["user_slots"] == status["account_slots"] == status["api_key_slots"] == 2
+                    and status["usage_rows"] == status["dedup_rows"] == 0 and status["balance"] == 10
+                    and reader.is_alive() and not outcome["returned_response"])
+
+        bootstrap.eventually(third_waiting, 3, "third real request is queued in shared Redis before upstream admission")
+        self.phase("third-authenticated-client-is-in-key-queue-no-extra-generation-or-user-account-slot")
+        self.assertIsNotNone(queued.sock)
+        queued.sock.shutdown(socket.SHUT_RDWR)
+        reader.join(timeout=2)
+        self.assertFalse(reader.is_alive(), "canceled queued HTTP reader must terminate")
+        self.assertTrue(outcome["disconnected"])
+        self.assertFalse(outcome["returned_response"])
+
+        def canceled_waiter_removed():
+            status = self.fixture_command("status")
+            return (self.model_stats() == {"accepted": 2, "completed": 0, "active": 2}
+                    and status["api_key_queue_active"] == 2 and status["api_key_queue_waiting"] == 0
+                    and status["user_slots"] == status["account_slots"] == status["api_key_slots"] == 2
+                    and status["usage_rows"] == status["dedup_rows"] == 0
+                    and status["input_tokens"] == status["output_tokens"] == 0 and status["balance"] == 10)
+
+        bootstrap.eventually(canceled_waiter_removed, 3, "canceled waiter removed without releasing active peer reservations")
+        self.phase("canceled-queued-client-never-reached-upstream-two-active-leases-intact")
+        self.release_model()
+        for connection, response in ((first_connection, first_response), (second_connection, second_response)):
+            self.assertIn(b'"response.completed"', response.read(65536))
+            response.close()
+            connection.close()
+
+        def active_peers_settled():
+            status = self.fixture_command("status")
+            return (self.model_stats() == {"accepted": 2, "completed": 2, "active": 0}
+                    and status["usage_rows"] == status["dedup_rows"] == 2
+                    and status["input_tokens"] == 14 and status["output_tokens"] == 4
+                    and Decimal(str(status["balance"])) == Decimal("9.999978")
+                    and status["user_slots"] == status["account_slots"] == status["api_key_slots"] == 0
+                    and status["api_key_queue_active"] == status["api_key_queue_waiting"] == 0)
+
+        bootstrap.eventually(active_peers_settled, 12, "only two admitted peers settle and shared queue/slots finish empty")
+        self.report["queued_cancel_verification"] = {"authenticated_client_posts": 3,
+                                                      "upstream_acceptances": 2, "completed": 2,
+                                                      "queue_waiting_before_cancel": 1, "queue_waiting_after_cancel": 0,
+                                                      "active_peer_slots_after_cancel": 2,
+                                                      "usage_rows": 2, "dedup_rows": 2,
+                                                      "input_tokens": 14, "output_tokens": 4,
+                                                      "balance_final": self.fixture_command("status")["balance"],
+                                                      "all_slots_final": 0, "queue_final": 0,
+                                                      "queued_client_reader_joined": True,
+                                                      "scope": "existing queue cancellation before upstream; not timeout/full-queue/revocation policy"}
+        self.phase("queued-cancel-no-hidden-generation-two-peers-unique-billing-all-capacity-clean")
+
+
 if __name__ == "__main__":
     # The original bootstrap suite still runs as its existing CI step. This
     # Explicit cases avoid rerunning inherited tests as accidental duplicates.
@@ -546,6 +847,10 @@ if __name__ == "__main__":
         FullApplicationPartialEOFTest("test_partial_model_sse_eof_is_not_replayed_or_billed_and_peer_can_continue"),
         FullApplicationAcceptedEOFTest("test_accepted_model_request_eof_is_not_replayed_or_settled_as_success"),
         FullApplicationClientCancelTest("test_client_cancel_drains_existing_upstream_usage_once_and_peer_can_continue"),
-        FullApplicationConcurrentFailureTest("test_failed_concurrent_stream_releases_only_its_lease_and_peer_settles_once")])
+        FullApplicationConcurrentFailureTest("test_failed_concurrent_stream_releases_only_its_lease_and_peer_settles_once"),
+        FullApplicationConcurrentSuccessTest("test_two_held_successes_release_together_and_preserve_both_settlements"),
+        FullApplicationMultiAccountEOFTest("test_existing_multi_account_failover_can_accept_again_after_ambiguous_eof"),
+        FullApplicationMultiAccountPartialEOFTest("test_existing_multi_account_policy_stops_after_partial_semantic_output_eof"),
+        FullApplicationQueuedCancelTest("test_third_queued_client_cancels_before_generation_without_releasing_two_active_peers")])
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     raise SystemExit(0 if result.wasSuccessful() else 1)

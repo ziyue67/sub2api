@@ -36,6 +36,9 @@ type updateScheduledTestPlanRequest struct {
 	Enabled        *bool                      `json:"enabled"`
 	MaxResults     int                        `json:"max_results"`
 	AutoRecover    *bool                      `json:"auto_recover"`
+
+	// Configuration import must retain this target's penalty ownership.
+	PreserveQualityState bool `json:"preserve_quality_state"`
 }
 
 // ListByAccount GET /admin/accounts/:id/scheduled-test-plans
@@ -104,6 +107,7 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	existing.PreserveQualityState = req.PreserveQualityState
 
 	if req.PelicanConfig != nil {
 		if existing.PelicanConfig == nil {

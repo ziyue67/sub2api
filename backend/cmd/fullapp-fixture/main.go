@@ -32,27 +32,35 @@ import (
 )
 
 type fixtureInput struct {
-	Database  config.DatabaseConfig `json:"database"`
-	Redis     config.RedisConfig    `json:"redis"`
-	APIKey    string                `json:"api_key"`
-	Origin    string                `json:"origin"`
-	UserID    int64                 `json:"user_id"`
-	APIKeyID  int64                 `json:"api_key_id"`
-	AccountID int64                 `json:"account_id"`
+	Database      config.DatabaseConfig `json:"database"`
+	Redis         config.RedisConfig    `json:"redis"`
+	APIKey        string                `json:"api_key"`
+	Origin        string                `json:"origin"`
+	UserID        int64                 `json:"user_id"`
+	APIKeyID      int64                 `json:"api_key_id"`
+	AccountID     int64                 `json:"account_id"`
+	PeerAccountID int64                 `json:"peer_account_id"`
 }
 
 type fixtureOutput struct {
-	UserID       int64   `json:"user_id"`
-	APIKeyID     int64   `json:"api_key_id"`
-	AccountID    int64   `json:"account_id"`
-	UsageRows    int64   `json:"usage_rows"`
-	DedupRows    int64   `json:"dedup_rows"`
-	InputTokens  int64   `json:"input_tokens"`
-	OutputTokens int64   `json:"output_tokens"`
-	Balance      float64 `json:"balance"`
-	UserSlots    int     `json:"user_slots"`
-	AccountSlots int     `json:"account_slots"`
-	APIKeySlots  int     `json:"api_key_slots"`
+	UserID             int64   `json:"user_id"`
+	APIKeyID           int64   `json:"api_key_id"`
+	AccountID          int64   `json:"account_id"`
+	UsageRows          int64   `json:"usage_rows"`
+	DedupRows          int64   `json:"dedup_rows"`
+	InputTokens        int64   `json:"input_tokens"`
+	OutputTokens       int64   `json:"output_tokens"`
+	Balance            float64 `json:"balance"`
+	UserSlots          int     `json:"user_slots"`
+	AccountSlots       int     `json:"account_slots"`
+	APIKeySlots        int     `json:"api_key_slots"`
+	PeerAccountID      int64   `json:"peer_account_id"`
+	PeerUsageRows      int64   `json:"peer_usage_rows"`
+	PeerInputTokens    int64   `json:"peer_input_tokens"`
+	PeerOutputTokens   int64   `json:"peer_output_tokens"`
+	PeerAccountSlots   int     `json:"peer_account_slots"`
+	APIKeyQueueActive  int     `json:"api_key_queue_active"`
+	APIKeyQueueWaiting int     `json:"api_key_queue_waiting"`
 }
 
 var fixtureStage = "input"
@@ -114,7 +122,7 @@ func run(op string) error {
 	defer cache.Close()
 	var out fixtureOutput
 	switch op {
-	case "seed":
+	case "seed", "seed-multi":
 		if in.Origin != "http://"+prefix+"-model:9090" ||
 			!strings.HasPrefix(in.APIKey, "sk-fixture-") {
 			return errors.New("synthetic model/key required")
@@ -163,17 +171,40 @@ func run(op string) error {
 		if !actual.IsSchedulable() || actual.ParentAccountID != nil || actual.QuotaDimension != "global" {
 			return errors.New("root account eligibility not preserved")
 		}
+		snapshotAccounts := []service.Account{*actual}
+		if op == "seed-multi" {
+			peer := &service.Account{Name: "model-fixture-peer", Platform: service.PlatformOpenAI,
+				Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true,
+				Concurrency: 2, Priority: 1, QuotaDimension: "global",
+				Credentials: map[string]any{"api_key": "synthetic-upstream-peer", "base_url": in.Origin,
+					"model_mapping": map[string]string{"gpt-6.1-sol": "gpt-6.1-sol"}},
+				Extra: map[string]any{"openai_passthrough": true}}
+			fixtureStage = "create-account-group"
+			if err := atomicCreator.CreateWithAccountGroups(ctx, peer, []service.AccountGroup{{GroupID: group.ID, Priority: 1}}); err != nil {
+				return err
+			}
+			fixtureStage = "hydrate-account"
+			actualPeer, err := accounts.GetByID(ctx, peer.ID)
+			if err != nil {
+				return err
+			}
+			if !actualPeer.IsSchedulable() || actualPeer.ParentAccountID != nil || actualPeer.QuotaDimension != "global" {
+				return errors.New("peer root account eligibility not preserved")
+			}
+			snapshotAccounts = append(snapshotAccounts, *actualPeer)
+			out.PeerAccountID = peer.ID
+		}
 		fixtureStage = "publish-snapshot"
 		bucket := service.SchedulerBucket{GroupID: group.ID, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
 		token, err := snapshots.CaptureBucketWriteToken(ctx, bucket)
 		if err != nil {
 			return err
 		}
-		if err := snapshots.SetSnapshot(ctx, bucket, token, []service.Account{*actual}); err != nil {
+		if err := snapshots.SetSnapshot(ctx, bucket, token, snapshotAccounts); err != nil {
 			return err
 		}
 		out.UserID, out.APIKeyID, out.AccountID = user.ID, key.ID, account.ID
-	case "status":
+	case "status", "status-multi":
 		fixtureStage = "observe-usage-billing-slots"
 		if in.UserID <= 0 || in.APIKeyID <= 0 || in.AccountID <= 0 {
 			return errors.New("fixture ids required")
@@ -203,6 +234,24 @@ func run(op string) error {
 			return err
 		}
 		out.APIKeySlots = keys[in.APIKeyID]
+		out.APIKeyQueueActive, out.APIKeyQueueWaiting, err = slots.(service.APIKeySlotQueueCache).GetAPIKeyQueueStats(ctx, in.APIKeyID)
+		if err != nil {
+			return err
+		}
+		if op == "status-multi" {
+			if in.PeerAccountID <= 0 || in.PeerAccountID == in.AccountID {
+				return errors.New("distinct fixture peer account required")
+			}
+			if err := db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(input_tokens),0),coalesce(sum(output_tokens),0)
+				FROM usage_logs WHERE user_id=$1 AND api_key_id=$2 AND account_id=$3`,
+				in.UserID, in.APIKeyID, in.PeerAccountID).Scan(&out.PeerUsageRows, &out.PeerInputTokens, &out.PeerOutputTokens); err != nil {
+				return err
+			}
+			out.PeerAccountSlots, err = slots.GetAccountConcurrency(ctx, in.PeerAccountID)
+			if err != nil {
+				return err
+			}
+		}
 	default:
 		return errors.New("unknown fixture operation")
 	}
@@ -210,12 +259,15 @@ func run(op string) error {
 }
 
 type modelState struct {
-	mu                          sync.Mutex
-	accepted, completed, active int
-	release                     chan struct{}
-	releaseOnce                 sync.Once
-	failureRelease              chan struct{}
-	failureReleaseOnce          sync.Once
+	mu                                    sync.Mutex
+	accepted, completed, active           int
+	release                               chan struct{}
+	releaseOnce                           sync.Once
+	failureRelease                        chan struct{}
+	failureReleaseOnce                    sync.Once
+	primaryAccepted, peerAccepted         int
+	primaryCompleted, peerCompleted       int
+	primaryHTTPAttempts, peerHTTPAttempts int
 }
 
 func serve() error {
@@ -242,13 +294,38 @@ func serve() error {
 		defer s.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]int{"accepted": s.accepted, "completed": s.completed, "active": s.active})
 	})
+	mux.HandleFunc("/fixture/multi-stats", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]int{"primary_accepted": s.primaryAccepted,
+			"peer_accepted": s.peerAccepted, "primary_completed": s.primaryCompleted, "peer_completed": s.peerCompleted,
+			"primary_http_attempts": s.primaryHTTPAttempts, "peer_http_attempts": s.peerHTTPAttempts})
+	})
 	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
+		primary := r.Header.Get("Authorization") == "Bearer synthetic-upstream-only"
+		peer := r.Header.Get("Authorization") == "Bearer synthetic-upstream-peer"
+		// Observed HTTP arrivals, before body parsing/acceptance. These do not
+		// count application attempts that fail DNS/TCP/TLS before reaching us.
+		s.mu.Lock()
+		if primary {
+			s.primaryHTTPAttempts++
+		} else if peer {
+			s.peerHTTPAttempts++
+		}
+		s.mu.Unlock()
 		var body struct {
 			Model string          `json:"model"`
 			Input json.RawMessage `json:"input"`
 		}
 		if r.Method != http.MethodPost || json.NewDecoder(io.LimitReader(r.Body, 65536)).Decode(&body) != nil ||
-			body.Model != "gpt-6.1-sol" || r.Header.Get("Authorization") != "Bearer synthetic-upstream-only" {
+			body.Model != "gpt-6.1-sol" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		multiAcceptedEOF := bytes.Contains(body.Input, []byte("fixture-multi-account-accepted-eof"))
+		multiPartialEOF := bytes.Contains(body.Input, []byte("fixture-multi-account-partial-eof"))
+		multi := multiAcceptedEOF || multiPartialEOF
+		if !primary && !(multi && peer) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -256,9 +333,18 @@ func serve() error {
 		s.accepted++
 		id := s.accepted
 		s.active++
+		firstMulti := false
+		if multi {
+			firstMulti = s.primaryAccepted+s.peerAccepted == 0
+			if peer {
+				s.peerAccepted++
+			} else {
+				s.primaryAccepted++
+			}
+		}
 		s.mu.Unlock()
 		defer func() { s.mu.Lock(); s.active--; s.mu.Unlock() }()
-		if bytes.Contains(body.Input, []byte("fixture-accepted-before-response-eof")) {
+		if (multiAcceptedEOF && firstMulti) || bytes.Contains(body.Input, []byte("fixture-accepted-before-response-eof")) {
 			// Body is fully read, authenticated and counted, but no response has
 			// been written. This is distinct from EOF after semantic output.
 			connection, _, err := w.(http.Hijacker).Hijack()
@@ -288,7 +374,7 @@ func serve() error {
 		if event("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "item_id": "msg_fixture", "output_index": 0, "content_index": 0, "delta": "OK"}) != nil {
 			return
 		}
-		if bytes.Contains(body.Input, []byte("fixture-partial-sse-eof")) {
+		if multiPartialEOF || bytes.Contains(body.Input, []byte("fixture-partial-sse-eof")) {
 			// Deliberately finish the HTTP response after real semantic output,
 			// without terminal usage/completion. The application must not turn
 			// this accepted/partly emitted request into another generation.
@@ -325,6 +411,13 @@ func serve() error {
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 		s.mu.Lock()
 		s.completed++
+		if multi {
+			if peer {
+				s.peerCompleted++
+			} else {
+				s.primaryCompleted++
+			}
+		}
 		s.mu.Unlock()
 	})
 	server := &http.Server{Addr: ":9090", Handler: mux, ReadHeaderTimeout: 2 * time.Second, IdleTimeout: 5 * time.Second}
