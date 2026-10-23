@@ -58,6 +58,7 @@ func (f *bodyFraming) detect(p []byte) (prefix, rest []byte) {
 // protocol fields. Large output strings never enter a diagnostic buffer.
 // Its bounded token and depth storage use a separate 4 KiB stream charge.
 type responseObserver struct {
+	sawEvent        bool
 	framing         bodyFraming
 	json            responseJSON
 	line            [5]byte
@@ -139,6 +140,7 @@ func (o *responseObserver) endEvent() {
 		o.terminal = "[DONE]"
 		o.expectsTerminal = true
 	} else if event, failed, valid := o.json.result(); valid {
+		o.sawEvent = true
 		o.expectsTerminal = o.expectsTerminal || strings.HasPrefix(o.json.event, "response.") || o.json.event == "message_start" || o.json.event == "message_delta" || o.json.event == "message_stop"
 		if event != "" {
 			o.terminal = event

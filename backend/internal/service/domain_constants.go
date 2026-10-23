@@ -218,9 +218,12 @@ const DingTalkConnectSyntheticEmailDomain = "@dingtalk-connect.invalid"
 // Setting keys
 const (
 	// 注册设置
-	SettingKeyRegistrationEnabled              = "registration_enabled"                // 是否开放注册
-	SettingKeyEmailVerifyEnabled               = "email_verify_enabled"                // 是否开启邮件验证
-	SettingKeyRegistrationEmailSuffixWhitelist = "registration_email_suffix_whitelist" // 注册邮箱后缀白名单（JSON 数组）
+	SettingKeyRegistrationEnabled                = "registration_enabled"                   // 是否开放注册
+	SettingKeyLoginRateLimitEnabled              = "login_rate_limit_enabled"               // 登录频率限制与失败 IP 封禁（默认开启）
+	SettingKeyRegistrationIPLimitEnabled         = "registration_ip_limit_enabled"          // 同一 IP 最多注册两个账号（默认开启）
+	SettingKeyEmailVerifyEnabled                 = "email_verify_enabled"                   // 是否开启邮件验证
+	SettingKeyRegistrationEmailSuffixWhitelist   = "registration_email_suffix_whitelist"    // 注册邮箱后缀白名单（JSON 数组）
+	SettingKeyRegistrationEmailAliasBlockEnabled = "registration_email_alias_block_enabled" // 屏蔽邮箱别名注册（默认开启）
 	// 白名单非空时，是否放行非白名单域名按主域名限量注册（每域名 1 个账户）。
 	// 默认 false：非白名单域名直接拒绝（白名单严格模式）。
 	SettingKeyRegistrationEmailDomainQuotaEnabled = "registration_email_domain_quota_enabled"
@@ -240,6 +243,9 @@ const (
 	SettingKeyCyberPolicyUserAllowlist            = "cyber_policy_user_allowlist"           // Platform user IDs with log-only cyber handling
 	SettingKeyCyberSessionBlockTTLSeconds         = "cyber_session_block_ttl_seconds"       // 会话屏蔽 TTL 秒数(默认 3600)
 	SettingKeyCyberSessionIdentityStrictEnabled   = "cyber_session_identity_strict_enabled" // 要求可信显式会话身份(默认关，仅会话屏蔽开启时生效)
+	SettingKeySafetyPromptEnabled                 = "safety_prompt_enabled"                 // 原生安全提示词注入模块总开关(默认关)
+	SettingKeySafetyPromptSignalEnabled           = "safety_prompt_signal_enabled"          // 原生独立拒绝识别(默认关，仅模块开启时生效)
+	SettingKeySafetyPromptRetentionDays           = "safety_prompt_retention_days"          // 命中事件保留天数(默认 30，范围 1-90)
 	SettingKeyLoginAgreementEnabled               = "login_agreement_enabled"               // 登录前是否要求同意条款
 	SettingKeyLoginAgreementMode                  = "login_agreement_mode"                  // 条款确认展示模式：modal / checkbox
 	SettingKeyLoginAgreementUpdatedAt             = "login_agreement_updated_at"            // 条款更新日期（展示用）
@@ -826,3 +832,9 @@ const SettingKeyUsageShowLongContextBadge = "usage_show_long_context_badge"
 // whether end users see that row; default false (admin only).
 const SettingKeyUsageShowCacheRate = "usage_show_cache_rate"
 const SettingKeyUsageShowCacheRateToUsers = "usage_show_cache_rate_to_users"
+
+// SettingKeyUsageShowUpstreamResponseModelToUsers controls whether end users
+// can see the model declared by the upstream response on their own usage
+// records. Default false. Admins always see it. This does not change billing
+// or the client-facing model rewritten into gateway responses.
+const SettingKeyUsageShowUpstreamResponseModelToUsers = "usage_show_upstream_response_model_to_users"

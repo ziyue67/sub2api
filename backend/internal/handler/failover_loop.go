@@ -353,6 +353,9 @@ func needForceCacheBilling(hasBoundSession bool, failoverErr *service.UpstreamFa
 // 照常完成计费，但不再为无人接收的响应启动新的上游尝试。
 // 响应尚未提交时把状态码标记为 499（client closed request），供访问日志归类。
 func failoverClientGone(c *gin.Context) bool {
+	if service.OpenAIHeaderWaitDisconnected(c) {
+		return true
+	}
 	if c == nil || c.Request == nil || c.Request.Context().Err() == nil {
 		return false
 	}

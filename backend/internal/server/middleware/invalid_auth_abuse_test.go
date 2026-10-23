@@ -5,6 +5,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -24,7 +25,36 @@ func invalidAuthAbuseTestConfig(threshold int) *config.Config {
 	}
 }
 
-func TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository(t *testing.T) {
+// A stranger sharing an egress IP must not deny service to a valid credential.
+func TestAnonymousGuardValidCredentialSurvivesSameIPBan(t *testing.T) {
+	for _, google := range []bool{false, true} {
+		t.Run(fmt.Sprint(google), func(t *testing.T) {
+			cfg := invalidAuthAbuseTestConfig(2)
+			repo := &stubApiKeyRepo{getByKey: func(_ context.Context, key string) (*service.APIKey, error) {
+				if key == "valid-key" {
+					return &service.APIKey{ID: 1, Status: service.StatusActive, User: &service.User{ID: 1, Status: service.StatusActive, Role: service.RoleUser, Balance: 1}}, nil
+				}
+				return nil, service.ErrAPIKeyNotFound
+			}}
+			svc := service.NewAPIKeyService(repo, nil, nil, nil, nil, nil, cfg)
+			r := gin.New()
+			require.NoError(t, r.SetTrustedProxies(nil))
+			auth := gin.HandlerFunc(NewAPIKeyAuthMiddleware(svc, nil, cfg))
+			if google {
+				auth = APIKeyAuthGoogle(svc, cfg)
+			}
+			r.POST("/v1/usage", auth, func(c *gin.Context) { c.Status(200) })
+			for i := 0; i < 3; i++ {
+				r.ServeHTTP(httptest.NewRecorder(), httpRequest(t, "/v1/usage", "", ""))
+			}
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httpRequest(t, "/v1/usage", "", "valid-key"))
+			require.Equal(t, 200, w.Code, w.Body.String())
+		})
+	}
+}
+
+func TestAPIKeyAuthInvalidAbuseReturns429AfterCredentialClassification(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	repoCalls := 0
 	repo := &stubApiKeyRepo{getByKey: func(context.Context, string) (*service.APIKey, error) {
@@ -56,7 +86,7 @@ func TestAPIKeyAuthInvalidAbuseReturns429BeforeRepository(t *testing.T) {
 	require.Equal(t, "60", w.Header().Get("Retry-After"))
 	require.Contains(t, w.Body.String(), "INVALID_AUTH_RATE_LIMITED")
 	require.Equal(t, IngressRejectInvalidAuthRateLimited, reason)
-	require.Equal(t, 1, repoCalls, "rate-limited request must not reach the repository")
+	require.Equal(t, 2, repoCalls, "unknown credentials must first be distinguished from valid NAT neighbors")
 }
 
 func TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429(t *testing.T) {
@@ -90,7 +120,7 @@ func TestGoogleAPIKeyAuthInvalidAbuseReturnsProtocol429(t *testing.T) {
 	require.Equal(t, "60", w.Header().Get("Retry-After"))
 	require.Contains(t, w.Body.String(), "RESOURCE_EXHAUSTED")
 	require.Equal(t, IngressRejectInvalidAuthRateLimited, reason)
-	require.Equal(t, 2, repoCalls)
+	require.Equal(t, 3, repoCalls)
 }
 
 func TestInvalidAuthAbuseDoesNotCountValidOrOperationalFailures(t *testing.T) {
@@ -136,7 +166,7 @@ func TestNormalizeIngressRejectIPGroupsIPv6By64(t *testing.T) {
 func httpRequest(t *testing.T, path, authorization, apiKey string) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, nil)
-	req.RemoteAddr = "203.0.113.10:12345"
+	req.RemoteAddr = "8.8.8.8:12345"
 	if authorization != "" {
 		req.Header.Set("Authorization", authorization)
 	}

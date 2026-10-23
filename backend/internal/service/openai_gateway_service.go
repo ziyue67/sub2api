@@ -505,6 +505,7 @@ type OpenAIGatewayService struct {
 	userGroupRateResolver  *userGroupRateResolver
 	httpUpstream           HTTPUpstream
 	pluginManager          *PluginManager
+	safetyPromptStore      *SafetyPromptStore
 	deferredService        *DeferredService
 	openAITokenProvider    *OpenAITokenProvider
 	excelOAuthReauth       *OpenAIOAuthReauthService
@@ -521,6 +522,8 @@ type OpenAIGatewayService struct {
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
+	openaiWSNodeOwnerOnce          sync.Once
+	openaiWSNodeOwnerToken         string
 	openaiSchedulerOnce            sync.Once
 	openaiProxyStreamCircuitOnce   sync.Once
 	openaiWSPassthroughDialerOnce  sync.Once
@@ -1306,12 +1309,24 @@ func hashSensitiveValueForLog(raw string) string {
 // GetAccessToken gets the access token for an OpenAI account
 func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Account) (string, string, error) {
 	defer requesttiming.Observe(ctx, "upstream_credentials")()
+	selectedSIWC := account.IsSIWCEnabled()
 	if account.IsShadow() {
 		credAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 		if err != nil {
 			return "", "", err
 		}
 		account = credAccount
+	}
+	if selectedSIWC {
+		if s.excelOAuthReauth == nil {
+			return "", "", errors.New("SIWC credential service is unavailable")
+		}
+		var cache OpenAITokenCache
+		if s.openAITokenProvider != nil {
+			cache = s.openAITokenProvider.tokenCache
+		}
+		token, err := s.excelOAuthReauth.SIWCAccessToken(ctx, account, cache)
+		return token, "siwc", err
 	}
 	switch account.Type {
 	case AccountTypeOAuth:

@@ -383,3 +383,68 @@ func TestCyberSessionLookupFailOpen(t *testing.T) {
 		})
 	}
 }
+
+func TestCyberRequestFingerprintFallbackBlocksIdenticalRetry(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		cache: &comboCacheAndStore{},
+		settingService: &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{
+			SettingKeyCyberSessionBlockEnabled:    "true",
+			SettingKeyCyberSessionBlockTTLSeconds: "60",
+		}}},
+	}
+	ctx := context.Background()
+	bodyA := []byte(`{"model":"gpt-5","messages":[{"role":"user","content":"synthetic same content"}],"prompt_cache_key":"cache-a","stream":true}`)
+	bodyB := []byte(`{"stream":false,"prompt_cache_key":"cache-b","messages":[{"role":"user","content":"synthetic same content"}],"model":"another-model"}`)
+	c, _ := newCyberBlockTestCtx(nil, string(bodyA))
+	identity := ResolveCyberSessionIdentity(7, c, bodyA)
+	require.False(t, identity.Resolved(), "fixture must not have an explicit session ID")
+	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 7, c, bodyA, "", ""))
+
+	svc.MarkCyberSessionBlockedForRequest(ctx, 7, identity, bodyA)
+	require.NotEmpty(t, svc.FindCyberSessionBlockedForRequest(ctx, 7, c, bodyB, "", ""), "identical content must match across cache/stream/model changes")
+	retryWithIdentity, _ := newCyberBlockTestCtx(map[string]string{"session_id": "retry-session"}, string(bodyA))
+	require.NotEmpty(t, svc.FindCyberSessionBlockedForRequest(ctx, 7, retryWithIdentity, bodyA, "", ""), "a retry that adds a session ID must still hit the fallback block")
+	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 7, c, []byte(`{"messages":[{"role":"user","content":"different content"}]}`), "", ""))
+	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 8, c, bodyA, "", ""), "fingerprint is API-key scoped")
+}
+
+func TestCyberRequestFingerprintFallbackDoesNotReplaceExplicitSession(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		cache: &comboCacheAndStore{},
+		settingService: &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{
+			SettingKeyCyberSessionBlockEnabled: "true",
+		}}},
+	}
+	ctx := context.Background()
+	body := []byte(`{"messages":[{"role":"user","content":"synthetic explicit content"}]}`)
+	explicitCtx, _ := newCyberBlockTestCtx(map[string]string{"session_id": "session-explicit"}, string(body))
+	identity := ResolveCyberSessionIdentity(9, explicitCtx, body)
+	require.True(t, identity.Resolved())
+	svc.MarkCyberSessionBlockedForRequest(ctx, 9, identity, body)
+
+	require.Equal(t, identity.BlockKey, svc.FindCyberSessionBlockedForRequest(ctx, 9, explicitCtx, body, "", ""))
+	noIdentityCtx, _ := newCyberBlockTestCtx(nil, string(body))
+	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 9, noIdentityCtx, body, "", ""), "explicit block must not silently become a content-wide block")
+}
+
+func TestCyberRequestFingerprintFallbackDisabledWithSessionBlock(t *testing.T) {
+	svc := &OpenAIGatewayService{
+		cache:          &comboCacheAndStore{},
+		settingService: &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{SettingKeyCyberSessionBlockEnabled: "false"}}},
+	}
+	ctx := context.Background()
+	body := []byte(`{"messages":[{"role":"user","content":"synthetic disabled content"}]}`)
+	c, _ := newCyberBlockTestCtx(nil, string(body))
+	identity := ResolveCyberSessionIdentity(10, c, body)
+	svc.MarkCyberSessionBlockedForRequest(ctx, 10, identity, body)
+	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 10, c, body, "", ""))
+}
+
+func TestCyberRequestFingerprintKeyNormalizesTransportFields(t *testing.T) {
+	a := []byte(`{"messages":[{"role":"user","content":"same"}],"model":"gpt-5","stream":true,"prompt_cache_key":"a"}`)
+	b := []byte(`{"prompt_cache_key":"b","stream":false,"model":"other","messages":[{"role":"user","content":"same"}]}`)
+	require.NotEmpty(t, CyberRequestFingerprintKey(1, a))
+	require.Equal(t, CyberRequestFingerprintKey(1, a), CyberRequestFingerprintKey(1, b))
+	require.NotEqual(t, CyberRequestFingerprintKey(1, a), CyberRequestFingerprintKey(2, a))
+	require.Empty(t, CyberRequestFingerprintKey(1, []byte(`{"model":"gpt-5"}`)))
+}

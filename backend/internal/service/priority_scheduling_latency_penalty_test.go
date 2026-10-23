@@ -13,9 +13,10 @@ import (
 func TestPriorityLatencyPenaltyExpiresWithoutNewTraffic(t *testing.T) {
 	now := time.Date(2026, 10, 14, 1, 0, 0, 0, time.UTC)
 	cfg := DefaultPrioritySchedulingConfig()
+	cfg.RecoveryExplorationPercent = 10
 	cfg.TargetTTFTMs = 15000
 	passed := true
-	signal := PrioritySchedulingSignal{Samples: 7, ProfitSamples: 7, P90TTFTMs: 19172.2, QualityPassed: 68, QualitySamples: 68, LatestQualityPassed: &passed, LatestLatencyAt: &now, Revenue: 1.2, BaseCost: 4.08}
+	signal := PrioritySchedulingSignal{Samples: 7, ProfitSamples: 7, P90TTFTMs: 19172.2, QualityPassed: 68, QualitySamples: 68, LatestQualityPassed: &passed, LatestLatencyAt: &now, LatestBadLatencyAt: &now, Revenue: 1.2, BaseCost: 4.08}
 	deadline := now.Add(10 * time.Minute)
 	item := priorityCandidate(1, 0.11, 0)
 	for _, at := range []time.Time{now, deadline.Add(-time.Nanosecond)} {
@@ -34,8 +35,9 @@ func TestPriorityLatencyPenaltyExpiresWithoutNewTraffic(t *testing.T) {
 	}
 	fresh := deadline.Add(time.Minute)
 	signal.LatestLatencyAt = &fresh
+	signal.LatestBadLatencyAt = &fresh
 	score := applyPriorityCandidate(cfg, &item, signal, fresh)
-	require.Equal(t, "degraded", score.Tier, "fresh evidence that P90 still misses the target re-arms the penalty")
+	require.Equal(t, "degraded", score.Tier, "a fresh above-target sample re-arms the penalty")
 	require.Equal(t, fresh.Add(10*time.Minute), *score.LatencyPenaltyUntil)
 	signal.P90TTFTMs = 14000
 	score = applyPriorityCandidate(cfg, &item, signal, fresh)
@@ -48,9 +50,11 @@ func TestPriorityLatencyRecoverySharesBoundedExploration(t *testing.T) {
 	old := now.Add(-11 * time.Minute)
 	passed := true
 	cfg := DefaultPrioritySchedulingConfig()
+	cfg.TargetTTFTMs = 3000
+	cfg.RecoveryExplorationPercent = 10
 	cfg.Mode = "custom"
 	cfg.QualityWeight, cfg.LatencyWeight, cfg.LoadWeight, cfg.CostWeight = 2, 2, 1, 95
-	signal := PrioritySchedulingSignal{Samples: 7, ProfitSamples: 7, P90TTFTMs: 5000, QualitySamples: 10, QualityPassed: 10, LatestQualityPassed: &passed, LatestLatencyAt: &old, Revenue: 1, BaseCost: 2}
+	signal := PrioritySchedulingSignal{Samples: 7, ProfitSamples: 7, P90TTFTMs: 5000, QualitySamples: 10, QualityPassed: 10, LatestQualityPassed: &passed, LatestLatencyAt: &old, LatestBadLatencyAt: &old, Revenue: 1, BaseCost: 2}
 	healthy, recovering := priorityCandidate(1, 0.17, 0), priorityCandidate(2, 0.11, 0)
 	good := signal
 	good.P90TTFTMs = 1000
@@ -82,6 +86,7 @@ func TestPriorityLatencyRecoverySharesBoundedExploration(t *testing.T) {
 		}},
 		{"loss", func(s *PrioritySchedulingSignal, _ *openAIAccountCandidateScore) { s.Revenue = 0.01 }},
 		{"errors", func(_ *PrioritySchedulingSignal, a *openAIAccountCandidateScore) { a.errorRate = 0.8 }},
+		{"scoped_errors", func(_ *PrioritySchedulingSignal, a *openAIAccountCandidateScore) { a.priorityErrors.SmoothedRate = 0.8 }},
 		{"busy", func(_ *PrioritySchedulingSignal, a *openAIAccountCandidateScore) { a.loadInfo.CurrentConcurrency = 9 }},
 		{"unknown_load", func(_ *PrioritySchedulingSignal, a *openAIAccountCandidateScore) { a.loadKnown = false }},
 	} {
@@ -89,7 +94,11 @@ func TestPriorityLatencyRecoverySharesBoundedExploration(t *testing.T) {
 			sample := signal
 			account := priorityCandidate(2, 0.11, 0)
 			tc.change(&sample, &account)
-			applyPriorityCandidate(cfg, &account, sample, now)
+			localConfig := cfg
+			if tc.name == "errors" {
+				localConfig.ErrorRateWeight = 0
+			} // Existing account EWMA contract.
+			applyPriorityCandidate(localConfig, &account, sample, now)
 			require.False(t, account.priorityExploration)
 		})
 	}
@@ -97,6 +106,7 @@ func TestPriorityLatencyRecoverySharesBoundedExploration(t *testing.T) {
 
 func TestPriorityLatencyPenaltyCompatibilityAndBounds(t *testing.T) {
 	cfg := DefaultPrioritySchedulingConfig()
+	cfg.TargetTTFTMs = 3000
 	// Persisted old configurations inherit the default, while explicit zero
 	// retains the prior continuous penalty. Missing timestamps fail closed.
 	old, err := json.Marshal(cfg)
@@ -120,10 +130,11 @@ func TestPriorityLatencyPenaltyCompatibilityAndBounds(t *testing.T) {
 	}
 	now := time.Now()
 	oldAt := now.Add(-time.Hour)
-	signal := PrioritySchedulingSignal{Samples: 7, P90TTFTMs: 5000, QualitySamples: 10, QualityPassed: 10, LatestLatencyAt: &oldAt}
+	signal := PrioritySchedulingSignal{Samples: 7, P90TTFTMs: 5000, QualitySamples: 10, QualityPassed: 10, LatestLatencyAt: &oldAt, LatestBadLatencyAt: &oldAt}
 	cfg.LatencyPenaltyMinutes = 0
 	require.Equal(t, "degraded", scorePriorityCandidate(cfg, priorityCandidate(1, 0.11, 0), signal, now).Tier)
 	cfg.LatencyPenaltyMinutes = 10
 	signal.LatestLatencyAt = nil
+	signal.LatestBadLatencyAt = nil
 	require.Equal(t, "degraded", scorePriorityCandidate(cfg, priorityCandidate(1, 0.11, 0), signal, now).Tier)
 }

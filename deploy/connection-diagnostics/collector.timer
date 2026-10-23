@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically collect Sub2API edge connection metadata
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=5s
+Unit=collector.service
+
+[Install]
+WantedBy=timers.target

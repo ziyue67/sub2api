@@ -66,7 +66,7 @@ func (s *ContentModerationService) callTypeSafeModeration(ctx context.Context, c
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutMS)*time.Millisecond)
 	defer cancel()
-	result, status, err := typesafe.Evaluate(ctx, client, cfg.BaseURL, key, typesafe.Request{
+	result, status, err := typesafe.Evaluate(ctx, client, cfg.keyBaseURL(key), key, typesafe.Request{
 		Model: cfg.Model, State: text, Questions: typeSafeModerationQuestions(),
 	})
 	if httpStatus != nil {

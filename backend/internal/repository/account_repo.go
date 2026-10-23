@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	dbgroup "github.com/Wei-Shaw/sub2api/ent/group"
 	dbpredicate "github.com/Wei-Shaw/sub2api/ent/predicate"
 	dbproxy "github.com/Wei-Shaw/sub2api/ent/proxy"
+	"github.com/Wei-Shaw/sub2api/internal/accounttimer"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -99,12 +101,14 @@ func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]a
 	if extra == nil {
 		return nil
 	}
-	if _, exists := extra["codex_fingerprint_seed"]; !exists {
+	_, seedExists := extra["codex_fingerprint_seed"]
+	_, admissionExists := extra[service.OpenAITwoFAAdmissionExtraKey]
+	if !seedExists && !admissionExists {
 		return extra
 	}
 	stripped := make(map[string]any, len(extra)-1)
 	for key, value := range extra {
-		if key == "codex_fingerprint_seed" {
+		if key == "codex_fingerprint_seed" || key == service.OpenAITwoFAAdmissionExtraKey {
 			continue
 		}
 		stripped[key] = value
@@ -133,7 +137,7 @@ func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedul
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
 	client := r.client
 	var tx *dbent.Tx
-	if account != nil && account.InitialQualityPlan != nil {
+	if account != nil && (account.InitialQualityPlan != nil || account.InitialAdmissionPlan != nil) {
 		var err error
 		tx, err = r.client.Tx(ctx)
 		if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
@@ -223,9 +227,48 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 		return translatePersistenceError(err, service.ErrAccountNotFound, nil)
 	}
 
-	if p := account.InitialQualityPlan; p != nil {
+	for _, p := range []*service.ScheduledTestPlan{account.InitialQualityPlan, account.InitialAdmissionPlan} {
+		if p == nil {
+			continue
+		}
 		_, err := client.ExecContext(ctx, `INSERT INTO scheduled_test_plans (account_id, model_id, cron_expression, enabled, max_results, auto_recover, next_run_at, pelican_config, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,false,$6,$7,NOW(),NOW())`, created.ID, p.ModelID, p.CronExpression, p.Enabled, p.MaxResults, p.NextRunAt, marshalPelicanConfig(p.PelicanConfig))
 		if err != nil {
+			return err
+		}
+	}
+	if account.InitialAdmissionPlan != nil {
+		rows, err := client.QueryContext(ctx, `SELECT id FROM scheduled_test_plans WHERE account_id=$1 AND pelican_config->'quality'->>'action'=$2`, created.ID, service.QualityActionOpenAITwoFAAdmission)
+		if err != nil {
+			return err
+		}
+		var planID int64
+		if !rows.Next() {
+			_ = rows.Close()
+			return fmt.Errorf("initial admission plan missing")
+		}
+		err = rows.Scan(&planID)
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(account.Extra[service.OpenAITwoFAAdmissionExtraKey])
+		if err != nil {
+			return err
+		}
+		var state service.OpenAITwoFAAdmissionState
+		if err := json.Unmarshal(encoded, &state); err != nil {
+			return err
+		}
+		if state.Phase != "pending" || !state.Policy.Enabled || state.Policy.Validate() != nil {
+			return fmt.Errorf("initial admission snapshot missing or invalid")
+		}
+		state.PlanID = planID
+		account.Extra[service.OpenAITwoFAAdmissionExtraKey] = state
+		encoded, err = json.Marshal(state)
+		if err != nil {
+			return err
+		}
+		if _, err := client.ExecContext(ctx, `UPDATE accounts SET extra=jsonb_set(extra,'{openai_two_fa_admission}',$2::jsonb) WHERE id=$1`, created.ID, string(encoded)); err != nil {
 			return err
 		}
 	}
@@ -547,6 +590,7 @@ func (r *accountRepository) updateAccount(
 	}
 
 	account.UpdatedAt = updated.UpdatedAt
+	account.Schedulable = updated.Schedulable
 	// 普通账号编辑（如 model_mapping / credentials）也需要立即刷新单账号快照，
 	// 否则网关在 outbox worker 延迟或异常时仍可能读到旧配置。
 	if contextTx == nil {
@@ -568,6 +612,10 @@ func (r *accountRepository) updateLockedAccount(
 		return nil, err
 	}
 	account.Extra = extra
+	// lockAndMergeAccountProbeExtra holds the account row lock in this transaction.
+	if err := accounttimer.CancelPending(ctx, client, account.ID, time.Now().UTC()); err != nil {
+		return nil, err
+	}
 
 	schedulable := account.Schedulable
 	if account.Status == service.StatusError {
@@ -585,8 +633,10 @@ func (r *accountRepository) updateLockedAccount(
 		SetPriority(account.Priority).
 		SetStatus(account.Status).
 		SetErrorMessage(account.ErrorMessage).
-		SetSchedulable(schedulable).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
+	if !accounttimer.PreserveSchedulable(ctx) || account.Status == service.StatusError {
+		builder.SetSchedulable(schedulable)
+	}
 
 	if explicitRateMultiplier != nil {
 		builder.SetRateMultiplier(*explicitRateMultiplier)
@@ -823,6 +873,13 @@ func lockAndMergeAccountProbeExtra(
 				extra[key] = value
 			}
 		}
+	}
+	delete(extra, service.OpenAITwoFAAdmissionExtraKey)
+	if state, ok := currentExtra[service.OpenAITwoFAAdmissionExtraKey]; ok {
+		if extra == nil {
+			extra = make(map[string]any)
+		}
+		extra[service.OpenAITwoFAAdmissionExtraKey] = state
 	}
 	delete(extra, service.AutoConfigConcurrencyExtraKey)
 	if state, ok := currentExtra[service.AutoConfigConcurrencyExtraKey]; ok {
@@ -1100,6 +1157,8 @@ func (r *accountRepository) ApplyOpenAIOAuthReauth(
 	if err != nil {
 		return false, err
 	}
+	extra = copyJSONMap(extra)
+	delete(extra, service.OpenAITwoFAAdmissionExtraKey)
 	extraJSON, err := json.Marshal(normalizeJSONMap(extra))
 	if err != nil {
 		return false, err
@@ -1129,7 +1188,7 @@ func (r *accountRepository) ApplyOpenAIOAuthReauth(
 			expires_at = COALESCE($14::timestamptz, a.expires_at),
 			status = $5,
 			error_message = '',
-			schedulable = TRUE,
+			schedulable = CASE WHEN a.extra ? 'openai_two_fa_admission' THEN a.schedulable ELSE TRUE END,
 			rate_limited_at = NULL,
 			rate_limit_reset_at = NULL,
 			overload_until = NULL,
@@ -3005,6 +3064,17 @@ func (r *accountRepository) UpdateSessionWindowEnd(ctx context.Context, id int64
 }
 
 func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedulable bool) error {
+	if actor := accounttimer.ManualActor(ctx); actor > 0 {
+		store, ok := r.SchedulableTimers().(*accounttimer.Store)
+		if !ok {
+			return errors.New("account timer transaction unavailable")
+		}
+		err := store.Manual(ctx, id, actor, schedulable)
+		if accounttimer.ErrorCode(err) == "account_deleted" {
+			return service.ErrAccountNotFound
+		}
+		return err
+	}
 	_, err := r.client.Account.Update().
 		Where(dbaccount.IDEQ(id)).
 		SetSchedulable(schedulable).
@@ -3732,6 +3802,34 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 		}
 	}
 
+	if updates.Schedulable != nil && accounttimer.ManualActor(ctx) > 0 {
+		if contextTx == nil && tx == nil {
+			return 0, errors.New("manual bulk scheduling requires a transaction")
+		}
+		locked, err := exec.QueryContext(ctx, "SELECT id FROM accounts WHERE id=ANY($1) AND deleted_at IS NULL ORDER BY id FOR UPDATE", pq.Array(ids))
+		if err != nil {
+			return 0, err
+		}
+		lockedIDs := []int64{}
+		for locked.Next() {
+			var id int64
+			if err = locked.Scan(&id); err != nil {
+				_ = locked.Close()
+				return 0, err
+			}
+			lockedIDs = append(lockedIDs, id)
+		}
+		err = locked.Err()
+		_ = locked.Close()
+		if err != nil {
+			return 0, err
+		}
+		for _, id := range lockedIDs {
+			if err = accounttimer.CancelPending(ctx, exec, id, time.Now().UTC()); err != nil {
+				return 0, err
+			}
+		}
+	}
 	result, err := exec.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, err

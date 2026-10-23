@@ -8,11 +8,14 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/iprisk"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -97,6 +100,14 @@ func ProvideRouter(
 		panic(err)
 	}
 	settingService.Serverless = manager
+	settingService.IPRisk = iprisk.New(settingService.IPRiskStore(), redisClient, serverless.NewGeoJSResolver(redisClient), strings.EqualFold(os.Getenv("IP_RISK_DISABLED"), "true"))
+	settingService.IPRisk.Start()
+	if handlers.Admin != nil && handlers.Admin.Setting != nil {
+		if handlers.Admin.PromptAudit != nil {
+			handlers.Admin.Setting.ConfigureIPAudit(handlers.Admin.AuditLog, handlers.Admin.PromptAudit.IPAuditPenaltySummary, handlers.Admin.PromptAudit.ReleaseIPAuditPenalty)
+		}
+	}
+	lifecycle.onDrain = append(lifecycle.onDrain, settingService.IPRisk.Stop)
 	manager.Start(func(ctx context.Context) error {
 		if lifecycle.isDraining() {
 			return fmt.Errorf("draining")
@@ -110,25 +121,20 @@ func ProvideRouter(
 }
 
 func configureTrustedProxies(r *gin.Engine, cfg config.ServerConfig) {
-	if cfg.TrustedProxiesConfigured {
-		if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
-			log.Printf("Failed to set trusted proxies: %v", err)
-			_ = r.SetTrustedProxies(nil)
-			warnAuthProxyMisconfiguration(r)
-		}
-		if len(cfg.TrustedProxies) == 0 && cfg.Mode == "release" {
-			log.Printf("Warning: server.trusted_proxies is explicitly empty; auth IP guards use direct peer addresses, shared proxies will share signup quotas and login bans")
-		}
-		if len(cfg.TrustedProxies) == 0 {
-			warnAuthProxyMisconfiguration(r)
-		}
-	} else {
-		if err := r.SetTrustedProxies(nil); err != nil {
-			log.Printf("Failed to disable trusted proxies: %v", err)
-		}
-		if cfg.Mode == "release" {
-			log.Printf("Warning: server.trusted_proxies is not configured; auth IP guards always use direct peer addresses, shared proxies will share signup quotas and login bans regardless of the forwarded-IP compatibility switch")
-		}
+	proxies := cfg.EffectiveTrustedProxies()
+	if err := r.SetTrustedProxies(proxies); err != nil {
+		log.Printf("Failed to set trusted proxies: %v", err)
+		_ = r.SetTrustedProxies(nil)
+		warnAuthProxyMisconfiguration(r)
+		return
+	}
+	if len(proxies) == 0 && cfg.Mode == "release" {
+		log.Printf("Warning: server.trusted_proxies is explicitly empty; auth IP guards use direct peer addresses, shared proxies will share signup quotas and login bans")
+	}
+	if !cfg.TrustedProxiesConfigured && len(cfg.TrustedProxies) == 0 && cfg.Mode == "release" {
+		log.Printf("server.trusted_proxies is not configured; trusting only local proxies at 127.0.0.1 and ::1; Docker bridges and remote proxies require explicit configuration")
+	}
+	if len(proxies) == 0 || !cfg.TrustedProxiesConfigured {
 		warnAuthProxyMisconfiguration(r)
 	}
 }
@@ -137,9 +143,11 @@ func warnAuthProxyMisconfiguration(r *gin.Engine) {
 	var once sync.Once
 	r.Use(func(c *gin.Context) {
 		if c.GetHeader("X-Forwarded-For") != "" || c.GetHeader("X-Real-IP") != "" || c.GetHeader("CF-Connecting-IP") != "" {
-			once.Do(func() {
-				slog.Warn("Forwarded client IP headers received without usable server.trusted_proxies; auth IP guards use the proxy peer address and may share the two-account signup quota and login bans across users; configure trusted proxies before enabling public signup")
-			})
+			if c.ClientIP() == c.RemoteIP() {
+				once.Do(func() {
+					slog.Warn("Forwarded client IP headers did not resolve beyond the TCP peer; auth IP guards may share signup quotas and login bans across users; verify server.trusted_proxies and proxy header rewriting before enabling public signup")
+				})
+			}
 		}
 		c.Next()
 	})

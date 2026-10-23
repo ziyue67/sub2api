@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -51,6 +52,9 @@ func firstNonEmpty(values ...string) string {
 
 // SettingHandler 系统设置处理器
 type SettingHandler struct {
+	ipAuditPenaltyRelease    func(context.Context, int64, int64, string) (service.SecurityPenaltySummary, error)
+	ipAuditLogs              *service.AuditLogService
+	ipAuditPenaltySummary    func(context.Context, int64) (service.SecurityPenaltySummary, error)
 	settingService           *service.SettingService
 	emailService             *service.EmailService
 	turnstileService         *service.TurnstileService
@@ -134,8 +138,11 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 	payload := dto.SystemSettings{
 		RegistrationEnabled:                                    settings.RegistrationEnabled,
+		LoginRateLimitEnabled:                                  settings.LoginRateLimitEnabled,
+		RegistrationIPLimitEnabled:                             settings.RegistrationIPLimitEnabled,
 		EmailVerifyEnabled:                                     settings.EmailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist:                       settings.RegistrationEmailSuffixWhitelist,
+		RegistrationEmailAliasBlockEnabled:                     settings.RegistrationEmailAliasBlockEnabled,
 		RegistrationEmailDomainQuotaEnabled:                    settings.RegistrationEmailDomainQuotaEnabled,
 		PromoCodeEnabled:                                       settings.PromoCodeEnabled,
 		PasswordResetEnabled:                                   settings.PasswordResetEnabled,
@@ -423,29 +430,30 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AffiliateEnabled: settings.AffiliateEnabled,
 
-		AccountSchedulingThresholds:   settings.AccountSchedulingThresholds,
-		AllowUserViewErrorRequests:    settings.AllowUserViewErrorRequests,
-		UsageShowLongContextBadge:     settings.UsageShowLongContextBadge,
-		UsageShowCacheRate:            settings.UsageShowCacheRate,
-		UsageShowCacheRateToUsers:     settings.UsageShowCacheRateToUsers,
-		RequestCaptureEnabled:         settings.RequestCaptureEnabled,
-		RequestCaptureQuotaMiB:        settings.RequestCaptureQuotaMiB,
-		RequestCaptureRetentionDays:   settings.RequestCaptureRetentionDays,
-		ExcelBPSImageMode:             settings.ExcelBPSImageMode,
-		ExcelBPSImageRelayEnabled:     settings.ExcelBPSImageRelayEnabled,
-		ExcelBPSImageBaseURL:          settings.ExcelBPSImageBaseURL,
-		ExcelBPSImageBodyLimitMiB:     settings.ExcelBPSImageBodyLimitMiB,
-		ExcelBPSImageBudgetMiB:        settings.ExcelBPSImageBudgetMiB,
-		ExcelBPSImageMaxRequests:      settings.ExcelBPSImageMaxRequests,
-		ExcelBPSImageMaxImageMiB:      settings.ExcelBPSImageMaxImageMiB,
-		ExcelBPSImageLimitPolicy:      settings.ExcelBPSImageLimitPolicy,
-		ExcelBPSImageWarningRemaining: settings.ExcelBPSImageWarningRemaining,
-		ExcelBPSImageCompactReserve:   settings.ExcelBPSImageCompactReserve,
-		ExcelBPSImageMaxImages:        settings.ExcelBPSImageMaxImages,
-		ExcelBPSImageMaxTotalMiB:      settings.ExcelBPSImageMaxTotalMiB,
-		ExcelBPSImageStorageMiB:       settings.ExcelBPSImageStorageMiB,
-		ExcelBPSImageStorageEntries:   settings.ExcelBPSImageStorageEntries,
-		ExcelBPSImageTTLMinutes:       settings.ExcelBPSImageTTLMinutes,
+		AccountSchedulingThresholds:           settings.AccountSchedulingThresholds,
+		AllowUserViewErrorRequests:            settings.AllowUserViewErrorRequests,
+		UsageShowLongContextBadge:             settings.UsageShowLongContextBadge,
+		UsageShowCacheRate:                    settings.UsageShowCacheRate,
+		UsageShowCacheRateToUsers:             settings.UsageShowCacheRateToUsers,
+		UsageShowUpstreamResponseModelToUsers: settings.UsageShowUpstreamResponseModelToUsers,
+		RequestCaptureEnabled:                 settings.RequestCaptureEnabled,
+		RequestCaptureQuotaMiB:                settings.RequestCaptureQuotaMiB,
+		RequestCaptureRetentionDays:           settings.RequestCaptureRetentionDays,
+		ExcelBPSImageMode:                     settings.ExcelBPSImageMode,
+		ExcelBPSImageRelayEnabled:             settings.ExcelBPSImageRelayEnabled,
+		ExcelBPSImageBaseURL:                  settings.ExcelBPSImageBaseURL,
+		ExcelBPSImageBodyLimitMiB:             settings.ExcelBPSImageBodyLimitMiB,
+		ExcelBPSImageBudgetMiB:                settings.ExcelBPSImageBudgetMiB,
+		ExcelBPSImageMaxRequests:              settings.ExcelBPSImageMaxRequests,
+		ExcelBPSImageMaxImageMiB:              settings.ExcelBPSImageMaxImageMiB,
+		ExcelBPSImageLimitPolicy:              settings.ExcelBPSImageLimitPolicy,
+		ExcelBPSImageWarningRemaining:         settings.ExcelBPSImageWarningRemaining,
+		ExcelBPSImageCompactReserve:           settings.ExcelBPSImageCompactReserve,
+		ExcelBPSImageMaxImages:                settings.ExcelBPSImageMaxImages,
+		ExcelBPSImageMaxTotalMiB:              settings.ExcelBPSImageMaxTotalMiB,
+		ExcelBPSImageStorageMiB:               settings.ExcelBPSImageStorageMiB,
+		ExcelBPSImageStorageEntries:           settings.ExcelBPSImageStorageEntries,
+		ExcelBPSImageTTLMinutes:               settings.ExcelBPSImageTTLMinutes,
 	}
 
 	// OpenAI fast policy (stored under a dedicated setting key)

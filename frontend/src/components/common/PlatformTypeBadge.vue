@@ -116,7 +116,11 @@ const typeLabel = computed(() => {
 
 const normalizedPlanType = computed(() => normalizePlanType(props.planType))
 
+// API keys can proxy another account's errors; legacy plan metadata is not their subscription.
+const isOpenAIAPIKey = computed(() => props.platform === 'openai' && props.type === 'apikey')
+
 const planLabel = computed(() => {
+  if (isOpenAIAPIKey.value) return ''
   if (!normalizedPlanType.value) return ''
   // ChatGPT 档位命名（Pro 100 / Pro 200 / Pro 500、Business / Business Premium）只适用于
   // OpenAI：Antigravity 与 Grok 各自的 pro/team 沿用下面的通用标签。
@@ -276,6 +280,7 @@ const planBadgeClass = computed(() => {
 
 // Subscription expiration label (non-free only)
 const expiresLabel = computed(() => {
+  if (isOpenAIAPIKey.value) return ''
   if (!props.subscriptionExpiresAt || !props.planType) return ''
   if (
     normalizedPlanType.value === 'free' ||

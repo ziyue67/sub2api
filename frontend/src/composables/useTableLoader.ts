@@ -35,12 +35,16 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
   })
 
   let abortController: AbortController | null = null
+  let disposed = false
 
   const isAbortError = (error: any) => {
     return error?.name === 'AbortError' || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError'
   }
 
   const load = async () => {
+    // A pending debounce can outlive the component scope. Never start another
+    // request after disposal, even when the debounce helper cannot be canceled.
+    if (disposed) return
     if (abortController) {
       abortController.abort()
     }
@@ -56,6 +60,7 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
         { signal: currentController.signal }
       )
 
+      if (disposed || currentController.signal.aborted) return
       items.value = response.items || []
       pagination.total = response.total || 0
       pagination.pages = response.pages || 0
@@ -93,6 +98,7 @@ export function useTableLoader<T, P extends Record<string, any>>(options: TableL
   }
 
   onUnmounted(() => {
+    disposed = true
     abortController?.abort()
   })
 

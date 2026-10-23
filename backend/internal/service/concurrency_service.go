@@ -1084,11 +1084,18 @@ func (s *ConcurrencyService) StartSlotCleanupWorker(_ AccountRepository, interva
 		return
 	}
 
+	stopCtx := s.apiKeyQueueStopContext()
+	if stopCtx == nil {
+		stopCtx = context.Background()
+	}
 	runCleanup := func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if stopCtx.Err() != nil {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(stopCtx, 5*time.Second)
 		err := s.cache.CleanupExpiredAccountSlotKeys(cleanupCtx)
 		cancel()
-		if err != nil {
+		if err != nil && stopCtx.Err() == nil {
 			logger.LegacyPrintf("service.concurrency", "Warning: cleanup expired account slots failed: %v", err)
 			return
 		}
@@ -1099,8 +1106,13 @@ func (s *ConcurrencyService) StartSlotCleanupWorker(_ AccountRepository, interva
 		defer ticker.Stop()
 
 		runCleanup()
-		for range ticker.C {
-			runCleanup()
+		for {
+			select {
+			case <-stopCtx.Done():
+				return
+			case <-ticker.C:
+				runCleanup()
+			}
 		}
 	}()
 }

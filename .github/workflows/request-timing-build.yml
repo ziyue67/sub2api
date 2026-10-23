@@ -33,6 +33,9 @@ jobs:
       - name: Compile affected packages
         working-directory: backend
         run: go test -tags=unit ./internal/handler/... ./internal/service ./internal/repository ./internal/server/... -run '^$'
+      - name: Gateway idle worker and account operations regression tests
+        working-directory: backend
+        run: go test -tags=unit ./internal/service -run '^Test(GatewayAccountOps|FullAccountOps|AccountOps|ContentModeration(Workers|Worker|IdleWorker|Runtime|Async))' -count=1
       - name: Frontend regression tests
         working-directory: frontend
         run: pnpm test:run src/components/admin/usage/__tests__/UsageTable.spec.ts src/components/admin/usage/__tests__/UsageTimingDialog.spec.ts src/utils/__tests__/usageTps.spec.ts src/utils/__tests__/latencyHealth.spec.ts src/utils/__tests__/requestTimingHealth.spec.ts src/views/admin/settings/MihomoSettings.spec.ts

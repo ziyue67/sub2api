@@ -46,3 +46,33 @@ func (s *APIKeyService) deleteAuthCacheByKeys(ctx context.Context, keys []string
 		s.deleteAuthCache(ctx, s.authCacheKey(key))
 	}
 }
+
+// InvalidateAuthCacheByUserIDChecked reports failures to administrative recovery
+// callers: a committed status change must not be presented as cache-confirmed.
+func (s *APIKeyService) InvalidateAuthCacheByUserIDChecked(ctx context.Context, userID int64) error {
+	keys, err := s.apiKeyRepo.ListKeysByUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		cacheKey := s.authCacheKey(key)
+		if s.authCacheL1 != nil {
+			s.authCacheL1.Del(cacheKey)
+		}
+		if s.authNegativeCacheL1 != nil {
+			s.authNegativeCacheL1.Del(cacheKey)
+		}
+		if s.cache != nil {
+			if err = s.cache.DeleteAuthCache(ctx, cacheKey); err != nil {
+				return err
+			}
+			if err = s.cache.PublishAuthCacheInvalidation(ctx, cacheKey); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

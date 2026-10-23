@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // CyberSessionBlockStore 是 cyber 会话屏蔽表的存取接口。
@@ -123,6 +125,43 @@ func (s *OpenAIGatewayService) CyberSessionIdentityStrictEnabled(ctx context.Con
 	return s.settingService.GetCyberSessionIdentityStrictEnabled(ctx)
 }
 
+// cyberRequestFingerprintFields is the moderation-relevant subset used when a
+// client does not provide a trustworthy explicit session identity. Transport
+// and cache hints are deliberately excluded so an identical retry still
+// matches after a prompt_cache_key or stream flag changes.
+var cyberRequestFingerprintFields = []string{
+	"messages", "input", "instructions", "system", "prompt",
+	"tools", "tool_choice", "previous_response_id", "conversation",
+	"thread_id", "session_id", "text",
+}
+
+// CyberRequestFingerprintKey returns an API-key-scoped block key for the
+// visible request content. It is used only as a fallback when no explicit
+// session identity is available: an exact retry of an already blocked request
+// must not be sent upstream again. The raw content is never stored; only the
+// one-way hash is used as a Redis key.
+func CyberRequestFingerprintKey(apiKeyID int64, body []byte) string {
+	if apiKeyID <= 0 || len(body) == 0 {
+		return ""
+	}
+	var normalized strings.Builder
+	for _, field := range cyberRequestFingerprintFields {
+		value := gjson.GetBytes(body, field)
+		if !value.Exists() {
+			continue
+		}
+		_, _ = normalized.WriteString(field)
+		_ = normalized.WriteByte('=')
+		_, _ = normalized.WriteString(value.Raw)
+		_ = normalized.WriteByte('\n')
+	}
+	if normalized.Len() == 0 {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("cyber-request-fingerprint:v1|api_key=" + strconv.FormatInt(apiKeyID, 10) + "|" + normalized.String()))
+	return hex.EncodeToString(sum[:])
+}
+
 // MarkCyberSessionBlocked 把会话写入屏蔽表（写入点：cyber 命中后）。
 // 开关关闭、key 为空或存储不可用时静默跳过。
 func (s *OpenAIGatewayService) MarkCyberSessionBlocked(ctx context.Context, scopeKey string, keys []string) {
@@ -142,23 +181,64 @@ func (s *OpenAIGatewayService) MarkCyberSessionBlocked(ctx context.Context, scop
 	}
 }
 
-// FindCyberSessionBlockedForRequest blocks only an exact session identity.
-// Unknown identity and storage failures remain fail-open: the upstream still
-// evaluates the request. Source metadata and history length cannot prove that
-// a request belongs to a previously blocked session.
-func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Context, apiKeyID int64, c *gin.Context, body []byte, _ string, _ string) string {
-	return s.FindCyberSessionBlockedForIdentity(ctx, ResolveCyberSessionIdentity(apiKeyID, c, body))
+// MarkCyberSessionBlockedForRequest prefers the explicit session identity and
+// falls back to the content fingerprint when the client supplied none. This is
+// what prevents an identical retry from reaching upstream again after a
+// cyber_policy hit.
+func (s *OpenAIGatewayService) MarkCyberSessionBlockedForRequest(ctx context.Context, apiKeyID int64, identity CyberSessionIdentityResolution, body []byte) {
+	keys := make([]string, 0, 1)
+	if identity.BlockKey != "" {
+		keys = append(keys, identity.BlockKey)
+	} else if key := CyberRequestFingerprintKey(apiKeyID, body); key != "" {
+		keys = append(keys, key)
+	}
+	s.MarkCyberSessionBlocked(ctx, "", keys)
 }
 
-// FindCyberSessionBlockedForIdentity checks a pre-resolved identity. This lets
-// WebSocket turns safely reuse a connection-bound identity without modifying
-// the client payload or synthesizing request headers.
+// FindCyberSessionBlockedForRequest blocks an exact session identity, or an
+// exact content fingerprint when the client has no explicit identity. Unknown
+// content and storage failures remain fail-open.
+func (s *OpenAIGatewayService) FindCyberSessionBlockedForRequest(ctx context.Context, apiKeyID int64, c *gin.Context, body []byte, _ string, _ string) string {
+	identity := ResolveCyberSessionIdentity(apiKeyID, c, body)
+	return s.findCyberSessionBlocked(ctx, apiKeyID, identity, body)
+}
+
+// FindCyberSessionBlockedForIdentityAndBody is used by WebSocket turns, which
+// may inherit a connection-bound identity while still needing the per-turn
+// fingerprint fallback.
+func (s *OpenAIGatewayService) FindCyberSessionBlockedForIdentityAndBody(ctx context.Context, apiKeyID int64, identity CyberSessionIdentityResolution, body []byte) string {
+	return s.findCyberSessionBlocked(ctx, apiKeyID, identity, body)
+}
+
+// FindCyberSessionBlockedForIdentity checks a pre-resolved identity without a
+// request body. Callers that have the body should use the AndBody variant so
+// the fingerprint fallback is available.
 func (s *OpenAIGatewayService) FindCyberSessionBlockedForIdentity(ctx context.Context, identity CyberSessionIdentityResolution) string {
+	return s.findCyberSessionBlocked(ctx, 0, identity, nil)
+}
+
+func (s *OpenAIGatewayService) findCyberSessionBlocked(ctx context.Context, apiKeyID int64, identity CyberSessionIdentityResolution, body []byte) string {
 	enabled, _ := s.CyberSessionBlockRuntime(ctx)
 	if !enabled {
 		return ""
 	}
 	keys := identity.LookupKeys
+	fingerprintKey := ""
+	if apiKeyID > 0 {
+		fingerprintKey = CyberRequestFingerprintKey(apiKeyID, body)
+		if fingerprintKey != "" {
+			duplicate := false
+			for _, key := range keys {
+				if key == fingerprintKey {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				keys = append(keys, fingerprintKey)
+			}
+		}
+	}
 	if len(keys) == 0 {
 		return ""
 	}
@@ -168,8 +248,11 @@ func (s *OpenAIGatewayService) FindCyberSessionBlockedForIdentity(ctx context.Co
 	}
 	matched, err := store.FindCyberSessionBlocked(ctx, keys)
 	if err != nil {
-		logger.LegacyPrintf("service.openai_gateway", "cyber explicit session read failed: err=%v", err)
+		logger.LegacyPrintf("service.openai_gateway", "cyber session block read failed: err=%v", err)
 		return ""
+	}
+	if matched != "" && matched == fingerprintKey {
+		logger.LegacyPrintf("service.openai_gateway", "cyber request fingerprint block matched: api_key_id=%d", apiKeyID)
 	}
 	return matched
 }

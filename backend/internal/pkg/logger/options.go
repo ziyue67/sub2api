@@ -14,6 +14,7 @@ const (
 )
 
 type InitOptions struct {
+	Runtime         RuntimeIdentity
 	Level           string
 	Format          string
 	ServiceName     string

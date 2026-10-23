@@ -6,6 +6,8 @@ export interface TimingAttempt {
   body_eof: boolean; events: Record<string, number>
 }
 export interface RequestTiming {
+  identity_source?: string
+  auth_rejection?: string
   outcome?: string; client_disconnect: boolean; version: number; trace_id: string; started_at: string; total_ms: number; status: number; canceled: boolean
   truncated: boolean; body_bytes: number; body_expected: number; body_complete: boolean; body_read_ms: number
   downstream_bytes: number; downstream_write_ms: number; downstream_error: boolean; ttft_mode?: string; terminal?: string

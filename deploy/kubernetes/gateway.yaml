@@ -4,7 +4,8 @@ metadata:
   name: sub2api-gateway
 spec:
   serviceName: sub2api-gateway-headless
-  replicas: 2
+  # Stage a new workload without starting any gateway by default.
+  replicas: 0
   podManagementPolicy: Parallel
   updateStrategy:
     type: RollingUpdate
@@ -74,11 +75,13 @@ spec:
             - {name: http, containerPort: 8080}
           env:
             - {name: RUNTIME_ROLE, value: gateway}
+            - {name: RUNTIME_SCHEDULER_SNAPSHOT_MODE, value: reader}
             - {name: RUN_MODE, value: standard}
             - {name: AUTO_SETUP, value: "false"}
             - {name: DATA_DIR, value: /app/data}
             - {name: SERVER_HOST, value: 0.0.0.0}
             - {name: SERVER_PORT, value: "8080"}
+            - {name: SERVER_READINESS_TIMEOUT_SECONDS, value: "3"}
             - {name: SERVER_GRACEFUL_SHUTDOWN_TIMEOUT, value: "240"}
             - {name: SERVER_SHUTDOWN_DRAIN_DELAY, value: "10"}
             - {name: DATABASE_MAX_OPEN_CONNS, value: "16"}
@@ -104,7 +107,7 @@ spec:
           readinessProbe:
             httpGet: {path: /readyz, port: http}
             periodSeconds: 5
-            timeoutSeconds: 2
+            timeoutSeconds: 5
             failureThreshold: 2
           livenessProbe:
             httpGet: {path: /health, port: http}

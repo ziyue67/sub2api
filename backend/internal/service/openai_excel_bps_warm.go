@@ -12,6 +12,12 @@ import (
 const excelBPSWarmSyncInterval = 5 * time.Second
 const excelBPSWarmMaxTarget = 4096
 
+// BPSWarmAccountRepository avoids hydrating credentials, proxies and groups for
+// the periodic pool-sizing pass. Implementations must retain eligibility flags.
+type BPSWarmAccountRepository interface {
+	ListBPSWarmAccounts(context.Context) ([]Account, error)
+}
+
 func excelBPSWarmTargets(accounts []Account) (managed, static int) {
 	for i := range accounts {
 		a := &accounts[i]
@@ -84,7 +90,15 @@ func (s *OpenAIGatewayService) StopBPSWarmPool() {
 }
 func (s *OpenAIGatewayService) syncBPSWarmPool(ctx context.Context) {
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	accounts, err := s.accountRepo.ListByPlatform(queryCtx, PlatformOpenAI)
+	var accounts []Account
+	var err error
+	if repo, ok := s.accountRepo.(BPSWarmAccountRepository); ok {
+		accounts, err = repo.ListBPSWarmAccounts(queryCtx)
+	} else {
+		// Compatibility for alternate repositories; the production repository
+		// implements the narrow projection. Never retry a projection error here.
+		accounts, err = s.accountRepo.ListByPlatform(queryCtx, PlatformOpenAI)
+	}
 	cancel()
 	if err != nil {
 		if ctx.Err() == nil {

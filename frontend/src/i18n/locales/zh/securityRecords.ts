@@ -1,0 +1,18 @@
+export default {
+  title: '安全记录', restricted: '当前模型请求权限受限', unrestricted: '当前未受模型请求限制',
+  loginUnaffected: '此处限制只针对模型 API 请求，不影响登录和查看个人资料。',
+  observation: '当前为观察模式，仅记录命中，不执行新增处罚。',
+  reason: '原因 / 命中分类', until: '解除时间', session: '会话标识', count: '本周期命中次数',
+  originalHint: '展开可查看此账号触发审核的具体对话提示词；原文仅限本人和管理员查看。',
+  showPrompt: '查看触发提示词原文', hidePrompt: '收起原文', empty: '暂无安全记录', previous: '上一页', next: '下一页',
+  loadFailed: '无法获取安全状态或记录，请刷新重试；当前状态未知。', saveFailed: '保存失败；如配置被更新，请刷新后重试。', saved: '处罚策略已保存',
+  policyTitle: '请求惩罚策略', policyHint: '独立于登录封禁。仅明确拦截的风险命中累计，节点故障不算违规；正常请求也会检查已有处罚。',
+  enabled: '启用请求惩罚', observeOnly: '仅观察，不执行处罚', masterOff: '风控总开关已关闭，当前策略不生效。',
+  policy: '惩罚选项', sessionPolicy: '会话累计：达阈值拒绝该会话', userPolicy: '用户累计：达阈值拒绝该用户所有请求', tieredPolicy: '会话两级：先转受限分组，达阈值拒绝该会话',
+  threshold: '处罚阈值（次）', window: '累计时间窗口（小时）', duration: '处罚持续时间（小时）', targetGroup: '受限分组',
+  routeHint: '命中当次仍拒绝；后续请求才路由。目标必须已绑定至 API Key 并具备授权、余额或订阅；不可用时拒绝，不回退正常分组。缺少明确会话标识时只记当次，不扩大处罚到其他会话。',
+  allGroups: '全部分组参与累计', exempt: '豁免用户 ID（逗号分隔）',
+  releaseUser: '解除用户 ID', releaseReason: '解除原因', release: '解除请求限制并清零次数', releaseConfirm: '解除该用户所有会话和用户级请求处罚，并保留历史记录？', released: '已解除请求处罚；历史记录已保留',
+  scopes: { session: '会话级', user: '用户全部请求', request: '仅当次请求（缺少会话标识）' },
+  actions: { block: '拒绝请求', route: '转入受限分组', record: '尚未达到阈值', observe: '仅观察', none: '未受限' },
+}

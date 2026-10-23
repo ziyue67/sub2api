@@ -106,15 +106,16 @@ type subscriptionCacheInvalidationPubSub interface {
 // BillingCacheService 计费缓存服务
 // 负责余额和订阅数据的缓存管理，提供高性能的计费资格检查
 type BillingCacheService struct {
-	cache                 BillingCache
-	userRepo              UserRepository
-	subRepo               UserSubscriptionRepository
-	apiKeyRateLimitLoader apiKeyRateLimitLoader
-	userRPMCache          UserRPMCache
-	userGroupRateRepo     UserGroupRateRepository
-	cfg                   *config.Config
-	circuitBreaker        *billingCircuitBreaker
-	userPlatformQuotaRepo UserPlatformQuotaRepository
+	balanceRejectionNotifier BalanceRejectionNotifier
+	cache                    BillingCache
+	userRepo                 UserRepository
+	subRepo                  UserSubscriptionRepository
+	apiKeyRateLimitLoader    apiKeyRateLimitLoader
+	userRPMCache             UserRPMCache
+	userGroupRateRepo        UserGroupRateRepository
+	cfg                      *config.Config
+	circuitBreaker           *billingCircuitBreaker
+	userPlatformQuotaRepo    UserPlatformQuotaRepository
 
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
@@ -765,7 +766,7 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 			return err
 		}
 	} else {
-		if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
+		if err := s.checkBalanceEligibility(ctx, user); err != nil {
 			return err
 		}
 	}
@@ -1024,7 +1025,8 @@ func (s *BillingCacheService) balanceBelowEligibilityThreshold(balance float64) 
 }
 
 // checkBalanceEligibility 检查余额模式资格
-func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
+func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, user *User) error {
+	userID := user.ID
 	balance, err := s.GetUserBalance(ctx, userID)
 	if err != nil {
 		if s.circuitBreaker != nil {
@@ -1038,6 +1040,9 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 	}
 
 	if s.balanceBelowEligibilityThreshold(balance) {
+		if s.balanceRejectionNotifier != nil {
+			s.balanceRejectionNotifier.CheckBalanceOnRejection(user, balance)
+		}
 		return ErrInsufficientBalance
 	}
 

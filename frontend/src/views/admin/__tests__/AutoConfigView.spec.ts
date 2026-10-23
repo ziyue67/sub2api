@@ -9,6 +9,7 @@ import type { Group } from '@/types'
 import { defaultModelBillingConfig } from '@/utils/modelBilling'
 import { defaultExcelBPSDefaults } from '@/utils/excelBPSDefaults'
 import { defaultOAuthModelMappings } from '@/utils/oauthModelMappings'
+import { defaultOpenAITwoFAAdmissionConfig } from '@/utils/openaiTwoFAAdmission'
 vi.mock('@/components/account/ModelWhitelistSelector.vue', () => ({ default: { props: ['modelValue'], template: '<div data-testid="model-selection">{{ modelValue.join(", ") }}</div>' } }))
 const state = vi.hoisted(() => ({ auth: null as any }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => state.auth }))
@@ -19,7 +20,7 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/api/admin/autoConfig', () => ({ getAutoConfig: vi.fn(), saveAutoConfig: vi.fn() }))
 vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn() }))
 vi.mock('@/api/admin/groups', () => ({ getAll: vi.fn() }))
-const config: AutoConfig = { model_billing: defaultModelBillingConfig(), model_mappings: defaultOAuthModelMappings('openai'), excel_bps: defaultExcelBPSDefaults(), enabled: false, platform: 'openai', priority: 50, load_factor: 1, concurrency: 3, cost_multiplier: 0.07, group_ids: [], upgrade_enabled: false, upgrade_group_ids: [], successes_per_step: 20, upgrade_step: 1, max_concurrency: 100, cooldown_seconds: 60, revision: '' }
+const config: AutoConfig = { openai_two_fa_admission: defaultOpenAITwoFAAdmissionConfig(), model_billing: defaultModelBillingConfig(), model_mappings: defaultOAuthModelMappings('openai'), excel_bps: defaultExcelBPSDefaults(), enabled: false, platform: 'openai', priority: 50, load_factor: 1, concurrency: 3, cost_multiplier: 0.07, group_ids: [], upgrade_enabled: false, upgrade_group_ids: [], successes_per_step: 20, upgrade_step: 1, max_concurrency: 100, cooldown_seconds: 60, revision: '' }
 beforeEach(() => {
  vi.resetAllMocks(); vi.mocked(listQualityPlans).mockResolvedValue([]); state.auth = reactive({ user: { id: 1, role: 'admin' } })
  vi.mocked(getAutoConfig).mockResolvedValue(structuredClone(config)); vi.mocked(saveAutoConfig).mockImplementation(async c => c)
@@ -215,4 +216,30 @@ it('preserves the saved quality copy if listing fails and allows opting out', as
  await w.get('form').trigger('submit'); await flushPromises()
  expect(vi.mocked(saveAutoConfig).mock.calls[1][0].quality_rule).toBeNull()
  w.unmount()
+})
+
+
+describe('new 2FA admission configuration', () => {
+ it('saves independently and validates active OpenAI isolation groups', async () => {
+  const w = mount(AutoConfigView); await flushPromises()
+  expect(w.get<HTMLInputElement>('[data-testid="admission-enabled"]').element.checked).toBe(false)
+  await w.get('[data-testid="admission-enabled"]').setValue(true)
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(saveAutoConfig).not.toHaveBeenCalled()
+  await w.get('[data-testid="admission-group"]').setValue('5')
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(saveAutoConfig).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, openai_two_fa_admission: { ...defaultOpenAITwoFAAdmissionConfig(), enabled: true, isolation_group_id: 5 } }))
+  w.unmount()
+ })
+ it('fills defaults for older settings without changing the other feature switches', async () => {
+  const legacy = { ...config }; delete legacy.openai_two_fa_admission
+  vi.mocked(getAutoConfig).mockResolvedValue(legacy)
+  const w = mount(AutoConfigView); await flushPromises()
+  expect(w.get<HTMLInputElement>('[data-testid="admission-model"]').element.value).toBe('gpt-6.1-sol')
+  expect(w.get<HTMLInputElement>('[data-testid="admission-pass_count"]').element.value).toBe('6')
+  expect(w.get<HTMLInputElement>('[data-testid="admission-wait_seconds"]').element.value).toBe('60')
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(saveAutoConfig).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, upgrade_enabled: false, openai_two_fa_admission: defaultOpenAITwoFAAdmissionConfig() }))
+  w.unmount()
+ })
 })

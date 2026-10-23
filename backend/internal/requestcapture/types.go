@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 )
 
 const (
@@ -77,16 +79,20 @@ type Meta struct {
 }
 
 type Attempt struct {
-	Number            int       `json:"number"`
-	AccountID         int64     `json:"account_id"`
-	StartedAt         time.Time `json:"started_at"`
-	Status            int       `json:"status,omitempty"`
-	UpstreamRequestID string    `json:"upstream_request_id,omitempty"`
-	Error             string    `json:"error,omitempty"`
-	ErrorStage        string    `json:"error_stage,omitempty"`
-	ReadError         string    `json:"read_error,omitempty"`
-	ResponseTerminal  string    `json:"response_terminal,omitempty"`
-	LocalClose        bool      `json:"local_close,omitempty"`
+	Phase             string              `json:"phase,omitempty"`
+	HandshakeMS       *float64            `json:"handshake_ms,omitempty"`
+	FirstEventMS      *float64            `json:"first_event_ms,omitempty"`
+	Route             transportdiag.Route `json:"route"`
+	Number            int                 `json:"number"`
+	AccountID         int64               `json:"account_id"`
+	StartedAt         time.Time           `json:"started_at"`
+	Status            int                 `json:"status,omitempty"`
+	UpstreamRequestID string              `json:"upstream_request_id,omitempty"`
+	Error             string              `json:"error,omitempty"`
+	ErrorStage        string              `json:"error_stage,omitempty"`
+	ReadError         string              `json:"read_error,omitempty"`
+	ResponseTerminal  string              `json:"response_terminal,omitempty"`
+	LocalClose        bool                `json:"local_close,omitempty"`
 }
 
 type Part struct {

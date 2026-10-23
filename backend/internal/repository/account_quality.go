@@ -45,6 +45,9 @@ type qualityGroup struct {
 	AllowedModels json.RawMessage `json:"allowed_models"`
 }
 type qualityState struct {
+	// Transaction-local evidence, copied to the result even when restore rolls
+	// back. Never persist diagnostics as ownership or use them as a restore guard.
+	RestoreDiagnostic *service.QualityRestoreDiagnostic `json:"-"`
 	// Composite policies compose the same model/group transitions used by the
 	// standalone actions. Persistent entries never share native cooldown storage.
 	PersistentModels  bool            `json:"persistent_models,omitempty"`
@@ -77,6 +80,7 @@ type qualityState struct {
 // Lease/version checks, account mutation, ownership and scheduler invalidation
 // commit together. A paused, edited, deleted or expired run cannot change accounts.
 func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, plan *service.ScheduledTestPlan, until time.Time, outcome string) (string, error) {
+	plan.QualityRestoreDiagnostic = nil
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -90,6 +94,17 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 	}
 	if err != nil {
 		return "", err
+	}
+
+	if plan.PelicanConfig.Quality.Action == service.QualityActionOpenAITwoFAAdmission {
+		action, applyErr := applyOpenAITwoFAAdmissionOutcome(ctx, tx, plan, until, outcome)
+		if applyErr != nil {
+			return "", applyErr
+		}
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+		return action, nil
 	}
 
 	var raw []byte
@@ -134,6 +149,23 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 	if state.Quality5xxEpisode != plan.Quality5xxEpisode {
 		return "stale_run", nil
 	}
+	defer func() {
+		diagnostic := plan.QualityRestoreDiagnostic
+		if diagnostic == nil {
+			diagnostic = state.RestoreDiagnostic
+		}
+		if diagnostic == nil {
+			return
+		}
+		diagnostic.Scope = state.Action
+		diagnostic.AccountStatus = status
+		diagnostic.Schedulable = &schedulable
+		diagnostic.AccountVersion = &version
+		if !state.AccountVersion.IsZero() {
+			diagnostic.OwnedAccountVersion = &state.AccountVersion
+		}
+		plan.QualityRestoreDiagnostic = diagnostic
+	}()
 	q := plan.PelicanConfig.Quality
 	// Changing a rule's action does not discard its previous ownership. While
 	// holding the account lock, keep another rule from taking over that scope
@@ -243,6 +275,7 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		// membership edits must not turn an enabled auto-restore rule into a
 		// manual cleanup task. A non-active account is not safe to reactivate.
 		if status != "active" {
+			state.RestoreDiagnostic = qualityRestoreConflict("account_not_active")
 			return "restore_conflict", nil
 		}
 		switch state.Action {
@@ -252,6 +285,7 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 				var enabled bool
 				err = tx.QueryRowContext(ctx, `SELECT schedulable FROM accounts WHERE id=$1`, plan.AccountID).Scan(&enabled)
 				if err == nil && !enabled {
+					state.RestoreDiagnostic = qualityRestoreConflict("account_expired")
 					return "restore_conflict", nil
 				}
 			}

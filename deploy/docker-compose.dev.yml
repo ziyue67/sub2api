@@ -28,6 +28,9 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
       - SERVER_MODE=debug
+      # Pass through only when set; an empty value explicitly disables proxy trust.
+      # Do not add an empty fallback: it would override persistent config.yaml.
+      - SERVER_TRUSTED_PROXIES
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}
       - SIMPLE_MODE_AUTO_CREATE_DEFAULT_GROUPS=${SIMPLE_MODE_AUTO_CREATE_DEFAULT_GROUPS:-}

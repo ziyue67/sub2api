@@ -227,3 +227,27 @@ func TestGatewayCompatibilityHandlers_UpstreamErrorEventAfterOutputIsNotBilled(t
 		})
 	}
 }
+
+// Runs the actual handlers and HTTP adapter: a refusal before any output must
+// terminate the request, even when a success stream is queued behind it.
+func TestGatewayCompatibilityHandlersSafetyRefusalNeverReplays(t *testing.T) {
+	for _, endpoint := range []string{"chat/completions", "responses"} {
+		for _, rejection := range []string{
+			`{"type":"error","error":{"type":"permission_error","code":"cyber_policy","message":"blocked"}}`,
+			`{"type":"error","error":{"type":"invalid_request_error","message":"This request was blocked by safeguard policy."}}`,
+		} {
+			t.Run(endpoint+"/"+rejection, func(t *testing.T) {
+				stream := "event: error\ndata: " + rejection + "\n\n" + compatStreamUsagePartialStream + compatStreamUsageCompletion
+				run := runCompatStreamUsageHandler(t, endpoint, stream, true)
+				require.Equal(t, 1, run.upstream.calls, "safety rejection must never replay")
+				require.NotContains(t, run.rec.Body.String(), "partial", "queued output after refusal must not be forwarded")
+				success, failure := compatStreamUsageMarkers(endpoint)
+				require.NotContains(t, run.rec.Body.String(), success)
+				require.Contains(t, run.rec.Body.String(), failure)
+				run.billingRepo.mu.Lock()
+				defer run.billingRepo.mu.Unlock()
+				require.Empty(t, run.billingRepo.commands, "refusal must not create a successful usage debit")
+			})
+		}
+	}
+}

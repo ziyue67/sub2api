@@ -287,8 +287,9 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 	out := make([]dto.UsageLog, 0, len(records))
+	showResponseModel := h.userMaySeeUpstreamResponseModel(c)
 	for i := range records {
-		out = append(out, *dto.UsageLogFromService(&records[i]).Localized(c.GetHeader("Accept-Language")))
+		out = append(out, *h.userUsageLogDTO(c, &records[i], showResponseModel))
 	}
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
@@ -467,7 +468,15 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 		response.Success(c, dto.UsageLogFromServiceObserver(record).Localized(c.GetHeader("Accept-Language")))
 		return
 	}
-	response.Success(c, dto.UsageLogFromService(record).Localized(c.GetHeader("Accept-Language")))
+	response.Success(c, h.userUsageLogDTO(c, record, h.userMaySeeUpstreamResponseModel(c)))
+}
+
+func (h *UsageHandler) userMaySeeUpstreamResponseModel(c *gin.Context) bool {
+	return h.settingService != nil && h.settingService.IsUserUpstreamResponseModelVisible(c.Request.Context())
+}
+
+func (h *UsageHandler) userUsageLogDTO(c *gin.Context, record *service.UsageLog, showResponseModel bool) *dto.UsageLog {
+	return dto.UsageLogFromServiceForUser(record, showResponseModel).Localized(c.GetHeader("Accept-Language"))
 }
 
 // Stats handles getting usage statistics

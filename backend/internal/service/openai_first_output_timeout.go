@@ -260,6 +260,7 @@ func (s *OpenAIGatewayService) newOpenAIFirstOutputTimeoutError(
 	phase string,
 	responseHeaders http.Header,
 ) *UpstreamFailoverError {
+	markPriorityAttemptFailure(ctx)
 	elapsed := time.Since(startTime)
 	logger.LegacyPrintf(
 		"service.openai_gateway",

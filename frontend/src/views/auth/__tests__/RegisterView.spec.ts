@@ -52,10 +52,10 @@ vi.mock('vue-i18n', () => ({
     }
   }),
   useI18n: () => ({
-    t: (key: string) =>
-      key === 'auth.emailDomainRegistrationLimit'
-        ? '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
-        : key,
+    t: (key: string) => ({
+      'auth.emailDomainRegistrationLimit': '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。',
+      'auth.emailAliasNotAllowed': '不支持使用邮箱别名注册，请去掉 Gmail 用户名中的点号、+标签或域名末尾的点号后重试。'
+    } as Record<string, string>)[key] ?? key,
     locale: { value: 'en' }
   })
 }))
@@ -280,6 +280,29 @@ describe('RegisterView', () => {
 
     expect(showErrorMock).toHaveBeenCalledWith(
       '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
+    )
+  })
+
+  it('shows the localized email alias rejection message returned by the backend', async () => {
+    getPublicSettingsMock.mockResolvedValueOnce({
+      ...publicSettings,
+      turnstile_enabled: false
+    })
+    registerMock.mockRejectedValueOnce({
+      reason: 'EMAIL_ALIAS_NOT_ALLOWED',
+      message: 'raw backend message'
+    })
+
+    const wrapper = mountRegister()
+    await flushPromises()
+    await wrapper.get('#email').setValue('sa.m.ple@gmail.com')
+    await wrapper.get('#password').setValue('secret-123')
+    await wrapper.get('#confirmPassword').setValue('secret-123')
+    await wrapper.get('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(showErrorMock).toHaveBeenCalledWith(
+      '不支持使用邮箱别名注册，请去掉 Gmail 用户名中的点号、+标签或域名末尾的点号后重试。'
     )
   })
 

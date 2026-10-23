@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 	"github.com/google/uuid"
 )
 
@@ -18,24 +19,28 @@ type Span struct {
 	Attempt int     `json:"attempt,omitempty"`
 }
 type Attempt struct {
-	Terminal        string             `json:"terminal,omitempty"`
-	CleanupCanceled bool               `json:"cleanup_canceled,omitempty"`
-	Kind            string             `json:"kind"`
-	Parent          int                `json:"parent,omitempty"`
-	Number          int                `json:"number"`
-	AccountID       int64              `json:"account_id"`
-	ProxyID         int64              `json:"proxy_id"`
-	StartMS         float64            `json:"start_ms"`
-	EndMS           *float64           `json:"end_ms"`
-	Status          int                `json:"status"`
-	Error           string             `json:"error,omitempty"`
-	Reused          *bool              `json:"reused"`
-	RequestBytes    int64              `json:"request_bytes"`
-	ResponseBytes   int64              `json:"response_bytes"`
-	BodyEOF         bool               `json:"body_eof"`
-	Events          map[string]float64 `json:"events"`
+	Route           transportdiag.Route `json:"route"`
+	Terminal        string              `json:"terminal,omitempty"`
+	CleanupCanceled bool                `json:"cleanup_canceled,omitempty"`
+	Kind            string              `json:"kind"`
+	Parent          int                 `json:"parent,omitempty"`
+	Number          int                 `json:"number"`
+	AccountID       int64               `json:"account_id"`
+	ProxyID         int64               `json:"proxy_id"`
+	StartMS         float64             `json:"start_ms"`
+	EndMS           *float64            `json:"end_ms"`
+	Status          int                 `json:"status"`
+	Error           string              `json:"error,omitempty"`
+	Reused          *bool               `json:"reused"`
+	RequestBytes    int64               `json:"request_bytes"`
+	ResponseBytes   int64               `json:"response_bytes"`
+	BodyEOF         bool                `json:"body_eof"`
+	Events          map[string]float64  `json:"events"`
 }
 type Snapshot struct {
+	IdentitySource    string             `json:"identity_source,omitempty"`
+	AuthRejection     string             `json:"auth_rejection,omitempty"`
+	Routes            []RouteObservation `json:"routes,omitempty"`
 	Outcome           string             `json:"outcome,omitempty"`
 	ClientDisconnect  bool               `json:"client_disconnect"`
 	Version           int                `json:"version"`
@@ -54,6 +59,7 @@ type Snapshot struct {
 	DownstreamError   bool               `json:"downstream_error"`
 	TTFTMode          string             `json:"ttft_mode,omitempty"`
 	Terminal          string             `json:"terminal,omitempty"`
+	TerminalFlushed   string             `json:"terminal_flushed,omitempty"`
 	Events            map[string]float64 `json:"events"`
 	Spans             []Span             `json:"spans"`
 	Attempts          []Attempt          `json:"attempts"`
@@ -178,6 +184,7 @@ func Mode(ctx context.Context, mode string) {
 }
 func (c *Collector) snapshot() Snapshot {
 	d := c.data
+	d.Routes = append([]RouteObservation(nil), d.Routes...)
 	d.Events = cloneEvents(d.Events)
 	d.Spans = append([]Span{}, d.Spans...)
 	d.Attempts = append([]Attempt{}, d.Attempts...)

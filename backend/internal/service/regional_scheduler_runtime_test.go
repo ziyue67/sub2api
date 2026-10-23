@@ -99,6 +99,16 @@ func writeRuntimeTestConfig(t *testing.T, c RegionalSchedulerRuntimeConfig) *con
 	return &config.Config{Runtime: config.RuntimeConfig{Role: role, RegionalSchedulerFile: path}}
 }
 
+// runtimeTestConfig belongs to the unit-tagged runtime suite. Keep callers here
+// so default-tag compilation (including lint) never depends on that fixture.
+func TestRegionalSchedulerPublisherRejectsReaderMode(t *testing.T) {
+	c := runtimeTestConfig(t)
+	cfg := &config.Config{Runtime: config.RuntimeConfig{Role: config.RuntimeRoleFull, SchedulerSnapshotMode: config.SchedulerSnapshotModeReader}}
+	require.ErrorContains(t, c.validate(cfg), "regional mode incompatible")
+	cfg.Runtime.SchedulerSnapshotMode = config.SchedulerSnapshotModeWriter
+	require.NoError(t, c.validate(cfg))
+}
+
 func TestRegionalRuntimeMTLSPullRestoreAndAdmission(t *testing.T) {
 	c := runtimeTestConfig(t)
 	authority := &runtimeAuthorityStub{}

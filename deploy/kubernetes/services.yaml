@@ -23,3 +23,19 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+---
+# A dedicated ingress may target this Service for a fixed-instance canary.
+# It never falls back to a different ordinal when gateway-0 is unavailable.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sub2api-gateway-0
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sub2api-gateway
+    statefulset.kubernetes.io/pod-name: sub2api-gateway-0
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

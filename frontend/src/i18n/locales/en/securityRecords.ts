@@ -1,0 +1,18 @@
+export default {
+  title: 'Security records', restricted: 'Model requests are currently restricted', unrestricted: 'No active model request restriction',
+  loginUnaffected: 'These restrictions apply to model API requests. Login and profile access remain available.',
+  observation: 'Observation mode records findings without enforcing new penalties.',
+  reason: 'Reason / matched categories', until: 'Expires at', session: 'Session reference', count: 'Findings in this window',
+  originalHint: 'Expand a record to review the conversation text that triggered auditing. Only its owner and administrators can view it.',
+  showPrompt: 'View original prompt', hidePrompt: 'Hide original prompt', empty: 'No security records', previous: 'Previous', next: 'Next',
+  loadFailed: 'Security status or records could not be loaded. Status is unknown; refresh to retry.', saveFailed: 'Save failed. Refresh if another administrator updated the configuration.', saved: 'Penalty policy saved',
+  policyTitle: 'Request penalty policy', policyHint: 'Separate from account login status. Only explicit blocked findings add strikes; scanner failures do not. Existing penalties apply to normal requests too.',
+  enabled: 'Enable request penalties', observeOnly: 'Observe without enforcing penalties', masterOff: 'The master risk-control switch is off; this policy is inactive.',
+  policy: 'Penalty option', sessionPolicy: 'Session: reject this session at threshold', userPolicy: 'User: reject all user requests at threshold', tieredPolicy: 'Session tiers: restricted group first, then reject at threshold',
+  threshold: 'Strike threshold', window: 'Counting window (hours)', duration: 'Penalty duration (hours)', targetGroup: 'Restricted group',
+  routeHint: 'The triggering request stays blocked. Only later requests are routed. The target must be bound to the API key and pass authorization and billing checks. An unavailable target is rejected without fallback. Missing session identity records the request without penalizing other sessions.',
+  allGroups: 'Count findings from all groups', exempt: 'Exempt user IDs (comma separated)',
+  releaseUser: 'User ID to release', releaseReason: 'Release reason', release: 'Release restrictions and reset strikes', releaseConfirm: 'Release all session and user request penalties for this user, preserving history?', released: 'Request restrictions released; history retained',
+  scopes: { session: 'Session', user: 'All user requests', request: 'This request only (no session identity)' },
+  actions: { block: 'Requests rejected', route: 'Restricted group', record: 'Below threshold', observe: 'Observation only', none: 'Unrestricted' },
+}

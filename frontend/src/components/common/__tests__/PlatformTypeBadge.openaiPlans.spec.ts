@@ -19,6 +19,31 @@ function mountPlan(platform: AccountPlatform, planType: string) {
 }
 
 describe('PlatformTypeBadge ChatGPT plan tiers', () => {
+  it('hides legacy upstream plan and expiration metadata for OpenAI API keys', async () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'apikey',
+        planType: 'pro',
+        subscriptionExpiresAt: '2027-01-01T00:00:00Z',
+      },
+    })
+
+    for (const planType of ['pro', 'chatgptpro', 'plus', 'team', 'free', 'future_sku']) {
+      await wrapper.setProps({ planType })
+      expect(wrapper.text().replace(/\s+/g, '')).toBe('OpenAIKey')
+      expect(wrapper.text()).not.toContain('admin.accounts.subscriptionExpires')
+      expect(wrapper.text()).not.toContain('2027-01-01')
+    }
+
+    await wrapper.setProps({ type: 'oauth', planType: 'pro' })
+    expect(wrapper.text()).toContain('Pro 200')
+    expect(wrapper.text()).toContain('admin.accounts.subscriptionExpires')
+
+    await wrapper.setProps({ type: 'apikey' })
+    expect(wrapper.text().replace(/\s+/g, '')).toBe('OpenAIKey')
+  })
+
   it('labels pro / chatgptpro as Pro 200 with the Pro color', () => {
     for (const planType of ['pro', 'chatgptpro', 'PRO']) {
       const wrapper = mountPlan('openai', planType)

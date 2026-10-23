@@ -25,6 +25,8 @@ const (
 // RateLimitOptions 限流可选配置
 type RateLimitOptions struct {
 	FailureMode RateLimitFailureMode
+	// Enabled is evaluated for every request. Nil preserves the default limit.
+	Enabled func(*gin.Context) bool
 }
 
 var rateLimitScript = redis.NewScript(`
@@ -136,6 +138,10 @@ func (r *RateLimiter) LimitWithOptions(key string, limit int, window time.Durati
 	}
 
 	return func(c *gin.Context) {
+		if opts.Enabled != nil && !opts.Enabled(c) {
+			c.Next()
+			return
+		}
 		result, err := r.Allow(c.Request.Context(), key+":"+clientIPForRateLimit(c), limit, window)
 		if err != nil {
 			log.Printf("[RateLimit] redis error: key=%s mode=%s err=%v", r.prefix+key, failureModeLabel(failureMode), err)

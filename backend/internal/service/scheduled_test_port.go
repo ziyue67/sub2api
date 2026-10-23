@@ -7,11 +7,14 @@ import (
 
 // PelicanTestConfig stores intelligence test inputs; a missing kind preserves legacy HTML plans.
 type PelicanTestConfig struct {
+	// Optional display name stored in the existing configuration JSON.
+	RuleName string `json:"rule_name,omitempty"`
 	// Filled only on saved result snapshots, never used to configure a rule.
-	QualityModelOutcomes map[string]string      `json:"quality_model_outcomes,omitempty"`
-	QualityModelActions  map[string]string      `json:"quality_model_actions,omitempty"`
-	TriggerSource        string                 `json:"trigger_source,omitempty"`
-	RandomQuestion       *QualityRandomQuestion `json:"random_question,omitempty"`
+	QualityRestoreDiagnostic *QualityRestoreDiagnostic `json:"quality_restore_diagnostic,omitempty"`
+	QualityModelOutcomes     map[string]string         `json:"quality_model_outcomes,omitempty"`
+	QualityModelActions      map[string]string         `json:"quality_model_actions,omitempty"`
+	TriggerSource            string                    `json:"trigger_source,omitempty"`
+	RandomQuestion           *QualityRandomQuestion    `json:"random_question,omitempty"`
 	// BPSRecoveryPending is filled from persisted ownership when the runner
 	// claims a plan. It is never accepted from or written to configuration JSON.
 	BPSRecoveryPending bool           `json:"-"`
@@ -29,25 +32,28 @@ type PelicanTestConfig struct {
 
 // ScheduledTestPlan represents a scheduled test plan domain model.
 type ScheduledTestPlan struct {
-	QualityModelActions  map[string]string  `json:"-"`
-	QualityModelOutcomes map[string]string  `json:"-"`
-	Quality5xxEpisode    int64              `json:"-"`
-	TriggerSource        string             `json:"-"`
-	TriggerObservedAt    *time.Time         `json:"-"`
-	AccountName          string             `json:"account_name,omitempty"`
-	PelicanConfig        *PelicanTestConfig `json:"pelican_config,omitempty"`
-	RunningUntil         *time.Time         `json:"running_until,omitempty"`
-	ID                   int64              `json:"id"`
-	AccountID            int64              `json:"account_id"`
-	ModelID              string             `json:"model_id"`
-	CronExpression       string             `json:"cron_expression"`
-	Enabled              bool               `json:"enabled"`
-	MaxResults           int                `json:"max_results"`
-	AutoRecover          bool               `json:"auto_recover"`
-	LastRunAt            *time.Time         `json:"last_run_at"`
-	NextRunAt            *time.Time         `json:"next_run_at"`
-	CreatedAt            time.Time          `json:"created_at"`
-	UpdatedAt            time.Time          `json:"updated_at"`
+	// Request-only: importing configuration preserves this target's ownership.
+	PreserveQualityState     bool                      `json:"-"`
+	QualityRestoreDiagnostic *QualityRestoreDiagnostic `json:"-"`
+	QualityModelActions      map[string]string         `json:"-"`
+	QualityModelOutcomes     map[string]string         `json:"-"`
+	Quality5xxEpisode        int64                     `json:"-"`
+	TriggerSource            string                    `json:"-"`
+	TriggerObservedAt        *time.Time                `json:"-"`
+	AccountName              string                    `json:"account_name,omitempty"`
+	PelicanConfig            *PelicanTestConfig        `json:"pelican_config,omitempty"`
+	RunningUntil             *time.Time                `json:"running_until,omitempty"`
+	ID                       int64                     `json:"id"`
+	AccountID                int64                     `json:"account_id"`
+	ModelID                  string                    `json:"model_id"`
+	CronExpression           string                    `json:"cron_expression"`
+	Enabled                  bool                      `json:"enabled"`
+	MaxResults               int                       `json:"max_results"`
+	AutoRecover              bool                      `json:"auto_recover"`
+	LastRunAt                *time.Time                `json:"last_run_at"`
+	NextRunAt                *time.Time                `json:"next_run_at"`
+	CreatedAt                time.Time                 `json:"created_at"`
+	UpdatedAt                time.Time                 `json:"updated_at"`
 }
 
 // ScheduledTestResult represents a single test execution result.
@@ -98,7 +104,8 @@ type PelicanHistoryPage struct {
 // ScheduledTestResultRepository defines the data access interface for test results.
 type ScheduledTestResultRepository interface {
 	ListQualityHistory(context.Context, int64, int) ([]*QualityHistoryResult, error)
-	ListPelicanHistory(ctx context.Context, beforeID int64, limit int) ([]*PelicanHistoryResult, error)
+	// accountID 0 lists every account.
+	ListPelicanHistory(ctx context.Context, beforeID int64, limit int, accountID int64) ([]*PelicanHistoryResult, error)
 	PruneExpiredPelican(ctx context.Context, before time.Time) error
 	Create(ctx context.Context, result *ScheduledTestResult) (*ScheduledTestResult, error)
 	GetResult(ctx context.Context, planID, resultID int64) (*ScheduledTestResult, error)

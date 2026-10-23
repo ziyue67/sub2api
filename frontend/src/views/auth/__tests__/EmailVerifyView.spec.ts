@@ -64,6 +64,9 @@ vi.mock('vue-i18n', () => ({
       if (key === 'auth.accountCreatedSuccess') {
         return `Account created for ${params?.siteName ?? 'Sub2API'}`
       }
+      if (key === 'auth.emailAliasNotAllowed') {
+        return '不支持使用邮箱别名注册，请去掉 Gmail 用户名中的点号、+标签或域名末尾的点号后重试。'
+      }
       if (key === 'auth.emailDomainRegistrationLimit') {
         return '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
       }
@@ -380,6 +383,43 @@ describe('EmailVerifyView', () => {
 
     expect(showErrorMock).toHaveBeenLastCalledWith(
       '该邮箱域名无法注册新账户。请使用主流邮箱注册；如需使用企业邮箱，请联系客服添加域名白名单。'
+    )
+  })
+
+  it('shows the localized email alias rejection message when sending a verification code is rejected', async () => {
+    getPublicSettingsMock.mockResolvedValue({
+      turnstile_enabled: false,
+      turnstile_site_key: '',
+      site_name: 'Sub2API',
+      registration_email_suffix_whitelist: [],
+    })
+    sendVerifyCodeMock.mockRejectedValueOnce({
+      reason: 'EMAIL_ALIAS_NOT_ALLOWED',
+      message: 'raw backend message',
+    })
+    sessionStorage.setItem(
+      'register_data',
+      JSON.stringify({
+        email: 'sa.m.ple@gmail.com',
+        password: 'secret-123',
+      })
+    )
+
+    mount(EmailVerifyView, {
+      global: {
+        stubs: {
+          AuthLayout: { template: '<div><slot /><slot name="footer" /></div>' },
+          Icon: true,
+          TurnstileWidget: true,
+          transition: false,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(showErrorMock).toHaveBeenLastCalledWith(
+      '不支持使用邮箱别名注册，请去掉 Gmail 用户名中的点号、+标签或域名末尾的点号后重试。'
     )
   })
 

@@ -20,6 +20,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/Wei-Shaw/sub2api/internal/cyberevidence"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -147,8 +150,10 @@ type ContentModerationConfig struct {
 	BaseURL  string                         `json:"base_url"`
 	Model    string                         `json:"model"`
 	// ProxyID 指定审计请求使用的代理服务器（IP管理-代理服务器），nil 表示直连。
-	ProxyID              *int64                       `json:"proxy_id,omitempty"`
-	APIKey               string                       `json:"api_key,omitempty"`
+	ProxyID *int64 `json:"proxy_id,omitempty"`
+	APIKey  string `json:"api_key,omitempty"`
+	// APIKeyBaseURLs is populated from the selected profile for runtime use only.
+	APIKeyBaseURLs       map[string]string            `json:"-"`
 	APIKeys              []string                     `json:"api_keys,omitempty"`
 	TimeoutMS            int                          `json:"timeout_ms"`
 	SampleRate           int                          `json:"sample_rate"`
@@ -215,6 +220,7 @@ type ContentModerationConfigView struct {
 }
 
 type ContentModerationAPIKeyStatus struct {
+	BaseURL        string     `json:"base_url,omitempty"`
 	Index          int        `json:"index"`
 	KeyHash        string     `json:"key_hash"`
 	Masked         string     `json:"masked"`
@@ -317,6 +323,7 @@ type ContentModerationModelFilter struct {
 }
 
 type ContentModerationCheckInput struct {
+	moderationVersion  *int64
 	riskControlLogOnly bool // Captured at admission and retained by asynchronous tasks.
 	RequestID          string
 	UserID             int64
@@ -397,35 +404,38 @@ type ContentModerationDecision struct {
 }
 
 type ContentModerationLog struct {
-	EngineMeta        *ContentModerationEngineMeta `json:"engine_meta,omitempty"`
-	ID                int64                        `json:"id"`
-	RequestID         string                       `json:"request_id"`
-	UserID            *int64                       `json:"user_id,omitempty"`
-	UserEmail         string                       `json:"user_email"`
-	APIKeyID          *int64                       `json:"api_key_id,omitempty"`
-	APIKeyName        string                       `json:"api_key_name"`
-	GroupID           *int64                       `json:"group_id,omitempty"`
-	GroupName         string                       `json:"group_name"`
-	Endpoint          string                       `json:"endpoint"`
-	Provider          string                       `json:"provider"`
-	Model             string                       `json:"model"`
-	Mode              string                       `json:"mode"`
-	Action            string                       `json:"action"`
-	Flagged           bool                         `json:"flagged"`
-	HighestCategory   string                       `json:"highest_category"`
-	HighestScore      float64                      `json:"highest_score"`
-	MatchedKeyword    string                       `json:"matched_keyword"`
-	CategoryScores    map[string]float64           `json:"category_scores"`
-	ThresholdSnapshot map[string]float64           `json:"threshold_snapshot"`
-	InputExcerpt      string                       `json:"input_excerpt"`
-	UpstreamLatencyMS *int                         `json:"upstream_latency_ms,omitempty"`
-	Error             string                       `json:"error"`
-	ViolationCount    int                          `json:"violation_count"`
-	AutoBanned        bool                         `json:"auto_banned"`
-	EmailSent         bool                         `json:"email_sent"`
-	UserStatus        string                       `json:"user_status"`
-	QueueDelayMS      *int                         `json:"queue_delay_ms,omitempty"`
-	CreatedAt         time.Time                    `json:"created_at"`
+	moderationVersion    *int64
+	suppressNotification bool
+	EvidenceStatus       string                       `json:"evidence_status,omitempty"`
+	EngineMeta           *ContentModerationEngineMeta `json:"engine_meta,omitempty"`
+	ID                   int64                        `json:"id"`
+	RequestID            string                       `json:"request_id"`
+	UserID               *int64                       `json:"user_id,omitempty"`
+	UserEmail            string                       `json:"user_email"`
+	APIKeyID             *int64                       `json:"api_key_id,omitempty"`
+	APIKeyName           string                       `json:"api_key_name"`
+	GroupID              *int64                       `json:"group_id,omitempty"`
+	GroupName            string                       `json:"group_name"`
+	Endpoint             string                       `json:"endpoint"`
+	Provider             string                       `json:"provider"`
+	Model                string                       `json:"model"`
+	Mode                 string                       `json:"mode"`
+	Action               string                       `json:"action"`
+	Flagged              bool                         `json:"flagged"`
+	HighestCategory      string                       `json:"highest_category"`
+	HighestScore         float64                      `json:"highest_score"`
+	MatchedKeyword       string                       `json:"matched_keyword"`
+	CategoryScores       map[string]float64           `json:"category_scores"`
+	ThresholdSnapshot    map[string]float64           `json:"threshold_snapshot"`
+	InputExcerpt         string                       `json:"input_excerpt"`
+	UpstreamLatencyMS    *int                         `json:"upstream_latency_ms,omitempty"`
+	Error                string                       `json:"error"`
+	ViolationCount       int                          `json:"violation_count"`
+	AutoBanned           bool                         `json:"auto_banned"`
+	EmailSent            bool                         `json:"email_sent"`
+	UserStatus           string                       `json:"user_status"`
+	QueueDelayMS         *int                         `json:"queue_delay_ms,omitempty"`
+	CreatedAt            time.Time                    `json:"created_at"`
 }
 
 type ContentModerationLogFilter struct {
@@ -511,6 +521,7 @@ type ContentModerationHashCache interface {
 }
 
 type ContentModerationService struct {
+	cyberEvidence            *cyberevidence.Service
 	settingRepo              SettingRepository
 	repo                     ContentModerationRepository
 	hashCache                ContentModerationHashCache
@@ -523,6 +534,7 @@ type ContentModerationService struct {
 	moderationProxyCache     atomic.Pointer[moderationProxyURLCacheEntry]
 	asyncQueue               chan contentModerationTask
 	workerCount              int
+	configUpdateMu           sync.Mutex
 	apiKeyCursor             atomic.Uint64
 	asyncActive              atomic.Int64
 	asyncEnqueued            atomic.Int64
@@ -626,7 +638,13 @@ func (s *ContentModerationService) GetConfig(ctx context.Context) (*ContentModer
 }
 
 func (s *ContentModerationService) UpdateConfig(ctx context.Context, input UpdateContentModerationConfigInput) (*ContentModerationConfigView, error) {
-	cfg, err := s.loadConfig(ctx)
+	s.configUpdateMu.Lock()
+	defer s.configUpdateMu.Unlock()
+	previous, err := s.settingRepo.GetValue(ctx, SettingKeyContentModerationConfig)
+	if err != nil && !errors.Is(err, ErrSettingNotFound) {
+		return nil, err
+	}
+	cfg, err := parseContentModerationConfig(previous)
 	if err != nil {
 		return nil, err
 	}
@@ -722,14 +740,18 @@ func (s *ContentModerationService) UpdateConfig(ctx context.Context, input Updat
 	}
 	var saveErr error
 	if writer, ok := s.settingRepo.(interface {
+		CompareAndSetContentModerationConfig(context.Context, string, string, []int64) error
+	}); ok {
+		saveErr = writer.CompareAndSetContentModerationConfig(ctx, string(raw), previous, cfg.GroupIDs)
+	} else if writer, ok := s.settingRepo.(interface {
 		SetContentModerationConfig(context.Context, string, []int64) error
 	}); ok {
 		saveErr = writer.SetContentModerationConfig(ctx, string(raw), cfg.GroupIDs)
-		if errors.Is(saveErr, ErrGroupNotFound) {
-			return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_GROUP", "审计分组不存在")
-		}
 	} else {
 		saveErr = s.settingRepo.Set(ctx, SettingKeyContentModerationConfig, string(raw))
+	}
+	if errors.Is(saveErr, ErrGroupNotFound) {
+		return nil, infraerrors.BadRequest("INVALID_CONTENT_MODERATION_GROUP", "审计分组不存在")
 	}
 	if err := saveErr; err != nil {
 		return nil, fmt.Errorf("save content moderation config: %w", err)
@@ -815,6 +837,9 @@ func (s *ContentModerationService) TestAPIKeys(ctx context.Context, input TestCo
 			}
 		}
 		status := s.apiKeyStatusForHash(idx, keyHash, maskSecretTail(key), configured)
+		if configured && cfg.Engine == ContentModerationEngineTypeSafe {
+			status.BaseURL = cfg.keyBaseURL(key)
+		}
 		status.LastTested = true
 		items = append(items, status)
 	}
@@ -852,6 +877,10 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			"protocol", input.Protocol)
 		return allow, nil
 	}
+	moderationState := s.captureModerationUserState(ctx, input.UserID)
+	if moderationState != nil {
+		input.moderationVersion = &moderationState.Version
+	}
 	_, input.riskControlLogOnly = runtimeSnapshot.allowlistedUsers[input.UserID]
 	// Keep audit evidence while ensuring all local rejection paths allow trusted users.
 	defer func() {
@@ -862,6 +891,10 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		}
 	}()
 	cfg := runtimeSnapshot.config
+	if securityPenaltyOwnsEnforcement(ctx) {
+		cfg = cloneContentModerationConfig(cfg)
+		cfg.AutoBanEnabled = false
+	}
 	inGroupScope := cfg.includesGroup(input.GroupID)
 	inModelScope := cfg.includesModel(input.Model)
 	slog.Info("content_moderation.config_loaded",
@@ -929,7 +962,7 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 		return allow, nil
 	}
 	if cfg.Mode == ContentModerationModePreBlock {
-		if cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && len(cfg.BlockedKeywords) > 0 {
+		if (moderationState == nil || !moderationState.KeywordExempt) && cfg.KeywordBlockingMode != ContentModerationKeywordModeAPIOnly && len(cfg.BlockedKeywords) > 0 {
 			keywordText := extractContentModerationKeywordText(input.Protocol, input.Body)
 			if keyword, hit := runtimeSnapshot.matchBlockedKeyword(keywordText); hit {
 				metricAction := ContentModerationActionKeywordBlock
@@ -1032,6 +1065,14 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 			}, nil
 		}
 	}
+	// Preserve hash and other independent rejection paths before skipping only
+	// the external audit layer. Keyword-only already returned above.
+	if moderationState != nil && moderationState.APIAuditExempt {
+		if cfg.Mode == ContentModerationModePreBlock {
+			s.recordPreBlockSyncMetric(0, ContentModerationActionAllow)
+		}
+		return allow, nil
+	}
 	if !cfg.shouldSample(hashText) {
 		if cfg.Mode == ContentModerationModePreBlock {
 			s.recordPreBlockSyncMetric(0, ContentModerationActionAllow)
@@ -1074,6 +1115,13 @@ func (s *ContentModerationService) Check(ctx context.Context, input ContentModer
 
 func (s *ContentModerationService) checkSync(ctx context.Context, input ContentModerationCheckInput, cfg *ContentModerationConfig, content ContentModerationInput, hashText string, queueDelay *int, allowBlock bool) *ContentModerationDecision {
 	allow := &ContentModerationDecision{Allowed: true, Action: ContentModerationActionAllow}
+	// Observe tasks may wait in the queue while an administrator grants an
+	// exemption. Recheck immediately before sending; never introduce keywords here.
+	if queueDelay != nil {
+		if state := s.captureModerationUserState(ctx, input.UserID); state != nil && state.APIAuditExempt {
+			return allow
+		}
+	}
 	trackPreBlock := queueDelay == nil && allowBlock && cfg != nil && cfg.Mode == ContentModerationModePreBlock
 	if trackPreBlock {
 		s.preBlockActive.Add(1)
@@ -1254,12 +1302,20 @@ func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInp
 }
 
 func (s *ContentModerationService) worker(id int) {
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), maxContentModerationTimeoutMS*time.Millisecond+10*time.Second)
+	s.runWorker(context.Background(), id)
+}
+
+func (s *ContentModerationService) runWorker(workerCtx context.Context, id int) {
+	for s.waitForAsyncWork(workerCtx) {
+		ctx, cancel := context.WithTimeout(workerCtx, maxContentModerationTimeoutMS*time.Millisecond+10*time.Second)
 		runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
 		if err != nil || runtimeSnapshot == nil || runtimeSnapshot.config == nil || id >= runtimeSnapshot.config.WorkerCount {
 			cancel()
-			time.Sleep(time.Second)
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-time.After(time.Second):
+			}
 			continue
 		}
 		cfg := runtimeSnapshot.config
@@ -1306,6 +1362,35 @@ func (s *ContentModerationService) worker(id int) {
 	}
 }
 
+// Idle workers must not refresh the runtime settings merely to discover that
+// there is no work. Check before loading settings and before dequeueing so
+// config failures or a lower WorkerCount leave queued tasks available to an
+// eligible worker. Only asynchronous work pays at most this short idle wait;
+// synchronous moderation and its snapshot refresh behavior are unchanged.
+func (s *ContentModerationService) waitForAsyncWork(ctx context.Context) bool {
+	if s == nil || s.asyncQueue == nil {
+		return false
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	if len(s.asyncQueue) > 0 {
+		return true
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if len(s.asyncQueue) > 0 {
+				return true
+			}
+		}
+	}
+}
+
 func (s *ContentModerationService) dequeueAsyncTask(ctx context.Context, idleWait time.Duration) (contentModerationTask, bool) {
 	var zero contentModerationTask
 	if s == nil || s.asyncQueue == nil {
@@ -1342,33 +1427,18 @@ func (s *ContentModerationService) ListLogs(ctx context.Context, filter ContentM
 	return s.repo.ListLogs(ctx, filter)
 }
 
-func (s *ContentModerationService) UnbanUser(ctx context.Context, userID int64) (*ContentModerationUnbanUserResult, error) {
-	if s == nil || s.userRepo == nil {
-		return nil, infraerrors.InternalServer("CONTENT_MODERATION_USER_REPOSITORY_UNAVAILABLE", "用户仓储不可用")
+// UnbanUser requires the same explicit confirmation and version as other user actions.
+func (s *ContentModerationService) UnbanUser(ctx context.Context, userID int64, actions ...ModerationUserAction) (*ContentModerationUnbanUserResult, error) {
+	if len(actions) != 1 {
+		return nil, infraerrors.BadRequest("MODERATION_CONFIRMATION_REQUIRED", "Reload current state and provide confirmation, version and reason")
 	}
-	if userID <= 0 {
-		return nil, infraerrors.BadRequest("INVALID_USER_ID", "用户 ID 无效")
-	}
-	user, err := s.userRepo.GetByID(ctx, userID)
+	in := actions[0]
+	in.Action = "unban"
+	state, err := s.ManageModerationUser(ctx, userID, in)
 	if err != nil {
-		if errors.Is(err, ErrUserNotFound) {
-			return nil, infraerrors.NotFound("USER_NOT_FOUND", "用户不存在")
-		}
-		return nil, fmt.Errorf("get content moderation unban user: %w", err)
+		return nil, err
 	}
-	if user.Status != StatusActive {
-		user.Status = StatusActive
-		if err := s.userRepo.Update(ctx, user, UserUpdateFields{Status: true}); err != nil {
-			return nil, fmt.Errorf("update content moderation unban user: %w", err)
-		}
-	}
-	if s.authCacheInvalidator != nil {
-		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
-	}
-	return &ContentModerationUnbanUserResult{
-		UserID: userID,
-		Status: StatusActive,
-	}, nil
+	return &ContentModerationUnbanUserResult{UserID: state.UserID, Status: state.Status}, nil
 }
 
 func (s *ContentModerationService) DeleteFlaggedInputHash(ctx context.Context, inputHash string) (*ContentModerationDeleteHashResult, error) {
@@ -1473,7 +1543,7 @@ func (s *ContentModerationService) GetStatus(ctx context.Context) (*ContentModer
 		PreBlockAPIKeyAvailableCount: s.preBlockAPIKeyAvailableCount(cfg.apiKeys(), cfg.Engine),
 		PreBlockAPIKeyTotalCalls:     s.preBlockAPIKeyTotalCalls(cfg.apiKeys(), cfg.Engine),
 		PreBlockAPIKeyLoads:          s.preBlockAPIKeyLoads(cfg.apiKeys(), cfg.Engine),
-		APIKeyStatuses:               s.apiKeyStatuses(cfg.apiKeys(), cfg.Engine),
+		APIKeyStatuses:               s.configAPIKeyStatuses(cfg),
 		FlaggedHashCount:             flaggedHashCount,
 		LastCleanupAt:                lastCleanupAt,
 		LastCleanupDeletedHit:        s.lastCleanupDeletedHit.Load(),
@@ -1919,6 +1989,7 @@ func (s *ContentModerationService) buildLog(input ContentModerationCheckInput, c
 		action = ContentModerationActionAllow
 	}
 	return &ContentModerationLog{
+		moderationVersion: input.moderationVersion,
 		RequestID:         input.RequestID,
 		UserID:            userID,
 		UserEmail:         input.UserEmail,
@@ -1958,12 +2029,19 @@ func (s *ContentModerationService) persistContentModerationLog(ctx context.Conte
 	autoBanJustApplied := false
 	if applySideEffects {
 		autoBanJustApplied = s.applyFlaggedAccountSideEffects(ctx, cfg, log)
-		s.sendFlaggedNotificationSideEffects(ctx, cfg, log, autoBanJustApplied)
 	}
 	if s.repo != nil {
 		if err := s.repo.CreateLog(ctx, log); err != nil {
 			slog.Warn("content_moderation.create_log_failed", "user_id", contentModerationEmailUserID(log), "endpoint", log.Endpoint, "action", log.Action, "error", err)
 			return
+		}
+	}
+	if applySideEffects {
+		s.sendFlaggedNotificationSideEffects(ctx, cfg, log, autoBanJustApplied)
+		if log.EmailSent && s.repo != nil {
+			if err := s.repo.UpdateLogEmailSent(ctx, log.ID, true); err != nil {
+				slog.Warn("content_moderation.update_email_sent_failed", "log_id", log.ID, "error", err)
+			}
 		}
 	}
 }
@@ -1972,44 +2050,50 @@ func (s *ContentModerationService) applyFlaggedAccountSideEffects(ctx context.Co
 	if s == nil || cfg == nil || log == nil || !log.Flagged || log.UserID == nil || *log.UserID <= 0 {
 		return false
 	}
+	if repo, ok := s.repo.(ModerationUserRepository); ok {
+		if log.moderationVersion == nil {
+			log.suppressNotification = true
+			return false
+		}
+		requestID := log.RequestID
+		if requestID == "" {
+			requestID = uuid.NewString()
+		}
+		result, err := repo.ApplyModerationHit(ctx, ModerationHit{UserID: *log.UserID, Version: *log.moderationVersion, RequestID: requestID, Action: log.Action, Since: time.Now().Add(-time.Duration(cfg.ViolationWindowHours) * time.Hour), AutoBan: cfg.AutoBanEnabled && !securityPenaltyOwnsEnforcement(ctx), Threshold: cfg.BanThreshold, ExcludeCyber: cfg.CyberPolicyExcludeFromBanCount})
+		if err != nil {
+			log.suppressNotification = true
+			slog.Error("content_moderation.apply_hit_failed", "user_id", *log.UserID, "error", err)
+			return false
+		}
+		log.suppressNotification = !result.Accepted
+		log.ViolationCount = result.Count
+		log.AutoBanned = result.OwnedDisable
+		if result.BanApplied && s.authCacheInvalidator != nil {
+			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, *log.UserID)
+		}
+		return result.BanApplied
+	}
+	// Adapters without transactional ownership may record evidence but cannot disable users.
 	count := 1
 	if s.repo != nil && cfg.ViolationWindowHours > 0 {
-		since := time.Now().Add(-time.Duration(cfg.ViolationWindowHours) * time.Hour)
-		if n, err := s.repo.CountFlaggedByUserSince(ctx, *log.UserID, since, cfg.CyberPolicyExcludeFromBanCount); err == nil {
-			count = n + 1
+		n, err := s.repo.CountFlaggedByUserSince(ctx, *log.UserID, time.Now().Add(-time.Duration(cfg.ViolationWindowHours)*time.Hour), cfg.CyberPolicyExcludeFromBanCount)
+		if err != nil {
+			log.suppressNotification = true
+			return false
 		}
+		count += n
 	}
 	log.ViolationCount = count
-	autoBanJustApplied := false
-	if cfg.AutoBanEnabled && cfg.BanThreshold > 0 && count >= cfg.BanThreshold && s.userRepo != nil {
-		user, err := s.userRepo.GetByID(ctx, *log.UserID)
-		if err != nil {
-			slog.Warn("content_moderation.ban_get_user_failed", "user_id", *log.UserID, "error", err)
-			return false
-		}
-		if user.IsAdmin() {
+	if s.userRepo != nil && cfg.AutoBanEnabled && count >= cfg.BanThreshold {
+		if user, err := s.userRepo.GetByID(ctx, *log.UserID); err == nil && user.IsAdmin() {
 			slog.Warn("content_moderation.autoban_skipped_admin", "user_id", *log.UserID, "role", user.Role, "count", count, "threshold", cfg.BanThreshold)
-			// TODO: Disable the triggering API key instead when API key mutation is available here.
-			return false
 		}
-		if user.Status != StatusDisabled {
-			user.Status = StatusDisabled
-			if err := s.userRepo.Update(ctx, user, UserUpdateFields{Status: true}); err != nil {
-				slog.Warn("content_moderation.ban_update_user_failed", "user_id", *log.UserID, "error", err)
-				return false
-			}
-			if s.authCacheInvalidator != nil {
-				s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, *log.UserID)
-			}
-			autoBanJustApplied = true
-		}
-		log.AutoBanned = true
 	}
-	return autoBanJustApplied
+	return false
 }
 
 func (s *ContentModerationService) sendFlaggedNotificationSideEffects(ctx context.Context, cfg *ContentModerationConfig, log *ContentModerationLog, autoBanJustApplied bool) {
-	if s == nil || cfg == nil || log == nil || !log.Flagged {
+	if s == nil || cfg == nil || log == nil || !log.Flagged || log.suppressNotification {
 		return
 	}
 	if s.emailService == nil || strings.TrimSpace(log.UserEmail) == "" {
@@ -2180,6 +2264,7 @@ func cloneContentModerationConfig(cfg *ContentModerationConfig) *ContentModerati
 	}
 	clone.ProxyID = cloneInt64Ptr(cfg.ProxyID)
 	clone.APIKeys = append([]string(nil), cfg.APIKeys...)
+	clone.APIKeyBaseURLs = cloneModerationKeyURLs(cfg.APIKeyBaseURLs)
 	clone.GroupIDs = append([]int64(nil), cfg.GroupIDs...)
 	clone.BlockedKeywords = append([]string(nil), cfg.BlockedKeywords...)
 	clone.Thresholds = cloneFloatMap(cfg.Thresholds)
@@ -2481,7 +2566,7 @@ func (s *ContentModerationService) configView(cfg *ContentModerationConfig) *Con
 		APIKeyMasked:                   apiKeyMasked,
 		APIKeyCount:                    len(keys),
 		APIKeyMasks:                    masks,
-		APIKeyStatuses:                 s.apiKeyStatuses(keys, cfg.Engine),
+		APIKeyStatuses:                 s.configAPIKeyStatuses(cfg),
 		TimeoutMS:                      cfg.TimeoutMS,
 		SampleRate:                     cfg.SampleRate,
 		AllGroups:                      cfg.AllGroups,
@@ -3037,21 +3122,23 @@ func maskSecretTail(secret string) string {
 
 // CyberPolicyRecordInput 是一次 cyber_policy 硬阻断的风控记录入参。
 type CyberPolicyRecordInput struct {
-	LogOnly         bool // Trusted platform user: retain evidence without penalties or notifications.
-	RequestID       string
-	UserID          int64
-	UserEmail       string
-	APIKeyID        int64
-	APIKeyName      string
-	GroupID         *int64
-	GroupName       string
-	Endpoint        string
-	Model           string
-	UpstreamMessage string
-	UpstreamBody    string
-	UpstreamStatus  int
-	UpstreamInTok   int
-	UpstreamOutTok  int
+	Evidence          cyberevidence.Prepared
+	ModerationVersion *int64
+	LogOnly           bool // Trusted platform user: retain evidence without penalties or notifications.
+	RequestID         string
+	UserID            int64
+	UserEmail         string
+	APIKeyID          int64
+	APIKeyName        string
+	GroupID           *int64
+	GroupName         string
+	Endpoint          string
+	Model             string
+	UpstreamMessage   string
+	UpstreamBody      string
+	UpstreamStatus    int
+	UpstreamInTok     int
+	UpstreamOutTok    int
 }
 
 // RecordCyberPolicyEvent 把一次 cyber_policy 硬阻断写入风控中心日志、计入违规计数、
@@ -3090,24 +3177,32 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 	if in.UpstreamInTok > 0 || in.UpstreamOutTok > 0 {
 		errBody = fmt.Sprintf("%s\nupstream_usage=in:%d,out:%d", errBody, in.UpstreamInTok, in.UpstreamOutTok)
 	}
+	evidenceStatus := strings.TrimSpace(in.Evidence.Status)
+	if evidenceStatus == "" {
+		// Callers without an attached evidence recorder must still expose an
+		// explicit non-saved state instead of an empty historical-looking value.
+		evidenceStatus = "unavailable"
+	}
 	log := &ContentModerationLog{
-		RequestID:       in.RequestID,
-		UserID:          userID,
-		UserEmail:       in.UserEmail,
-		APIKeyID:        apiKeyID,
-		APIKeyName:      in.APIKeyName,
-		GroupID:         cloneInt64Ptr(in.GroupID),
-		GroupName:       in.GroupName,
-		Endpoint:        in.Endpoint,
-		Provider:        "openai",
-		Model:           in.Model,
-		Mode:            "post_upstream",
-		Action:          ContentModerationActionCyberPolicy,
-		Flagged:         true,
-		HighestCategory: "cyber_policy",
-		HighestScore:    1.0,
-		Error:           trimRunes(redactContentModerationSecrets(errBody), maxModerationExcerptRunes*4),
-		CreatedAt:       time.Now(),
+		moderationVersion: in.ModerationVersion,
+		EvidenceStatus:    evidenceStatus,
+		RequestID:         in.RequestID,
+		UserID:            userID,
+		UserEmail:         in.UserEmail,
+		APIKeyID:          apiKeyID,
+		APIKeyName:        in.APIKeyName,
+		GroupID:           cloneInt64Ptr(in.GroupID),
+		GroupName:         in.GroupName,
+		Endpoint:          in.Endpoint,
+		Provider:          "openai",
+		Model:             in.Model,
+		Mode:              "post_upstream",
+		Action:            ContentModerationActionCyberPolicy,
+		Flagged:           true,
+		HighestCategory:   "cyber_policy",
+		HighestScore:      1.0,
+		Error:             trimRunes(redactContentModerationSecrets(errBody), maxModerationExcerptRunes*4),
+		CreatedAt:         time.Now(),
 	}
 	// 开关开时 cyber_policy 不参与封号计数：当次不判定（此处跳过），
 	// 历史行由 CountFlaggedByUserSince 的 excludeCyberPolicy 排除。
@@ -3124,8 +3219,12 @@ func (s *ContentModerationService) RecordCyberPolicyEvent(ctx context.Context, i
 		logPersisted = false
 		slog.Warn("content_moderation.cyber_create_log_failed", "user_id", in.UserID, "error", err)
 	}
+	if logPersisted && s.cyberEvidence != nil {
+		s.cyberEvidence.Enqueue(log.ID, in.Evidence)
+	}
+
 	emailSent := false
-	if !in.LogOnly && s.emailService != nil && strings.TrimSpace(log.UserEmail) != "" {
+	if !in.LogOnly && !log.suppressNotification && s.emailService != nil && strings.TrimSpace(log.UserEmail) != "" {
 		if err := s.sendCyberPolicyEmail(ctx, log); err != nil {
 			slog.Warn("content_moderation.cyber_email_failed", "user_id", in.UserID, "error", err)
 		} else {
@@ -3174,4 +3273,17 @@ func (s *ContentModerationService) sendCyberPolicyEmail(ctx context.Context, log
 	}
 	subject := fmt.Sprintf("[%s] 网络安全策略拦截 / Cyber Policy Notice", sanitizeEmailHeader(siteName))
 	return s.emailService.SendEmail(ctx, log.UserEmail, subject, buildCyberPolicyNoticeEmailBody(siteName, log))
+}
+
+func (s *ContentModerationService) CyberEvidence() *cyberevidence.Service {
+	if s == nil {
+		return nil
+	}
+	return s.cyberEvidence
+}
+
+// WithCyberEvidence attaches the optional post-upstream evidence recorder. Configure before serving.
+func (s *ContentModerationService) WithCyberEvidence(e *cyberevidence.Service) *ContentModerationService {
+	s.cyberEvidence = e
+	return s
 }

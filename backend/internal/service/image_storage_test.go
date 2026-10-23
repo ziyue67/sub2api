@@ -343,6 +343,8 @@ func TestImageDownloadTransportRejectsNonPublicHosts(t *testing.T) {
 		"http://[fd00::1]/a.png",
 		"http://[fe80::1%25eth0]/a.png",
 		"http:///a.png",
+		"http://224.0.0.1/a.png",
+		"http://255.255.255.255/a.png",
 	}
 	for _, proxied := range []bool{false, true} {
 		for _, rawURL := range hosts {
@@ -454,6 +456,9 @@ func TestImageResultUploaderDownloadContentTypes(t *testing.T) {
 		{name: "octet-stream sniffed png", contentType: "application/octet-stream", body: pngBytes, wantType: "image/png"},
 		{name: "missing header sniffed png", body: pngBytes, wantType: "image/png"},
 		{name: "declared avif not sniffable", contentType: "Image/AVIF; charset=binary", body: avif, wantType: "image/avif"},
+		{name: "json disguised as image", contentType: "image/png", body: []byte(`{"ok":true}`), wantErr: "content is not an image"},
+		{name: "html disguised as image", contentType: "image/jpeg", body: []byte("<html>admin</html>"), wantErr: "content is not an image"},
+		{name: "fake avif", contentType: "image/avif", body: []byte(`{"ok":true}`), wantErr: "content is not an image"},
 		{name: "json body", contentType: "application/json", body: []byte(`{"ok":true}`), wantErr: "content is not an image"},
 		{name: "html body", contentType: "text/html", body: []byte("<html>admin</html>"), wantErr: "content is not an image"},
 		{name: "empty body", body: nil, wantErr: "content is not an image"},

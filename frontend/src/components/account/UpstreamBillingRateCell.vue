@@ -24,7 +24,12 @@
           </span>
         </template>
         <div class="space-y-1">
-          <template v-if="hasEffectiveRate && data">
+          <template v-if="isMultiGroup">
+            <p>{{ t('admin.accounts.upstreamBilling.multiGroupHint') }}</p>
+            <p>{{ t('admin.accounts.upstreamBilling.multiGroupSyncPaused') }}</p>
+            <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
+          </template>
+          <template v-else-if="hasEffectiveRate && data">
             <p>{{ t('admin.accounts.upstreamBilling.groupRate', { value: data.group_rate_multiplier }) }}</p>
             <p v-if="data.user_rate_multiplier != null">
               {{ t('admin.accounts.upstreamBilling.userRate', { value: data.user_rate_multiplier }) }}
@@ -94,6 +99,19 @@
         <Icon name="refresh" size="xs" :class="{ 'animate-spin': probing }" />
       </button>
     </div>
+    <details v-if="isMultiGroup" class="my-1 max-w-sm text-xs" data-testid="upstream-billing-groups">
+      <summary class="cursor-pointer text-blue-600 dark:text-blue-400">{{ t('admin.accounts.upstreamBilling.multiGroupCount', { count: declaredGroups.length }) }}</summary>
+      <p class="mt-1 text-gray-500">{{ t('admin.accounts.upstreamBilling.multiGroupSyncPaused') }}</p>
+      <p v-if="stale" class="text-amber-600">{{ t('admin.accounts.upstreamBilling.lastDetectedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
+      <div v-for="group in declaredGroups" :key="group.group_id" class="mt-2 rounded bg-gray-50 p-2 dark:bg-dark-800">
+        <p class="font-medium text-gray-800 dark:text-gray-200">{{ group.group_name || `#${group.group_id}` }}</p>
+        <p>{{ t('admin.accounts.upstreamBilling.groupRate', { value: group.group_rate_multiplier }) }}</p>
+        <p v-if="group.user_rate_multiplier != null">{{ t('admin.accounts.upstreamBilling.userRate', { value: group.user_rate_multiplier }) }}</p>
+        <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: formatGroupRate(group) }) }}</p>
+        <p v-if="group.peak_rate_enabled">{{ t('admin.accounts.upstreamBilling.peakRate', { start: group.peak_start, end: group.peak_end, value: group.peak_rate_multiplier, timezone: group.timezone }) }}</p>
+        <p v-if="group.status !== 'active'" class="text-amber-600">{{ t('admin.accounts.upstreamBilling.groupInactive') }}</p>
+      </div>
+    </details>
     <div v-if="showBalance" class="flex h-5 items-center gap-1 text-xs" data-testid="upstream-balance">
       <HelpTooltip class="-ml-1" width-class="w-max max-w-[calc(100vw-2rem)]" data-testid="upstream-balance-details">
         <template #trigger>
@@ -170,7 +188,7 @@ import { useI18n } from 'vue-i18n'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatMultiplier } from '@/utils/formatters'
-import type { Account, UpstreamBalanceData, UpstreamBalanceSnapshot, UpstreamBillingProbeSnapshot } from '@/types'
+import type { UpstreamBillingData, Account, UpstreamBalanceData, UpstreamBalanceSnapshot, UpstreamBillingProbeSnapshot } from '@/types'
 
 const props = withDefaults(defineProps<{
   account: Account
@@ -194,6 +212,8 @@ const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000
 const eligible = computed(() => props.account.type === 'apikey')
 const snapshot = computed<UpstreamBillingProbeSnapshot | undefined>(() => props.account.extra?.upstream_billing_probe)
 const data = computed(() => snapshot.value?.data)
+const isMultiGroup = computed(() => data.value?.schema_version === 2 && data.value.billing_mode === 'multi_group' && Array.isArray(data.value.groups))
+const declaredGroups = computed(() => isMultiGroup.value ? data.value?.groups ?? [] : [])
 const isNewAPIGroup = computed(() => data.value?.provider === 'new_api' && data.value.object === 'new_api.group_billing' && data.value.billing_scope === 'group')
 const probeEnabled = computed(() => props.account.extra?.upstream_billing_probe_enabled === true)
 const nextProbeAt = computed(() => {
@@ -243,10 +263,9 @@ const minuteInTimeZone = (timestamp: number, timeZone?: string) => {
     return null
   }
 }
-const currentEffectiveRate = computed(() => {
-  const billing = data.value
+const effectiveMultiplier = (billing?: UpstreamBillingData) => {
   if (!billing) return null
-  if (billing.billing_scope !== 'token' && !isNewAPIGroup.value) return null
+  if (billing.billing_scope !== 'token' && billing.provider !== 'new_api') return null
   const base = billing.resolved_rate_multiplier
   if (typeof base !== 'number' || !Number.isFinite(base) || base < 0) return null
   if (typeof billing.peak_rate_enabled !== 'boolean') return null
@@ -258,6 +277,17 @@ const currentEffectiveRate = computed(() => {
   if (start == null || end == null || minute == null || start >= end || typeof peak !== 'number' || !Number.isFinite(peak) || peak < 0) return null
   const value = minute >= start && minute < end ? base * peak : base
   return Number.isFinite(value) ? value : null
+}
+const currentEffectiveRate = computed(() => effectiveMultiplier(data.value))
+const formatGroupRate = (group: UpstreamBillingData): string => {
+  const rate = effectiveMultiplier(group)
+  return rate == null ? '-' : formatMultiplier(rate)
+}
+const multiGroupRange = computed(() => {
+  const rates = declaredGroups.value.map(group => effectiveMultiplier(group)).filter((rate): rate is number => rate != null)
+  if (rates.length === 0) return '-'
+  const min = Math.min(...rates), max = Math.max(...rates)
+  return min === max ? `${formatMultiplier(min)}x` : `${formatMultiplier(min)}–${formatMultiplier(max)}x`
 })
 const lastDetectedRate = computed(() => {
   const value = data.value?.effective_rate_multiplier
@@ -277,6 +307,7 @@ const formatElapsedSince = (timestamp: number) => {
 const elapsedSinceLastSuccess = computed(() => formatElapsedSince(receivedAt.value))
 const effectiveRate = computed(() => {
   if (!validTimestamps.value || stale.value || !['ok', 'failed'].includes(snapshot.value?.status ?? '')) return '-'
+  if (isMultiGroup.value) return multiGroupRange.value
   const value = currentEffectiveRate.value
   return value == null ? '-' : `${formatMultiplier(value)}x`
 })

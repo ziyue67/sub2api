@@ -12,19 +12,15 @@ import (
 func TestCollectOpenAIEncryptedContentDigestsRaw(t *testing.T) {
 	t.Parallel()
 
-	digests := collectOpenAIEncryptedContentDigestsRaw([]byte(`{"input":[
-		{"type":"reasoning","encrypted_content":"cipher-a"},
-		{"type":"compaction","encrypted_content":"cipher-b"},
-		{"type":"input_text","text":"hello"},
-		{"type":"reasoning"},
-		{"type":"message","encrypted_content":"cipher-alien"}
-	]}`))
-	// 剥离端处理不了的类型（message）不收摘要，否则该摘要永远命中却剥不掉。
-	require.Equal(t, []string{
-		openAIEncryptedContentDigest("cipher-a"),
-		openAIEncryptedContentDigest("cipher-b"),
-	}, digests)
-
+	for _, input := range []string{
+		`[{"type":"reasoning","encrypted_content":"a"},{"type":"reasoning","encrypted_content":"b"}]`,
+		`[{"type":"compaction","encrypted_content":"history"}]`,
+		`[{"type":"reasoning","encrypted_content":"a"},{"type":"compaction_summary","encrypted_content":"history"}]`,
+		`[{"type":"message","encrypted_content":"unknown"}]`,
+	} {
+		require.Nil(t, collectOpenAIEncryptedContentDigestsRaw([]byte(`{"input":`+input+`}`)))
+	}
+	require.Equal(t, []string{openAIEncryptedContentDigest("a")}, collectOpenAIEncryptedContentDigestsRaw([]byte(`{"input":[{"type":"reasoning","encrypted_content":"a"},{"type":"input_text","text":"hello"}]}`)))
 	require.Nil(t, collectOpenAIEncryptedContentDigestsRaw([]byte(`{"model":"gpt-5"}`)))
 }
 
@@ -59,7 +55,7 @@ func TestStripOpenAIInvalidEncryptedContentItems(t *testing.T) {
 		require.Equal(t, "fresh-cipher", second["encrypted_content"], "新密文不得误删")
 	})
 
-	t.Run("compaction_removed_entirely", func(t *testing.T) {
+	t.Run("compaction_preserved", func(t *testing.T) {
 		t.Parallel()
 		reqBody := map[string]any{
 			"input": []any{
@@ -68,13 +64,13 @@ func TestStripOpenAIInvalidEncryptedContentItems(t *testing.T) {
 			},
 		}
 		stripped := stripOpenAIInvalidEncryptedContentItems(reqBody, invalid)
-		require.Equal(t, 1, stripped)
+		require.Zero(t, stripped)
 		input, ok := reqBody["input"].([]any)
 		require.True(t, ok)
-		require.Len(t, input, 1)
-		survivor, ok := input[0].(map[string]any)
+		require.Len(t, input, 2)
+		first, ok := input[0].(map[string]any)
 		require.True(t, ok)
-		require.Equal(t, "input_text", survivor["type"])
+		require.Equal(t, "stale-cipher", first["encrypted_content"])
 	})
 
 	t.Run("no_hit_no_change", func(t *testing.T) {
@@ -92,19 +88,21 @@ func TestStripOpenAIInvalidEncryptedContentFromReplayItems(t *testing.T) {
 	t.Parallel()
 
 	invalid := map[string]struct{}{
-		openAIEncryptedContentDigest("stale-cipher"): {},
+		openAIEncryptedContentDigest("stale-cipher"):      {},
+		openAIEncryptedContentDigest("cached-compaction"): {},
 	}
 
 	t.Run("rewrites_hit_items_and_shares_the_rest", func(t *testing.T) {
 		t.Parallel()
 		original := json.RawMessage(`{"type":"reasoning","id":"rs_1","encrypted_content":"stale-cipher"}`)
 		clean := json.RawMessage(`{"type":"input_text","text":"hello"}`)
-		compaction := json.RawMessage(`{"type":"compaction","encrypted_content":"stale-cipher"}`)
+		compaction := json.RawMessage(`{"type":"compaction","encrypted_content":"cached-compaction"}`)
 		items := []json.RawMessage{original, clean, compaction}
 
 		next, stripped := stripOpenAIInvalidEncryptedContentFromReplayItems(items, invalid)
-		require.Equal(t, 2, stripped)
-		require.Len(t, next, 2, "compaction 命中项应整项删除")
+		require.Equal(t, 1, stripped)
+		require.Len(t, next, 3, "compaction must survive even an old cached invalid digest")
+		require.Same(t, &compaction[0], &next[2][0])
 		var rewritten map[string]any
 		require.NoError(t, json.Unmarshal(next[0], &rewritten))
 		require.Equal(t, "rs_1", rewritten["id"])

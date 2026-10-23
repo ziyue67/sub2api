@@ -59,6 +59,8 @@ func TestObserverGuardRejectsWholeUnauthorizedBatch(t *testing.T) {
 		{"mixed_create", "POST", "/accounts/batch", "/accounts/batch", `{"accounts":[{"group_ids":[10]},{"group_ids":[20]}]}`, []int64{10}, 403},
 		{"credential_body_untouched", "PUT", "/accounts/:id", "/accounts/1", `{"credentials":{"api_key":"test-secret","account_ids":[2]},"group_ids":[10]}`, []int64{10}, 204},
 		{"system_update", "POST", "/system/update", "/system/update", "{}", []int64{10}, 403},
+		{"quality_presets_read", "GET", "/account-quality-presets", "/account-quality-presets", "", []int64{10}, 403},
+		{"quality_presets_write", "POST", "/account-quality-presets", "/account-quality-presets", "{}", []int64{10}, 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &AccountHandler{adminService: svc}

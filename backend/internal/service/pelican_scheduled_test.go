@@ -45,6 +45,20 @@ func TestPelicanPlanValidation(t *testing.T) {
 	require.True(t, old.AutoRecover)
 }
 
+func TestScheduledRuleNameValidation(t *testing.T) {
+	for _, name := range []string{"", "  Quality rule (copy)  ", strings.Repeat("副", 100)} {
+		plan := pelicanPlan()
+		plan.PelicanConfig.RuleName = name
+		_, err := nextPlanRun(plan, time.Now())
+		require.NoError(t, err)
+		require.Equal(t, strings.TrimSpace(name), plan.PelicanConfig.RuleName)
+	}
+	plan := pelicanPlan()
+	plan.PelicanConfig.RuleName = strings.Repeat("副", 101)
+	_, err := nextPlanRun(plan, time.Now())
+	require.EqualError(t, err, "rule name must be at most 100 characters")
+}
+
 type pelicanPlanRepo struct {
 	ScheduledTestPlanRepository
 	mu       sync.Mutex

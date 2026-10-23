@@ -66,3 +66,26 @@ export async function deleteQualityTemplate(id: number, deletePlans: boolean): P
   const { data } = await apiClient.delete(`/admin/account-quality-templates/${id}`, { params: { delete_plans: deletePlans ? 'true' : undefined } })
   return data
 }
+
+// Reusable configuration only; unlike QualityRuleTemplate, never distributes plans.
+export interface QualityRulePresetRequest {
+  name: string
+  model_id: string
+  cron_expression: string
+  enabled: boolean
+  max_results: number
+  pelican_config: PelicanTestConfig
+}
+export interface QualityRulePreset extends QualityRulePresetRequest {
+  id: number
+  created_at: string
+  updated_at: string
+}
+export async function listQualityPresets(): Promise<QualityRulePreset[]> {
+  const { data } = await apiClient.get<QualityRulePreset[]>('/admin/account-quality-presets')
+  return data ?? []
+}
+export async function createQualityPreset(body: QualityRulePresetRequest): Promise<QualityRulePreset> {
+  const { data } = await apiClient.post<QualityRulePreset>('/admin/account-quality-presets', body)
+  return data
+}

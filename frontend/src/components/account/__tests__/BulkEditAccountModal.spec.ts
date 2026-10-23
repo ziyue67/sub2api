@@ -1406,6 +1406,33 @@ describe('BulkEditAccountModal', () => {
     expect(wrapper.text()).toContain('admin.accounts.openai.modelRestrictionDisabledByPassthrough')
   })
 
+  it('uses the frozen OAuth selection for group changes even if live selection changes', async () => {
+    const wrapper = mountModal({
+      accountIds: [101, 102],
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['oauth'],
+      target: {
+        mode: 'selected', accountIds: [101, 102],
+        selectedPlatforms: ['openai'], selectedTypes: ['oauth']
+      }
+    })
+    await wrapper.setProps({ accountIds: [101, 102, 201, 202] })
+    await wrapper.get('#bulk-edit-groups-enabled').setValue(true)
+    wrapper.findComponent({ name: 'GroupSelector' }).vm.$emit('update:modelValue', [11, 15])
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([101, 102], { group_ids: [11, 15] })
+  })
+
+  it('does not replace an empty frozen selection with live account IDs', async () => {
+    const wrapper = mountModal({ target: { mode: 'selected', accountIds: [] } })
+    await wrapper.get('#bulk-edit-status-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.accounts.bulkEdit.noSelection')
+  })
+
   it('filtered-results 模式下应提交 filters 而不是 account_ids', async () => {
     const wrapper = mountModal({
       accountIds: [],

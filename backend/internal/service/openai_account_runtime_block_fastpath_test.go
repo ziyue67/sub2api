@@ -371,8 +371,10 @@ func TestOpenAI429FastPath_OpenCodeGoUsageLimitUsesMessageResetDuration(t *testi
 	repo := &rateLimit429AccountRepoStub{}
 	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
 	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
-	rateLimitService.SetAccountRuntimeBlocker(svc)
-	account := &Account{ID: 44, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}
+	blocker := &runtimeBlockRecorder{}
+	rateLimitService.SetAccountRuntimeBlocker(blocker)
+	// Only an identified provider owns this quota; generic relayed OpenAI keys use fallback.
+	account := &Account{ID: 44, Platform: PlatformOpenCodeGo, Type: AccountTypeAPIKey}
 	body := []byte(`{"type":"error","error":{"type":"GoUsageLimitError","message":"5-hour usage limit reached. Resets in 4hr 59min. To continue using this model now, enable usage from your available balance: https://opencode.ai/workspace/wrk_test/go"},"metadata":{"workspace":"wrk_test","limitName":"5 hour"}}`)
 
 	before := time.Now()
@@ -391,7 +393,8 @@ func TestOpenAI429FastPath_OpenCodeGoUsageLimitUsesMessageResetDuration(t *testi
 	expectedResetAfter := 4*time.Hour + 59*time.Minute
 	require.False(t, repo.lastRateLimitReset.Before(before.Add(expectedResetAfter-time.Second)))
 	require.False(t, repo.lastRateLimitReset.After(after.Add(expectedResetAfter)))
-	require.True(t, svc.isOpenAIAccountRuntimeBlocked(account))
+	require.Equal(t, []*Account{account}, blocker.accounts)
+	require.Equal(t, []time.Time{repo.lastRateLimitReset}, blocker.until)
 }
 
 // TestOpenAI429FastPath_SkipsSparkShadow 外审第8轮 P1:spark 影子被选中后若 /responses 返回 429,

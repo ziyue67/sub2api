@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 )
 
 type attemptKey struct{}
@@ -46,7 +48,7 @@ func startAttempt(req *http.Request, accountID, proxyID int64, kind string, pare
 		return req, nil
 	}
 	idx := len(c.data.Attempts)
-	c.data.Attempts = append(c.data.Attempts, Attempt{Kind: kind, Parent: parent, Number: idx + 1, AccountID: accountID, ProxyID: proxyID, StartMS: c.offset(time.Now()), RequestBytes: req.ContentLength, Events: map[string]float64{}})
+	c.data.Attempts = append(c.data.Attempts, Attempt{Route: transportdiag.HTTPRoute(req), Kind: kind, Parent: parent, Number: idx + 1, AccountID: accountID, ProxyID: proxyID, StartMS: c.offset(time.Now()), RequestBytes: req.ContentLength, Events: map[string]float64{}})
 	c.mu.Unlock()
 	t := &Trace{c: c, index: idx}
 	ctx := context.WithValue(req.Context(), attemptKey{}, t)
@@ -92,6 +94,7 @@ func (t *Trace) Response(resp *http.Response, err error) {
 		}
 		if resp != nil {
 			a.Status = resp.StatusCode
+			a.Route.ResponseFormat = transportdiag.ResponseFormat(resp.Header)
 			a.Events["response_headers"] = t.c.offset(time.Now())
 		}
 		if err != nil || resp == nil || resp.Body == nil {

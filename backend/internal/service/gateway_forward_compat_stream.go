@@ -218,6 +218,12 @@ func (st *anthropicCompatStream) failure() *anthropicCompatStreamFailure {
 // handler 换号重试。其余失败写出终止错误，并带上已观测到的 usage；未观测到任何
 // usage 时结果为 nil。
 func finishAnthropicCompatStreamFailure(c *gin.Context, writerSizeBeforeStream int, failure *anthropicCompatStreamFailure, result *ForwardResult, writeFailure func()) (*ForwardResult, error) {
+	// Safety refusals are terminal for this request even before output. They
+	// must not be converted into an account failover or replayed elsewhere.
+	if isAnthropicCompatSafetyRejection([]byte(extractCompatFailurePayload(failure.err))) {
+		writeFailure()
+		return nil, fmt.Errorf("upstream safety rejection: %s", failure.message)
+	}
 	var sseErr *sseStreamErrorEventError
 	if errors.As(failure.err, &sseErr) {
 		if c.Writer.Size() != writerSizeBeforeStream {
@@ -288,4 +294,23 @@ func commitAnthropicCompatStreamFailure(c *gin.Context, failure *anthropicCompat
 		return
 	}
 	c.Writer.Flush()
+}
+
+func extractCompatFailurePayload(err error) string {
+	var sseErr *sseStreamErrorEventError
+	if errors.As(err, &sseErr) {
+		return sseErr.RawData
+	}
+	return ""
+}
+
+func isAnthropicCompatSafetyRejection(body []byte) bool {
+	for _, key := range []string{"error.code", "error.type"} {
+		switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, key).String())) {
+		case "cyber_policy", "content_policy_violation", "content_policy_error", "safety_error", "safety_violation":
+			return true
+		}
+	}
+	message := strings.ToLower(gjson.GetBytes(body, "error.message").String())
+	return strings.Contains(message, "this request was blocked by safe guard policy") || strings.Contains(message, "this request was blocked by safeguard policy")
 }

@@ -131,7 +131,7 @@ const PaginationStub = {
 
 const BulkEditAccountModalStub = {
   props: ['show', 'target'],
-  template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
+  template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'" :data-target-ids="JSON.stringify(target?.accountIds ?? [])"></div>'
 }
 
 const makeProbeAccount = (id: number, rate = 0.25) => ({
@@ -157,11 +157,17 @@ const mockRatePage = (ids: number[], total = ids.length) => {
   })
 }
 
-const mountProbeView = () => mount(AccountsView, {
+const FilterValuesStub = {
+ props: ['filters'],
+ emits: ['update:filters', 'change'],
+ template: `<button data-test="persist-filters" @click="$emit('update:filters', { ...filters, platform: 'gemini', status: 'error' }); $emit('change')">filter</button>`
+}
+
+const mountProbeView = (stubs: { BulkEditAccountModal?: typeof BulkEditAccountModalStub; AccountTableFilters?: typeof FilterValuesStub } = {}) => mount(AccountsView, {
   global: {
     stubs: {
       AppLayout: { template: '<div><slot /></div>' },
-      TablePageLayout: { template: '<div><slot name="table" /><slot name="pagination" /></div>' },
+      TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
       DataTable: ProbeDataTableStub, Pagination: PaginationStub,
       AccountBulkActionsBar: AccountBulkActionsBarStub, AccountTableActions: true, AccountTableFilters: true,
       AccountActionMenu: true, ConfirmDialog: true, ImportDataModal: true, ReAuthAccountModal: true,
@@ -169,7 +175,8 @@ const mountProbeView = () => mount(AccountsView, {
       TempUnschedStatusModal: true, ErrorPassthroughRulesModal: true, TLSFingerprintProfilesModal: true,
       CreateAccountModal: true, EditAccountModal: true, BulkEditAccountModal: true,
       PlatformTypeBadge: true, AccountCapacityCell: true, AccountStatusIndicator: true,
-      AccountTodayStatsCell: true, AccountGroupsCell: true, AccountUsageCell: true, Icon: true
+      AccountTodayStatsCell: true, AccountGroupsCell: true, AccountUsageCell: true, Icon: true,
+      ...stubs
     }
   }
 })
@@ -218,7 +225,75 @@ describe('admin AccountsView bulk edit scope', () => {
     probeUpstreamUsageBatch.mockResolvedValue([])
   })
 
-  it('opens bulk edit in filtered-results mode from the bulk actions dropdown', async () => {
+  it('restores saved platform and status in the initial account request', async () => {
+    localStorage.setItem('account-filter-values', JSON.stringify({ platform: 'gemini', status: 'rate_limited' }))
+    const wrapper = mountProbeView()
+    await flushPromises()
+    expect(listAccounts.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ platform: 'gemini', status: 'rate_limited' }))
+    wrapper.unmount()
+  })
+
+  it.each(['{', 'null', '[]', '42', '{"platform":"unknown","status":"removed"}'])(
+    'ignores malformed or unsupported saved filters: %s', async raw => {
+      localStorage.setItem('account-filter-values', raw)
+      const wrapper = mountProbeView()
+      await flushPromises()
+      expect(listAccounts.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ platform: '', status: '' }))
+      wrapper.unmount()
+    }
+  )
+
+  it('persists actual filter events and restores them after remount', async () => {
+    const wrapper = mountProbeView({ AccountTableFilters: FilterValuesStub })
+    await flushPromises()
+    await wrapper.get('[data-test="persist-filters"]').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(localStorage.getItem('account-filter-values')!)).toEqual({ platform: 'gemini', status: 'error' })
+    wrapper.unmount()
+    listAccounts.mockClear()
+    const restored = mountProbeView()
+    await flushPromises()
+    expect(listAccounts.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ platform: 'gemini', status: 'error' }))
+    restored.unmount()
+  })
+
+  it('keeps filtering available when browser storage writes fail', async () => {
+    const original = Storage.prototype.setItem
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === 'account-filter-values') throw new Error('storage unavailable')
+      return original.call(this, key, value)
+    })
+    const wrapper = mountProbeView({ AccountTableFilters: FilterValuesStub })
+    try {
+      await flushPromises()
+      await wrapper.get('[data-test="persist-filters"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.findComponent(FilterValuesStub).props('filters')).toEqual(expect.objectContaining({ platform: 'gemini', status: 'error' }))
+    } finally {
+      wrapper.unmount()
+      spy.mockRestore()
+    }
+  })
+
+  it('does not reload an unmounted filter view after its debounce expires', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountProbeView({ AccountTableFilters: FilterValuesStub })
+    try {
+      await flushPromises()
+      expect(listAccounts).toHaveBeenCalledTimes(1)
+      await wrapper.get('[data-test="persist-filters"]').trigger('click')
+      wrapper.unmount()
+      await vi.advanceTimersByTimeAsync(301)
+      await flushPromises()
+      expect(listAccounts).toHaveBeenCalledTimes(1)
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+
+  it('freezes filtered results as explicit IDs before opening bulk edit', async () => {
+    listAccounts.mockResolvedValue(probePage([7, 11]))
     const wrapper = mount(AccountsView, {
       global: {
         stubs: {
@@ -261,7 +336,40 @@ describe('admin AccountsView bulk edit scope', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('true')
-    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('filtered')
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('selected')
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-ids')).toBe('[7,11]')
+  })
+
+  it('keeps checked OAuth IDs when a stale filtered-edit action fires', async () => {
+    const page = probePage([7, 11, 13])
+    page.items[0] = { ...page.items[0], type: 'oauth' }
+    // Initial mounting uses list(); listWithEtag() only serves incremental refreshes.
+    listAccounts.mockResolvedValue(page)
+    const wrapper = mountProbeView({ BulkEditAccountModal: BulkEditAccountModalStub })
+    await flushPromises()
+    expect(wrapper.findAll('[data-account-id]').map(row => row.attributes('data-account-id'))).toEqual(['7', '11', '13'])
+    await wrapper.get('[data-account-id="7"] [data-test="select-row"] input').trigger('change')
+    const callsBeforeEdit = listAccounts.mock.calls.length
+    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('true')
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-ids')).toBe('[7]')
+    expect(listAccounts).toHaveBeenCalledTimes(callsBeforeEdit)
+  })
+
+  it('does not open bulk edit for an empty or incomplete filtered preview', async () => {
+    const wrapper = mountProbeView({ BulkEditAccountModal: BulkEditAccountModalStub })
+    await flushPromises()
+    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('false')
+    expect(showError).toHaveBeenCalledWith('admin.accounts.bulkEdit.noSelection')
+
+    listAccounts.mockResolvedValue(probePage([7], 2))
+    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('false')
+    expect(showError).toHaveBeenCalledWith('admin.accounts.bulkActions.selectAllFailed')
   })
 
   it('renders the created_at column by default', async () => {

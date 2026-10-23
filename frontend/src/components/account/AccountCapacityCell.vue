@@ -7,6 +7,7 @@
       </svg>
     </CapacityBadge>
 
+    <AccountAdmissionProgress :account="account" />
     <AccountConcurrencyProgress v-if="concurrencyUpgradeEnabled" :account="account" />
 
     <!-- 5h窗口费用限制 -->
@@ -42,8 +43,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Account } from '@/types'
 import AccountConcurrencyProgress from './AccountConcurrencyProgress.vue'
+import AccountAdmissionProgress from './AccountAdmissionProgress.vue'
 import { supportsAccountQuota } from '@/utils/accountQuota'
-
 import CapacityBadge from '@/components/account/CapacityBadge.vue'
 import QuotaBadge from '@/components/account/QuotaBadge.vue'
 

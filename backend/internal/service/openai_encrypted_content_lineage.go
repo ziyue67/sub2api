@@ -24,60 +24,147 @@ const openAIWSFallbackReasonInvalidEncryptedContent = "invalid_encrypted_content
 // 供 HTTP bridge turn 内的 lineage 记录复用同一会话键。
 const openAIWSIngressSessionHashContextKey = "openai_ws_ingress_session_hash"
 
+// openAIStreamInvalidEncryptedContentContextKey 标记本次上游流内出现过
+// invalid_encrypted_content 拒绝（error / response.failed 事件）。流内拒绝发生时
+// 尚未提交输出且输入可安全恢复时，由 Forward 在同账号重试一次；其他情况
+// 读取该标记补记 lineage，让下一轮进场预剥离可明确归属的同一失效密文。
+const openAIStreamInvalidEncryptedContentContextKey = "openai_stream_invalid_encrypted_content"
+
+// isOpenAIInvalidEncryptedContentEvent 判断流内 error / response.failed 事件是否
+// 为上游 invalid_encrypted_content 拒绝。判定规则复用 isExcelBPSInvalidEncryptedContent
+// （显式错误码优先，缺码时才匹配固定诊断文案），并覆盖 response.failed 嵌套的
+// response.error。
+func isOpenAIInvalidEncryptedContentEvent(payload []byte) bool {
+	if isExcelBPSInvalidEncryptedContent(payload) {
+		return true
+	}
+	nested := gjson.GetBytes(payload, "response.error")
+	if !nested.IsObject() {
+		return false
+	}
+	return isExcelBPSInvalidEncryptedContent([]byte(`{"error":` + nested.Raw + `}`))
+}
+
+func markOpenAIStreamInvalidEncryptedContent(c *gin.Context, rejection []byte) {
+	if c != nil {
+		if len(rejection) > 65536 {
+			rejection = nil
+		}
+		c.Set(openAIStreamInvalidEncryptedContentContextKey, true)
+		c.Set(openAIStreamEncryptedRejectionContextKey, append([]byte(nil), rejection...))
+	}
+}
+
+// takeOpenAIStreamInvalidEncryptedContent 读取并清除流内拒绝标记，避免同一请求
+// 内后续尝试误用上一次尝试遗留的标记。
+func takeOpenAIStreamInvalidEncryptedContent(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	value, ok := c.Get(openAIStreamInvalidEncryptedContentContextKey)
+	if !ok {
+		return false
+	}
+	c.Set(openAIStreamInvalidEncryptedContentContextKey, false)
+	flagged, _ := value.(bool)
+	return flagged
+}
+
 func openAIEncryptedContentDigest(encrypted string) string {
 	sum := sha256.Sum256([]byte(encrypted))
 	return hex.EncodeToString(sum[:])
 }
 
-// openAIEncryptedLineageItemType 限定 lineage 覆盖的项类型，与剥离端
-// sanitizeEncryptedReasoningInputItem 能处理的类型对称；其他类型即使携带
-// encrypted_content 也不收摘要，避免记入永远剥不掉的摘要后每轮空转解码。
-func openAIEncryptedLineageItemType(itemType string) bool {
-	switch strings.TrimSpace(itemType) {
-	case "reasoning", "compaction", "compaction_summary":
-		return true
-	default:
-		return false
-	}
-}
-
-// collectOpenAIEncryptedContentDigestsRaw 收集 input 中 lineage 覆盖类型所携
-// 密文的摘要。payload 须遵守 replay 所有权不变式（零拷贝视图解析）。
-func collectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
-	if len(payload) == 0 {
-		return nil
-	}
-	input := gjson.Get(openAIWSPayloadStringView(payload), "input")
-	if !input.Exists() {
-		return nil
-	}
-	var digests []string
-	appendItem := func(item gjson.Result) {
-		if !openAIEncryptedLineageItemType(item.Get("type").String()) {
+// openAIEncryptedRecoveryAmbiguous refuses to guess which of several ciphertexts
+// failed, or to delete a compaction that may be the only conversation history.
+// Null-only reasoning cleanup is still allowed for legacy provider compatibility.
+func openAIEncryptedRecoveryAmbiguous(input any) bool {
+	count := 0
+	unsafe := false
+	visit := func(value any) {
+		item, ok := value.(map[string]any)
+		if !ok {
 			return
 		}
-		encrypted := item.Get("encrypted_content")
-		if encrypted.Type == gjson.String && encrypted.String() != "" {
-			digests = append(digests, openAIEncryptedContentDigest(encrypted.String()))
+		encrypted, _ := item["encrypted_content"].(string)
+		if encrypted == "" {
+			return
+		}
+		count++
+		kind, _ := item["type"].(string)
+		if strings.TrimSpace(kind) != "reasoning" {
+			unsafe = true
 		}
 	}
+	switch items := input.(type) {
+	case []any:
+		for _, item := range items {
+			visit(item)
+		}
+	case []map[string]any:
+		for _, item := range items {
+			visit(item)
+		}
+	case map[string]any:
+		visit(items)
+	}
+	return unsafe || count > 1
+}
+
+// Keep provider-specific sanitization (for example Grok compaction recovery)
+// independent of native OpenAI's opaque-history safety policy.
+func trimOpenAIEncryptedReasoningItemsForRecovery(body map[string]any) bool {
+	if openAIEncryptedRecoveryAmbiguous(body["input"]) {
+		return false
+	}
+	return trimOpenAIEncryptedReasoningItems(body)
+}
+
+func sanitizeOpenAIRecoveryInputItem(item any) (any, bool, bool) {
+	if value, ok := item.(map[string]any); ok {
+		kind, _ := value["type"].(string)
+		if strings.TrimSpace(kind) == "compaction" || strings.TrimSpace(kind) == "compaction_summary" {
+			return item, false, true
+		}
+	}
+	return sanitizeEncryptedReasoningInputItem(item)
+}
+
+// collectOpenAIEncryptedContentDigestsRaw only attributes a generic rejection
+// when there is one reasoning ciphertext. Multiple or opaque-history items are
+// not evidence that every input ciphertext is invalid. No plaintext is retained.
+func collectOpenAIEncryptedContentDigestsRaw(payload []byte) []string {
+	input := gjson.Get(openAIWSPayloadStringView(payload), "input")
+	count := 0
+	var digest string
+	unsafe := false
+	visit := func(item gjson.Result) {
+		encrypted := item.Get("encrypted_content")
+		if encrypted.Type != gjson.String || encrypted.String() == "" {
+			return
+		}
+		count++
+		if strings.TrimSpace(item.Get("type").String()) != "reasoning" {
+			unsafe = true
+			return
+		}
+		digest = openAIEncryptedContentDigest(encrypted.String())
+	}
 	if input.IsArray() {
-		input.ForEach(func(_, item gjson.Result) bool {
-			appendItem(item)
-			return true
-		})
-		return digests
+		input.ForEach(func(_, item gjson.Result) bool { visit(item); return true })
+	} else if input.IsObject() {
+		visit(input)
 	}
-	if input.IsObject() {
-		appendItem(input)
+	if unsafe || count != 1 {
+		return nil
 	}
-	return digests
+	return []string{digest}
 }
 
 // stripOpenAIInvalidEncryptedContentItems 剥离 input 中摘要命中 invalid 的密文
 // 项，剥离语义与 trimOpenAIEncryptedReasoningItems 对齐：reasoning 仅剥
-// encrypted_content（连带 content:null 清理与空骨架删除），compaction/
-// compaction_summary 整项删除。返回被改写的项数。
+// encrypted_content（连带 content:null 清理与空骨架删除）；压缩历史始终保留。
+// 返回被改写的项数。
 func stripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map[string]struct{}) int {
 	if len(reqBody) == 0 || len(invalid) == 0 {
 		return 0
@@ -86,6 +173,7 @@ func stripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map
 	if !has {
 		return 0
 	}
+	counts := openAIEncryptedInputCounts(inputValue)
 	stripped := 0
 	stripItem := func(item any) (next any, changed bool, keep bool) {
 		inputItem, ok := item.(map[string]any)
@@ -96,10 +184,13 @@ func stripOpenAIInvalidEncryptedContentItems(reqBody map[string]any, invalid map
 		if !ok || encrypted == "" {
 			return item, false, true
 		}
+		if counts[encrypted] != 1 {
+			return item, false, true
+		}
 		if _, hit := invalid[openAIEncryptedContentDigest(encrypted)]; !hit {
 			return item, false, true
 		}
-		return sanitizeEncryptedReasoningInputItem(item)
+		return sanitizeOpenAIRecoveryInputItem(item)
 	}
 	switch input := inputValue.(type) {
 	case []any:
@@ -200,6 +291,10 @@ func stripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 	if !hit {
 		return items, 0
 	}
+	counts := map[string]int{}
+	for _, item := range items {
+		counts[gjson.GetBytes(item, "encrypted_content").String()]++
+	}
 	stripped := 0
 	next := make([]json.RawMessage, 0, len(items))
 	for _, item := range items {
@@ -213,11 +308,15 @@ func stripOpenAIInvalidEncryptedContentFromReplayItems(items []json.RawMessage, 
 			next = append(next, item)
 			continue
 		}
+		if counts[encrypted] != 1 {
+			next = append(next, item)
+			continue
+		}
 		if _, matched := invalid[openAIEncryptedContentDigest(encrypted)]; !matched {
 			next = append(next, item)
 			continue
 		}
-		nextItem, changed, keep := sanitizeEncryptedReasoningInputItem(decoded)
+		nextItem, changed, keep := sanitizeOpenAIRecoveryInputItem(decoded)
 		if !changed {
 			next = append(next, item)
 			continue
@@ -306,14 +405,15 @@ func (s *OpenAIGatewayService) markOpenAIWSInvalidEncryptedContentLineageFromPay
 	logKey string,
 	accountID int64,
 	turn int,
+	rejection []byte,
 ) {
-	digests := collectOpenAIEncryptedContentDigestsRaw(payload)
+	digests := openAIRejectedEncryptedDigests(payload, rejection)
 	if len(digests) == 0 {
 		return
 	}
 	s.markOpenAIWSInvalidEncryptedContentLineage(
 		getOpenAIGroupIDFromContext(c),
-		s.openAIWSLineageSessionHashFromContext(c, payload),
+		openAIEncryptedLineageKey(c, accountID, s.openAIWSLineageSessionHashFromContext(c, payload)),
 		digests,
 	)
 	logOpenAIWSModeInfo("%s account_id=%d turn=%d digests=%d", logKey, accountID, turn, len(digests))

@@ -21,6 +21,42 @@ export function qualityBPSForm(saved?: Partial<QualityBPSPolicy> | null): Qualit
     pass_threshold: saved ? saved.pass_threshold || 1 : defaultQualityBPS().pass_threshold }
 }
 
+// Copy reusable inputs only. Result snapshots and future server-only fields must
+// never enter a create request through a spread of the source configuration.
+export function copyQualityRuleConfig(source: PelicanTestConfig): PelicanTestConfig & { quality: QualityPolicy } {
+  const policy = source.quality
+  if (!policy || policy.action === 'openai_two_fa_admission') throw new Error('qualityOps.copyUnsupported')
+  const bps = policy.bps
+  return {
+    rule_name: source.rule_name,
+    question_kind: source.question_kind,
+    test_channel: source.test_channel,
+    prompt: source.question_kind === 'random_reasoning' ? '' : source.prompt,
+    reasoning_effort: source.reasoning_effort,
+    parallel_count: source.parallel_count,
+    model_ids: source.model_ids ? [...source.model_ids] : undefined,
+    quality: {
+      trigger_on_upstream_5xx: policy.trigger_on_upstream_5xx ?? false,
+      expected_answer: source.question_kind === 'random_reasoning' ? '' : policy.expected_answer,
+      action: policy.action,
+      remove_group_ids: [...(policy.remove_group_ids || [])],
+      remove_models: policy.remove_models ? [...policy.remove_models] : undefined,
+      recovery_concurrency: policy.recovery_concurrency,
+      auto_restore: policy.auto_restore,
+      judge: policy.judge ? { group_id: policy.judge.group_id, model_id: policy.judge.model_id, prompt: policy.judge.prompt } : undefined,
+      bps: bps ? {
+        failure_threshold: bps.failure_threshold, usage_percent: bps.usage_percent, require_all: bps.require_all,
+        all_models: bps.all_models, models: [...(bps.models || [])], omit_unsupported_tools: bps.omit_unsupported_tools,
+        ignore_encrypted_content: bps.ignore_encrypted_content, auto_disable_on_403: bps.auto_disable_on_403,
+        auto_recover_on_403: bps.auto_recover_on_403, recovery_interval_minutes: bps.recovery_interval_minutes,
+        auto_move_on_403: bps.auto_move_on_403, target_group_id: bps.target_group_id,
+        session_proxy: bps.session_proxy, proxy_source: bps.proxy_source, cache_creation_as_input: bps.cache_creation_as_input,
+        pass_threshold: bps.pass_threshold, hold_on_usage: bps.hold_on_usage,
+      } : undefined,
+    },
+  }
+}
+
 const validPassCount = (count: number) => Number.isInteger(count) && count >= 1 && count <= 100
 
 // 与后端 validateQualityBPSPolicy 对应的前置检查，返回 i18n 键；空串表示通过。
@@ -84,6 +120,24 @@ export type QualityRuleDraft = {
   cron_expression: string
   enabled: boolean
   pelican_config: PelicanTestConfig & { quality: QualityPolicy }
+}
+
+// Compare only the business fields owned by each bulk checkbox. Dependencies
+// between fields must be confirmed too when importing a configuration.
+export function qualityRuleFieldValue(rule: Pick<ScheduledTestPlan, 'model_id' | 'cron_expression' | 'enabled' | 'pelican_config'>, field: QualityRuleField): unknown {
+  const cfg = rule.pelican_config, q = cfg?.quality, b = q?.bps
+  switch (field) {
+    case 'model': return [...new Set([rule.model_id, ...(cfg?.model_ids || [])])]
+    case 'schedule': return rule.cron_expression
+    case 'enabled': return rule.enabled
+    case 'test': return [cfg?.question_kind, cfg?.test_channel || 'account', cfg?.prompt, cfg?.reasoning_effort, cfg?.parallel_count,
+      q?.expected_answer, q?.judge?.group_id, q?.judge?.model_id, q?.judge?.prompt]
+    case 'restore': return [q?.auto_restore, b?.pass_threshold, b?.hold_on_usage]
+    case 'action': return [q?.action, q?.remove_group_ids || [], q?.remove_models || [], q?.recovery_concurrency,
+      b ? [b.failure_threshold, b.usage_percent, b.require_all, b.all_models, b.models || [], b.omit_unsupported_tools,
+        b.ignore_encrypted_content, b.auto_disable_on_403, b.auto_recover_on_403, b.recovery_interval_minutes,
+        b.auto_move_on_403, b.target_group_id, b.session_proxy, b.proxy_source, b.cache_creation_as_input] : null]
+  }
 }
 
 // The API replaces pelican_config as a whole. Merge selected fields into each

@@ -92,7 +92,7 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 	// = relational graphs with back-references that would cycle under encoding/json.
 	// InitialQualityPlan = internal creation-only policy, not readable plugin metadata.
 	stripped := map[string]struct{}{
-		"Credentials": {}, "Groups": {}, "AccountGroups": {}, "InitialQualityPlan": {},
+		"Credentials": {}, "Groups": {}, "AccountGroups": {}, "InitialQualityPlan": {}, "InitialAdmissionPlan": {},
 		// Fork-only proxy lane fields: internal egress configuration and
 		// request-scoped runtime state, never part of the readable snapshot.
 		"ProxyLanes": {}, "SelectedProxyLane": {},

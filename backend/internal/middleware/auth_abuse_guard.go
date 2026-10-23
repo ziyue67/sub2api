@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/iprisk"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/authguard"
 	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -47,6 +48,18 @@ return 0
 // accounting for every creation path, including OAuth callbacks/completion.
 // It deliberately uses the trusted proxy chain, never legacy raw-header trust.
 func AuthAbuseGuard(client *redis.Client) gin.HandlerFunc {
+	return AuthAbuseGuardWithOptions(client, AuthAbuseGuardOptions{})
+}
+
+type AuthAbuseGuardOptions struct {
+	// RegistrationIPLimitEnabled controls only the lifetime signup quota.
+	RegistrationIPLimitEnabled func(*gin.Context) bool
+	// LoginRateLimitEnabled controls login bans and failure recording only.
+	// Registration accounting and protection of other auth endpoints remain active.
+	LoginRateLimitEnabled func(*gin.Context) bool
+}
+
+func AuthAbuseGuardWithOptions(client *redis.Client, opts AuthAbuseGuardOptions) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !isAuthAbuseProtectedEndpoint(c) {
 			c.Next()
@@ -54,7 +67,21 @@ func AuthAbuseGuard(client *redis.Client) gin.HandlerFunc {
 		}
 		address := ippkg.GetTrustedClientIP(c)
 		key := authguard.IPKey(address)
-		c.Request = c.Request.WithContext(authguard.WithRegistrationIP(c.Request.Context(), address))
+		if opts.RegistrationIPLimitEnabled == nil || opts.RegistrationIPLimitEnabled(c) {
+			c.Request = c.Request.WithContext(authguard.WithRegistrationIP(c.Request.Context(), address))
+		}
+		// The configurable guard owns bans and whitelist decisions in enforce
+		// mode (and for whitelisted clients); retain registration accounting and
+		// the existing per-route limits.
+		if iprisk.Managed(c) {
+			c.Next()
+			return
+		}
+		if (isCredentialAttempt(c) || strings.HasSuffix(c.FullPath(), "/passkey/login/begin")) &&
+			opts.LoginRateLimitEnabled != nil && !opts.LoginRateLimitEnabled(c) {
+			c.Next()
+			return
+		}
 		if key == "" || client == nil {
 			abortRateLimit(c, time.Minute)
 			return

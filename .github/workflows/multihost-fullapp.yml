@@ -1,0 +1,79 @@
+name: Multi-host full application bootstrap
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-real-applications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Build actual cmd/server for the isolated runner only
+        working-directory: backend
+        env:
+          CGO_ENABLED: '0'
+          GOMAXPROCS: '1'
+          GOFLAGS: '-p=1'
+        run: |
+          set -euo pipefail
+          fullapp_fixture_dir="$RUNNER_TEMP/sub2api-fullapp"
+          mkdir -p "$fullapp_fixture_dir"
+          fullapp_fixture_commit="$(git rev-parse HEAD)"
+          go build -trimpath -ldflags="-X main.Commit=$fullapp_fixture_commit" \
+            -o "$fullapp_fixture_dir/sub2api" ./cmd/server
+          echo "FULLAPP_BIN=$fullapp_fixture_dir/sub2api" >> "$GITHUB_ENV"
+          echo "FULLAPP_EXPECTED_COMMIT=$fullapp_fixture_commit" >> "$GITHUB_ENV"
+          echo "FULLAPP_REPORT=$fullapp_fixture_dir/result.json" >> "$GITHUB_ENV"
+      - name: Fetch checksum-pinned Caddy 2.11.7
+        run: |
+          set -euo pipefail
+          fullapp_fixture_dir="$RUNNER_TEMP/sub2api-fullapp"
+          curl --fail --location --silent --show-error \
+            --connect-timeout 10 --max-time 90 \
+            https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz \
+            --output "$fullapp_fixture_dir/caddy.tar.gz"
+          echo '727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b  '"$fullapp_fixture_dir/caddy.tar.gz" | sha256sum --check --strict
+          tar -xzf "$fullapp_fixture_dir/caddy.tar.gz" -C "$fullapp_fixture_dir" caddy
+          echo "CADDY_BIN=$fullapp_fixture_dir/caddy" >> "$GITHUB_ENV"
+      - name: Initialize two full Sub2API applications and real Caddy in isolation
+        timeout-minutes: 15
+        run: python3 deploy/traffic/test_fullapp_bootstrap.py
+      - name: Build isolated seed and model fixture only
+        working-directory: backend
+        env:
+          CGO_ENABLED: '0'
+          GOMAXPROCS: '1'
+          GOFLAGS: '-p=1'
+        run: |
+          set -euo pipefail
+          go build -tags=fullappfixture -trimpath \
+            -o "$RUNNER_TEMP/sub2api-fullapp/fullapp-fixture" ./cmd/fullapp-fixture
+          echo "FULLAPP_FIXTURE_BIN=$RUNNER_TEMP/sub2api-fullapp/fullapp-fixture" >> "$GITHUB_ENV"
+      - name: Authenticated lifecycle, EOF boundaries and shared queued cancellation through two complete applications
+        timeout-minutes: 15
+        env:
+          FULLAPP_REPORT: ${{ runner.temp }}/sub2api-fullapp/model-result.json
+        run: python3 deploy/traffic/test_fullapp_models.py
+      - name: Save bounded fixture metadata, no config or application logs
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/sub2api-fullapp/result.json" ]; then
+            cat "$RUNNER_TEMP/sub2api-fullapp/result.json"
+          fi
+          if [ -f "$RUNNER_TEMP/sub2api-fullapp/model-result.json" ]; then
+            cat "$RUNNER_TEMP/sub2api-fullapp/model-result.json"
+          fi

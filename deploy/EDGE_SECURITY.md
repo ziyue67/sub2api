@@ -49,6 +49,15 @@ headers are ignored completely when the switch is disabled. In that mode Gin's
 CIDR/IP addresses that connect directly to Sub2API. An explicit empty list
 trusts no forwarded client IPs.
 
+When `server.trusted_proxies` is omitted, only `127.0.0.1/32` and `::1/128`
+are trusted, so local Nginx/1Panel proxies can pass the visitor address without
+extra configuration. This trusts forwarding headers supplied by local
+processes; set an explicit empty list to disable that trust. Explicit lists
+replace the defaults. Docker bridge addresses, private subnets and CDN peers
+are never added automatically. Changes require restarting Sub2API. These
+defaults also apply to auth IP guards and IP risk control, which always use
+the trusted proxy chain regardless of the compatibility switch.
+
 On the first upgrade to this mode, a legacy `false` value is changed to `true`
 only when `server.trusted_proxies` was not explicitly configured; explicit
 proxy policies remain in secure mode. New installations persist the configured

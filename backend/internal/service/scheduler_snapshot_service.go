@@ -183,7 +183,7 @@ func (s *SchedulerSnapshotService) SetLocalSnapshotReader(reader LocalSchedulerS
 }
 
 func (s *SchedulerSnapshotService) Start() {
-	if s == nil || s.cache == nil || s.localSnapshotReader != nil {
+	if s == nil || s.cache == nil || !s.writesSnapshots() {
 		return
 	}
 
@@ -256,6 +256,9 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] cache read failed: bucket=%s err=%v", bucket.String(), err)
 		} else if hit {
 			return derefAccounts(cached), useMixed, nil
+		}
+		if !s.writesSnapshots() {
+			return nil, useMixed, ErrSchedulerCacheNotReady
 		}
 		token, err := s.cache.CaptureBucketWriteToken(ctx, bucket)
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -407,7 +410,9 @@ func (s *SchedulerSnapshotService) GetGroupByIDLite(ctx context.Context, groupID
 	return s.groupRepo.GetByIDLite(ctx, groupID)
 }
 
-// UpdateAccountInCache 立即更新 Redis 中单个账号的数据（用于模型限流后立即生效）
+// UpdateAccountInCache 立即更新 Redis 中单个账号的数据（用于模型限流后立即生效）。
+// Reader mode retains request-triggered cooldown/status feedback; this does not
+// grant authority to rebuild candidate snapshots or consume the outbox.
 func (s *SchedulerSnapshotService) UpdateAccountInCache(ctx context.Context, account *Account) error {
 	if s.cache == nil || account == nil {
 		return nil
@@ -462,7 +467,7 @@ func (s *SchedulerSnapshotService) runFullRebuildWorker(interval time.Duration) 
 }
 
 func (s *SchedulerSnapshotService) pollOutbox() {
-	if s.outboxRepo == nil || s.cache == nil {
+	if !s.writesSnapshots() || s.outboxRepo == nil || s.cache == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1122,7 +1127,7 @@ func (s *SchedulerSnapshotService) setRebuildSnapshot(
 }
 
 func (s *SchedulerSnapshotService) triggerFullRebuild(reason string) error {
-	if s.cache == nil {
+	if !s.writesSnapshots() || s.cache == nil {
 		return ErrSchedulerCacheNotReady
 	}
 	return s.coalesceFullRebuild(func() error {
@@ -1133,7 +1138,7 @@ func (s *SchedulerSnapshotService) triggerFullRebuild(reason string) error {
 }
 
 func (s *SchedulerSnapshotService) rebuildFullSnapshot(ctx context.Context, reason string) error {
-	if s.cache == nil {
+	if !s.writesSnapshots() || s.cache == nil {
 		return ErrSchedulerCacheNotReady
 	}
 
@@ -1676,7 +1681,14 @@ func (s *SchedulerSnapshotService) resolveMode(platform string, hasForcePlatform
 	return SchedulerModeSingle
 }
 
+func (s *SchedulerSnapshotService) writesSnapshots() bool {
+	return s != nil && s.localSnapshotReader == nil && s.cfg.WritesSchedulerSnapshots()
+}
+
 func (s *SchedulerSnapshotService) guardFallback(ctx context.Context) error {
+	if !s.writesSnapshots() {
+		return ErrSchedulerCacheNotReady
+	}
 	if s.cfg == nil || s.cfg.Gateway.Scheduling.DbFallbackEnabled {
 		if s.fallbackLimit == nil || s.fallbackLimit.Allow() {
 			return nil

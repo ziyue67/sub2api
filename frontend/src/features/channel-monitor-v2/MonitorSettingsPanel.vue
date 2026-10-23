@@ -147,10 +147,6 @@
             data-testid="monitor-v2-platform-row"
             :data-platform="platform.platform"
           >
-            <div class="flex items-center gap-1">
-              <button type="button" class="icon-btn" :disabled="index === 0" :title="t('channelMonitorV2.settings.moveUp')" data-testid="monitor-v2-move-up" @click="movePlatform(index, -1)"><Icon name="arrowUp" size="xs" /></button>
-              <button type="button" class="icon-btn" :disabled="index === draft.platforms.length - 1" :title="t('channelMonitorV2.settings.moveDown')" data-testid="monitor-v2-move-down" @click="movePlatform(index, 1)"><Icon name="arrowDown" size="xs" /></button>
-            </div>
             <Toggle v-model="platform.enabled" />
             <div class="w-36 min-w-0">
               <strong class="block truncate text-sm font-medium text-gray-900 dark:text-white">{{ platformLabel(platform.platform) }}</strong>
@@ -183,6 +179,10 @@
             >
               <Icon name="trash" size="xs" />
             </button>
+            <div class="flex shrink-0 items-center gap-1">
+              <button type="button" class="icon-btn" :disabled="index === 0" :title="t('channelMonitorV2.settings.moveUp')" data-testid="monitor-v2-move-up" @click="movePlatform(index, -1)"><Icon name="arrowUp" size="xs" /></button>
+              <button type="button" class="icon-btn" :disabled="index === draft.platforms.length - 1" :title="t('channelMonitorV2.settings.moveDown')" data-testid="monitor-v2-move-down" @click="movePlatform(index, 1)"><Icon name="arrowDown" size="xs" /></button>
+            </div>
           </div>
         </div>
       </div>
@@ -219,10 +219,6 @@
               data-testid="monitor-v2-group-row"
               :data-group-id="group.id"
             >
-              <div class="flex items-center gap-1">
-                <button type="button" class="icon-btn" :disabled="index === 0" :title="t('channelMonitorV2.settings.moveUp')" data-testid="monitor-v2-group-move-up" @click="moveGroup(section.platform, index, -1)"><Icon name="arrowUp" size="xs" /></button>
-                <button type="button" class="icon-btn" :disabled="index === section.groups.length - 1" :title="t('channelMonitorV2.settings.moveDown')" data-testid="monitor-v2-group-move-down" @click="moveGroup(section.platform, index, 1)"><Icon name="arrowDown" size="xs" /></button>
-              </div>
               <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
                 <input
                   type="checkbox"
@@ -233,6 +229,10 @@
                 <span class="min-w-0 flex-1 truncate font-medium text-gray-800 dark:text-gray-100">{{ group.name }}</span>
                 <small class="shrink-0 text-xs text-gray-400">#{{ group.id }}</small>
               </label>
+              <div class="flex shrink-0 items-center gap-1">
+                <button type="button" class="icon-btn" :disabled="index === 0" :title="t('channelMonitorV2.settings.moveUp')" data-testid="monitor-v2-group-move-up" @click="moveGroup(section.platform, index, -1)"><Icon name="arrowUp" size="xs" /></button>
+                <button type="button" class="icon-btn" :disabled="index === section.groups.length - 1" :title="t('channelMonitorV2.settings.moveDown')" data-testid="monitor-v2-group-move-down" @click="moveGroup(section.platform, index, 1)"><Icon name="arrowDown" size="xs" /></button>
+              </div>
             </div>
           </section>
           <p v-if="groups.length === 0" class="empty-state py-8 text-sm text-gray-400">{{ t('channelMonitorV2.settings.groupsEmpty') }}</p>

@@ -77,7 +77,7 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 	const query = `
 		UPDATE scheduled_test_plans
 		SET model_id = $2, cron_expression = $3, enabled = $4, max_results = $5, auto_recover = $6, next_run_at = $7, updated_at = NOW(), pelican_config = $8
-		WHERE id = $1
+		WHERE id = $1 AND COALESCE(pelican_config->'quality'->>'action','') <> 'openai_two_fa_admission'
 		RETURNING id, account_id, model_id, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, pelican_config, running_until
 	`
 	args := []any{plan.ID, plan.ModelID, plan.CronExpression, plan.Enabled, plan.MaxResults, plan.AutoRecover, plan.NextRunAt, marshalPelicanConfig(plan.PelicanConfig)}
@@ -95,7 +95,9 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 	if err != nil {
 		return nil, err
 	}
-	if updated.PelicanConfig != nil && updated.PelicanConfig.Quality != nil &&
+	// Importing configuration cannot implicitly undo account restrictions or
+	// discard their ownership. Incompatible live isolation still rejects below.
+	if !plan.PreserveQualityState && updated.PelicanConfig != nil && updated.PelicanConfig.Quality != nil &&
 		updated.PelicanConfig.Quality.Action == service.QualityActionIsolateModels &&
 		(state.Action == "remove_groups" || state.Action == "disable_scheduling") {
 		if err = restoreQualityAccountActionForIsolation(ctx, tx, updated, &state); err != nil {
@@ -105,7 +107,7 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 	if err = checkQualityIsolationScope(updated, &state); err != nil {
 		return nil, err
 	}
-	if updated.PelicanConfig != nil && updated.PelicanConfig.Quality != nil && updated.PelicanConfig.Quality.Action == service.QualityActionObserveOnly {
+	if !plan.PreserveQualityState && updated.PelicanConfig != nil && updated.PelicanConfig.Quality != nil && updated.PelicanConfig.Quality.Action == service.QualityActionObserveOnly {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, plan.ID); err != nil {
 			return nil, err
 		}
@@ -346,7 +348,9 @@ func (r *scheduledTestPlanRepository) ClaimPelican(ctx context.Context, plan *se
 }
 
 func (r *scheduledTestPlanRepository) FinishPelican(ctx context.Context, id int64, until, finished time.Time) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE scheduled_test_plans SET running_until = NULL, last_run_at = $3
+	_, err := r.db.ExecContext(ctx, `UPDATE scheduled_test_plans SET running_until = NULL, last_run_at = $3,
+ next_run_at=CASE WHEN pelican_config->'quality'->>'action'='openai_two_fa_admission'
+ THEN $3::timestamptz+make_interval(secs => (pelican_config->'quality'->'admission'->>'wait_seconds')::int) ELSE next_run_at END
  WHERE id = $1 AND running_until = $2`, id, until, finished)
 	return err
 }
@@ -394,7 +398,8 @@ func (r *scheduledTestResultRepository) GetResult(ctx context.Context, planID, r
 
 // ListPelicanHistory lists every retained output, including failures and paused plans.
 // Cursor pagination is independent of account-table filters or pages. Bodies are lazy-loaded.
-func (r *scheduledTestResultRepository) ListPelicanHistory(ctx context.Context, beforeID int64, limit int) ([]*service.PelicanHistoryResult, error) {
+// A non-zero accountID narrows the same history to that account's plans.
+func (r *scheduledTestResultRepository) ListPelicanHistory(ctx context.Context, beforeID int64, limit int, accountID int64) ([]*service.PelicanHistoryResult, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT r.id, r.plan_id, r.status, r.error_message,
  r.latency_ms, r.started_at, r.finished_at, r.created_at, r.pelican_config, a.id, a.name
  FROM scheduled_test_results r
@@ -402,7 +407,8 @@ func (r *scheduledTestResultRepository) ListPelicanHistory(ctx context.Context, 
  JOIN accounts a ON a.id = p.account_id
  WHERE p.pelican_config IS NOT NULL AND p.pelican_config->'quality' IS NULL AND a.deleted_at IS NULL
  AND ($1::bigint = 0 OR r.id < $1)
- ORDER BY r.id DESC LIMIT $2`, beforeID, limit)
+ AND ($3::bigint = 0 OR p.account_id = $3)
+ ORDER BY r.id DESC LIMIT $2`, beforeID, limit, accountID)
 	if err != nil {
 		return nil, err
 	}

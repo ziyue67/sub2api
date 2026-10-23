@@ -122,6 +122,10 @@ func isClientCanceledTransportError(ctx context.Context, err error) bool {
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
 	// Astra 路由不可用先转为可失败转移的错误；客户端取消检查保留在本函数后段
 	// （与 ranxi 一致，先判定准入/RPM 与门票拒绝这类终结性错误）。
+	var phaseTimeout *openAIHTTPPhaseTimeout
+	if errors.As(err, &phaseTimeout) {
+		return handleOpenAIHTTPPhaseError(c, account, err)
+	}
 	if routeErr, ok := s.astraRouteFailover(ctx, account, err).(*UpstreamFailoverError); ok {
 		return routeErr
 	}

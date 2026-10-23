@@ -188,6 +188,10 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 			continue
 		}
 		if !cooldownEntryEqual(limits[key], state.ModelApplied[key]) {
+			if state.RestoreDiagnostic == nil {
+				state.RestoreDiagnostic = qualityRestoreConflict("model_entry_changed")
+			}
+			state.RestoreDiagnostic.Models = append(state.RestoreDiagnostic.Models, key)
 			conflict = true
 			continue
 		}
@@ -232,6 +236,10 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 				state.PreviousConcurrency, state.AppliedConcurrency = nil, nil
 			}
 		} else {
+			state.RestoreDiagnostic = qualityRestoreConflict("concurrency_changed")
+			state.RestoreDiagnostic.ExpectedConcurrency = state.AppliedConcurrency
+			current := account.Concurrency
+			state.RestoreDiagnostic.CurrentConcurrency = &current
 			conflict = true
 		}
 	}
@@ -304,6 +312,7 @@ func transitionQualityModelRound(account *service.Account, state *qualityState, 
 }
 
 func applyQualityModelOutcome(ctx context.Context, tx *sql.Tx, plan *service.ScheduledTestPlan, outcome, status string, state qualityState) (string, error) {
+	defer func() { plan.QualityRestoreDiagnostic = state.RestoreDiagnostic }()
 	if outcome == "inconclusive" && plan.QualityModelOutcomes == nil {
 		if state.Action == "" {
 			return "inconclusive", nil
@@ -311,6 +320,7 @@ func applyQualityModelOutcome(ctx context.Context, tx *sql.Tx, plan *service.Sch
 		outcome = "failed"
 	}
 	if outcome == "passed" && state.Action != "" && plan.PelicanConfig.Quality.AutoRestore && status != "active" {
+		state.RestoreDiagnostic = qualityRestoreConflict("account_not_active")
 		return "restore_conflict", nil
 	}
 	account := &service.Account{}

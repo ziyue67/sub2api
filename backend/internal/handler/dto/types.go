@@ -59,6 +59,7 @@ type APIKey struct {
 	UserID      int64                     `json:"user_id"`
 	Key         string                    `json:"key"`
 	Name        string                    `json:"name"`
+	GroupIDs    []int64                   `json:"group_ids"`
 	GroupID     *int64                    `json:"group_id"`
 	GroupRoutes []domain.APIKeyGroupRoute `json:"group_routes,omitempty"`
 	Status      string                    `json:"status"`
@@ -688,6 +689,11 @@ type UsageLog struct {
 	// ToolSurcharges lists completed hosted-tool calls billed in addition to
 	// token usage. Price is USD per 1,000 calls.
 	ToolSurcharges []ToolSurcharge `json:"tool_surcharges,omitempty"`
+
+	// UpstreamResponseModel is the model declared by the upstream response.
+	// End-user payloads include it only when the admin visibility setting is on.
+	// Omitted otherwise so mapped models stay hidden by default.
+	UpstreamResponseModel *string `json:"upstream_response_model,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 

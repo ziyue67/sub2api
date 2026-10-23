@@ -18,7 +18,7 @@ type prioritySnapshotInput struct {
 }
 
 func newPrioritySnapshotInput(req OpenAIAccountScheduleRequest, c PrioritySchedulingConfig, pool []openAIAccountCandidateScore, at time.Time) *prioritySnapshotInput {
-	input := &prioritySnapshotInput{limited: len(pool) > priorityHistoryMaxAccounts, at: at, request: OpenAIAccountScheduleRequest{RequestedModel: req.RequestedModel}, config: c, quota: make(map[int64]float64)}
+	input := &prioritySnapshotInput{limited: len(pool) > priorityHistoryMaxAccounts, at: at, request: OpenAIAccountScheduleRequest{RequestedModel: req.RequestedModel, RequiredCapability: req.RequiredCapability, RequireCompact: req.RequireCompact}, config: c, quota: make(map[int64]float64)}
 	if req.GroupID != nil {
 		id := *req.GroupID
 		input.request.GroupID = &id
@@ -67,7 +67,7 @@ func (s *OpenAIGatewayService) PrioritySchedulingSnapshot() *PrioritySchedulingS
 		id := *input.request.GroupID
 		group = &id
 	}
-	snapshot := &PrioritySchedulingSnapshot{At: input.at, EvaluatedAt: now, Model: input.request.RequestedModel, GroupID: group, Mode: input.config.Mode, SelectionPolicy: "capacity_first", HistoryReady: h.ready(), HistoryStatus: h.status, HistoryObservedAt: h.observed, HistoryError: h.failure, HistoryRefreshing: h.refreshing, Candidates: make([]PrioritySchedulingScore, 0, len(input.candidates))}
+	snapshot := &PrioritySchedulingSnapshot{LatencyPercentile: input.config.LatencyPercentile, LatencyMeasurement: input.config.LatencyMeasurement, MinSamples: input.config.MinSamples, WindowMinutes: input.config.WindowMinutes, ConfigRevision: priorityConfigRevision(input.config), At: input.at, EvaluatedAt: now, Model: input.request.RequestedModel, GroupID: group, Mode: input.config.Mode, SelectionPolicy: "capacity_first", HistoryReady: h.ready(), HistoryStatus: h.status, HistoryObservedAt: h.observed, HistoryWindowEnd: h.windowEnd, HistoryError: h.failure, HistoryRefreshing: h.refreshing, Candidates: make([]PrioritySchedulingScore, 0, len(input.candidates))}
 	if input.config.OAuthQuotaPriority {
 		snapshot.SelectionPolicy = "oauth_quota_priority"
 	}
@@ -79,6 +79,10 @@ func (s *OpenAIGatewayService) PrioritySchedulingSnapshot() *PrioritySchedulingS
 		}
 		if item.priorityAPIStandby {
 			role = "standby"
+		}
+		if s.openaiAccountStats != nil {
+			key := priorityAttemptKey{item.account.ID, input.request.RequestedModel, priorityErrorEndpoint(input.request)}
+			item.priorityErrors = s.openaiAccountStats.attempts.snapshot(key, now, input.config.ErrorRateWindowMinutes, input.config.ErrorRatePriorSamples)
 		}
 		score := applyPriorityCandidate(input.config, &item, h.signals[item.account.ID], now)
 		score.OAuthQuotaRole = role

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/cyberevidence"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -173,6 +174,7 @@ func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 	return err != nil &&
 		!errors.Is(err, errOpenAIWSUnsupportedModelSwitch) &&
 		!errors.Is(err, errOpenAIWSLocalAdmissionRejected) &&
+		!errors.Is(err, service.ErrOpenAIWSNodeOwner) &&
 		!service.IsOpenAIWSSessionPreemptedError(err)
 }
 
@@ -790,6 +792,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
+	stopHeaderWait := service.WrapOpenAIResponsesHeaderWait(c, reqStream)
+	defer stopHeaderWait()
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 	previousResponseID := strings.TrimSpace(gjson.GetBytes(body, "previous_response_id").String())
 	if previousResponseID != "" {
@@ -967,7 +971,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 生图意图只影响能力路由与图片计费，不关门：混合 /v1/responses 请求的
 	// token 计费部分仍受利润门保护，独立图片/视频端点才在门外。
 	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
-	c.Request = c.Request.WithContext(pricingCtx)
+	c.Request = c.Request.WithContext(service.WithOpenAIEncryptedReasoningAffinity(pricingCtx, body))
 
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
@@ -3168,7 +3172,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		return
 	}
 	// 白名单（log-only）用户跳过既有会话屏蔽查询：风控命中只记日志不拦截。
-	if cyberBlockKey := h.findBlockedCyberSessionForIdentity(c, apiKey, firstIdentityDecision.effective); cyberBlockKey != "" {
+	// 优先用含 body 指纹回退的 ForRequest（与上游语义一致），显式身份路径由
+	// ForIdentity 在 WS 握手/后续 turn 复用连接身份时使用。
+	if cyberBlockKey := h.findBlockedCyberSessionForRequest(c, apiKey, firstIdentityDecision.effective, firstMessage); cyberBlockKey != "" {
 		writeCyberSessionBlockedWSError(c.Request.Context(), wsConn)
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "session blocked by cyber-security policy")
 		h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, reqModel, cyberBlockKey)
@@ -3386,7 +3392,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	// 继续按建连时刻的谷价计费。生图意图只影响能力路由与图片计费，不关门。
 	// 建连时刻只用于选号/准入，不作为任何 turn 的计费定价时刻。
 	wsPricingCtx, _ := h.gatewayService.WithOpenAIRequestPricingContext(ctx, apiKey.GroupID)
-	ctx = wsPricingCtx
+	ctx = service.WithOpenAIEncryptedReasoningAffinity(wsPricingCtx, firstMessage)
 
 	for {
 		if !service.OpenAIWSIngressCanFailover(ctx, c) {
@@ -3677,7 +3683,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					h.enqueueCyberSessionIdentityRejectedOpsEntry(c, apiKey, model, metadata)
 					return newOpenAIWSLocalAdmissionCloseError("invalid or conflicting session identity")
 				}
-				if cyberBlockKey := h.findBlockedCyberSessionForIdentity(c, apiKey, identityDecision.effective); cyberBlockKey != "" {
+				if cyberBlockKey := h.findBlockedCyberSessionForRequest(c, apiKey, identityDecision.effective, payload); cyberBlockKey != "" {
 					writeCyberSessionBlockedWSError(c.Request.Context(), wsConn)
 					h.enqueueCyberSessionBlockedOpsEntry(c, apiKey, model, cyberBlockKey)
 					return newOpenAIWSLocalAdmissionCloseError(cyberSessionBlockedClientMsg)
@@ -3955,7 +3961,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		// 说明该会话链不属于本次调度到的账号，原样转发会触发上游会话链鉴权失败（“鉴权失败，请检查 API Key”）。
 		// 故剥离首包里的 previous_response_id，改用首包内 input 重建上下文；带 function_call_output 的
 		// 工具续链无法重建，保持原样。仅作用于首轮首包，后续 turn 的续链由 WS 转发层既有逻辑处理。
-		if previousResponseID != "" && !scheduleDecision.StickyPreviousHit && previousResponseCanMove {
+		if previousResponseID != "" && !scheduleDecision.StickyPreviousHit && previousResponseCanMove && !h.gatewayService.ProtectsWSNodeContinuation(account, wsFirstMessage) {
 			wsFirstMessage = service.RemovePreviousResponseIDFromBody(wsFirstMessage)
 			reqLog.Debug("openai.websocket_previous_response_id_stripped_cross_group",
 				zap.Int64("account_id", account.ID),
@@ -3996,6 +4002,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			if service.IsOpenAITurnAdmissionError(err) {
 				releaseTurnSlots()
 				closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account eligibility changed; reconnect with complete context")
+				return
+			}
+			if errors.Is(err, service.ErrOpenAIWSNodeOwner) {
+				releaseTurnSlots()
+				closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "continuation requires its original live node and connection; automatic replay is disabled")
 				return
 			}
 			var failoverErr *service.UpstreamFailoverError
@@ -5136,6 +5147,7 @@ func (h *OpenAIGatewayHandler) rejectIfCyberSessionBlocked(c *gin.Context, apiKe
 		return false
 	}
 	// 白名单（log-only）用户跳过既有会话屏蔽查询：风控命中只记日志不拦截。
+	// WebSocket 场景复用连接绑定身份，不重新从 payload 推断（否则继承身份丢失）。
 	key := h.findBlockedCyberSessionForIdentity(c, apiKey, identity)
 	if key == "" {
 		return false
@@ -5316,6 +5328,9 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithIdentity(c *gin.Cont
 	model = clientRequestedModel(c, model)
 
 	requestID := c.Writer.Header().Get("X-Request-Id")
+	if requestID == "" && c.Request != nil {
+		requestID = contentModerationRequestID(c.Request.Context())
+	}
 	var userID, apiKeyID int64
 	var userEmail, apiKeyName, groupName string
 	var groupID *int64
@@ -5332,6 +5347,9 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithIdentity(c *gin.Cont
 		}
 	}
 	inboundEndpoint := GetInboundEndpoint(c)
+	if inboundEndpoint == "" && c.Request != nil && c.Request.URL != nil {
+		inboundEndpoint = c.Request.URL.Path
+	}
 	upstreamEndpoint := ""
 	var accountID int64
 	if account != nil {
@@ -5398,34 +5416,43 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarkedWithIdentity(c *gin.Cont
 	// 白名单（log-only）用户只记日志，不写入会话屏蔽键。本 Fork 的屏蔽键沿用
 	// 类型化会话身份（identity.BlockKey）；上游的 transcript 写计划依赖已被本
 	// Fork 删除的 openai_cyber_transcript.go，故不引入。
+	var moderationVersion *int64
+	if value, ok := c.Get("content_moderation.user_version"); ok {
+		moderationVersion, _ = value.(*int64)
+	}
 	cyberLogOnly := h.cyberPolicyLogOnly(c, apiKey)
 	if gwSvc != nil && apiKey != nil && !cyberLogOnly {
-		if identity.BlockKey != "" {
-			blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			gwSvc.MarkCyberSessionBlocked(blockCtx, "", []string{identity.BlockKey})
-			cancel()
-		}
+		blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		gwSvc.MarkCyberSessionBlockedForRequest(blockCtx, apiKey.ID, identity, cyberBlockBody)
+		cancel()
+	}
+	evidence := cyberevidence.Prepared{Status: "unavailable"}
+	if cmSvc != nil && cmSvc.CyberEvidence() != nil {
+		evidence = cmSvc.CyberEvidence().PrepareWithSession(cyberBlockBody, mark.Message, sessionID, mark.UpstreamStatus)
 	}
 	go func() {
+		defer evidence.Release()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if cmSvc != nil {
 			cmSvc.RecordCyberPolicyEvent(ctx, service.CyberPolicyRecordInput{
-				LogOnly:         cyberLogOnly,
-				RequestID:       requestID,
-				UserID:          userID,
-				UserEmail:       userEmail,
-				APIKeyID:        apiKeyID,
-				APIKeyName:      apiKeyName,
-				GroupID:         groupID,
-				GroupName:       groupName,
-				Endpoint:        inboundEndpoint,
-				Model:           model,
-				UpstreamMessage: mark.Message,
-				UpstreamBody:    mark.Body,
-				UpstreamStatus:  mark.UpstreamStatus,
-				UpstreamInTok:   mark.UpstreamInTok,
-				UpstreamOutTok:  mark.UpstreamOutTok,
+				Evidence:          evidence,
+				ModerationVersion: moderationVersion,
+				LogOnly:           cyberLogOnly,
+				RequestID:         requestID,
+				UserID:            userID,
+				UserEmail:         userEmail,
+				APIKeyID:          apiKeyID,
+				APIKeyName:        apiKeyName,
+				GroupID:           groupID,
+				GroupName:         groupName,
+				Endpoint:          inboundEndpoint,
+				Model:             model,
+				UpstreamMessage:   mark.Message,
+				UpstreamBody:      mark.Body,
+				UpstreamStatus:    mark.UpstreamStatus,
+				UpstreamInTok:     mark.UpstreamInTok,
+				UpstreamOutTok:    mark.UpstreamOutTok,
 			})
 		}
 		if forwardErrored && gwSvc != nil {

@@ -26,7 +26,7 @@
       <p class="text-xs text-gray-500">{{ t('qualityOps.accountStatusHint') }}</p>
     </div>
     <div class="flex gap-2"><input id="quality-account-search" v-model="search" class="input min-w-0" :placeholder="t('qualityOps.search')" @keydown.enter.prevent="emit('search', 1)" /><button type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="emit('search', 1)">{{ t('qualityOps.search') }}</button></div>
-    <div v-if="!bulk && !scopeLocked" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+    <div v-if="!bulk && !scopeLocked && !hideScope" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
       <span>{{ t('qualityOps.accountScope') }}</span>
       <label class="flex items-center gap-1.5"><input v-model="scope" type="radio" value="all" data-testid="quality-account-scope-all" />{{ t('qualityOps.accountScopeAll') }}</label>
       <label class="flex items-center gap-1.5"><input v-model="scope" type="radio" value="manual" data-testid="quality-account-scope-manual" />{{ t('qualityOps.accountScopeManual') }}</label>
@@ -36,7 +36,7 @@
       <button type="button" class="text-primary-600 disabled:opacity-50" data-testid="quality-select-all" :disabled="accountsLoading || selectingAccounts || !accounts.length" @click="emit('selectAll')">{{ t(selectingAccounts ? 'qualityOps.selectingAccounts' : 'qualityOps.selectMatchingAccounts') }}</button>
       <button type="button" class="text-gray-500 disabled:opacity-50" data-testid="quality-clear-selection" :disabled="!selectedAccounts.length && !selectingAccounts" @click="emit('clear')">{{ t('qualityOps.clearAccountSelection') }}</button>
     </div>
-    <p class="text-xs text-gray-500">{{ t(scopeLocked ? 'qualityOps.templateFilterHint' : allScope ? 'qualityOps.accountScopeAllHint' : bulk ? 'qualityOps.bulkAccountSelectionHint' : 'qualityOps.accountSelectionHint') }}</p>
+    <p class="text-xs text-gray-500">{{ selectionHint || t(scopeLocked ? 'qualityOps.templateFilterHint' : allScope ? 'qualityOps.accountScopeAllHint' : bulk ? 'qualityOps.bulkAccountSelectionHint' : 'qualityOps.accountSelectionHint') }}</p>
     <p v-if="accountsError" role="alert" class="text-sm text-red-600">{{ accountsError }}</p>
     <p v-if="accountsLoading" role="status" class="text-sm text-gray-500">{{ t('qualityOps.loading') }}</p>
     <div class="grid max-h-52 gap-2 overflow-auto rounded border p-3 sm:grid-cols-2 dark:border-dark-600" :aria-busy="accountsLoading || selectingAccounts">
@@ -73,6 +73,8 @@ const props = defineProps<{
   bulk: boolean
   // 编辑分组规则时范围固定为「所有匹配账户」，只能改筛选条件。
   scopeLocked?: boolean
+  hideScope?: boolean
+  selectionHint?: string
   disabledReason: (account: AccountListItem) => string
 }>()
 // 批量修改改的是已有规则，范围选择只在新建时出现。

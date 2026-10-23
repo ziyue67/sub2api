@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -298,5 +299,44 @@ func TestIsHTMLResponse(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, isHTMLResponse([]byte(tc.body)))
 		})
+	}
+}
+
+func TestCloudflare1010AcrossForkPlatformsDoesNotPenalize(t *testing.T) {
+	for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformDeepseek, PlatformKimi, PlatformZhipu, PlatformMiniMax, PlatformCline, PlatformGrok} {
+		t.Run(platform, func(t *testing.T) {
+			repo := &rateLimitAccountRepoStub{}
+			counter := &countingOpenAI403CounterCache{}
+			svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+			svc.SetOpenAI403CounterCache(counter)
+			account := &Account{ID: 972, Platform: platform, Type: AccountTypeAPIKey}
+			for _, body := range []string{"error code: 1010", `{"cloudflare_error":true,"error_code":1010}`} {
+				require.False(t, svc.HandleUpstreamError(context.Background(), account, http.StatusForbidden, http.Header{}, []byte(body)))
+			}
+			require.Zero(t, repo.setErrorCalls)
+			require.Zero(t, repo.tempCalls)
+			require.Zero(t, counter.increments)
+		})
+	}
+}
+
+func TestCloudflare1010SkipsCustomAndTemporaryPolicies(t *testing.T) {
+	for _, platform := range []string{PlatformOpenAI, PlatformAnthropic, PlatformGemini, PlatformAntigravity, PlatformDeepseek, PlatformKimi} {
+		for _, custom := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/custom=%t", platform, custom), func(t *testing.T) {
+				repo := &rateLimitAccountRepoStub{}
+				svc := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+				account := &Account{ID: 983, Platform: platform, Type: AccountTypeAPIKey, Credentials: map[string]any{
+					"custom_error_codes_enabled": custom, "custom_error_codes": []any{float64(403)},
+					"temp_unschedulable_enabled": true,
+					"temp_unschedulable_rules":   []any{map[string]any{"error_code": float64(403), "keywords": []any{"1010"}, "duration_minutes": float64(10)}},
+				}}
+				body := []byte(`{"cloudflare_error":true,"error_code":1010}`)
+				require.Equal(t, ErrorPolicySkipped, svc.CheckErrorPolicy(context.Background(), account, http.StatusForbidden, body))
+				require.False(t, svc.HandleUpstreamError(context.Background(), account, http.StatusForbidden, http.Header{}, body))
+				require.Zero(t, repo.setErrorCalls)
+				require.Zero(t, repo.tempCalls)
+			})
+		}
 	}
 }

@@ -177,13 +177,15 @@ func TestCalculateOpenAI429ResetTime_ReversedWindowOrder(t *testing.T) {
 type openAI429SnapshotRepo struct {
 	mockAccountRepoForGemini
 	rateLimitedID      int64
+	rateLimitResetAt   time.Time
 	updatedExtra       map[string]any
 	bulkUpdatedIDs     []int64
 	bulkUpdatedPayload AccountBulkUpdate
 }
 
-func (r *openAI429SnapshotRepo) SetRateLimited(_ context.Context, id int64, _ time.Time) error {
+func (r *openAI429SnapshotRepo) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
 	r.rateLimitedID = id
+	r.rateLimitResetAt = resetAt
 	return nil
 }
 
@@ -224,6 +226,40 @@ func TestHandle429_OpenAIPersistsCodexSnapshotImmediately(t *testing.T) {
 	}
 	if got := repo.updatedExtra["codex_7d_used_percent"]; got != 100.0 {
 		t.Fatalf("codex_7d_used_percent = %v, want 100", got)
+	}
+}
+
+func TestHandle429_OpenAIAPIKeyDoesNotSyncUpstreamPlanType(t *testing.T) {
+	for _, currentPlan := range []string{"", "plus"} {
+		for _, errorType := range []string{"usage_limit_reached", "rate_limit_exceeded"} {
+			t.Run(currentPlan+"/"+errorType, func(t *testing.T) {
+				repo := &openAI429SnapshotRepo{}
+				svc := NewRateLimitService(repo, nil, nil, nil, nil)
+				credentials := map[string]any{"api_key": "test-key", "base_url": "https://example.invalid"}
+				if currentPlan != "" {
+					credentials["plan_type"] = currentPlan
+				}
+				account := &Account{ID: 125, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: credentials}
+				body := []byte(`{"error":{"type":"` + errorType + `","plan_type":"pro","resets_at":4102444800}}`)
+
+				before := time.Now()
+				svc.handle429(context.Background(), account, http.Header{}, body)
+				after := time.Now()
+
+				require.Empty(t, repo.bulkUpdatedIDs, "upstream plans must not be persisted for API keys")
+				require.Nil(t, repo.bulkUpdatedPayload.Credentials)
+				require.Equal(t, currentPlan, account.GetCredential("plan_type"))
+				if currentPlan == "" {
+					require.NotContains(t, account.Credentials, "plan_type")
+				}
+				require.Equal(t, AccountTypeAPIKey, account.Type)
+				require.Equal(t, "test-key", account.GetCredential("api_key"))
+				require.Equal(t, account.ID, repo.rateLimitedID, "429 cooldown must still be persisted")
+				cooldown := time.Duration(defaultRateLimit429CooldownSeconds) * time.Second
+				require.False(t, repo.rateLimitResetAt.Before(before.Add(cooldown)))
+				require.False(t, repo.rateLimitResetAt.After(after.Add(cooldown)))
+			})
+		}
 	}
 }
 

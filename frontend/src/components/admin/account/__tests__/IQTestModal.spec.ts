@@ -288,6 +288,33 @@ describe('Intelligence question selection', () => {
   })
 })
 
+describe('IQTestModal test records', () => {
+  it('opens only this account over the dialog and returns to the test on close', async () => {
+    const wrapper = mount(IQTestModal, {
+      props: { show: true, account: { id: 42, name: 'Astra account', platform: 'openai', type: 'oauth', status: 'active' } as any, accounts: [{ id: 7, name: 'Other account' }] as any },
+      global: { stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }, Input: true, TextArea: true, Select: true, Icon: true, PelicanRecordsDashboard: true } }
+    })
+    await flushPromises()
+    const records = () => wrapper.findComponent({ name: 'PelicanRecordsDashboard' })
+    expect(records().exists()).toBe(false)
+    await wrapper.get('[data-testid="open-records"]').trigger('click')
+    expect(records().props('accountOnly')).toBe(true)
+    expect(records().props('account')).toMatchObject({ id: 42 })
+    records().vm.$emit('showAll')
+    await flushPromises()
+    expect(records().props('accountOnly')).toBe(false)
+    records().vm.$emit('close')
+    await flushPromises()
+    expect(records().exists()).toBe(false)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    // A records window left open closes with the dialog.
+    await wrapper.get('[data-testid="open-records"]').trigger('click')
+    await wrapper.setProps({ show: false })
+    expect(records().exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
 function probeResult(overrides: Record<string, unknown> = {}) {
   return {
     account_id: 42,

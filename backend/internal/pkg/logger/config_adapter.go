@@ -2,6 +2,14 @@ package logger
 
 import "github.com/Wei-Shaw/sub2api/internal/config"
 
+// OptionsFromRuntimeConfig extends normal process logs without changing callers
+// that intentionally use the legacy log-only adapter (including bootstrap).
+func OptionsFromRuntimeConfig(cfg config.LogConfig, runtime config.RuntimeConfig) InitOptions {
+	opts := OptionsFromConfig(cfg)
+	opts.Runtime = RuntimeIdentity{NodeID: runtime.NodeID, Role: runtime.Role}
+	return opts
+}
+
 func OptionsFromConfig(cfg config.LogConfig) InitOptions {
 	return InitOptions{
 		Level:           cfg.Level,

@@ -74,6 +74,13 @@
             </div>
             <span v-else class="font-medium text-gray-900 dark:text-white">{{ row.model }}</span>
             <div
+              v-if="userVisibleResponseModel(row)"
+              class="break-all text-gray-500 dark:text-gray-400"
+              data-testid="user-upstream-response-model"
+            >
+              <span class="mr-0.5">↳</span>{{ t('usage.upstreamResponseModel') }}: {{ userVisibleResponseModel(row) }}
+            </div>
+            <div
               v-if="row.upstream_model_mismatch === true && row.upstream_response_model"
               class="break-all pl-3 text-[11px]"
               :class="isLikelyModelVariant(row) ? 'text-amber-600 dark:text-amber-400' : 'text-orange-600 dark:text-orange-400'"
@@ -637,6 +644,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
+import { userVisibleUpstreamResponseModel } from '@/utils/upstreamResponseModel'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
 
@@ -694,6 +702,11 @@ const ipGeoBatchLoading = ref(false)
 // 长上下文计费 x2 徽标展示开关（公开设置，默认开启；未加载/缺失时按开启处理）
 const showLongContextBadge = computed(() => appStore.cachedPublicSettings?.usage_show_long_context_badge !== false)
 const showCacheRate = computed(() => showUsageCacheRate(appStore.cachedPublicSettings, props.cacheRateAudience))
+const userVisibleResponseModel = (row: AdminUsageLog): string => (
+  props.cacheRateAudience === 'user'
+    ? userVisibleUpstreamResponseModel(appStore.cachedPublicSettings, row)
+    : ''
+)
 
 const isWebSearchSurcharge = (name: string): boolean => name.trim().toLowerCase() === 'web_search'
 

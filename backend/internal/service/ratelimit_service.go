@@ -304,6 +304,18 @@ const (
 // CheckErrorPolicy 检查自定义错误码和临时不可调度规则。
 // 自定义错误码开启时覆盖后续所有逻辑（包括临时不可调度）。
 func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Account, statusCode int, responseBody []byte, requestedModel ...string) ErrorPolicyResult {
+	// An edge refusal must not reach account-specific rules, linked-account
+	// mutation or quota handlers, even when administrators configured a broad 403.
+	if statusCode == http.StatusForbidden && isCloudflareBotBlockResponse(responseBody) {
+		return ErrorPolicySkipped
+	}
+
+	if account.IsOpenAICompatible() && isOpenAIUpstreamSessionBlocked(responseBody) {
+		return ErrorPolicySkipped
+	}
+	if isOpenAIRequestScoped403(account, statusCode, responseBody) {
+		return ErrorPolicySkipped
+	}
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
 	if account.IsCustomErrorCodesEnabled() {
 		if account.ShouldHandleErrorCode(statusCode) {
@@ -344,8 +356,24 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 // handleUpstreamErrorAfterStreakReset keeps account policy handling shared with
 // the OpenAI gateway, which resets the streak before its early-return policies.
 func (s *RateLimitService) handleUpstreamErrorAfterStreakReset(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
+	// An edge refusal must not reach account-specific rules, linked-account
+	// mutation or quota handlers, even when administrators configured a broad 403.
+	if statusCode == http.StatusForbidden && isCloudflareBotBlockResponse(responseBody) {
+		return false
+	}
+
 	ctx = s.observeAccountOps(ctx, account, statusCode, headers, responseBody)
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
+	// A frozen upstream conversation must not reach custom cooldown rules,
+	// linked-account handling, or the escalating account-wide 403 counter.
+	if account.IsOpenAICompatible() && isOpenAIUpstreamSessionBlocked(responseBody) {
+		return false
+	}
+	// Relay content refusals and upstream WebSocket handshake failures must not
+	// reach custom account policies or the escalating account-wide 403 counter.
+	if isOpenAIRequestScoped403(account, statusCode, responseBody) {
+		return false
+	}
 	// An upstream group's image permission says nothing about text credentials.
 	// Keep it out of the generic 403 streak and whole-account policies.
 	if account != nil && account.Platform == PlatformOpenAI && isOpenAIImagePermissionError(statusCode, responseBody) {
@@ -1224,7 +1252,6 @@ func isCloudflareBotBlockCode(value any) bool {
 	default:
 		return false
 	}
-
 }
 
 // handleAntigravity403 处理 Antigravity 平台的 403 错误
@@ -1332,6 +1359,15 @@ func (s *RateLimitService) handle429Cooldown(ctx context.Context, account *Accou
 	}
 	// 1. OpenAI 平台：优先尝试解析 x-codex-* 响应头（用于 rate_limit_exceeded）
 	if account.Platform == PlatformOpenAI {
+		// An API key may relay a different ChatGPT account's quota error. Its
+		// reset time and Codex snapshot do not describe this key's capacity.
+		// Keep real 429 backoff without blocking the entire key for that window.
+		// Provider-specific quota handling above and explicit account policies
+		// remain authoritative.
+		if account.Type == AccountTypeAPIKey {
+			s.apply429FallbackRateLimit(ctx, account, "openai_apikey_upstream_429")
+			return
+		}
 		persistOpenAI429PlanType(ctx, s.accountRepo, account, responseBody)
 		s.persistOpenAICodexSnapshot(ctx, account, headers)
 		notifyOpenAIAutoReset(account.ID)
@@ -2037,7 +2073,9 @@ func parseOpenAIRateLimitPlanType(body []byte) string {
 }
 
 func persistOpenAI429PlanType(ctx context.Context, repo AccountRepository, account *Account, body []byte) {
-	if repo == nil || account == nil || account.Platform != PlatformOpenAI {
+	// API keys may proxy a different account's quota errors. Its plan_type must
+	// never classify our API key; only ChatGPT credentials have a local plan.
+	if repo == nil || account == nil || !account.IsOpenAIOAuthLike() {
 		return
 	}
 	// spark 影子账号恒不持凭据:即便收到带 plan_type 的 429,也不能把 plan_type 写进影子 credentials

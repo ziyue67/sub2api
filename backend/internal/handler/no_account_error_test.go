@@ -320,8 +320,8 @@ func TestClassifyNoAccountError_GPT55Retirement(t *testing.T) {
 }
 
 func TestGPT55RetirementEmptyListingDoesNotUseDefaults(t *testing.T) {
-	require.Empty(t, modelListingSource(service.PlatformOpenAI, []string{}, []string{"gpt-5.5"}))
-	require.Equal(t, []string{"gpt-5.5"}, modelListingSource(service.PlatformOpenAI, nil, []string{"gpt-5.5"}))
+	require.Empty(t, service.ModelListingSource(service.PlatformOpenAI, []string{}, []string{"gpt-5.5"}))
+	require.Equal(t, []string{"gpt-5.5"}, service.ModelListingSource(service.PlatformOpenAI, nil, []string{"gpt-5.5"}))
 }
 
 func TestModelCapacityExhausted_ResponseAndRetryAfter(t *testing.T) {

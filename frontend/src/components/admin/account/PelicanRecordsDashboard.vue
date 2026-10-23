@@ -1,23 +1,30 @@
 <template>
-  <div class="fixed inset-0 z-[60] overflow-y-auto bg-[#f6f8f7] p-4 dark:bg-dark-950 sm:p-6" role="dialog" aria-modal="true" :aria-label="t('admin.accounts.pelicanTest.history')" @keydown.esc.stop="selected = null">
-    <div class="mx-auto max-w-[1800px]">
-      <header class="mb-4 flex items-center justify-between gap-4">
-        <div>
+  <div ref="root" tabindex="-1" :class="scopedAccount ? 'fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-2 outline-none backdrop-blur-sm sm:p-4' : 'fixed inset-0 z-[60] overflow-y-auto bg-[#f6f8f7] p-4 outline-none dark:bg-dark-950 sm:p-6'" role="dialog" aria-modal="true" :aria-label="t('admin.accounts.pelicanTest.history')" @keydown.esc.stop="closeTop">
+    <div :class="scopedAccount ? 'max-h-[95vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-gray-200 bg-[#f6f8f7] p-4 shadow-2xl dark:border-dark-700 dark:bg-dark-950 sm:max-h-[90vh] sm:p-6' : 'mx-auto max-w-[1800px]'" data-testid="records-panel">
+      <header class="mb-4 flex gap-4" :class="scopedAccount ? 'flex-col sm:flex-row sm:items-start sm:justify-between' : 'items-center justify-between'">
+        <div class="min-w-0">
           <h2 class="text-xl font-semibold">{{ t('admin.accounts.pelicanTest.history') }}</h2>
+          <p v-if="scopedAccount" class="mt-0.5 break-all text-sm font-medium text-gray-700 dark:text-gray-200" data-testid="records-account">{{ scopedAccount.name }}</p>
           <p class="text-sm text-gray-500">{{ t('admin.accounts.pelicanTest.dashboardHint') }}</p>
           <p class="text-xs text-gray-500" data-testid="record-count">{{ t('admin.accounts.pelicanTest.recordCount', { count: cards.length }) }}</p>
         </div>
-        <div class="flex gap-2"><button type="button" class="btn btn-secondary" :disabled="refreshing" @click="refresh">{{ t('common.refresh') }}</button>
-        <button type="button" class="btn btn-secondary" @click="$emit('close')">{{ t('common.close') }}</button></div>
+        <div class="flex shrink-0 flex-wrap gap-2">
+          <button v-if="scopedAccount" type="button" class="btn btn-secondary" data-testid="show-all-records" @click="$emit('showAll')">{{ t('admin.accounts.pelicanTest.allAccountsHistory') }}</button>
+          <button type="button" class="btn btn-secondary" :disabled="refreshing" @click="refresh">{{ t('common.refresh') }}</button>
+          <button type="button" class="btn btn-secondary" @click="$emit('close')">{{ t('common.close') }}</button>
+        </div>
       </header>
       <p v-if="loadError" role="alert" class="mb-4 text-sm text-red-600">{{ loadError }}</p>
       <div v-if="loading" class="py-20 text-center text-sm text-gray-500">{{ t('common.loading') }}...</div>
-      <div v-else-if="cards.length" class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div v-else-if="cards.length" class="grid grid-cols-1 gap-4" :class="scopedAccount ? 'sm:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4'">
         <article v-for="card in visibleCards" :key="card.key" class="relative overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition hover:border-primary-300 hover:shadow-md dark:border-dark-700 dark:bg-dark-800" data-testid="pelican-record-card">
           <div class="p-4">
-            <h3 class="font-semibold">{{ card.account.name }}</h3>
-            <p class="mt-1 text-xs text-gray-500">#{{ card.account.id }}<span v-if="card.resultId"> · {{ t('admin.accounts.pelicanTest.recordId') }} #{{ card.resultId }}</span></p>
-            <div class="mt-3 flex justify-between gap-2 text-xs">
+            <!-- The account window names its one account in the header. -->
+            <template v-if="!scopedAccount">
+              <h3 class="font-semibold">{{ card.account.name }}</h3>
+              <p class="mt-1 text-xs text-gray-500">#{{ card.account.id }}<span v-if="card.resultId"> · {{ t('admin.accounts.pelicanTest.recordId') }} #{{ card.resultId }}</span></p>
+            </template>
+            <div class="flex justify-between gap-2 text-xs" :class="scopedAccount ? '' : 'mt-3'">
               <span :class="statusClass(card.record)" data-testid="record-status">{{ statusLabel(card.record) }}</span>
               <span class="text-gray-500">{{ duration(card.record.durationMs) }} · {{ sourceLabel(card.record.source) }}</span>
             </div>
@@ -28,7 +35,7 @@
             <div class="mt-3 aspect-[4/3] overflow-hidden rounded-xl bg-gray-50">
               <iframe v-if="card.record.html" :srcdoc="card.record.html" class="pointer-events-none h-full w-full border-0" tabindex="-1" sandbox="allow-scripts" referrerpolicy="no-referrer" :title="card.account.name" />
               <p v-else-if="!card.loaded && !card.loadError" class="p-4 text-sm text-gray-500">{{ t('common.loading') }}...</p>
-              <pre v-else-if="card.record.output && !card.record.html" class="whitespace-pre-wrap break-words p-4 text-sm">{{ card.record.output }}</pre>
+              <pre v-else-if="card.record.output && !card.record.html" class="whitespace-pre-wrap break-words p-4 text-sm text-gray-800">{{ card.record.output }}</pre>
               <p v-else class="p-4 text-sm text-red-500">{{ card.loadError || card.record.error || t('admin.accounts.pelicanTest.invalidHtml') }}</p>
             </div>
             <p v-if="card.record.error && !card.record.verdict" class="mt-2 line-clamp-2 break-words text-xs text-red-500">{{ card.record.error }}</p>
@@ -108,9 +115,12 @@ interface Card {
   loaded: boolean
   loadError?: string
 }
-const props = defineProps<{ accounts: AccountListItem[]; account: Account | null; manualRecord: ManualRecord | null }>()
-defineEmits<{ close: [] }>()
+// accountOnly opens the IQ test's own window: only `account`'s records, over the test dialog.
+const props = defineProps<{ accounts: AccountListItem[]; account: Account | null; manualRecord: ManualRecord | null; accountOnly?: boolean }>()
+const emit = defineEmits<{ close: []; showAll: [] }>()
 const { t } = useI18n()
+const scopedAccount = computed(() => props.accountOnly ? props.account : null)
+const root = ref<HTMLElement | null>(null)
 const loading = ref(true)
 const refreshing = ref(false)
 const selected = ref<Card | null>(null)
@@ -148,12 +158,13 @@ function manualCards(server: PelicanHistoryResult[]): Card[] {
   for (const result of server) accounts.set(result.account_id, { id: result.account_id, name: result.account_name })
   if (props.account) accounts.set(props.account.id, props.account)
   const saved = new Map<number, ManualRecord[]>()
+  const scopeId = scopedAccount.value?.id
   // Read only Pelican keys, across all account pages; never inspect auth storage.
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
       const match = key?.match(/^sub2api-pelican-test:(\d+)$/)
-      if (!match || !key) continue
+      if (!match || !key || (scopeId !== undefined && Number(match[1]) !== scopeId)) continue
       try {
         const records = JSON.parse(localStorage.getItem(key) || '[]')
         if (Array.isArray(records)) saved.set(Number(match[1]), records)
@@ -220,8 +231,9 @@ async function refresh() {
   try {
     const server: PelicanHistoryResult[] = []
     let cursor = 0
+    const scoped = scopedAccount.value
     do {
-      const page = await scheduledTestsAPI.listPelicanHistory(cursor)
+      const page = await (scoped ? scheduledTestsAPI.listPelicanHistory(cursor, scoped.id) : scheduledTestsAPI.listPelicanHistory(cursor))
       if (!alive) return
       server.push(...page.items)
       if (page.next_cursor && cursor && page.next_cursor >= cursor) throw new Error('Invalid history cursor')
@@ -253,6 +265,22 @@ async function poll() {
   await refresh()
   if (alive) timer = setTimeout(poll, 15000)
 }
-onMounted(poll)
-onBeforeUnmount(() => { alive = false; clearTimeout(timer) })
+// Escape closes the open preview, then the account window. The template stops the key
+// at this layer so the IQ test dialog underneath stays open.
+function closeTop() {
+  if (selected.value) selected.value = null
+  else if (scopedAccount.value) emit('close')
+}
+let returnFocus: HTMLElement | null = null
+onMounted(() => {
+  // Focus lands here so Escape reaches this layer rather than the dialog below.
+  returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  root.value?.focus({ preventScroll: true })
+  void poll()
+})
+onBeforeUnmount(() => {
+  alive = false
+  clearTimeout(timer)
+  if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true })
+})
 </script>

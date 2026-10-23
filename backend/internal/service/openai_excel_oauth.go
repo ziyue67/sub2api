@@ -29,6 +29,9 @@ type OpenAIExcelOAuthRepository interface {
 }
 
 func reauthTaskProfile(record *OpenAIOAuthReauthTaskRecord) string {
+	if record.OAuthProfile == "siwc" {
+		return "siwc"
+	}
 	if record.OAuthProfile == "excel" {
 		return "excel"
 	}

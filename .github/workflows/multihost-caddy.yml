@@ -1,0 +1,35 @@
+name: Multi-host Caddy contract
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  real-proxy-responses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Fetch verified Caddy 2.11.7 binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          proxy_fixture_dir="$RUNNER_TEMP/sub2api-caddy-contract"
+          mkdir -p "$proxy_fixture_dir"
+          curl --fail --location --silent --show-error \
+            --connect-timeout 10 --max-time 90 \
+            https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz \
+            --output "$proxy_fixture_dir/caddy.tar.gz"
+          echo '727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b  '"$proxy_fixture_dir/caddy.tar.gz" | sha256sum --check --strict
+          tar -xzf "$proxy_fixture_dir/caddy.tar.gz" -C "$proxy_fixture_dir" caddy
+          echo "CADDY_BIN=$proxy_fixture_dir/caddy" >> "$GITHUB_ENV"
+      - name: Real proxy and two synthetic HTTP SSE origins
+        run: python3 deploy/traffic/test_caddy_responses.py
+      - name: Verified HTTPS origins with synthetic CA and SNI failures
+        run: python3 deploy/traffic/test_caddy_responses_tls.py

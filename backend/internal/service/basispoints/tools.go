@@ -475,6 +475,15 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 			}
 			seenCalls[id] = true
 		case "function_call_output", "custom_tool_call_output":
+			if isCodexThreadDelegation(item) {
+				// Validate the original item before lowering so extra content cannot
+				// hide unsupported/encrypted parts behind the handoff exception.
+				if err := b.validateHistoryContent(item["content"], index, "content"); err != nil {
+					return nil, err
+				}
+				item = codexThreadDelegationMessage(item)
+				break
+			}
 			id := text(item["call_id"])
 			if !seenCalls[id] {
 				native := b.replay.get(b.scope, id)
@@ -576,7 +585,7 @@ func (b *Bridge) translateCall(native object) (object, error) {
 	}
 	info, allowed := b.tools[toolName]
 	if !allowed {
-		return nil, unknownClientToolError{}
+		return nil, unknownClientToolError{name: safeSchemaName(toolName)}
 	}
 	result, err := b.finishClientToolCall(native, info, envelope, rawCustom, !rawCmd)
 	if err != nil {

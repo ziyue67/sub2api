@@ -1,0 +1,22 @@
+{
+  "source_commit": "373e64e732be48f6a05aa6792403e0f13cc90401",
+  "baseline": "d70a3b1e427fba8968c929fdbe24be2e29e13f14",
+  "mode": "Actual ProfileView, SecurityRecordsView and PenaltyPolicyPanel; slot-only AppLayout; fictional auth/store and API fixtures. Not production, real authentication, sidebar navigation or backend acceptance.",
+  "screenshots": [
+    "profile-before.png",
+    "profile-restricted.png",
+    "profile-prompt-detail.png",
+    "records-unrestricted.png",
+    "policy-user-block.png",
+    "policy-tiered.png",
+    "records-dark.png",
+    "records-mobile.png"
+  ],
+  "interactions": [
+    "profile shows restriction and lazy-loaded original prompt",
+    "saved user_block",
+    "saved session_route_then_block"
+  ],
+  "browser_errors": [],
+  "captured_at": "2026-10-20T16:28:33.467Z"
+}

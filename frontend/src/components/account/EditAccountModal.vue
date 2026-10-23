@@ -26,6 +26,9 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
+      <SIWCAccountSettings v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow"
+        v-model:enabled="siwcEnabled" :account-id="account.id" :active="show" />
+
       <div v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
         <label class="flex items-center gap-2 text-sm"><input v-model="openaiModelAliases" type="checkbox" data-testid="openai-model-aliases" />{{ t('priorityScheduling.modelAliases') }}</label>
         <p class="input-hint">{{ t('priorityScheduling.modelAliasesHint') }}</p>
@@ -1931,7 +1934,7 @@
                 {{ t('admin.accounts.upstreamBilling.syncRate') }}
               </p>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.upstreamBilling.syncRateHint') }}
+                {{ t(account?.extra?.upstream_billing_probe?.data?.billing_mode === 'multi_group' ? 'admin.accounts.upstreamBilling.multiGroupSyncPaused' : 'admin.accounts.upstreamBilling.syncRateHint') }}
               </p>
             </div>
             <Toggle
@@ -2172,6 +2175,11 @@
       </div>
 
       <OpenAIRequestTimezoneField v-if="account?.platform === 'openai'" v-model="openAIRequestTimezone" />
+      <ExtraImageModelsField
+        v-if="account?.platform === 'openai' && account?.type === 'apikey'"
+        v-model:models="extraImageModels"
+        v-model:prefixes="extraImageModelPrefixes"
+      />
       <ExcelBPSCredentialStatus :state="account?.excel_bps_credential_state" />
 
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
@@ -3614,6 +3622,9 @@
 
 <script setup lang="ts">
 import OpenAIRequestTimezoneField from '@/components/account/OpenAIRequestTimezoneField.vue'
+import ExtraImageModelsField from '@/components/account/ExtraImageModelsField.vue'
+import { parseExtraImageModels, readExtraImageModels } from '@/utils/extraImageModels'
+import SIWCAccountSettings from './SIWCAccountSettings.vue'
 import ExcelBPSCredentialStatus from './ExcelBPSCredentialStatus.vue'
 import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier, readAccountCostMultiplier } from '@/utils/accountCost'
 
@@ -3755,6 +3766,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const siwcEnabled = ref(false)
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const globalBpsEnabled = computed(() => appStore.cachedPublicSettings?.excel_bps_enabled !== false)
@@ -4375,6 +4387,8 @@ const excelBPS403GroupOptions = computed(() => [
 ])
 const copilotSDKEnabled = ref(false)
 const openAIRequestTimezone = ref('Asia/Singapore')
+const extraImageModels = ref('')
+const extraImageModelPrefixes = ref('')
 const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
@@ -4893,6 +4907,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     extra?.upstream_billing_provider !== 'new_api' && upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
+  siwcEnabled.value = false
   excelBPSEnabled.value = false
   excelBPSMode.value = 'initial'
   excelBPSAllModels.value = false
@@ -4911,6 +4926,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   prismBrowserModels.value = [...prismSupportedModels]
   copilotSDKEnabled.value = false
   openAIRequestTimezone.value = 'Asia/Singapore'
+  extraImageModels.value = ''
+  extraImageModelPrefixes.value = ''
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
@@ -4940,6 +4957,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         ? extra.openai_prism_browser_models.filter((model): model is string => typeof model === 'string' && prismSupportedModels.includes(model))
         : []
     }
+    siwcEnabled.value = extra?.openai_siwc === true
     excelBPSEnabled.value = newAccount.type === 'oauth' && extra?.openai_excel_bps === true
     excelBPSMode.value = extra?.openai_excel_bps_config_mode === 'defaults' ? 'defaults' : 'initial'
     excelBPSAllModels.value = excelBPSEnabled.value && !Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')
@@ -4961,6 +4979,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     excelBPS403TargetGroupID.value = typeof targetGroupID === 'number' && Number.isSafeInteger(targetGroupID) && targetGroupID >= 0 ? targetGroupID : ''
     copilotSDKEnabled.value = newAccount.type === 'apikey' && extra?.openai_copilot_sdk === true
     openAIRequestTimezone.value = typeof extra?.openai_request_timezone === 'string' ? extra.openai_request_timezone : 'Asia/Singapore'
+    extraImageModels.value = readExtraImageModels(extra?.extra_image_models)
+    extraImageModelPrefixes.value = readExtraImageModels(extra?.extra_image_model_prefixes)
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openaiFlattenNamespacesEnabled.value =
       newAccount.type === 'oauth' && extra?.openai_responses_flatten_namespaces === true
@@ -6617,7 +6637,12 @@ const handleSubmit = async () => {
     if (props.account.platform === 'openai' && (props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'apikey')) {
       const currentExtra = (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (props.account.type === 'oauth' && !isSparkShadow.value) newExtra.openai_siwc = siwcEnabled.value
       newExtra.openai_request_timezone = openAIRequestTimezone.value
+      if (props.account.type === 'apikey') {
+        newExtra.extra_image_models = parseExtraImageModels(extraImageModels.value)
+        newExtra.extra_image_model_prefixes = parseExtraImageModels(extraImageModelPrefixes.value)
+      }
       if (props.account.type === 'oauth') {
         applyAccountRPMSettings(newExtra, {
           enabled: rpmLimitEnabled.value,

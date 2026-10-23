@@ -7,16 +7,26 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
 
 type ContentModerationHandler struct {
-	service *service.ContentModerationService
+	service            *service.ContentModerationService
+	safetyPromptStore  *service.SafetyPromptStore
+	safetyPromptConfig *service.SettingService
 }
 
 func NewContentModerationHandler(svc *service.ContentModerationService) *ContentModerationHandler {
 	return &ContentModerationHandler{service: svc}
+}
+
+// NewContentModerationHandlerWithSafetyPrompt wires the native safety injection
+// module into the admin handler. The store is shared with the gateway through
+// Wire so events written on the request path are visible in the audit API.
+func NewContentModerationHandlerWithSafetyPrompt(svc *service.ContentModerationService, store *service.SafetyPromptStore, settings *service.SettingService) *ContentModerationHandler {
+	return &ContentModerationHandler{service: svc, safetyPromptStore: store, safetyPromptConfig: settings}
 }
 
 type contentModerationConfigRequest struct {
@@ -211,18 +221,88 @@ func (h *ContentModerationHandler) ListLogs(c *gin.Context) {
 	response.Paginated(c, items, pageResult.Total, pageResult.Page, pageResult.PageSize)
 }
 
-func (h *ContentModerationHandler) UnbanUser(c *gin.Context) {
-	userID, err := strconv.ParseInt(strings.TrimSpace(c.Param("user_id")), 10, 64)
+func (h *ContentModerationHandler) UnbanUser(c *gin.Context) { h.manageUser(c, "unban") }
+
+func (h *ContentModerationHandler) ManageUser(c *gin.Context) { h.manageUser(c, "") }
+
+func (h *ContentModerationHandler) manageUser(c *gin.Context, action string) {
+	if !ipAuditAdministrator(c) {
+		return
+	}
+	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
 	if err != nil || userID <= 0 {
 		response.BadRequest(c, "Invalid user_id")
 		return
 	}
-	result, err := h.service.UnbanUser(c.Request.Context(), userID)
+	var req struct {
+		Action         string `json:"action"`
+		Version        *int64 `json:"version" binding:"required"`
+		Exempt         *bool  `json:"auto_ban_exempt"`
+		KeywordExempt  *bool  `json:"keyword_exempt"`
+		APIAuditExempt *bool  `json:"api_audit_exempt"`
+		Reason         string `json:"reason"`
+		Confirm        bool   `json:"confirm"`
+	}
+	if err = c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid action")
+		return
+	}
+	in := service.ModerationUserAction{Action: req.Action, Version: *req.Version, Exempt: req.Exempt, KeywordExempt: req.KeywordExempt, APIAuditExempt: req.APIAuditExempt, Reason: req.Reason, Confirm: req.Confirm}
+	if action != "" {
+		in.Action = action
+	}
+	subject, _ := middleware.GetAuthSubjectFromContext(c)
+	in.ActorID = subject.UserID
+	state, err := h.service.ManageModerationUser(c.Request.Context(), userID, in)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, result)
+	response.Success(c, state)
+}
+
+func (h *ContentModerationHandler) GetUser(c *gin.Context) {
+	if !ipAuditAdministrator(c) {
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid user_id")
+		return
+	}
+	state, err := h.service.GetModerationUser(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, state)
+}
+
+func (h *ContentModerationHandler) ListUsers(c *gin.Context) {
+	if !ipAuditAdministrator(c) {
+		return
+	}
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil {
+		response.BadRequest(c, "Invalid page")
+		return
+	}
+	size, err := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if err != nil {
+		response.BadRequest(c, "Invalid page_size")
+		return
+	}
+	id, err := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid user_id")
+		return
+	}
+	items, total, err := h.service.ListModerationUsers(c.Request.Context(), page, size, c.DefaultQuery("state", "exempt"), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Paginated(c, items, total, page, size)
 }
 
 func (h *ContentModerationHandler) DeleteFlaggedHash(c *gin.Context) {

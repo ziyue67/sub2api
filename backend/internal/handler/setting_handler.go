@@ -129,10 +129,11 @@ func (h *SettingHandler) GetPublicSettings(c *gin.Context) {
 
 		RiskControlEnabled: settings.RiskControlEnabled,
 
-		AllowUserViewErrorRequests: settings.AllowUserViewErrorRequests,
-		UsageShowLongContextBadge:  settings.UsageShowLongContextBadge,
-		UsageShowCacheRate:         settings.UsageShowCacheRate,
-		UsageShowCacheRateToUsers:  settings.UsageShowCacheRateToUsers,
+		AllowUserViewErrorRequests:            settings.AllowUserViewErrorRequests,
+		UsageShowLongContextBadge:             settings.UsageShowLongContextBadge,
+		UsageShowCacheRate:                    settings.UsageShowCacheRate,
+		UsageShowCacheRateToUsers:             settings.UsageShowCacheRateToUsers,
+		UsageShowUpstreamResponseModelToUsers: settings.UsageShowUpstreamResponseModelToUsers,
 	})
 }
 

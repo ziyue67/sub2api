@@ -396,6 +396,42 @@ func TestTypeSafeAccountBaseURLNeverFallsBackToAnthropic(t *testing.T) {
 	require.Equal(t, "https://api.anthropic.com", anthropic.GetBaseURL())
 }
 
+func TestForwardSystemOneEditableURLUsesExistingSecurityPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, base, want string
+		policy           config.URLAllowlistConfig
+		rejected         bool
+	}{
+		{"default", "", typesafe.DefaultBaseURL + typesafe.SystemOnePath, config.URLAllowlistConfig{}, false},
+		{"api base", "https://relay.example/relay/v1/", "https://relay.example/relay/v1/systemone", config.URLAllowlistConfig{}, false},
+		{"full endpoint", "https://relay.example/relay/v1/systemone/", "https://relay.example/relay/v1/systemone", config.URLAllowlistConfig{}, false},
+		{"allowlisted", "https://relay.example/v1/", "https://relay.example/v1/systemone", config.URLAllowlistConfig{Enabled: true, UpstreamHosts: []string{"relay.example"}}, false},
+		{"unlisted", "https://other.example/v1", "", config.URLAllowlistConfig{Enabled: true, UpstreamHosts: []string{"relay.example"}}, true},
+		{"private host", "https://127.0.0.1/v1", "", config.URLAllowlistConfig{Enabled: true, UpstreamHosts: []string{"127.0.0.1"}}, true},
+		{"private ipv6", "https://[::1]/v1", "", config.URLAllowlistConfig{Enabled: true, UpstreamHosts: []string{"::1"}}, true},
+		{"http denied", "http://relay.example/v1", "", config.URLAllowlistConfig{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			upstream := &systemOneHTTPUpstream{do: func(req *http.Request) (*http.Response, error) {
+				calls++
+				require.Equal(t, tc.want, req.URL.String())
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"answers":{}}`))}, nil
+			}}
+			s := &GatewayService{cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: tc.policy}}, httpUpstream: upstream}
+			account := &Account{ID: 123, Platform: PlatformTypeSafe, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": tc.base, "api_key": "fixture-key"}}
+			_, err := s.ForwardSystemOne(context.Background(), newSystemOneTestContext(), account, []byte(`{}`))
+			if tc.rejected {
+				require.Error(t, err)
+				require.Zero(t, calls)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 1, calls)
+			}
+		})
+	}
+}
+
 func TestTypeSafeModelsListCandidates(t *testing.T) {
 	require.Equal(t, []string{typesafe.JevLatestModel}, defaultModelsListCandidateIDs(PlatformTypeSafe))
 	require.NotContains(t, compositeDefaultModelsListCandidateIDs(), typesafe.JevLatestModel)
