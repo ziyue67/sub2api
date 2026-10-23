@@ -1024,6 +1024,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		return OpenAIUsage{}, 0, nil, err
 	}
 	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
+	ObserveImageArchiveJSON(c, body)
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"
 	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
@@ -1088,6 +1089,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		if streamErr != nil {
 			return
 		}
+		ObserveImageArchiveJSON(c, dataBytes)
 		seenSSEData = true
 		fallbackBody.Reset()
 		fallbackBytes = 0
@@ -1198,6 +1200,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		}
 		mergeOpenAIUsage(&usage, body)
 		imageCounter.AddJSONResponse(body)
+		ObserveImageArchiveJSON(c, body)
 	}
 
 	streamInterval := s.openAIImageStreamDataInterval()

@@ -31,6 +31,13 @@ func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthCli
 	return svc
 }
 
+// ProvideImageArchiveService starts the bounded local archive workers.
+func ProvideImageArchiveService(repo ImageArchiveRepository, settings SettingRepository) *ImageArchiveService {
+	svc := NewImageArchiveService(repo, settings)
+	svc.Start()
+	return svc
+}
+
 // BuildInfo contains build information
 type BuildInfo struct {
 	Version   string
@@ -1054,6 +1061,7 @@ func ProvideAPIKeyService(
 
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
+	ProvideImageArchiveService,
 	ProvideRequestCaptureManager,
 	// Core services
 	ProvideAuthService,

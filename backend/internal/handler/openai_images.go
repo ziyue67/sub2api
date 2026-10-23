@@ -298,12 +298,17 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		forwardStart := time.Now()
 		writerSizeBeforeForward := service.OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
 		result, err := func() (*service.OpenAIForwardResult, error) {
+			capture := h.imageArchive.Begin(c, subject.UserID, apiKey.ID, apiKey.GroupID, account.ID, parsed)
+			var forwarded *service.OpenAIForwardResult
+			defer func() { capture.Finish(c, forwarded) }()
 			defer func() {
 				if accountReleaseFunc != nil {
 					accountReleaseFunc()
 				}
 			}()
-			return h.gatewayService.ForwardImages(rpmAdmission.forwardContext(requestCtx, account), c, account, body, parsed, channelMapping.MappedModel)
+			var forwardErr error
+			forwarded, forwardErr = h.gatewayService.ForwardImages(rpmAdmission.forwardContext(requestCtx, account), c, account, body, parsed, channelMapping.MappedModel)
+			return forwarded, forwardErr
 		}()
 		if h.handleOpenAIRPMForwardError(c, err, streamStarted, false) {
 			return

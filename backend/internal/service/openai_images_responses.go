@@ -1153,6 +1153,7 @@ func (s *OpenAIGatewayService) tryWriteOpenAIImagesStreamEvent(
 	eventName string,
 	payload []byte,
 ) bool {
+	ObserveImageArchiveJSON(c, payload)
 	if clientDisconnected != nil && *clientDisconnected {
 		return false
 	}
@@ -1389,6 +1390,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 		return OpenAIUsage{}, 0, nil, err
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	ObserveImageArchiveJSON(c, responseBody)
 	c.Data(resp.StatusCode, "application/json; charset=utf-8", responseBody)
 	return usage, len(results), openAIResponsesImageResultSizes(results), nil
 }
