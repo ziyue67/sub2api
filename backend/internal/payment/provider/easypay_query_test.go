@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -150,14 +151,16 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 				}
 				// Parameters must be in the URL query (彩虹易支付 reads $_GET)
 				// and mirrored in the body for forks that read $_POST.
-				gotForm = r.URL.Query()
-				for key, values := range r.PostForm {
-					if got := gotForm.Get(key); got != values[0] {
-						t.Errorf("body[%s] = %q, query has %q", key, values[0], got)
+				if queryForm := r.URL.Query(); len(queryForm) > 0 {
+					gotForm = queryForm
+					for key, values := range r.PostForm {
+						if got := gotForm.Get(key); got != values[0] {
+							t.Errorf("body[%s] = %q, query has %q", key, values[0], got)
+						}
 					}
-				}
-				if len(r.PostForm) != len(gotForm) {
-					t.Errorf("body params %v do not mirror query params %v", r.PostForm, gotForm)
+					if len(r.PostForm) != len(gotForm) {
+						t.Errorf("body params %v do not mirror query params %v", r.PostForm, gotForm)
+					}
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(tt.body))
@@ -195,5 +198,58 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEasyPayQueryOrderFallsBackToPostOnly(t *testing.T) {
+	t.Parallel()
+
+	const orderID = "order-bepusdt"
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		for key, want := range map[string]string{
+			"act":          "order",
+			"pid":          "pid-1",
+			"key":          "pkey-1",
+			"out_trade_no": orderID,
+		} {
+			if got := r.PostForm.Get(key); got != want {
+				t.Errorf("post form[%s] = %q, want %q", key, got, want)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(r.URL.Query()) > 0 {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"code":-1,"msg":"not found","status":0}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":1,"msg":"success","out_trade_no":"order-bepusdt","trade_no":"gateway-bepusdt","money":"200","status":1,"trade_status":"TRADE_SUCCESS"}`))
+	}))
+	defer server.Close()
+
+	provider := newTestEasyPay(t, server.URL)
+	resp, err := provider.QueryOrder(context.Background(), orderID)
+	if err != nil {
+		t.Fatalf("QueryOrder returned error: %v", err)
+	}
+	if requestCount.Load() != 2 {
+		t.Fatalf("request count = %d, want 2", requestCount.Load())
+	}
+	if resp.Status != payment.ProviderStatusPaid {
+		t.Fatalf("status = %q, want %q", resp.Status, payment.ProviderStatusPaid)
+	}
+	if resp.TradeNo != "gateway-bepusdt" {
+		t.Fatalf("trade_no = %q, want gateway-bepusdt", resp.TradeNo)
+	}
+	if resp.Amount != 200 {
+		t.Fatalf("amount = %v, want 200", resp.Amount)
 	}
 }
