@@ -335,23 +335,67 @@ func (e *EasyPay) queryOrder(ctx context.Context, outTradeNo string) (*easyPayQu
 		"act": "order", "pid": e.config["pid"],
 		"key": e.config["pkey"], "out_trade_no": outTradeNo,
 	}
-	// 彩虹易支付 and ZPay read act=order parameters from $_GET only (a
-	// body-only request is answered with "No Act!"), while other forks read
-	// the form body; send them in both places.
+	endpoint := e.apiBase() + "/api.php"
+
+	// Caihong EasyPay and ZPay read act=order parameters from $_GET, while
+	// other forks such as Bepusdt accept only the form body. Try the broad
+	// compatibility form first, then retry POST-only for response shapes that
+	// indicate the upstream could not parse that mixed request. Both requests
+	// are read-only and the response remains bound to outTradeNo below.
 	query := url.Values{}
 	for k, v := range params {
 		query.Set(k, v)
 	}
-	body, err := e.post(ctx, e.apiBase()+"/api.php?"+query.Encode(), params)
-	if err != nil {
-		// The request URL carries the merchant key; never let it reach logs
-		// or audit records through *url.Error.
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
-			err = urlErr.Err
+	body, err := e.post(ctx, endpoint+"?"+query.Encode(), params)
+	if err == nil {
+		if result, parseErr := parseEasyPayQueryResponse(body, outTradeNo); parseErr == nil {
+			return result, nil
+		} else {
+			err = parseErr
 		}
-		return nil, fmt.Errorf("easypay query: %w", err)
 	}
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("easypay query: %w", ctx.Err())
+	}
+	compatErr := sanitizeEasyPayQueryError(err)
+	if !shouldRetryEasyPayQueryPostOnly(compatErr) {
+		return nil, fmt.Errorf("easypay query: %w", compatErr)
+	}
+
+	body, err = e.post(ctx, endpoint, params)
+	if err == nil {
+		if result, parseErr := parseEasyPayQueryResponse(body, outTradeNo); parseErr == nil {
+			return result, nil
+		} else {
+			err = parseErr
+		}
+	}
+	err = sanitizeEasyPayQueryError(err)
+	return nil, fmt.Errorf("easypay query compatibility request failed: %v; post-only retry failed: %w", compatErr, err)
+}
+
+func sanitizeEasyPayQueryError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
+}
+
+func shouldRetryEasyPayQueryPostOnly(err error) bool {
+	if err == nil {
+		return false
+	}
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "easypay query failed: not found") ||
+		strings.Contains(msg, "easypay query failed: no act")
+}
+
+func parseEasyPayQueryResponse(body []byte, outTradeNo string) (*easyPayQueryResult, error) {
 	// Scalars are decoded leniently: PHP deployments commonly serialize
 	// integer columns as strings ("status":"1").
 	type easyPayQueryData struct {
