@@ -75,7 +75,7 @@ func newImageDownloadHTTPClient(proxy func(*http.Request) (*url.URL, error)) *ht
 	proxied.Proxy = proxy
 	return &http.Client{
 		Timeout:   60 * time.Second,
-		Transport: &imageDownloadTransport{direct: direct, proxied: proxied, proxy: proxy, resolvesPrivate: isPrivateOrLoopbackHost},
+		Transport: &imageDownloadTransport{direct: direct, proxied: proxied, proxy: proxy, resolvesPrivate: imageDownloadHostResolvesNonPublic},
 	}
 }
 
@@ -100,7 +100,7 @@ func imageDownloadDialControl(_, address string, _ syscall.RawConn) error {
 	if err != nil {
 		return err
 	}
-	if ip := net.ParseIP(stripIPv6Zone(host)); ip == nil || isPrivateIP(ip) {
+	if ip := net.ParseIP(stripIPv6Zone(host)); ip == nil || !ip.IsGlobalUnicast() || isPrivateIP(ip) {
 		return &net.AddrError{Err: "address not allowed for image download", Addr: address}
 	}
 	return nil
@@ -157,6 +157,27 @@ func (t *imageDownloadTransport) route(req *http.Request) (http.RoundTripper, er
 	return t.proxied, nil
 }
 
+// Proxy transports cannot inspect the proxy's remote resolution; fail closed
+// on every non-public address returned by the local resolver before each hop.
+func imageDownloadHostResolvesNonPublic(ctx context.Context, host string) (bool, error) {
+	if isBlockedImageDownloadHost(host) {
+		return true, nil
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return false, err
+	}
+	if len(addresses) == 0 {
+		return true, nil
+	}
+	for _, address := range addresses {
+		if !address.IP.IsGlobalUnicast() || isPrivateIP(address.IP) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // isBlockedImageDownloadHost 报告 host 是否为空、被拒绝的主机名，或非公网 IP 字面量。
 // 域名的解析结果由 socket 层或代理分支再校验。
 func isBlockedImageDownloadHost(host string) bool {
@@ -165,7 +186,7 @@ func isBlockedImageDownloadHost(host string) bool {
 		return true
 	}
 	if ip := net.ParseIP(stripIPv6Zone(host)); ip != nil {
-		return isPrivateIP(ip)
+		return !ip.IsGlobalUnicast() || isPrivateIP(ip)
 	}
 	return false
 }
@@ -337,11 +358,15 @@ func (u *ImageResultUploader) download(ctx context.Context, rawURL string) ([]by
 		return nil, "", fmt.Errorf("downloaded image exceeds %d bytes", limit)
 	}
 	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
-	if !strings.HasPrefix(contentType, "image/") {
-		// 声明与嗅探都不是图片时拒绝，避免把任意响应体（内部接口的 JSON/HTML 等）转存给租户。
-		if contentType = detectedImageContentType(data); contentType == "" {
-			return nil, "", errors.New("download image: content is not an image")
-		}
+	// Trust detected image bytes over an upstream header: a JSON/HTML response
+	// labelled image/png must not be uploaded. AVIF has an ISO BMFF signature
+	// that net/http does not currently recognize as an image.
+	if detected := detectedImageContentType(data); detected != "" {
+		contentType = detected
+	} else if contentType == "image/avif" && len(data) >= 12 && string(data[4:8]) == "ftyp" && (string(data[8:12]) == "avif" || string(data[8:12]) == "avis") {
+		// Keep the declared AVIF media type after validating its container signature.
+	} else {
+		return nil, "", errors.New("download image: content is not an image")
 	}
 	return data, contentType, nil
 }

@@ -1,5 +1,6 @@
 <template>
-  <PelicanRecordsDashboard v-if="dashboardOpen" :accounts="props.accounts || []" :account="props.account" :manual-record="records[0] || null" @close="dashboardOpen = false" />
+  <PelicanRecordsDashboard v-if="recordsView" :key="recordsView" :accounts="props.accounts || []" :account="props.account" :manual-record="records[0] || null"
+    :account-only="recordsView === 'account'" @show-all="recordsView = 'all'" @close="recordsView = null" />
   <BaseDialog :show="show" :title="t('admin.accounts.pelicanTest.title')" width="full" :fullscreen="viewingScheduled && testMode === 'question'" @close="handleClose">
     <div class="space-y-5">
       <div v-if="account" class="flex flex-col items-start gap-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-800/60 dark:bg-amber-950/20 sm:flex-row sm:items-center sm:justify-between">
@@ -179,7 +180,8 @@
             type="button"
             class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
             :class="activeTab === 'history' ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300' : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-dark-700'"
-            @click="dashboardOpen = true"
+            data-testid="open-records"
+            @click="recordsView = 'account'"
           >
             {{ t('admin.accounts.pelicanTest.history') }}<span v-if="records.length" class="ml-1">({{ records.length }})</span>
           </button>
@@ -366,7 +368,8 @@ const parallelCount = ref<string | number>(1)
 const activeTab = ref<'results' | 'history' | 'schedule'>('results')
 const running = ref(false)
 const viewingScheduled = ref(false)
-const dashboardOpen = ref(false)
+// Test records open as this account's window over the dialog; every account's page is one step further.
+const recordsView = ref<'account' | 'all' | null>(null)
 const runs = ref<TestRun[]>([])
 const records = ref<TestRecord[]>([])
 const scheduledRecords = ref<ScheduledTestResult[]>([])
@@ -696,6 +699,8 @@ onBeforeUnmount(() => { for (const controller of controllers.values()) controlle
 watch(modelId, () => { if (props.show) loadReasoning() })
 
 watch(() => [props.show, props.account?.id] as const, ([show]) => {
+  // The records window never outlives the dialog or carries over to another account.
+  recordsView.value = null
   if (show) {
     readRecords()
     activeTab.value = 'results'

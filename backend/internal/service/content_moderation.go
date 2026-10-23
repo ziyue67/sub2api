@@ -1302,12 +1302,20 @@ func (s *ContentModerationService) enqueueRecord(input ContentModerationCheckInp
 }
 
 func (s *ContentModerationService) worker(id int) {
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), maxContentModerationTimeoutMS*time.Millisecond+10*time.Second)
+	s.runWorker(context.Background(), id)
+}
+
+func (s *ContentModerationService) runWorker(workerCtx context.Context, id int) {
+	for s.waitForAsyncWork(workerCtx) {
+		ctx, cancel := context.WithTimeout(workerCtx, maxContentModerationTimeoutMS*time.Millisecond+10*time.Second)
 		runtimeSnapshot, err := s.loadRuntimeSnapshot(ctx)
 		if err != nil || runtimeSnapshot == nil || runtimeSnapshot.config == nil || id >= runtimeSnapshot.config.WorkerCount {
 			cancel()
-			time.Sleep(time.Second)
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-time.After(time.Second):
+			}
 			continue
 		}
 		cfg := runtimeSnapshot.config
@@ -1351,6 +1359,35 @@ func (s *ContentModerationService) worker(id int) {
 			_ = s.checkSync(ctx, task.input, cfg, task.content, task.inputHash, &queueDelay, false)
 			s.asyncProcessed.Add(1)
 		}()
+	}
+}
+
+// Idle workers must not refresh the runtime settings merely to discover that
+// there is no work. Check before loading settings and before dequeueing so
+// config failures or a lower WorkerCount leave queued tasks available to an
+// eligible worker. Only asynchronous work pays at most this short idle wait;
+// synchronous moderation and its snapshot refresh behavior are unchanged.
+func (s *ContentModerationService) waitForAsyncWork(ctx context.Context) bool {
+	if s == nil || s.asyncQueue == nil {
+		return false
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	if len(s.asyncQueue) > 0 {
+		return true
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if len(s.asyncQueue) > 0 {
+				return true
+			}
+		}
 	}
 }
 

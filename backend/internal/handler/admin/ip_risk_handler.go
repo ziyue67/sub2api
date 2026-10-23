@@ -35,7 +35,13 @@ func (h *SettingHandler) GetIPRisk(c *gin.Context) {
 		response.Error(c, 503, "IP risk configuration unavailable")
 		return
 	}
-	response.Success(c, gin.H{"config": cfg, "health": m.Health(ctx), "current_ip": ippkg.GetTrustedClientIP(c), "trusted_proxies_configured": h.settingService.IPRiskTrustedProxiesConfigured()})
+	response.Success(c, gin.H{
+		"config":                     cfg,
+		"health":                     m.Health(ctx),
+		"current_ip":                 ippkg.GetTrustedClientIP(c),
+		"current_peer_ip":            c.RemoteIP(),
+		"trusted_proxies_configured": h.settingService.IPRiskTrustedProxiesConfigured(),
+	})
 }
 
 func (h *SettingHandler) SaveIPRisk(c *gin.Context) {

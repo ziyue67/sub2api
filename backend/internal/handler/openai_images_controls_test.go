@@ -13,37 +13,45 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestOpenAIGatewayHandlerImages_DisabledGroupRejectsBeforeScheduling(t *testing.T) {
+func TestOpenAIGatewayHandlerImages_RejectsBeforeScheduling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-
-	body := []byte(`{"model":"gpt-image-2","prompt":"draw","size":"1024x1024"}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = req
-	groupID := int64(111)
-	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
-		ID:      222,
-		GroupID: &groupID,
-		Group: &service.Group{
-			ID:                   groupID,
-			AllowImageGeneration: false,
-		},
-		User: &service.User{ID: 333},
-	})
-	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 333, Concurrency: 1})
-
-	h := &OpenAIGatewayHandler{
-		gatewayService:      &service.OpenAIGatewayService{},
-		billingCacheService: &service.BillingCacheService{},
-		apiKeyService:       &service.APIKeyService{},
-		concurrencyHelper:   &ConcurrencyHelper{concurrencyService: &service.ConcurrencyService{}},
+	for _, tc := range []struct {
+		model       string
+		allowImages bool
+		status      int
+		errorType   string
+	}{
+		{"gpt-image-2", false, http.StatusForbidden, "permission_error"},
+		{"nai-diffusion-4-5-full", false, http.StatusForbidden, "permission_error"},
+		{"nai-diffusion-4-5-full", true, http.StatusBadRequest, "invalid_request_error"},
+	} {
+		t.Run(tc.model+tc.errorType, func(t *testing.T) {
+			body := []byte(`{"model":"` + tc.model + `","prompt":"draw","size":"1024x1024"}`)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			groupID := int64(111)
+			c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+				ID: 222, GroupID: &groupID,
+				Group: &service.Group{ID: groupID, AllowImageGeneration: tc.allowImages},
+				User:  &service.User{ID: 333},
+			})
+			c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 333, Concurrency: 1})
+			h := &OpenAIGatewayHandler{
+				gatewayService:      &service.OpenAIGatewayService{},
+				billingCacheService: &service.BillingCacheService{},
+				apiKeyService:       &service.APIKeyService{},
+				concurrencyHelper:   &ConcurrencyHelper{concurrencyService: &service.ConcurrencyService{}},
+			}
+			h.Images(c)
+			require.Equal(t, tc.status, rec.Code)
+			require.Equal(t, tc.errorType, gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+			if tc.allowImages {
+				require.Contains(t, rec.Body.String(), "images endpoint requires an image model")
+			} else {
+				require.Contains(t, rec.Body.String(), service.ImageGenerationPermissionMessage())
+			}
+		})
 	}
-
-	h.Images(c)
-
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Equal(t, "permission_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
-	require.Contains(t, rec.Body.String(), service.ImageGenerationPermissionMessage())
 }

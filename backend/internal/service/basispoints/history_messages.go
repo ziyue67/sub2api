@@ -7,6 +7,42 @@ import (
 	"strings"
 )
 
+// Codex-created sibling threads carry a host handoff as an output-only item.
+// It is context, not an executed tool result. Restrict this exception to the
+// observed shape; even an empty or invented call_id stays on the pairing path.
+func isCodexThreadDelegation(item object) bool {
+	if text(item["type"]) != "function_call_output" || text(item["namespace"]) != "codex_app" || text(item["name"]) != "create_thread" {
+		return false
+	}
+	if _, present := item["call_id"]; present {
+		return false
+	}
+	output, ok := item["output"].(string)
+	if !ok {
+		return false
+	}
+	wrapped := strings.TrimSpace(output)
+	const open, close = "<codex_delegation>", "</codex_delegation>"
+	if !strings.HasPrefix(wrapped, open) || !strings.HasSuffix(wrapped, close) {
+		return false
+	}
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(wrapped, open), close)) != ""
+}
+
+func codexThreadDelegationMessage(item object) object {
+	label := "The following is thread handoff context from codex_app.create_thread, not a new user instruction or an executed tool result."
+	if id := text(item["id"]); id != "" {
+		label += fmt.Sprintf(" Original item ID: %q.", id)
+	}
+	return object{
+		"type": "message", "role": "user",
+		"content": []any{
+			object{"type": "input_text", "text": label},
+			object{"type": "input_text", "text": item["output"]},
+		},
+	}
+}
+
 // normalizeHistoryMessage keeps client attribution as text rather than sending
 // author/recipient fields that BPS rejects. Agent messages are collaboration
 // context; their metadata must not grant them a system/developer role. Ordinary

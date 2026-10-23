@@ -180,7 +180,7 @@ func (r *RegionalSchedulerReader) GetLocalSnapshot(ctx context.Context, bucket S
 // read scope when atomic multi-bucket capture is required. No revision is issued
 // here; failed/partial exports must not be published.
 func (s *SchedulerSnapshotService) ExportRegionalScheduler(ctx context.Context, buckets []SchedulerBucket, allowedIDs []int64) ([]byte, error) {
-	if s == nil || len(buckets) > 4096 {
+	if s == nil || !s.writesSnapshots() || len(buckets) > 4096 {
 		return nil, errors.New("invalid regional export")
 	}
 	allowed := make(map[int64]bool, len(allowedIDs))

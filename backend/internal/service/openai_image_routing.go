@@ -65,6 +65,9 @@ func openAIImageRequestRejection(ctx context.Context, account *Account, requeste
 	if account == nil || !account.IsOpenAI() {
 		return ""
 	}
+	if extraImagesAccountRejected(ctx, account) {
+		return "image_model_not_authorized"
+	}
 	model := openAIImageRequestModel(ctx, requestedModel)
 	if model == "" {
 		return ""

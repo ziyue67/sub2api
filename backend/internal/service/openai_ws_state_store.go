@@ -135,6 +135,12 @@ func (s *defaultOpenAIWSStateStore) BindHTTPResponseOwner(ctx context.Context, g
 		return nil
 	}
 	ttl = normalizeOpenAIWSTTL(ttl)
+	if shared, ok := s.cache.(OpenAIHTTPResponseOwnerCache); ok {
+		cacheCtx, cancel := withOpenAIWSStateStoreRedisTimeout(ctx)
+		defer cancel()
+		// Do not authorize from local memory before shared publication succeeds.
+		return shared.SetHTTPResponseOwner(cacheCtx, groupID, id, userID, apiKeyID, ttl)
+	}
 	s.maybeCleanup()
 
 	mapKey := openAIWSResponseAccountMapKey(groupID, id)
@@ -160,6 +166,13 @@ func (s *defaultOpenAIWSStateStore) GetHTTPResponseOwner(ctx context.Context, gr
 	id := normalizeOpenAIWSResponseID(responseID)
 	if id == "" {
 		return 0, 0, false, nil
+	}
+	if shared, ok := s.cache.(OpenAIHTTPResponseOwnerCache); ok {
+		cacheCtx, cancel := withOpenAIWSStateStoreRedisTimeout(ctx)
+		defer cancel()
+		// Shared expiry, deletion and availability must apply to this node too.
+		// A local hot hit must not extend Redis's authorization lifetime.
+		return shared.GetHTTPResponseOwner(cacheCtx, groupID, id)
 	}
 	s.maybeCleanup()
 

@@ -66,6 +66,9 @@ type QualityTemplateUpdate struct {
 
 // QualityRuleTemplateRepository stores group rules and the accounts each one has covered.
 type QualityRuleTemplateRepository interface {
+	// Presets are configuration snapshots in separate storage, never sync inputs.
+	ListPresets(ctx context.Context) ([]*QualityRulePreset, error)
+	CreatePreset(ctx context.Context, preset *QualityRulePreset) (*QualityRulePreset, error)
 	List(ctx context.Context) ([]*QualityRuleTemplate, error)
 	Get(ctx context.Context, id int64) (*QualityRuleTemplate, error)
 	Create(ctx context.Context, template *QualityRuleTemplate) (*QualityRuleTemplate, error)

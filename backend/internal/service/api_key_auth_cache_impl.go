@@ -20,6 +20,13 @@ import (
 // ranxi v30(include configured API key groups)。
 const apiKeyAuthSnapshotVersion = 30
 
+// Local-only generation wrapper. Old entries remain bounded by existing TTL
+// and capacity, but cannot authorize after a subscription recovery checkpoint.
+type apiKeyAuthL1Entry struct {
+	entry *APIKeyAuthCacheEntry
+	epoch uint64
+}
+
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
 	l1TTL         time.Duration
@@ -118,6 +125,9 @@ func (s *APIKeyService) StartAuthCacheInvalidationSubscriber(ctx context.Context
 	s.authInvalidationStart.Do(func() {
 		subscriberCtx, cancel := context.WithCancel(ctx)
 		subscriberCtx = withAuthCacheSubscriptionReady(subscriberCtx, func() {
+			// Pub/Sub has no replay. A reconnect may have missed revocations.
+			// Avoid Cache.Clear(), which is unsafe with concurrent Set/Get.
+			s.authCacheL1Epoch.Add(1)
 			s.authInvalidationConnected.Store(true)
 		})
 		s.authInvalidationCancel = cancel
@@ -207,15 +217,15 @@ func (s *APIKeyService) authCacheKey(key string) string {
 func (s *APIKeyService) getAuthCacheEntry(ctx context.Context, cacheKey string) (*APIKeyAuthCacheEntry, bool) {
 	if s.authCacheL1 != nil {
 		if val, ok := s.authCacheL1.Get(cacheKey); ok {
-			if entry, ok := val.(*APIKeyAuthCacheEntry); ok {
-				return entry, true
+			if local, ok := val.(apiKeyAuthL1Entry); ok && local.epoch == s.authCacheL1Epoch.Load() {
+				return local.entry, true
 			}
 		}
 	}
 	if s.authNegativeCacheL1 != nil {
 		if val, ok := s.authNegativeCacheL1.Get(cacheKey); ok {
-			if entry, ok := val.(*APIKeyAuthCacheEntry); ok && entry.NotFound {
-				return entry, true
+			if local, ok := val.(apiKeyAuthL1Entry); ok && local.epoch == s.authCacheL1Epoch.Load() && local.entry.NotFound {
+				return local.entry, true
 			}
 		}
 	}
@@ -234,9 +244,10 @@ func (s *APIKeyService) setAuthCacheL1(cacheKey string, entry *APIKeyAuthCacheEn
 	if entry == nil {
 		return
 	}
+	local := apiKeyAuthL1Entry{entry: entry, epoch: s.authCacheL1Epoch.Load()}
 	if entry.NotFound {
 		if s.authNegativeCacheL1 != nil && s.authCfg.negativeTTL > 0 {
-			_ = s.authNegativeCacheL1.SetWithTTL(cacheKey, entry, 1, s.authCfg.jitterTTL(s.authCfg.negativeTTL))
+			_ = s.authNegativeCacheL1.SetWithTTL(cacheKey, local, 1, s.authCfg.jitterTTL(s.authCfg.negativeTTL))
 		}
 		return
 	}
@@ -245,7 +256,7 @@ func (s *APIKeyService) setAuthCacheL1(cacheKey string, entry *APIKeyAuthCacheEn
 	}
 	ttl := s.authCfg.l1TTL
 	ttl = s.authCfg.jitterTTL(ttl)
-	_ = s.authCacheL1.SetWithTTL(cacheKey, entry, 1, ttl)
+	_ = s.authCacheL1.SetWithTTL(cacheKey, local, 1, ttl)
 }
 
 func (s *APIKeyService) setAuthCacheEntry(ctx context.Context, cacheKey string, entry *APIKeyAuthCacheEntry, ttl time.Duration) {

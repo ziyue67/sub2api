@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -36,6 +37,30 @@ func TestExcelBPSWarmTargetsUseConfiguredConcurrency(t *testing.T) {
 	large := makeAccount(100000, "mihomo")
 	m, _ = excelBPSWarmTargets([]Account{large, large})
 	require.Equal(t, excelBPSWarmMaxTarget, m)
+}
+
+type warmProjectionRepo struct {
+	AccountRepository
+	projectionCalls int
+	legacyCalls     int
+}
+
+func (r *warmProjectionRepo) ListBPSWarmAccounts(context.Context) ([]Account, error) {
+	r.projectionCalls++
+	return nil, errors.New("projection unavailable")
+}
+
+func (r *warmProjectionRepo) ListByPlatform(context.Context, string) ([]Account, error) {
+	r.legacyCalls++
+	return nil, errors.New("full hydration must not be retried")
+}
+
+func TestBPSWarmUsesProjectionWithoutFullHydrationFallback(t *testing.T) {
+	repo := &warmProjectionRepo{}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	svc.syncBPSWarmPool(context.Background())
+	require.Equal(t, 1, repo.projectionCalls)
+	require.Zero(t, repo.legacyCalls)
 }
 
 type warmLifecycleRepo struct {

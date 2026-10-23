@@ -3,6 +3,28 @@
 # Keep exactly one full instance until every enabled global job has a shared lease.
 runtime:
   role: "full"
+  # Optional opaque node label for structured logs. No hostname/IP/secret.
+  # If WS node owner is enabled, use the same node_id there.
+  node_id: ""
+  # Optional direct origin for this process's temporary BPS image capabilities.
+  # Empty keeps the shared setting. Must resolve to this node, not a shared LB.
+  image_relay_owner_origin: ""
+  # Opt-in native store=false WS safety gate; no node routing or replay.
+  # Each process must use a unique, stable node_id; boot identity is generated.
+  ws_node_owner:
+    enabled: false
+    node_id: "" # e.g. node-a, safe lowercase identifier only
+  # auto: full publishes scheduler snapshots; gateway only reads shared snapshots.
+  # reader rejects account-cache misses without database fallback or rebuilding.
+  # Keep exactly one full writer; gateway + writer is rejected.
+  # See docs/multi-host-scheduler-snapshots.md before upgrading request replicas.
+  scheduler_snapshot_mode: "auto"
+  # Opt in only after upgrading the full writer; see docs/multi-host-scheduler-snapshots.md.
+  # These scopes must cover the traffic assigned to a shared-Redis gateway.
+  scheduler_readiness:
+    enabled: false
+    buckets: [] # e.g. ["17:openai:single"] (synthetic group ID)
+    max_age_seconds: 900
 
 # Sub2API Configuration File
 # Sub2API 配置文件
@@ -61,6 +83,8 @@ server:
   # 只填写直接连接 Sub2API 的精确代理地址；显式设置 [] 可在高安全模式下
   # 禁用转发 IP 信任。
   # 未配置时仅信任 127.0.0.1/32 和 ::1/128；Docker 桥接/远程代理需显式配置。
+  # Docker + 宿主机 Nginx 排障与持久化步骤见 docs/docker-trusted-proxies.md。
+  # SERVER_TRUSTED_PROXIES 环境变量优先于此列表；显式空值会禁用信任。
   trusted_proxies:
     - 127.0.0.1/32
     - ::1/128

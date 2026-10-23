@@ -160,7 +160,7 @@ func runMainServer() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	if err := logger.Init(logger.OptionsFromConfig(cfg.Log)); err != nil {
+	if err := logger.Init(logger.OptionsFromRuntimeConfig(cfg.Log, cfg.Runtime)); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
 	if cfg.RunMode == config.RunModeSimple {

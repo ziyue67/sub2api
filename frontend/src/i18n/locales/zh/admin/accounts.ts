@@ -987,6 +987,10 @@ export default {
       },
       // OpenAI specific hints
       openai: {
+        extraImageModelsTitle: '额外生图模型（API Key）',
+        extraImageModelsExact: '精确模型 ID',
+        extraImageModelsPrefixes: '模型前缀',
+        extraImageModelsHint: '每行一个，也可用逗号分隔；前缀直接填写，无需星号，区分大小写。默认留空。仅放行此账号的图片生成及异步生成，不包含图片编辑。对外别名、渠道映射名和上游模型名都须命中内置生图家族或此名单；分组仍需允许生图。请另行配置生图价格。',
         requestTimezone: '请求时区',
         requestTimezoneDesc: '仅在系统设置中开启“请求时区绑定”后生效，未配置时使用 Asia/Singapore。',
         requestTimezoneLoadFailed: '加载时区列表失败，请稍后重试。',
@@ -2104,6 +2108,7 @@ export default {
 
         historyLoadError: '部分自动记录加载失败，已保留可用的手动记录。',
         dashboardHint: '展示保留的自动和手动测试，每次输出一张卡片，每 15 秒刷新。点击卡片查看完整结果。',
+        allAccountsHistory: '查看全部账号记录',
         scheduledPreview: '定时测试预览',
         sourceManual: '手动',
         sourceScheduled: '定时',

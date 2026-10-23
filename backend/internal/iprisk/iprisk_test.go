@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -243,16 +244,33 @@ func TestIPRiskAutomaticFailureBanSharedAndFixedExpiry(t *testing.T) {
 	require.Equal(t, 401, riskRequest(r, "POST", "/api/v1/auth/login", "198.51.100.1", "Mozilla/5.0", "bad_credentials").Code)
 	require.Equal(t, 200, riskRequest(r, "POST", "/api/v1/auth/login", "198.51.100.1", "Mozilla/5.0", "").Code)
 	require.Equal(t, 400, riskRequest(r, "POST", "/api/v1/auth/login/2fa", "198.51.100.1", "Mozilla/5.0", "bad_totp").Code)
+	key := modePrefix(false) + hashNetwork("198.51.100.1/32") + ":ban"
+	rawBan, err := server.Get(key)
+	require.NoError(t, err)
+	var ban Ban
+	require.NoError(t, json.Unmarshal([]byte(rawBan), &ban))
+	require.Equal(t, int64(60), ban.ExpiresAt-ban.CreatedAt)
+	require.Equal(t, 60*time.Second, server.TTL(key))
 	// Another process with an independent config cache must see the same Redis ban.
 	other := New(m.store, client, countryStub("US"), false)
 	r2 := riskRouter(t, other)
+	beforeRequest := time.Now().Unix()
 	blocked := riskRequest(r2, "POST", "/v1/responses", "198.51.100.1", "Python", "")
+	afterRequest := time.Now().Unix()
 	require.Equal(t, 429, blocked.Code)
-	require.Equal(t, "60", blocked.Header().Get("Retry-After"))
+	retryAfter, err := strconv.ParseInt(blocked.Header().Get("Retry-After"), 10, 64)
+	require.NoError(t, err)
+	// The stored expiry is fixed, but Retry-After uses wall-clock Unix seconds.
+	// Creating the second manager may cross a second boundary; validate against
+	// the request's actual time window rather than assuming it is still creation time.
+	require.GreaterOrEqual(t, retryAfter, max(int64(1), ban.ExpiresAt-afterRequest))
+	require.LessOrEqual(t, retryAfter, max(int64(1), ban.ExpiresAt-beforeRequest))
 	server.FastForward(30 * time.Second)
-	key := modePrefix(false) + hashNetwork("198.51.100.1/32") + ":ban"
 	require.Equal(t, 429, riskRequest(r, "GET", "/", "198.51.100.1", "Mozilla/5.0", "").Code)
 	require.Equal(t, 30*time.Second, server.TTL(key))
+	unchangedBan, err := server.Get(key)
+	require.NoError(t, err)
+	require.Equal(t, rawBan, unchangedBan, "blocked requests must not rewrite the fixed expiry")
 	require.Equal(t, 200, riskRequest(r, "GET", "/health", "198.51.100.1", "", "").Code)
 	require.NoError(t, other.Unban(context.Background(), "198.51.100.1"))
 	require.Equal(t, 200, riskRequest(r, "GET", "/", "198.51.100.1", "Mozilla/5.0", "").Code)

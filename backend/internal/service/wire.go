@@ -519,7 +519,8 @@ func ProvideTimingWheelService() (*TimingWheelService, error) {
 	return svc, nil
 }
 
-// ProvideDeferredService creates and starts DeferredService
+// ProvideDeferredService drains this process's request observations on every role.
+// A full node cannot flush the last-used updates held in a gateway's memory.
 func ProvideDeferredService(accountRepo AccountRepository, timingWheel *TimingWheelService) *DeferredService {
 	svc := NewDeferredService(accountRepo, timingWheel, 10*time.Second)
 	svc.Start()
@@ -532,8 +533,13 @@ func ProvideConcurrencyService(cache ConcurrencyCache, accountRepo AccountReposi
 	if runtime, ok := cache.(interface{ RunRegionalRuntime(context.Context) }); ok {
 		go runtime.RunRegionalRuntime(svc.apiKeyQueueStopContext())
 	}
-	if err := svc.CleanupStaleProcessSlots(context.Background()); err != nil {
-		logger.LegacyPrintf("service.concurrency", "Warning: startup cleanup stale process slots failed: %v", err)
+	// This scans shared expired-slot indexes, not this process's live requests.
+	// Keep request leases and regional runtime active on every role; let full
+	// nodes maintain the shared backlog instead of repeating scans per gateway.
+	if cfg.RunsBackgroundJobs() {
+		if err := svc.CleanupStaleProcessSlots(context.Background()); err != nil {
+			logger.LegacyPrintf("service.concurrency", "Warning: startup cleanup stale process slots failed: %v", err)
+		}
 	}
 	if cfg != nil {
 		svc.SetAPIKeyQueuePolicy(APIKeyQueuePolicy{
@@ -541,7 +547,9 @@ func ProvideConcurrencyService(cache ConcurrencyCache, accountRepo AccountReposi
 			Timeout:    cfg.Gateway.APIKeyQueue.Timeout(),
 		})
 		svc.SetAccountLoadBatchCacheTTL(time.Duration(cfg.Gateway.Scheduling.LoadBatchCacheTTLMS) * time.Millisecond)
-		svc.StartSlotCleanupWorker(accountRepo, cfg.Gateway.Scheduling.SlotCleanupInterval)
+		if cfg.RunsBackgroundJobs() {
+			svc.StartSlotCleanupWorker(accountRepo, cfg.Gateway.Scheduling.SlotCleanupInterval)
+		}
 	}
 	return svc
 }
@@ -629,7 +637,7 @@ func ProvideOpsMetricsCollector(
 	cfg *config.Config,
 ) *OpsMetricsCollector {
 	collector := NewOpsMetricsCollector(opsRepo, settingRepo, accountRepo, concurrencyService, db, redisClient, cfg)
-	collector.Start()
+	startBackgroundService(cfg, collector)
 	return collector
 }
 
@@ -684,16 +692,22 @@ func ProvideOpsCleanupService(
 
 func ProvideOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
 	sink := NewOpsSystemLogSink(opsRepo)
+	// The sink drains process-local warning/error and request log events. A
+	// gateway must keep this writer even though global aggregation is full-only.
 	sink.Start()
 	logger.SetSink(sink)
 	return sink
 }
 
-// ProvideAuditLogService 创建操作审计日志服务并启动异步写入与保留期清理协程。
+// ProvideAuditLogService keeps local audit writes on every role and runs shared
+// retention cleanup only on full nodes.
 // 停止逻辑挂在 cmd/server 的 provideCleanup。
-func ProvideAuditLogService(repo AuditLogRepository, settingService *SettingService) *AuditLogService {
+func ProvideAuditLogService(repo AuditLogRepository, settingService *SettingService, cfg *config.Config) *AuditLogService {
 	svc := NewAuditLogService(repo, settingService)
-	svc.Start()
+	svc.StartWriter()
+	if cfg.RunsBackgroundJobs() {
+		svc.StartRetentionCleanup()
+	}
 	return svc
 }
 
@@ -739,7 +753,7 @@ func ProvideIdempotencyCleanupService(repo IdempotencyRepository, cfg *config.Co
 // ProvideGeminiCachedContentService creates GeminiCachedContentService and starts its mutation recovery loop.
 func ProvideGeminiCachedContentService(repo GeminiCachedContentRepository, compat *GeminiMessagesCompatService, cfg *config.Config) *GeminiCachedContentService {
 	svc := NewGeminiCachedContentService(repo, compat, cfg)
-	svc.Start()
+	startBackgroundService(cfg, svc)
 	return svc
 }
 
@@ -1065,6 +1079,7 @@ var ProviderSet = wire.NewSet(
 	NewAdminService,
 	NewGatewayService,
 	ProvideOpenAIGatewayService,
+	NewSafetyPromptStore,
 	wire.Struct(new(OpenAIGatewayDependencies), "*"),
 	ProvideCodexHarvestService,
 	ProvideImageStorageSettingService,

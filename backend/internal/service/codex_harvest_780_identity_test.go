@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,26 +39,26 @@ func TestCodex780ProbeUsesCanonicalClientIdentity(t *testing.T) {
 		{
 			name: "same service follows updated canonical identity", model: "gpt-6-astra",
 			canonical: "codex-tui/0.201.2 (Mac OS X 14.0; arm64) iTerm",
-			wantUA:    "codex-tui/0.201.2 (Mac OS X 14.0; arm64) iTerm", wantOriginator: "codex-tui", wantVersion: "0.201.2",
+			wantUA:    "codex_cli_rs/0.201.2 (Mac OS X 14.0; arm64) iTerm", wantOriginator: "codex_cli_rs", wantVersion: "0.201.2",
 		},
 		{
 			name: "Astra minimum client version", model: "gpt-6-astra",
 			canonical: "codex-tui/0.145.0" + codexCLIUserAgentSuffix,
-			wantUA:    "codex-tui/" + openAICodexAstraMinVersion + codexCLIUserAgentSuffix, wantOriginator: "codex-tui", wantVersion: openAICodexAstraMinVersion,
+			wantUA:    "codex_cli_rs/" + openAICodexAstraMinVersion + codexCLIUserAgentSuffix, wantOriginator: "codex_cli_rs", wantVersion: openAICodexAstraMinVersion,
 		},
 		{
 			name: "non Astra keeps configured version", model: "gpt-5.6-sol",
 			canonical: "codex-tui/0.145.0" + codexCLIUserAgentSuffix,
-			wantUA:    "codex-tui/0.145.0" + codexCLIUserAgentSuffix, wantOriginator: "codex-tui", wantVersion: "0.145.0",
+			wantUA:    "codex_cli_rs/0.145.0" + codexCLIUserAgentSuffix, wantOriginator: "codex_cli_rs", wantVersion: "0.145.0",
 		},
 		{
 			name: "invalid canonical identity falls back safely", model: "gpt-5.6-sol", canonical: "invalid-client",
-			wantUA: codexCLIUserAgent, wantOriginator: "codex-tui", wantVersion: codexCLIVersion,
+			wantUA: codexCLIUserAgent, wantOriginator: "codex_cli_rs", wantVersion: codexCLIVersion,
 		},
 		{
 			name: "enforcement disabled still supplies paired identity", model: "gpt-6-astra", disableEnforcement: true,
 			canonical: "codex-tui/0.200.1" + codexCLIUserAgentSuffix,
-			wantUA:    "codex-tui/0.200.1" + codexCLIUserAgentSuffix, wantOriginator: "codex-tui", wantVersion: "0.200.1",
+			wantUA:    "codex_cli_rs/0.200.1" + codexCLIUserAgentSuffix, wantOriginator: "codex_cli_rs", wantVersion: "0.200.1",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,6 +69,13 @@ func TestCodex780ProbeUsesCanonicalClientIdentity(t *testing.T) {
 				calls++
 				require.Equal(t, tc.wantUA, req.Header.Get("User-Agent"))
 				require.Equal(t, tc.wantOriginator, req.Header.Get("Originator"))
+				// Keep legacy TUI inputs above: the real harvest adapter must
+				// normalize both headers, never send a mixed CLI/TUI pair.
+				require.NotContains(t, req.Header.Get("User-Agent"), "codex-tui")
+				pairedOriginator, pairedUA, paired := openai.PairCodexClientIdentity(req.Header.Get("User-Agent"))
+				require.True(t, paired)
+				require.Equal(t, req.Header.Get("Originator"), pairedOriginator)
+				require.Equal(t, req.Header.Get("User-Agent"), pairedUA)
 				require.Equal(t, tc.wantVersion, req.Header.Get("Version"))
 				require.Equal(t, "responses=experimental", req.Header.Get("OpenAI-Beta"))
 				require.Equal(t, "session", req.Header.Get("session_id"))

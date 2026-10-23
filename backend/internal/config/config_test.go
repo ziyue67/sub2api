@@ -332,6 +332,35 @@ func TestLoadTrustedProxiesPresenceFromYAML(t *testing.T) {
 	}
 }
 
+func TestLoadTrustedProxiesEnvironmentOverridesPersistentYAML(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		setEnv bool
+		value  string
+		want   []string
+	}{
+		{"unset preserves YAML", false, "", []string{"172.18.0.1/32"}},
+		{"explicit empty disables YAML trust", true, "", []string{}},
+		{"list replaces YAML trust", true, "127.0.0.1/32, ::1/128", []string{"127.0.0.1/32", "::1/128"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resetViperWithJWTSecret(t)
+			configFile := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(configFile, []byte("server:\n  trusted_proxies:\n    - 172.18.0.1/32\n"), 0o600))
+			t.Setenv("CONFIG_FILE", configFile)
+			// Register cleanup before unsetting so an inherited value is restored.
+			t.Setenv("SERVER_TRUSTED_PROXIES", tt.value)
+			if !tt.setEnv {
+				require.NoError(t, os.Unsetenv("SERVER_TRUSTED_PROXIES"))
+			}
+			cfg, err := Load()
+			require.NoError(t, err)
+			require.True(t, cfg.Server.TrustedProxiesConfigured)
+			require.Equal(t, tt.want, cfg.Server.EffectiveTrustedProxies())
+		})
+	}
+}
+
 func TestLoadTrustedProxiesFromConfigFile(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	configFile := filepath.Join(t.TempDir(), "reporter-config.yaml")

@@ -270,7 +270,9 @@ type CreateGroupInput struct {
 	LongContextPricingEnabled bool
 	ModelPricing              []ChannelModelPricing
 	// 图片生成计费配置（仅 antigravity 平台使用）
-	AllowImageGeneration         bool
+	AllowImageGeneration bool
+	// Explicit API choice wins over platform defaults, including false.
+	AllowImageGenerationExplicit *bool
 	AllowBatchImageGeneration    bool
 	ImageRateIndependent         bool
 	ImageRateMultiplier          *float64

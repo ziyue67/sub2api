@@ -116,6 +116,10 @@ func (c *apiKeyCache) PublishAuthCacheInvalidation(ctx context.Context, cacheKey
 
 // SubscribeAuthCacheInvalidation subscribes to cache invalidation messages
 func (c *apiKeyCache) SubscribeAuthCacheInvalidation(ctx context.Context, handler func(cacheKey string)) error {
+	return c.subscribeAuthCacheInvalidation(ctx, handler, func() { service.NotifyAuthCacheSubscriptionReady(ctx) })
+}
+
+func (c *apiKeyCache) subscribeAuthCacheInvalidation(ctx context.Context, handler func(string), ready func()) error {
 	pubsub := c.rdb.Subscribe(ctx, authCacheInvalidateChannel)
 
 	// Verify subscription is working
@@ -130,19 +134,28 @@ func (c *apiKeyCache) SubscribeAuthCacheInvalidation(ctx context.Context, handle
 			log.Printf("Warning: failed to close auth cache invalidation pubsub: %v", err)
 		}
 	}()
-	service.NotifyAuthCacheSubscriptionReady(ctx)
+	ready()
 
-	ch := pubsub.Channel()
+	// The message-only channel hides automatic reconnects. Subscription events
+	// mark a recovery checkpoint at which consumers discard missed L1 grants.
+	ch := pubsub.ChannelWithSubscriptions()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case msg, ok := <-ch:
+		case event, ok := <-ch:
 			if !ok {
 				return errors.New("auth cache invalidation pubsub channel closed")
 			}
-			if msg != nil {
-				handler(msg.Payload)
+			switch message := event.(type) {
+			case *redis.Subscription:
+				if message.Kind == "subscribe" && message.Channel == authCacheInvalidateChannel {
+					ready()
+				}
+			case *redis.Message:
+				if message != nil {
+					handler(message.Payload)
+				}
 			}
 		}
 	}

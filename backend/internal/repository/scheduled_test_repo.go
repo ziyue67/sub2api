@@ -396,7 +396,8 @@ func (r *scheduledTestResultRepository) GetResult(ctx context.Context, planID, r
 
 // ListPelicanHistory lists every retained output, including failures and paused plans.
 // Cursor pagination is independent of account-table filters or pages. Bodies are lazy-loaded.
-func (r *scheduledTestResultRepository) ListPelicanHistory(ctx context.Context, beforeID int64, limit int) ([]*service.PelicanHistoryResult, error) {
+// A non-zero accountID narrows the same history to that account's plans.
+func (r *scheduledTestResultRepository) ListPelicanHistory(ctx context.Context, beforeID int64, limit int, accountID int64) ([]*service.PelicanHistoryResult, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT r.id, r.plan_id, r.status, r.error_message,
  r.latency_ms, r.started_at, r.finished_at, r.created_at, r.pelican_config, a.id, a.name
  FROM scheduled_test_results r
@@ -404,7 +405,8 @@ func (r *scheduledTestResultRepository) ListPelicanHistory(ctx context.Context, 
  JOIN accounts a ON a.id = p.account_id
  WHERE p.pelican_config IS NOT NULL AND p.pelican_config->'quality' IS NULL AND a.deleted_at IS NULL
  AND ($1::bigint = 0 OR r.id < $1)
- ORDER BY r.id DESC LIMIT $2`, beforeID, limit)
+ AND ($3::bigint = 0 OR p.account_id = $3)
+ ORDER BY r.id DESC LIMIT $2`, beforeID, limit, accountID)
 	if err != nil {
 		return nil, err
 	}

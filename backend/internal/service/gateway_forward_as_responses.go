@@ -177,6 +177,12 @@ func (s *GatewayService) ForwardAsResponses(
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 
+		if isAnthropicCompatSafetyRejection(respBody) {
+			writeResponsesError(c, http.StatusForbidden, "permission_error", upstreamMsg)
+			MarkResponseCommitted(c)
+			return nil, fmt.Errorf("upstream safety rejection: %s", upstreamMsg)
+		}
+
 		if s.shouldFailoverUpstreamError(resp.StatusCode) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
@@ -449,7 +455,14 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 			continue
 		}
 
-		// message_start carries the initial response structure
+		// Stop queued success events after a terminal safety rejection.
+		if event.Type == "error" && isAnthropicCompatSafetyRejection([]byte(payload)) {
+			message := sanitizeUpstreamErrorMessage(gjson.Get(payload, "error.message").String())
+			writeResponsesError(c, http.StatusForbidden, "permission_error", message)
+			MarkResponseCommitted(c)
+			return nil, fmt.Errorf("upstream safety rejection: %s", message)
+		}
+
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)

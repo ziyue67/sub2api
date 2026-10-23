@@ -2,15 +2,36 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { reactive } from 'vue'
 import { useAccountQualityStore } from '../accountQuality'
-import { listQualityPlans, listQualityOperations, listQualityTemplates } from '@/api/admin/accountQuality'
+import { listQualityPlans, listQualityOperations, listQualityTemplates, listQualityPresets } from '@/api/admin/accountQuality'
 import { getAllIncludingInactive } from '@/api/admin/groups'
 const state = vi.hoisted(() => ({ auth: null as any }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => state.auth }))
-vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), listQualityOperations: vi.fn(), listQualityTemplates: vi.fn() }))
+vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), listQualityOperations: vi.fn(), listQualityTemplates: vi.fn(), listQualityPresets: vi.fn() }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: vi.fn() }))
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes }); return { promise, resolve } }
-beforeEach(() => { setActivePinia(createPinia()); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.resetAllMocks(); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityTemplates).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({ items: [], next_cursor: 0 }); vi.mocked(getAllIncludingInactive).mockResolvedValue([]) })
+beforeEach(() => { setActivePinia(createPinia()); state.auth = reactive({ user: { id: 1, role: 'admin' } }); vi.resetAllMocks(); vi.mocked(listQualityPresets).mockResolvedValue([]); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityTemplates).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({ items: [], next_cursor: 0 }); vi.mocked(getAllIncludingInactive).mockResolvedValue([]) })
 describe('quality workspace session state', () => {
+  it('reloads persisted reusable templates independently of dynamic group rules and clears them on logout', async () => {
+    vi.mocked(listQualityPresets).mockResolvedValueOnce([{ id: 17, name: 'Saved check' }] as any)
+    const store = useAccountQualityStore(); await store.refresh()
+    expect(store.presets.map(item => item.name)).toEqual(['Saved check'])
+    expect(store.templates).toEqual([])
+    const pending = deferred<any[]>(); vi.mocked(listQualityPresets).mockReturnValueOnce(pending.promise)
+    const refresh = store.refreshPresets(); state.auth.user = null
+    expect(store.presets).toEqual([])
+    pending.resolve([{ id: 18, name: 'Previous session' }]); await refresh
+    expect(store.presets).toEqual([])
+  })
+  it('keeps rule panels usable when template loading fails and can reload on retry', async () => {
+    vi.mocked(listQualityPresets).mockRejectedValueOnce(new Error('preset storage unavailable'))
+    const store = useAccountQualityStore(); await store.refresh()
+    expect(store.rulesLoaded).toBe(true)
+    expect(store.presetsError).toBe('preset storage unavailable')
+    vi.mocked(listQualityPresets).mockResolvedValueOnce([{ id: 17 }] as any)
+    await store.refreshPresets()
+    expect(store.presetsError).toBe('')
+    expect(store.presets).toHaveLength(1)
+  })
   it('loads independent panels concurrently and retains visible rules while refreshing', async () => {
     const first = deferred<any[]>(); vi.mocked(listQualityPlans).mockReturnValueOnce(first.promise)
     const store = useAccountQualityStore(); const loading = store.refresh()

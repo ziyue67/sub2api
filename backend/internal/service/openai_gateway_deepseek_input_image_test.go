@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
@@ -176,4 +177,40 @@ func TestForwardResponses_NativeDeepSeekAliasesInputImageURL(t *testing.T) {
 	require.Equal(t, "https://api.deepseek.com/responses", upstream.lastReq.URL.String())
 	require.Equal(t, deepSeekInputImageDataURI, gjson.GetBytes(upstream.lastBody, "input.0.content.1.image_url").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "input.0.content.1.url").Exists())
+}
+
+// Exercise the real forwarding adapter, including native and OpenAI-mapped
+// accounts. A legacy schema is selected before sending, never by replaying.
+func TestForwardResponsesDeepSeekExplicitImageSchema(t *testing.T) {
+	for _, field := range []string{"image_url", "url"} {
+		for name, makeAccount := range map[string]func() *Account{
+			"native": deepSeekNativeResponsesImageAccount,
+			"mapped": openaiMappedDeepSeekResponsesImageAccount,
+		} {
+			t.Run(name+"/"+field, func(t *testing.T) {
+				account := makeAccount()
+				account.Credentials[DeepSeekResponsesImageFieldCredential] = field
+				body := deepSeekUserImageBody(`{"type":"input_image","image_url":"` + deepSeekInputImageDataURI + `","url":"` + deepSeekInputImageDataURI + `"}`)
+				c := newDeepSeekChatFallbackContext(t, body)
+				upstream := &httpUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{"id":"resp_schema","object":"response","model":"deepseek-flash","status":"completed","output":[],"usage":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}`)),
+				}}
+				svc := &OpenAIGatewayService{cfg: deepSeekChatFallbackTestConfig(), httpUpstream: upstream}
+				result, err := svc.Forward(context.Background(), c, account, body)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Len(t, upstream.requests, 1, "schema selection must not probe or replay")
+				image := gjson.GetBytes(upstream.lastBody, "input.0.content.1")
+				require.Equal(t, deepSeekInputImageDataURI, image.Get(field).String())
+				other := "url"
+				if field == "url" {
+					other = "image_url"
+				}
+				require.False(t, image.Get(other).Exists(), "only the configured image payload may be sent")
+				normalized := normalizeDeepSeekResponsesRequestBody(account, body)
+				require.Equal(t, string(normalized), string(normalizeDeepSeekResponsesRequestBody(account, normalized)))
+			})
+		}
+	}
 }

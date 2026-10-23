@@ -1,0 +1,62 @@
+{
+	admin off
+	auto_https off
+	# Do not persist request headers, credentials, bodies or capability URLs.
+	log {
+		output discard
+	}
+}
+
+# Optional verified HTTPS origins; see CADDY_RESPONSES.md.
+# Dedicated L7 edge, not the existing single-node deploy/Caddyfile.
+# Default loopback HTTP requires a separately managed TLS front end or a
+# reviewed TLS site configuration before any public use. Never expose this
+# cleartext listener or use the old bandwidth-limited host as a central edge.
+http://{$SUB2API_LB_LISTEN:127.0.0.1:9080} {
+	@responses {
+		method POST
+		path /v1/responses /v1/responses/compact
+	}
+	handle @responses {
+		request_body {
+			max_size 256MB
+		}
+		reverse_proxy https://{$SUB2API_LB_UPSTREAM_A:node-a.example.invalid:8443} https://{$SUB2API_LB_UPSTREAM_B:node-b.example.invalid:8443} {
+			lb_policy round_robin
+			# No application-level replay, including dial errors or Idempotency-Key.
+			lb_retries 0
+			lb_try_duration 0s
+			health_uri /readyz
+			health_status 200
+			health_interval {$SUB2API_LB_HEALTH_INTERVAL:5s}
+			health_timeout 1s
+			health_fails 2
+			health_passes 2
+			health_headers {
+				Host {$SUB2API_LB_ORIGIN_HOST:api.example.invalid}
+			}
+			header_up Host {$SUB2API_LB_ORIGIN_HOST:api.example.invalid}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+			# Leave flush_interval unset: SSE flushes automatically, while a
+			# negative interval would suppress upstream client-cancel propagation.
+			transport http {
+				tls_server_name {$SUB2API_LB_TLS_SERVER_NAME:api.example.invalid}
+				# Explicit trust, no skip-verify or plaintext fallback.
+				tls_trust_pool file {$SUB2API_LB_TRUSTED_CA_FILE:/etc/sub2api-lb/origin-ca.pem}
+				versions 1.1
+				# Avoid net/http retries on reused idle upstream connections.
+				keepalive off
+				compression off
+				dial_timeout 3s
+				response_header_timeout 30s
+			}
+		}
+	}
+	# No management, payment, arbitrary resource, WS or implicit method fallback.
+	handle {
+		respond 404
+	}
+}

@@ -13,11 +13,20 @@ import (
 )
 
 type ContentModerationHandler struct {
-	service *service.ContentModerationService
+	service            *service.ContentModerationService
+	safetyPromptStore  *service.SafetyPromptStore
+	safetyPromptConfig *service.SettingService
 }
 
 func NewContentModerationHandler(svc *service.ContentModerationService) *ContentModerationHandler {
 	return &ContentModerationHandler{service: svc}
+}
+
+// NewContentModerationHandlerWithSafetyPrompt wires the native safety injection
+// module into the admin handler. The store is shared with the gateway through
+// Wire so events written on the request path are visible in the audit API.
+func NewContentModerationHandlerWithSafetyPrompt(svc *service.ContentModerationService, store *service.SafetyPromptStore, settings *service.SettingService) *ContentModerationHandler {
+	return &ContentModerationHandler{service: svc, safetyPromptStore: store, safetyPromptConfig: settings}
 }
 
 type contentModerationConfigRequest struct {

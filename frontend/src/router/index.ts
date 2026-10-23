@@ -855,6 +855,19 @@ const routes: RouteRecordRaw[] = [
    }
  },
   {
+    path: '/admin/safety-prompt-audit',
+    name: 'AdminSafetyPromptAudit',
+    component: () => import('@/views/admin/SafetyPromptAuditView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Safety Injection Audit',
+      titleKey: 'admin.safetyPromptAudit.title',
+      descriptionKey: 'admin.safetyPromptAudit.description',
+      requiresRiskControl: true
+    }
+  },
+  {
     path: '/admin/leaderboard',
     name: 'AdminLeaderboard',
     component: () => import('@/views/admin/LeaderboardView.vue'),

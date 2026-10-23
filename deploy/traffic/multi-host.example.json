@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "node-a",
+      "capabilities": ["http-responses", "native-ws", "bps-relay"],
+      "scheduler_buckets": ["17:openai:single"],
+      "runtime": {
+        "role": "full",
+        "scheduler_snapshot_mode": "writer",
+        "ws_node_owner": {"enabled": true, "node_id": "node-a"},
+        "image_relay_owner_origin": "https://node-a.example.invalid"
+      }
+    },
+    {
+      "id": "node-b",
+      "capabilities": ["http-responses", "native-ws", "bps-relay"],
+      "scheduler_buckets": ["17:openai:single"],
+      "runtime": {
+        "role": "gateway",
+        "scheduler_snapshot_mode": "reader",
+        "scheduler_readiness": {"enabled": true, "buckets": ["17:openai:single"], "max_age_seconds": 900},
+        "ws_node_owner": {"enabled": true, "node_id": "node-b"},
+        "image_relay_owner_origin": "https://node-b.example.invalid"
+      }
+    }
+  ]
+}

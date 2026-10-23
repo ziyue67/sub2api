@@ -138,6 +138,9 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 	if items, ok := source["input"].([]any); ok {
 		for _, v := range items {
 			item, _ := v.(object)
+			if isCodexThreadDelegation(item) {
+				continue
+			}
 			if isTool(item) || strings.HasSuffix(text(item["type"]), "_call_output") {
 				b.hasToolHistory = true
 			}

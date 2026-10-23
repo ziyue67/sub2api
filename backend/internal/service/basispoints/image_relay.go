@@ -15,13 +15,14 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 
 	_ "golang.org/x/image/webp"
 )
@@ -76,8 +77,7 @@ type relayImage struct {
 }
 
 func ValidateImageRelayOrigin(baseURL string) error {
-	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(baseURL, "#") || (parsed.Path != "" && parsed.Path != "/") {
+	if err := urlvalidator.ValidateHTTPSOrigin(baseURL); err != nil {
 		return fmt.Errorf("BPS image relay requires an HTTPS public origin without credentials, path, query or fragment")
 	}
 	return nil

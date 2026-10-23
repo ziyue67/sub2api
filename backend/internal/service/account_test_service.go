@@ -963,8 +963,16 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
 
-	// Route to image generation test if an image model is selected
-	if isOpenAIImageModel(testModelID) {
+	// Extra models are an API-key Images grant, never a native Codex tool model.
+	extraImage := account.AllowsExtraImageModel(modelID) || account.AllowsExtraImageModel(testModelID)
+	if extraImage {
+		parsed := &OpenAIImagesRequest{Endpoint: openAIImagesGenerationsEndpoint, Model: firstNonEmptyString(modelID, testModelID)}
+		if err := parsed.ValidateAccountModels(account, ""); err != nil {
+			return s.sendErrorAndEnd(c, err.Error())
+		}
+	}
+	// Route to image generation test if an image model is selected.
+	if isOpenAIImageModel(testModelID) || extraImage {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
 			imagePrompt = defaultOpenAIImageTestPrompt

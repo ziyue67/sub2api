@@ -869,6 +869,10 @@ export default {
       },
       // OpenAI specific hints
       openai: {
+        extraImageModelsTitle: 'Extra image models (API Key)',
+        extraImageModelsExact: 'Exact model IDs',
+        extraImageModelsPrefixes: 'Model prefixes',
+        extraImageModelsHint: 'One entry per line or comma-separated; prefixes are literal, case-sensitive and need no wildcard. Empty by default. Grants image generation and async generation on this account, excluding edits. Public aliases, channel targets and upstream IDs must each match a built-in image family or this list. The group must allow image generation. Configure image pricing separately.',
         requestTimezone: 'Request timezone',
         requestTimezoneDesc: 'Applies when Bind request timezone is enabled in system settings. Defaults to Asia/Singapore.',
         requestTimezoneLoadFailed: 'Could not load timezones. Please retry later.',
@@ -2016,6 +2020,7 @@ export default {
 
         historyLoadError: 'Some scheduled records could not be loaded. Available manual records are still shown.',
         dashboardHint: 'Retained scheduled and manual test outputs, refreshed every 15 seconds. Select a card to view the full result.',
+        allAccountsHistory: 'View all accounts',
         scheduledPreview: 'Scheduled preview',
         sourceManual: 'Manual',
         sourceScheduled: 'Scheduled',

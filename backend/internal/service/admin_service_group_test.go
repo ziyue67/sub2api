@@ -2350,3 +2350,20 @@ func TestAdminService_CreateGroup_CodexModelsManifestConfigDisabledAccepted(t *t
 	require.Equal(t, []int64{1, 2}, group.CodexModelsManifestConfig.AccountIDs)
 	require.False(t, repo.created.CodexModelsManifestConfig.Enabled)
 }
+
+func TestAdminServiceCreateGroupHonorsExplicitImageGenerationDisabled(t *testing.T) {
+	for _, platform := range []string{PlatformGemini, PlatformAntigravity, PlatformComposite} {
+		t.Run(platform, func(t *testing.T) {
+			disabled := false
+			repo := &groupRepoStubForAdmin{}
+			svc := &adminServiceImpl{groupRepo: repo}
+			group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+				Name: platform + "-explicit-off", Platform: platform, RateMultiplier: 1,
+				AllowImageGenerationExplicit: &disabled,
+			})
+			require.NoError(t, err)
+			require.False(t, group.AllowImageGeneration)
+			require.False(t, repo.created.AllowImageGeneration)
+		})
+	}
+}

@@ -145,6 +145,20 @@ docker compose -f docker-compose.local.yml up -d --no-deps sub2api
 
 **Recommendation:** Use `docker-compose.local.yml` (deployed by `docker-deploy.sh`) for easier data management and migration.
 
+### Docker behind host Nginx: trusted client IPs
+
+Registration quotas and authentication abuse protection always use the trusted
+proxy chain. With host Nginx and a Docker published port, the application's TCP
+peer may be a bridge gateway, which is not trusted by default. Configure only
+the actual proxy IPs through `SERVER_TRUSTED_PROXIES` in `.env` or the persistent
+`/app/data/config.yaml`. Leave the environment variable **unset**, not empty, to
+keep YAML configuration. Updating `.env` alone has no effect with an older
+Compose template that does not pass this variable through.
+
+See [Docker + host Nginx trusted proxy configuration](../docs/docker-trusted-proxies.md)
+for peer inspection, exact proxy configuration, application-only recreation,
+registration IP diagnostics and preserving site settings across template updates.
+
 ### How Auto-Setup Works
 
 When using Docker Compose with `AUTO_SETUP=true`:

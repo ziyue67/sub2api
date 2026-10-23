@@ -45,3 +45,25 @@ func TestPelicanCleanupIncludesPausedPlansAndBoundsBatch(t *testing.T) {
 	require.NoError(t, NewScheduledTestResultRepository(db).PruneExpiredPelican(context.Background(), cutoff))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+func TestPelicanHistoryPassesAccountFilterWithCursor(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	now := time.Now()
+	columns := []string{"id", "plan_id", "status", "error_message", "latency_ms", "started_at", "finished_at", "created_at", "pelican_config", "account_id", "account_name"}
+	query := `(?s)FROM scheduled_test_results r.*AND \(\$1::bigint = 0 OR r.id < \$1\)\s+AND \(\$3::bigint = 0 OR p.account_id = \$3\)\s+ORDER BY r.id DESC LIMIT \$2`
+	mock.ExpectQuery(query).WithArgs(int64(90), 101, int64(42)).WillReturnRows(sqlmock.NewRows(columns).
+		AddRow(int64(89), int64(7), "success", "", int64(1200), now, now, now, []byte(`{"model_id":"gpt-6-astra"}`), int64(42), "Account 42"))
+	// Zero keeps the all-accounts dashboard query unchanged.
+	mock.ExpectQuery(query).WithArgs(int64(0), 101, int64(0)).WillReturnRows(sqlmock.NewRows(columns))
+	repo := NewScheduledTestResultRepository(db)
+	items, err := repo.ListPelicanHistory(context.Background(), 90, 101, 42)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, int64(42), items[0].AccountID)
+	require.Equal(t, "gpt-6-astra", items[0].PelicanConfig.ModelID)
+	items, err = repo.ListPelicanHistory(context.Background(), 0, 101, 0)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

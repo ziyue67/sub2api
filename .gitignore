@@ -136,8 +136,10 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/multi-host-session-owner.md
 !docs/security-penalties.md
 !docs/ip-risk-control.md
+!docs/docker-trusted-proxies.md
 !docs/anonymous-api-guard.md
 !docs/registration-email-alias-block.md
 !docs/openai-ws-sse-acceleration.md

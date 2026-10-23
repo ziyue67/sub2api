@@ -11,6 +11,7 @@ import settings from './settings'
 import audit from './audit'
 import promptAudit from './promptAudit'
 import emailBroadcast from './emailBroadcast'
+import safetyPromptAudit from './safetyPromptAudit'
 import plugins from './plugins'
 import harvestFlow from './harvestFlow'
 
@@ -28,6 +29,7 @@ export default {
   ...audit,
   ...promptAudit,
   ...emailBroadcast,
+  ...safetyPromptAudit,
   ...plugins,
   ...harvestFlow,
 }

@@ -437,6 +437,37 @@ describe('EditAccountModal', () => {
     restored.unmount()
   })
 
+  it('round-trips and clears API-key image grants without affecting other extra fields', async () => {
+    const account = buildAccount()
+    account.extra = { extra_image_models: ['my-nai'], extra_image_model_prefixes: ['nai-diffusion-'], unrelated: 'preserve' }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    await flushPromises()
+    expect(wrapper.get<HTMLTextAreaElement>('[data-testid="extra-image-model-ids"]').element.value).toBe('my-nai')
+    expect(wrapper.get<HTMLTextAreaElement>('[data-testid="extra-image-model-prefixes"]').element.value).toBe('nai-diffusion-')
+    await wrapper.get('[data-testid="extra-image-model-ids"]').setValue(' my-nai, other-image\nmy-nai ')
+    await wrapper.get('#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).toMatchObject({ extra_image_models: ['my-nai', 'other-image'], extra_image_model_prefixes: ['nai-diffusion-'], unrelated: 'preserve' })
+    wrapper.unmount()
+    const restored = mountModal({ ...account, extra })
+    await flushPromises()
+    expect(restored.get<HTMLTextAreaElement>('[data-testid="extra-image-model-ids"]').element.value).toBe('my-nai\nother-image')
+    await restored.get('[data-testid="extra-image-model-ids"]').setValue('')
+    await restored.get('[data-testid="extra-image-model-prefixes"]').setValue('')
+    await restored.get('#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra).toMatchObject({ extra_image_models: [], extra_image_model_prefixes: [], unrelated: 'preserve' })
+    restored.unmount()
+    for (const type of ['oauth', 'setup-token']) {
+      const oauth = mountModal({ ...account, type })
+      await flushPromises()
+      expect(oauth.find('[data-testid="extra-image-models"]').exists()).toBe(false)
+      oauth.unmount()
+    }
+  })
+
   it('round-trips OAuth alias scope and lets an operator restore a whitelist', async () => {
     const account = { ...buildAccount(), type: 'oauth', credentials: { model_mapping_mode: 'aliases', model_mapping: { 'gpt-5.4': 'gpt-5.6-sol' } } }
     const wrapper = mountModal(account); await flushPromises()

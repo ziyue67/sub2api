@@ -46,6 +46,7 @@ import AccountConcurrencyProgress from './AccountConcurrencyProgress.vue'
 import { supportsAccountQuota } from '@/utils/accountQuota'
 
 import AccountAdmissionProgress from './AccountAdmissionProgress.vue'
+import { supportsAccountQuota } from '@/utils/accountQuota'
 import CapacityBadge from '@/components/account/CapacityBadge.vue'
 import QuotaBadge from '@/components/account/QuotaBadge.vue'
 

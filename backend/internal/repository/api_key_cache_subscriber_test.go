@@ -47,3 +47,53 @@ func TestAPIKeyCacheSubscriber_BlocksUntilContextCancellation(t *testing.T) {
 		t.Fatal("subscriber did not stop after context cancellation")
 	}
 }
+
+func TestAPIKeyCacheSubscriberReportsAutomaticResubscription(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cache := &apiKeyCache{rdb: client}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	ready := make(chan struct{}, 4)
+	received := make(chan string, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- cache.subscribeAuthCacheInvalidation(ctx, func(key string) { received <- key }, func() { ready <- struct{}{} })
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("subscriber cleanup did not finish")
+		}
+	})
+	awaitReady := func() {
+		t.Helper()
+		select {
+		case <-ready:
+		case <-time.After(5 * time.Second):
+			t.Fatal("go-redis adapter did not report subscription acknowledgement")
+		}
+	}
+	awaitReady()
+	// Force an actual connection loss on the isolated fixture only. Restart
+	// preserves the port, so the same PubSub call must reconnect by itself.
+	server.Close()
+	require.NoError(t, server.Restart())
+	awaitReady()
+	require.NoError(t, client.Publish(ctx, authCacheInvalidateChannel, "fixture-key-after-reconnect").Err())
+	select {
+	case key := <-received:
+		require.Equal(t, "fixture-key-after-reconnect", key)
+	case <-time.After(time.Second):
+		t.Fatal("messages stopped after the automatic resubscription")
+	}
+	select {
+	case err := <-done:
+		done <- err // Keep cleanup's one join intact on assertion failure.
+		t.Fatalf("subscriber returned instead of reconnecting: %v", err)
+	default:
+	}
+}

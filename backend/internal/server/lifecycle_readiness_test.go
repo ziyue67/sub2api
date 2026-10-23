@@ -38,7 +38,7 @@ func TestProvideLifecycleSlowDependency(t *testing.T) {
 			cache := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			t.Cleanup(func() { _ = cache.Close() })
 			cfg := &config.Config{Server: config.ServerConfig{ReadinessTimeoutSeconds: tc.seconds}}
-			lifecycle := ProvideLifecycle(cfg, db, cache)
+			lifecycle := ProvideLifecycle(cfg, db, cache, nil)
 			response := httptest.NewRecorder()
 			lifecycle.Wrap(http.NotFoundHandler()).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 			require.Equal(t, tc.want, response.Code)
@@ -49,7 +49,7 @@ func TestProvideLifecycleSlowDependency(t *testing.T) {
 
 func TestProvideLifecycleReadinessDefaults(t *testing.T) {
 	for _, cfg := range []*config.Config{nil, {}, {Server: config.ServerConfig{ReadinessTimeoutSeconds: 0}}} {
-		lifecycle := ProvideLifecycle(cfg, nil, nil)
+		lifecycle := ProvideLifecycle(cfg, nil, nil, nil)
 		require.Equal(t, time.Second, lifecycle.probeTimeout)
 		response := httptest.NewRecorder()
 		lifecycle.Wrap(http.NotFoundHandler()).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -75,7 +75,7 @@ func TestProvideLifecycleConfiguredBudgetStillRejectsDependencyFailures(t *testi
 			cache := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
 			t.Cleanup(func() { _ = cache.Close() })
 			cfg := &config.Config{Server: config.ServerConfig{ReadinessTimeoutSeconds: 3}}
-			lifecycle := ProvideLifecycle(cfg, db, cache)
+			lifecycle := ProvideLifecycle(cfg, db, cache, nil)
 			handler := lifecycle.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}))

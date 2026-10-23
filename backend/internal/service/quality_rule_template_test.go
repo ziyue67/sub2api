@@ -61,12 +61,25 @@ func (r *templatePlanRepo) Delete(_ context.Context, id int64) error {
 }
 
 type fakeTemplateRepo struct {
+	presets   []*QualityRulePreset
 	plans     *templatePlanRepo
 	templates map[int64]*QualityRuleTemplate
 	accounts  []QualityTemplateAccount
 	links     map[int64]map[int64]int64 // template -> account -> plan (0 once the plan is gone)
 	filters   []QualityRuleAccountFilter
 	nextID    int64
+}
+
+func (r *fakeTemplateRepo) ListPresets(context.Context) ([]*QualityRulePreset, error) {
+	return r.presets, nil
+}
+
+func (r *fakeTemplateRepo) CreatePreset(_ context.Context, preset *QualityRulePreset) (*QualityRulePreset, error) {
+	stored := *preset
+	stored.ID = int64(len(r.presets) + 1)
+	stored.PelicanConfig = cloneQualityPelicanConfig(preset.PelicanConfig)
+	r.presets = append(r.presets, &stored)
+	return &stored, nil
 }
 
 func newFakeTemplateRepo(plans *templatePlanRepo, accounts ...QualityTemplateAccount) *fakeTemplateRepo {

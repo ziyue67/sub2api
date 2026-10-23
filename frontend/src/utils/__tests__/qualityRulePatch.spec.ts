@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildQualityRulePatch, qualityBPSError, qualityBPSForm, qualityBPSPayload, type QualityRuleDraft } from '../qualityRulePatch'
+import { buildQualityRulePatch, copyQualityRuleConfig, qualityBPSError, qualityBPSForm, qualityBPSPayload, type QualityRuleDraft } from '../qualityRulePatch'
 import type { QualityBPSPolicy, ScheduledTestPlan } from '@/types'
 
 const draft = (): QualityRuleDraft => ({
@@ -27,6 +27,51 @@ const probePlan = () => {
   config.quality!.expected_answer = ''; delete config.quality!.judge
   return rule
 }
+
+describe('quality rule copy inputs', () => {
+  it('accepts null group and BPS model arrays returned by normalized observation and BPS rules', () => {
+    const source = plan().pelican_config!
+    source.quality!.action = 'enable_bps'
+    Object.assign(source.quality!, { remove_group_ids: null, bps: { ...bps(), all_models: true, models: null } })
+    const copy = copyQualityRuleConfig(source)
+    expect(copy.quality.remove_group_ids).toEqual([])
+    expect(copy.quality.bps!.models).toEqual([])
+  })
+
+  it('copies editable answer and cooldown settings with independent nested values', () => {
+    const source = plan().pelican_config!
+    source.model_ids = ['first', 'second']
+    source.quality!.action = 'remove_models'
+    source.quality!.remove_models = ['first']
+    source.quality!.recovery_concurrency = 9
+    const original = JSON.stringify(source)
+    const copy = copyQualityRuleConfig(source)
+    expect(copy).toMatchObject({ prompt: source.prompt, reasoning_effort: 'low', parallel_count: 2, model_ids: ['first', 'second'],
+      quality: { action: 'remove_models', remove_models: ['first'], recovery_concurrency: 9, judge: source.quality!.judge } })
+    copy.model_ids!.push('third')
+    copy.quality.remove_group_ids.push(100)
+    copy.quality.remove_models!.push('second')
+    copy.quality.judge!.prompt = 'Changed'
+    expect(JSON.stringify(source)).toBe(original)
+  })
+
+  it('drops generated questions, runtime state and unknown nested fields while preserving reusable random-test inputs', () => {
+    const source = plan().pelican_config!
+    source.question_kind = 'random_reasoning'
+    source.random_question = { id: 'previous-question', family: 'paths', version: 'v1' }
+    Object.assign(source, { trigger_source: 'upstream_5xx', model_id: 'result-model', quality_round_id: 'round',
+      quality_model_actions: { first: 'cooled' }, quality_model_outcomes: { first: 'failed' },
+      quality_restore_diagnostic: { ownership_retained: true }, credentials: 'synthetic-secret' })
+    Object.assign(source.quality!, { admission: { enabled: true }, owner_plan_id: 1, failure_count: 3 })
+    Object.assign(source.quality!.judge!, { credentials: 'synthetic-secret' })
+    const copy = copyQualityRuleConfig(source)
+    expect(copy.prompt).toBe('')
+    expect(copy.quality.expected_answer).toBe('')
+    expect(copy.quality.judge).toEqual({ group_id: 99, model_id: 'own-judge', prompt: 'Own grading instructions' })
+    expect(Object.keys(copy).sort()).toEqual(['model_ids', 'parallel_count', 'prompt', 'quality', 'question_kind', 'reasoning_effort', 'rule_name', 'test_channel'])
+    for (const key of ['admission', 'owner_plan_id', 'failure_count']) expect(copy.quality).not.toHaveProperty(key)
+  })
+})
 
 describe('quality rule partial updates', () => {
   it('bulk switches to generated questions without requiring fixed inputs or changing the judge', () => {

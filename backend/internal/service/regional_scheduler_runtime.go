@@ -107,7 +107,7 @@ func (c RegionalSchedulerRuntimeConfig) validate(cfg *config.Config) error {
 	if c.Mode != "publisher" && c.Mode != "subscriber" {
 		return errors.New("regional mode must be publisher or subscriber")
 	}
-	if cfg == nil || (c.Mode == "subscriber" && cfg.Runtime.Role != config.RuntimeRoleGateway) || (c.Mode == "publisher" && !cfg.RunsBackgroundJobs()) {
+	if cfg == nil || (c.Mode == "subscriber" && cfg.Runtime.Role != config.RuntimeRoleGateway) || (c.Mode == "publisher" && (!cfg.RunsBackgroundJobs() || (c.snapshotKind() == regional.SnapshotScheduler && !cfg.WritesSchedulerSnapshots()))) {
 		return errors.New("regional mode incompatible with runtime role")
 	}
 	if c.IntervalSeconds < 1 || c.IntervalSeconds > 300 || c.LifetimeSeconds <= c.IntervalSeconds || int64(c.LifetimeSeconds) > c.Policy.MaxSnapshotAgeSeconds {

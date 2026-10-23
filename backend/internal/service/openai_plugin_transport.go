@@ -30,6 +30,12 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 	if phaseGuard != nil && phaseGuard.ctx.Err() != nil {
 		return nil, context.Cause(phaseGuard.ctx)
 	}
+	request, safetyInfo := s.applySafetyPromptToRequest(request, account)
+	defer func() {
+		if result != nil {
+			result = s.wrapSafetyPromptResponse(result, safetyInfo)
+		}
+	}()
 	if account.IsSIWCEnabled() {
 		if request.URL == nil || request.URL.Scheme != "https" || request.URL.Host != "api.openai.com" || request.URL.Path != "/v1/responses" {
 			return nil, fmt.Errorf("SIWC request must use the official Responses endpoint")

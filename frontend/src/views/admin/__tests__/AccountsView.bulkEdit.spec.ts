@@ -157,11 +157,17 @@ const mockRatePage = (ids: number[], total = ids.length) => {
   })
 }
 
-const mountProbeView = (stubs: { BulkEditAccountModal?: typeof BulkEditAccountModalStub } = {}) => mount(AccountsView, {
+const FilterValuesStub = {
+ props: ['filters'],
+ emits: ['update:filters', 'change'],
+ template: `<button data-test="persist-filters" @click="$emit('update:filters', { ...filters, platform: 'gemini', status: 'error' }); $emit('change')">filter</button>`
+}
+
+const mountProbeView = (stubs: { BulkEditAccountModal?: typeof BulkEditAccountModalStub; AccountTableFilters?: typeof FilterValuesStub } = {}) => mount(AccountsView, {
   global: {
     stubs: {
       AppLayout: { template: '<div><slot /></div>' },
-      TablePageLayout: { template: '<div><slot name="table" /><slot name="pagination" /></div>' },
+      TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
       DataTable: ProbeDataTableStub, Pagination: PaginationStub,
       AccountBulkActionsBar: AccountBulkActionsBarStub, AccountTableActions: true, AccountTableFilters: true,
       AccountActionMenu: true, ConfirmDialog: true, ImportDataModal: true, ReAuthAccountModal: true,
@@ -217,6 +223,73 @@ describe('admin AccountsView bulk edit scope', () => {
     probeUpstreamBilling.mockResolvedValue({})
     probeUpstreamBillingBatch.mockResolvedValue([])
     probeUpstreamUsageBatch.mockResolvedValue([])
+  })
+
+  it('restores saved platform and status in the initial account request', async () => {
+    localStorage.setItem('account-filter-values', JSON.stringify({ platform: 'gemini', status: 'rate_limited' }))
+    const wrapper = mountProbeView()
+    await flushPromises()
+    expect(listAccounts.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ platform: 'gemini', status: 'rate_limited' }))
+    wrapper.unmount()
+  })
+
+  it.each(['{', 'null', '[]', '42', '{"platform":"unknown","status":"removed"}'])(
+    'ignores malformed or unsupported saved filters: %s', async raw => {
+      localStorage.setItem('account-filter-values', raw)
+      const wrapper = mountProbeView()
+      await flushPromises()
+      expect(listAccounts.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ platform: '', status: '' }))
+      wrapper.unmount()
+    }
+  )
+
+  it('persists actual filter events and restores them after remount', async () => {
+    const wrapper = mountProbeView({ AccountTableFilters: FilterValuesStub })
+    await flushPromises()
+    await wrapper.get('[data-test="persist-filters"]').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(localStorage.getItem('account-filter-values')!)).toEqual({ platform: 'gemini', status: 'error' })
+    wrapper.unmount()
+    listAccounts.mockClear()
+    const restored = mountProbeView()
+    await flushPromises()
+    expect(listAccounts.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ platform: 'gemini', status: 'error' }))
+    restored.unmount()
+  })
+
+  it('keeps filtering available when browser storage writes fail', async () => {
+    const original = Storage.prototype.setItem
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === 'account-filter-values') throw new Error('storage unavailable')
+      return original.call(this, key, value)
+    })
+    const wrapper = mountProbeView({ AccountTableFilters: FilterValuesStub })
+    try {
+      await flushPromises()
+      await wrapper.get('[data-test="persist-filters"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.findComponent(FilterValuesStub).props('filters')).toEqual(expect.objectContaining({ platform: 'gemini', status: 'error' }))
+    } finally {
+      wrapper.unmount()
+      spy.mockRestore()
+    }
+  })
+
+  it('does not reload an unmounted filter view after its debounce expires', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountProbeView({ AccountTableFilters: FilterValuesStub })
+    try {
+      await flushPromises()
+      expect(listAccounts).toHaveBeenCalledTimes(1)
+      await wrapper.get('[data-test="persist-filters"]').trigger('click')
+      wrapper.unmount()
+      await vi.advanceTimersByTimeAsync(301)
+      await flushPromises()
+      expect(listAccounts).toHaveBeenCalledTimes(1)
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
   })
 
   it('freezes filtered results as explicit IDs before opening bulk edit', async () => {

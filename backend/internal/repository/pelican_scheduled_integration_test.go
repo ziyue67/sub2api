@@ -19,7 +19,7 @@ func TestPelicanSchedulePersistenceLeaseAndRetention(t *testing.T) {
 	plans := NewScheduledTestPlanRepository(integrationDB)
 	results := NewScheduledTestResultRepository(integrationDB)
 	svc := service.NewScheduledTestService(plans, results)
-	config := &service.PelicanTestConfig{Prompt: "<pelican>", ReasoningEffort: "medium", ParallelCount: 2}
+	config := &service.PelicanTestConfig{RuleName: "Saved test rule", Prompt: "<pelican>", ReasoningEffort: "medium", ParallelCount: 2}
 	plan, err := svc.CreatePlan(ctx, &service.ScheduledTestPlan{AccountID: account, ModelID: "gpt-6-astra", CronExpression: "*/30 * * * *", Enabled: true, MaxResults: 2, PelicanConfig: config})
 	require.NoError(t, err)
 	require.Equal(t, config, plan.PelicanConfig)
@@ -129,20 +129,34 @@ func TestPelicanHistoryReturnsEveryRetainedOutputAcrossAccounts(t *testing.T) {
 		_, err = results.Create(ctx, &service.ScheduledTestResult{PlanID: legacy.ID, Status: "success", StartedAt: now, FinishedAt: now})
 		require.NoError(t, err)
 	}
-	var found []*service.PelicanHistoryResult
-	cursor := int64(0)
-	for {
-		page, err := svc.ListPelicanHistory(ctx, cursor, 2)
-		require.NoError(t, err)
-		found = append(found, page.Items...)
-		if page.NextCursor == 0 {
-			break
+	collect := func(accountID int64) []*service.PelicanHistoryResult {
+		var found []*service.PelicanHistoryResult
+		cursor := int64(0)
+		for {
+			page, err := svc.ListPelicanHistory(ctx, cursor, 2, accountID)
+			require.NoError(t, err)
+			found = append(found, page.Items...)
+			if page.NextCursor == 0 {
+				break
+			}
+			if cursor > 0 {
+				require.Less(t, page.NextCursor, cursor)
+			}
+			cursor = page.NextCursor
 		}
-		if cursor > 0 {
-			require.Less(t, page.NextCursor, cursor)
-		}
-		cursor = page.NextCursor
+		return found
 	}
+	// The IQ test's records window pages one account with the same cursor.
+	for i, want := range [][]int64{ids[:6], ids[6:]} {
+		scoped := collect(accountIDs[i])
+		scopedIDs := make([]int64, 0, len(scoped))
+		for _, result := range scoped {
+			require.Equal(t, accountIDs[i], result.AccountID)
+			scopedIDs = append(scopedIDs, result.ID)
+		}
+		require.ElementsMatch(t, want, scopedIDs)
+	}
+	found := collect(0)
 	require.Len(t, found, 7)
 	actual := make([]int64, 0)
 	failed := 0

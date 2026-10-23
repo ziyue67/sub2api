@@ -195,8 +195,9 @@ func (s *AccountOpsService) Start() {
 }
 
 // Request observations and auto-configuration must drain on every replica.
-// Only the primary delivers the shared notification queue.
-func (s *AccountOpsService) start(deliverNotifications bool) {
+// Only the full node reconciles shared manual groups and delivers the shared
+// notification queue; gateways still reload settings and persist local events.
+func (s *AccountOpsService) start(runSharedJobs bool) {
 	s.lifecycle.Lock()
 	defer s.lifecycle.Unlock()
 	if s.cancel != nil {
@@ -208,7 +209,7 @@ func (s *AccountOpsService) start(deliverNotifications bool) {
 	go s.runAutoConfig(ctx)
 	go func() {
 		defer s.wg.Done()
-		s.refreshConfig(ctx)
+		s.refreshConfig(ctx, runSharedJobs)
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -226,7 +227,7 @@ func (s *AccountOpsService) start(deliverNotifications bool) {
 					s.failures.Add(1)
 				}
 			case <-ticker.C:
-				if s.refreshConfig(ctx) && deliverNotifications {
+				if s.refreshConfig(ctx, runSharedJobs) && runSharedJobs {
 					s.scanBalances(ctx)
 					s.deliver(ctx)
 				}
@@ -243,7 +244,7 @@ func (s *AccountOpsService) Stop() {
 		s.wg.Wait()
 	}
 }
-func (s *AccountOpsService) refreshConfig(ctx context.Context) bool {
+func (s *AccountOpsService) refreshConfig(ctx context.Context, reconcileGroups bool) bool {
 	query, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	c, err := s.GetConfig(query)
@@ -252,7 +253,7 @@ func (s *AccountOpsService) refreshConfig(ctx context.Context) bool {
 		s.failures.Add(1)
 		return false
 	}
-	if s.accounts != nil {
+	if reconcileGroups && s.accounts != nil {
 		if reconciled, reconcileErr := s.ensureManualAccountOpsGroups(query); reconcileErr != nil {
 			s.failures.Add(1)
 			return false

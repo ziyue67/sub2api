@@ -505,6 +505,7 @@ type OpenAIGatewayService struct {
 	userGroupRateResolver  *userGroupRateResolver
 	httpUpstream           HTTPUpstream
 	pluginManager          *PluginManager
+	safetyPromptStore      *SafetyPromptStore
 	deferredService        *DeferredService
 	openAITokenProvider    *OpenAITokenProvider
 	excelOAuthReauth       *OpenAIOAuthReauthService
@@ -521,6 +522,8 @@ type OpenAIGatewayService struct {
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
+	openaiWSNodeOwnerOnce          sync.Once
+	openaiWSNodeOwnerToken         string
 	openaiSchedulerOnce            sync.Once
 	openaiProxyStreamCircuitOnce   sync.Once
 	openaiWSPassthroughDialerOnce  sync.Once

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useTableLoader } from '@/composables/useTableLoader'
+import { onUnmounted } from 'vue'
 
 // Mock @vueuse/core 的 useDebounceFn
 vi.mock('@vueuse/core', () => ({
@@ -35,6 +36,34 @@ describe('useTableLoader', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('does not fetch when a pending filter debounce fires after unmount', async () => {
+    const fetchFn = createMockFetchFn([{ id: 1 }], 1, 1)
+    const loader = useTableLoader({ fetchFn })
+    await loader.load()
+    loader.debouncedReload()
+    const cleanup = vi.mocked(onUnmounted).mock.calls.at(-1)?.[0]
+    expect(cleanup).toBeTypeOf('function')
+    cleanup!()
+    await vi.runAllTimersAsync()
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+    expect(fetchFn.mock.calls[0]?.[3].signal.aborted).toBe(true)
+    expect(loader.items.value).toEqual([{ id: 1 }])
+  })
+
+  it('ignores an in-flight response that resolves after unmount', async () => {
+    let resolveLoad!: (value: { items: { id: number }[]; total: number; pages: number }) => void
+    const fetchFn = vi.fn(() => new Promise<{ items: { id: number }[]; total: number; pages: number }>(resolve => { resolveLoad = resolve }))
+    const loader = useTableLoader({ fetchFn })
+    const pending = loader.load()
+    const cleanup = vi.mocked(onUnmounted).mock.calls.at(-1)?.[0]
+    expect(cleanup).toBeTypeOf('function')
+    cleanup!()
+    resolveLoad({ items: [{ id: 99 }], total: 1, pages: 1 })
+    await pending
+    expect(loader.items.value).toEqual([])
+    expect(loader.pagination.total).toBe(0)
   })
 
   // --- 基础加载 ---

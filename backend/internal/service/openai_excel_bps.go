@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
@@ -130,6 +131,13 @@ func (s *OpenAIGatewayService) excelBPSImageRelayForSettings(settings ExcelBPSIm
 		}
 		return nil, nil
 	}
+	origin := settings.BaseURL
+	if s.cfg != nil && s.cfg.Runtime.ImageRelayOwnerOrigin != "" {
+		if err := config.ValidateImageRelayOwnerOrigin(s.cfg.Runtime.ImageRelayOwnerOrigin); err != nil {
+			return nil, err
+		}
+		origin = strings.TrimRight(s.cfg.Runtime.ImageRelayOwnerOrigin, "/")
+	}
 	var err error
 	s.excelBPSImagesMu.Lock()
 	defer s.excelBPSImagesMu.Unlock()
@@ -138,13 +146,13 @@ func (s *OpenAIGatewayService) excelBPSImageRelayForSettings(settings ExcelBPSIm
 		if dataDir == "" {
 			dataDir = "./data"
 		}
-		s.excelBPSImages, err = basispoints.NewImageRelay(settings.BaseURL, filepath.Join(dataDir, "bps-images"))
-		if err == nil && s.settingService.Serverless != nil {
+		s.excelBPSImages, err = basispoints.NewImageRelay(origin, filepath.Join(dataDir, "bps-images"))
+		if err == nil && s.settingService != nil && s.settingService.Serverless != nil {
 			s.excelBPSImages.SetURLDecorator(s.settingService.Serverless.ImageOwnerURL)
 		}
 	}
 	if err == nil {
-		err = s.excelBPSImages.Configure(settings.BaseURL, settings.Limits)
+		err = s.excelBPSImages.Configure(origin, settings.Limits)
 	}
 	return s.excelBPSImages, err
 }
