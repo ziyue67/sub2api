@@ -557,6 +557,7 @@ const refreshData = () => {
   loadModelStats(modelDistributionSource.value, true)
   loadChartData()
   if (activeTab.value === 'errors') loadAdminErrors()
+  if (rankingMounted.value) rankingRef.value?.reload()
 }
 const resetFilters = () => {
   const range = getLast24HourRange()
@@ -835,6 +836,7 @@ const switchTab = (tab: DetailTab) => {
   if (!detailTabs.value.some(item => item.key === tab)) return
   activeTab.value = tab
   if (tab === 'errors' && errRows.value.length === 0) loadAdminErrors()
+  if (tab === 'ranking') rankingMounted.value = true
 }
 
 // Error tab state

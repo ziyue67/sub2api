@@ -615,7 +615,7 @@ describe('user KeysView column settings', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('new-key', 42, undefined, [], [], 0, undefined,
-      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, Number(input), [42])
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, Number(input), [], [42])
     await getButtonByText(wrapper, 'Create API Key').trigger('click')
     expect((wrapper.get('#key-concurrency-limit').element as HTMLInputElement).value).toBe('0')
   })
@@ -745,7 +745,7 @@ describe('user KeysView column settings', () => {
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
     expect(createKey).toHaveBeenCalledWith('new-key', 42, undefined, [], [], 0, undefined,
-      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, 2, [42])
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, 2, [], [42])
   })
 
   it('distinguishes unknown statistics and policy from zero and still permits saving', async () => {
