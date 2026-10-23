@@ -7,6 +7,7 @@ package handler
 // 目标平台豁免，解析到 openai 目标仍受其可配置开关控制。
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 
@@ -29,6 +30,34 @@ func TestAllowOpenAICompatibleMessagesDispatch_CNProvidersExempt(t *testing.T) {
 	require.False(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOff))
 	openaiOn := &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI, AllowMessagesDispatch: true}}
 	require.True(t, allowOpenAICompatibleMessagesDispatch(nil, openaiOn))
+}
+
+func TestOpenAICompatibleRequestPlatform_PreservesCompatibleProviders(t *testing.T) {
+	tests := []struct {
+		platform string
+		want     string
+	}{
+		{platform: service.PlatformOpenAI, want: service.PlatformOpenAI},
+		{platform: service.PlatformGrok, want: service.PlatformGrok},
+		{platform: service.PlatformKimi, want: service.PlatformKimi},
+		{platform: service.PlatformZhipu, want: service.PlatformZhipu},
+		{platform: service.PlatformDeepseek, want: service.PlatformDeepseek},
+		{platform: service.PlatformMiniMax, want: service.PlatformMiniMax},
+		{platform: service.PlatformOpenCodeGo, want: service.PlatformOpenCodeGo},
+		{platform: service.PlatformAnthropic, want: service.PlatformOpenAI},
+		{platform: "unknown", want: service.PlatformOpenAI},
+	}
+
+	for _, tt := range tests {
+		t.Run("group_"+tt.platform, func(t *testing.T) {
+			apiKey := &service.APIKey{Group: &service.Group{Platform: tt.platform}}
+			require.Equal(t, tt.want, openAICompatibleRequestPlatform(context.Background(), apiKey))
+		})
+		t.Run("resolved_"+tt.platform, func(t *testing.T) {
+			ctx := service.WithResolvedTargetPlatform(context.Background(), tt.platform)
+			require.Equal(t, tt.want, openAICompatibleRequestPlatform(ctx, nil))
+		})
+	}
 }
 
 func TestAllowOpenAICompatibleMessagesDispatch_CompositeResolvedTargets(t *testing.T) {
