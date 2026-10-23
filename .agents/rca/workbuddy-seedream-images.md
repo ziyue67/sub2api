@@ -24,7 +24,7 @@ Seedream provider resolution tiers are not maximum-edge pixel tiers: a Pro 2K 16
 
 ## Commands
 
-Use Go 1.27.2 with a host-compatible GOOS for execution:
+Use Go 1.27.3 with a host-compatible GOOS for execution:
 
 ```text
 go test -tags unit ./internal/service -run '^TestCompatibleImages.*WorkBuddy' -count=1
