@@ -20,9 +20,15 @@ func newConfirmTestEasyPay(t *testing.T, body string, status int) (*EasyPay, *at
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("ParseForm: %v", err)
 		}
-		q := r.URL.Query()
-		if r.URL.Path != "/api.php" || q.Get("act") != "order" || q.Get("pid") != "1001" || q.Get("key") != "pkey-1" || q.Get("out_trade_no") != "sub2_ORDER1" {
-			t.Errorf("unexpected query request: path=%s query=%v", r.URL.Path, q)
+		if r.URL.Path != "/api.php" {
+			t.Errorf("unexpected query path: %s", r.URL.Path)
+		}
+		form := r.URL.Query()
+		if len(form) == 0 {
+			form = r.PostForm
+		}
+		if form.Get("act") != "order" || form.Get("pid") != "1001" || form.Get("key") != "pkey-1" || form.Get("out_trade_no") != "sub2_ORDER1" {
+			t.Errorf("unexpected query request: path=%s form=%v", r.URL.Path, form)
 		}
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(body))
@@ -60,6 +66,7 @@ func TestEasyPayConfirmNotification(t *testing.T) {
 		notifyTrade string
 		wantErr     string
 		wantTradeNo string
+		wantCalls   int
 	}{
 		{
 			name:        "paid with matching amount and trade_no",
@@ -120,6 +127,7 @@ func TestEasyPayConfirmNotification(t *testing.T) {
 			status:      http.StatusBadGateway,
 			notifyTrade: "2026101600001",
 			wantErr:     "parse query",
+			wantCalls:   2,
 		},
 	}
 	for _, tt := range tests {
@@ -134,8 +142,12 @@ func TestEasyPayConfirmNotification(t *testing.T) {
 			n := confirmTestNotification()
 			n.TradeNo = tt.notifyTrade
 			err := provider.ConfirmNotification(context.Background(), n)
-			if calls.Load() != 1 {
-				t.Fatalf("upstream query calls = %d, want 1", calls.Load())
+			wantCalls := tt.wantCalls
+			if wantCalls == 0 {
+				wantCalls = 1
+			}
+			if calls.Load() != int32(wantCalls) {
+				t.Fatalf("upstream query calls = %d, want %d", calls.Load(), wantCalls)
 			}
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
