@@ -79,14 +79,19 @@
       </form>
     </BaseDialog>
 
-    <BaseDialog :show="detailOpen" :title="t('imageArchive.detail')" width="extra-wide" @close="closeDetail">
+    <BaseDialog :show="detailOpen" :title="t('imageArchive.detail')" width="extra-wide" :close-on-escape="!deleting" :show-close-button="!deleting" @close="closeDetail">
       <p v-if="detailLoading" role="status">{{ t('common.loading') }}</p>
       <p v-else-if="detailError" role="alert" class="text-red-600">{{ detailError }}</p>
       <div v-else-if="detail" class="grid gap-6 lg:grid-cols-2">
         <div class="space-y-3">
           <ImageArchiveAsset v-if="selectedFile" :key="`${detail.id}-${selectedFile.id}`" :record-i-d="detail.id" :file="selectedFile" full />
+          <p v-if="!selectedFile" class="py-10 text-center text-sm text-gray-500">{{ t('imageArchive.noImages') }}</p>
           <div class="flex flex-wrap gap-2"><button v-for="file in detail.files" :key="file.id" class="btn btn-secondary text-xs" :class="{ 'ring-2 ring-primary-500': selectedFile?.id === file.id }" @click="selectedFile = file">{{ t(`imageArchive.roles.${file.role}`) }} {{ file.id }}</button></div>
           <p v-if="selectedFile" class="break-all text-xs text-gray-500">{{ selectedFile.width }} × {{ selectedFile.height }} · {{ bytes(selectedFile.byte_size) }} · {{ selectedFile.mime_type }}</p>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" class="btn btn-secondary text-red-600" :disabled="!selectedFile || deleting" @click="deleteTarget = 'file'">{{ t('imageArchive.deleteImage') }}</button>
+            <button type="button" class="btn btn-secondary text-red-600" :disabled="deleting" @click="deleteTarget = 'record'">{{ t('imageArchive.deleteRecord') }}</button>
+          </div>
           <p v-if="selectedFile?.revised_prompt" class="whitespace-pre-wrap break-words text-sm">{{ t('imageArchive.revisedPrompt') }}: {{ selectedFile.revised_prompt }}</p>
         </div>
         <div class="space-y-4 text-sm">
@@ -106,11 +111,19 @@
         </div>
       </div>
     </BaseDialog>
+    <BaseDialog :show="!!deleteTarget" :title="t('imageArchive.confirmDelete')" :z-index="80" :close-on-escape="!deleting" :show-close-button="!deleting" @close="deleteTarget = undefined">
+      <p class="text-sm">{{ t(deleteTarget === 'file' ? 'imageArchive.deleteImageHint' : 'imageArchive.deleteRecordHint') }}</p>
+      <p v-if="deleteError" role="alert" class="mt-3 text-sm text-red-600">{{ deleteError }}</p>
+      <div class="mt-5 flex justify-end gap-2">
+        <button type="button" class="btn btn-secondary" :disabled="deleting" @click="deleteTarget = undefined">{{ t('common.cancel') }}</button>
+        <button type="button" class="btn btn-primary" :disabled="deleting" @click="confirmDelete">{{ deleting ? t('common.loading') : t('common.delete') }}</button>
+      </div>
+    </BaseDialog>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -131,6 +144,26 @@ const capacityGiB = ref(20), accountSearch = ref(''), findingAccounts = ref(fals
 const accountOptions = ref<{ id: number; name: string }[]>([])
 const detailOpen = ref(false), detailLoading = ref(false), detailError = ref('')
 const detail = ref<ImageArchiveRecord>(), selectedFile = ref<ImageArchiveFile>()
+const deleteTarget = ref<'file' | 'record'>(), deleting = ref(false), deleteError = ref('')
+watch(deleteTarget, () => { deleteError.value = '' })
+async function confirmDelete() {
+  if (!detail.value || !deleteTarget.value || deleting.value) return
+  const id = detail.value.id
+  const fileID = deleteTarget.value === 'file' ? selectedFile.value?.id : undefined
+  if (deleteTarget.value === 'file' && fileID === undefined) return
+  deleting.value = true; deleteError.value = ''
+  try {
+    await imageArchiveAPI.remove(id, fileID)
+    deleteTarget.value = undefined
+    if (fileID === undefined) { closeDetail(); if (records.value.length === 1 && page.value > 1) page.value-- }
+    else {
+      detail.value.files = detail.value.files.filter(file => file.id !== fileID)
+      selectedFile.value = cover(detail.value)
+    }
+    await refresh()
+  } catch (err) { deleteError.value = message(err) }
+  finally { deleting.value = false }
+}
 let listController: AbortController | undefined
 let detailController: AbortController | undefined
 let listVersion = 0
@@ -196,7 +229,7 @@ async function openRecord(id: string) {
   } catch (err) { if (!controller.signal.aborted) detailError.value = message(err) }
   finally { if (!controller.signal.aborted) detailLoading.value = false }
 }
-function closeDetail() { detailController?.abort(); detailOpen.value = false; detail.value = undefined; selectedFile.value = undefined }
+function closeDetail() { deleteTarget.value = undefined; deleteError.value = ''; detailController?.abort(); detailOpen.value = false; detail.value = undefined; selectedFile.value = undefined }
 onMounted(async () => {
   await Promise.all([refresh(), getAllIncludingInactive().then(value => { groups.value = value }).catch(err => { error.value = message(err) })])
 })

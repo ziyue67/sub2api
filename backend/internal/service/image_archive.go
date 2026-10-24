@@ -124,6 +124,7 @@ type ImageArchiveRepository interface {
 	List(context.Context, ImageArchiveFilter) ([]ImageArchiveRecord, int64, error)
 	Expired(context.Context, time.Time, int) ([]string, error)
 	Delete(context.Context, string) error
+	UpdateFiles(context.Context, string, []ImageArchiveFile, int64) error
 	// Serializes filesystem writes/cleanup across server processes sharing this volume.
 	Lock(context.Context) (func(), error)
 }
