@@ -93,6 +93,8 @@ func (s *ImageArchiveService) process(job *ImageArchiveCapture) {
 			assets = append(assets, asset)
 		}
 	}
+	// Choose one storage mode for the job; client response bytes stay untouched.
+	previewOnly := s.config.Load().PreviewOnly
 	for _, asset := range assets {
 		if ctx.Err() != nil {
 			job.issues = append(job.issues, "save_timeout")
@@ -115,10 +117,24 @@ func (s *ImageArchiveService) process(job *ImageArchiveCapture) {
 			job.issues = append(job.issues, "asset_size_limit")
 			continue
 		}
-		mimeType, width, height, thumb, err := imageArchiveInspect(data)
+		mimeType, width, height, thumb, err := imageArchiveInspect(data, previewOnly)
 		if err != nil {
 			job.issues = append(job.issues, "invalid_image")
 			continue
+		}
+		if previewOnly {
+			// Never fall back to persisting originals when compression is unavailable.
+			if len(thumb) == 0 {
+				job.issues = append(job.issues, "preview_failed")
+				continue
+			}
+			previewConfig, err := jpeg.DecodeConfig(bytes.NewReader(thumb))
+			if err != nil {
+				job.issues = append(job.issues, "preview_failed")
+				continue
+			}
+			data, thumb = thumb, nil
+			mimeType, width, height = "image/jpeg", previewConfig.Width, previewConfig.Height
 		}
 		size := int64(len(data) + len(thumb))
 		free, spaceErr := s.freeSpace(s.root)
@@ -141,7 +157,7 @@ func (s *ImageArchiveService) process(job *ImageArchiveCapture) {
 			job.issues = append(job.issues, "write_failed")
 			break
 		}
-		file := ImageArchiveFile{ID: len(job.record.Files) + 1, Role: asset.role, MIME: mimeType, ByteSize: int64(len(data)), SHA256: imageArchiveHash(data), Width: width, Height: height, Thumbnail: len(thumb) > 0, RevisedPrompt: asset.revised}
+		file := ImageArchiveFile{ID: len(job.record.Files) + 1, Role: asset.role, MIME: mimeType, ByteSize: int64(len(data)), SHA256: imageArchiveHash(data), Width: width, Height: height, Thumbnail: previewOnly || len(thumb) > 0, PreviewOnly: previewOnly, RevisedPrompt: asset.revised}
 		path := filepath.Join(dir, strconv.Itoa(file.ID))
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			_ = os.Remove(path)
@@ -211,7 +227,7 @@ func imageArchiveErrorCodes(codes []string) string {
 	return strings.Join(unique, ",")
 }
 
-func imageArchiveInspect(data []byte) (string, int, int, []byte, error) {
+func imageArchiveInspect(data []byte, previewOnly bool) (string, int, int, []byte, error) {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
 		return "", 0, 0, nil, fmt.Errorf("invalid raster image")
@@ -228,20 +244,30 @@ func imageArchiveInspect(data []byte) (string, int, int, []byte, error) {
 	if err != nil {
 		return "", 0, 0, nil, err
 	}
+	limit, quality := 384, 78
+	if previewOnly {
+		limit, quality = 1280, 75
+	}
 	w, h := cfg.Width, cfg.Height
-	if w > 384 || h > 384 {
+	if w > limit || h > limit {
 		if w >= h {
-			h = max(1, h*384/w)
-			w = 384
+			h = max(1, h*limit/w)
+			w = limit
 		} else {
-			w = max(1, w*384/h)
-			h = 384
+			w = max(1, w*limit/h)
+			h = limit
 		}
 	}
 	preview := image.NewRGBA(image.Rect(0, 0, w, h))
-	xdraw.ApproxBiLinear.Scale(preview, preview.Bounds(), img, img.Bounds(), xdraw.Src, nil)
+	op := xdraw.Src
+	if previewOnly {
+		// JPEG cannot retain alpha; composite transparent references/masks on white.
+		xdraw.Draw(preview, preview.Bounds(), image.White, image.Point{}, xdraw.Src)
+		op = xdraw.Over
+	}
+	xdraw.ApproxBiLinear.Scale(preview, preview.Bounds(), img, img.Bounds(), op, nil)
 	var out bytes.Buffer
-	if err := jpeg.Encode(&out, preview, &jpeg.Options{Quality: 78}); err != nil {
+	if err := jpeg.Encode(&out, preview, &jpeg.Options{Quality: quality}); err != nil {
 		return mimeType, cfg.Width, cfg.Height, nil, nil
 	}
 	return mimeType, cfg.Width, cfg.Height, out.Bytes(), nil
@@ -445,7 +471,8 @@ func (s *ImageArchiveService) OpenFile(ctx context.Context, id string, fileID in
 		if f.ID == fileID {
 			name := strconv.Itoa(fileID)
 			mimeType := f.MIME
-			if thumb {
+			// Preview-only records share one JPEG for the grid and the viewer.
+			if thumb && !f.PreviewOnly {
 				if !f.Thumbnail {
 					return nil, "", os.ErrNotExist
 				}

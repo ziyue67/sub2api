@@ -2,6 +2,8 @@ import { apiClient } from '../client'
 
 export interface ImageArchiveConfig {
   enabled: boolean
+  preview_only: boolean
+  close_on_backdrop: boolean
   account_ids: number[]
   group_ids: number[]
   retention_days: number
@@ -17,6 +19,7 @@ export interface ImageArchiveFile {
   width: number
   height: number
   thumbnail: boolean
+  preview_only?: boolean
   revised_prompt?: string
 }
 

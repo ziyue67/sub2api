@@ -93,6 +93,61 @@ describe('authenticated archive images', () => {
     wrapper.unmount()
   })
 
+  it('closes on an empty-space tap only when enabled, including object-contain letterboxing', async () => {
+    mocks.file.mockResolvedValue(new Blob(['image']))
+    const wrapper = mount(ImageArchiveAsset, { props: { recordID: 'record', file, full: true, closeOnBackdrop: false } })
+    await flushPromises()
+    await wrapper.get('img').trigger('click')
+    const viewport = wrapper.get('[data-testid="archive-viewport"]')
+    Object.assign(viewport.element, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+    const img = viewport.get('img').element
+    Object.defineProperties(img, { naturalWidth: { value: 400 }, naturalHeight: { value: 200 } })
+    img.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 400 }) as DOMRect
+    const tap = async (x: number, y: number) => {
+      const point = { pointerId: 1, pointerType: 'mouse', button: 0, clientX: x, clientY: y }
+      await viewport.trigger('pointerdown', point)
+      await viewport.trigger('pointerup', point)
+      await viewport.trigger('click', point)
+    }
+    await tap(200, 50)
+    expect(wrapper.find('[data-testid="viewer"]').exists()).toBe(true)
+    await wrapper.setProps({ closeOnBackdrop: true })
+    await tap(200, 200) // Actual image: never close.
+    expect(wrapper.find('[data-testid="viewer"]').exists()).toBe(true)
+    await tap(200, 50) // Letterbox inside the image element's CSS box.
+    expect(wrapper.find('[data-testid="viewer"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the viewer open after a drag, a pinch, or a cancelled pointer on the backdrop', async () => {
+    mocks.file.mockResolvedValue(new Blob(['image']))
+    const wrapper = mount(ImageArchiveAsset, { props: { recordID: 'record', file, full: true, closeOnBackdrop: true } })
+    await flushPromises()
+    await wrapper.get('img').trigger('click')
+    const viewport = wrapper.get('[data-testid="archive-viewport"]')
+    Object.assign(viewport.element, { setPointerCapture: vi.fn(), hasPointerCapture: () => false })
+    const img = viewport.get('img').element
+    Object.defineProperties(img, { naturalWidth: { value: 100 }, naturalHeight: { value: 100 } })
+    img.getBoundingClientRect = () => ({ left: 100, top: 100, width: 200, height: 200 }) as DOMRect
+    const point = (id: number, x: number, y = 20) => ({ pointerId: id, pointerType: 'touch', clientX: x, clientY: y })
+    await viewport.trigger('pointerdown', point(1, 20))
+    await viewport.trigger('pointermove', point(1, 40))
+    await viewport.trigger('pointerup', point(1, 40))
+    await viewport.trigger('click', { clientX: 40, clientY: 20 })
+    expect(wrapper.find('[data-testid="viewer"]').exists()).toBe(true)
+    await viewport.trigger('pointerdown', point(1, 20))
+    await viewport.trigger('pointerdown', point(2, 80))
+    await viewport.trigger('pointerup', point(2, 80))
+    await viewport.trigger('pointerup', point(1, 20))
+    await viewport.trigger('click', { clientX: 20, clientY: 20 })
+    expect(wrapper.find('[data-testid="viewer"]').exists()).toBe(true)
+    await viewport.trigger('pointerdown', point(1, 20))
+    await viewport.trigger('pointercancel', point(1, 20))
+    await viewport.trigger('click', { clientX: 20, clientY: 20 })
+    expect(wrapper.find('[data-testid="viewer"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('loads a thumbnail through the authenticated API and releases its object URL', async () => {
     const blob = new Blob(['test'], { type: 'image/png' })
     mocks.file.mockResolvedValue(blob)

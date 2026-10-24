@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ImageArchiveView from '../ImageArchiveView.vue'
+import ImageArchiveAsset from '@/components/admin/ImageArchiveAsset.vue'
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), stats: vi.fn(), get: vi.fn(), remove: vi.fn() }))
+const mocks = vi.hoisted(() => ({ list: vi.fn(), stats: vi.fn(), get: vi.fn(), remove: vi.fn(), configure: vi.fn() }))
 vi.mock('@/api/admin/imageArchive', () => ({ imageArchiveAPI: mocks }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: async () => [] }))
 vi.mock('@/api/admin/accounts', () => ({ list: vi.fn() }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key, te: () => false }) }))
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<div><slot /></div>' } }))
-vi.mock('@/components/admin/ImageArchiveAsset.vue', () => ({ default: { template: '<div>image</div>' } }))
+vi.mock('@/components/admin/ImageArchiveAsset.vue', () => ({ default: { props: ['closeOnBackdrop'], template: '<div>image</div>' } }))
 vi.mock('@/components/common/BaseDialog.vue', () => ({ default: {
   props: ['show', 'title'], template: '<section v-if="show" :data-title="title"><slot /></section>',
 } }))
@@ -30,6 +31,28 @@ function button(wrapper: ReturnType<typeof mount>, label: string) {
 }
 
 describe('image archive deletion', () => {
+  it('saves the independent archive/viewer options without changing the selected scopes', async () => {
+    const stats = { config: { enabled: true, preview_only: false, close_on_backdrop: false, retention_days: 30, max_bytes: 20 * 2 ** 30, account_ids: [7], group_ids: [8] }, stored_bytes: 40, disk_free_bytes: 1000, storage_available: true }
+    mocks.stats.mockResolvedValue(stats)
+    mocks.configure.mockImplementation(async config => ({ ...stats, config }))
+    mocks.get.mockResolvedValue({ ...record, files: [{ ...files[0], preview_only: true }] })
+    const wrapper = mount(ImageArchiveView)
+    await flushPromises()
+    await button(wrapper, 'imageArchive.settings').trigger('click')
+    const settings = wrapper.get('[data-title="imageArchive.settings"]')
+    for (const label of ['imageArchive.previewOnly', 'imageArchive.closeOnBackdrop']) {
+      await settings.findAll('label').find(item => item.text() === label)!.get('input').setValue(true)
+    }
+    await settings.get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.configure).toHaveBeenCalledWith(expect.objectContaining({ preview_only: true, close_on_backdrop: true, account_ids: [7], group_ids: [8], max_bytes: 20 * 2 ** 30 }))
+    await wrapper.get('button.card').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-title="imageArchive.detail"]').text()).toContain('imageArchive.previewOnlyFile')
+    expect(wrapper.findAllComponents(ImageArchiveAsset).some(component => component.props('closeOnBackdrop') === true)).toBe(true)
+    wrapper.unmount()
+  })
+
   it('requires confirmation and deletes only the selected file, keeping the other image', async () => {
     const wrapper = mount(ImageArchiveView)
     await flushPromises()
