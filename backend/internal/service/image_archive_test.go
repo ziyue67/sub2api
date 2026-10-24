@@ -308,7 +308,7 @@ func TestImageArchiveDownloadRejectsPrivateAndNonImages(t *testing.T) {
 		require.False(t, imageArchivePublicIP(netip.MustParseAddr(ip)), ip)
 	}
 	require.True(t, imageArchivePublicIP(netip.MustParseAddr("8.8.8.8")))
-	_, _, _, _, err := imageArchiveInspect([]byte("<svg onload='alert(1)'/>"))
+	_, _, _, _, err := imageArchiveInspect([]byte("<svg onload='alert(1)'/>"), false)
 	require.Error(t, err)
 }
 

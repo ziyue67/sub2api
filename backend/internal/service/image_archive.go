@@ -24,11 +24,13 @@ const imageArchiveCaptureLimit int64 = 64 << 20
 const imageArchiveAssetLimit int64 = 32 << 20
 
 type ImageArchiveConfig struct {
-	Enabled       bool    `json:"enabled"`
-	AccountIDs    []int64 `json:"account_ids"`
-	GroupIDs      []int64 `json:"group_ids"`
-	RetentionDays int     `json:"retention_days"`
-	MaxBytes      int64   `json:"max_bytes"`
+	Enabled         bool    `json:"enabled"`
+	PreviewOnly     bool    `json:"preview_only"`
+	CloseOnBackdrop bool    `json:"close_on_backdrop"`
+	AccountIDs      []int64 `json:"account_ids"`
+	GroupIDs        []int64 `json:"group_ids"`
+	RetentionDays   int     `json:"retention_days"`
+	MaxBytes        int64   `json:"max_bytes"`
 }
 
 func DefaultImageArchiveConfig() ImageArchiveConfig {
@@ -80,6 +82,7 @@ type ImageArchiveFile struct {
 	Width         int    `json:"width"`
 	Height        int    `json:"height"`
 	Thumbnail     bool   `json:"thumbnail"`
+	PreviewOnly   bool   `json:"preview_only,omitempty"`
 	RevisedPrompt string `json:"revised_prompt,omitempty"`
 }
 

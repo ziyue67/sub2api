@@ -62,6 +62,10 @@
       <form class="space-y-5" @submit.prevent="saveSettings">
         <label class="flex items-center gap-3"><input v-model="draft.enabled" type="checkbox" />{{ t('imageArchive.enableCapture') }}</label>
         <p class="text-sm text-gray-500">{{ t('imageArchive.scopeHint') }}</p>
+        <label class="flex items-center gap-3"><input v-model="draft.preview_only" type="checkbox" />{{ t('imageArchive.previewOnly') }}</label>
+        <p class="text-sm text-gray-500">{{ t('imageArchive.previewOnlyHint') }}</p>
+        <label class="flex items-center gap-3"><input v-model="draft.close_on_backdrop" type="checkbox" />{{ t('imageArchive.closeOnBackdrop') }}</label>
+        <p class="text-sm text-gray-500">{{ t('imageArchive.closeOnBackdropHint') }}</p>
         <div class="grid gap-4 sm:grid-cols-2">
           <label class="text-sm">{{ t('imageArchive.retention') }}<input v-model.number="draft.retention_days" type="number" min="1" max="365" required class="input mt-1" /></label>
           <label class="text-sm">{{ t('imageArchive.capacityGiB') }}<input v-model.number="capacityGiB" type="number" min="1" max="2048" step="1" required class="input mt-1" /></label>
@@ -84,10 +88,10 @@
       <p v-else-if="detailError" role="alert" class="text-red-600">{{ detailError }}</p>
       <div v-else-if="detail" class="grid gap-6 lg:grid-cols-2">
         <div class="space-y-3">
-          <ImageArchiveAsset v-if="selectedFile" :key="`${detail.id}-${selectedFile.id}`" :record-i-d="detail.id" :file="selectedFile" full />
+          <ImageArchiveAsset v-if="selectedFile" :key="`${detail.id}-${selectedFile.id}`" :record-i-d="detail.id" :file="selectedFile" :close-on-backdrop="stats?.config.close_on_backdrop" full />
           <p v-if="!selectedFile" class="py-10 text-center text-sm text-gray-500">{{ t('imageArchive.noImages') }}</p>
           <div class="flex flex-wrap gap-2"><button v-for="file in detail.files" :key="file.id" class="btn btn-secondary text-xs" :class="{ 'ring-2 ring-primary-500': selectedFile?.id === file.id }" @click="selectedFile = file">{{ t(`imageArchive.roles.${file.role}`) }} {{ file.id }}</button></div>
-          <p v-if="selectedFile" class="break-all text-xs text-gray-500">{{ selectedFile.width }} × {{ selectedFile.height }} · {{ bytes(selectedFile.byte_size) }} · {{ selectedFile.mime_type }}</p>
+          <p v-if="selectedFile" class="break-all text-xs text-gray-500">{{ selectedFile.width }} × {{ selectedFile.height }} · {{ bytes(selectedFile.byte_size) }} · {{ selectedFile.mime_type }}<span v-if="selectedFile.preview_only"> · {{ t('imageArchive.previewOnlyFile') }}</span></p>
           <div class="flex flex-wrap gap-2">
             <button type="button" class="btn btn-secondary text-red-600" :disabled="!selectedFile || deleting" @click="deleteTarget = 'file'">{{ t('imageArchive.deleteImage') }}</button>
             <button type="button" class="btn btn-secondary text-red-600" :disabled="deleting" @click="deleteTarget = 'record'">{{ t('imageArchive.deleteRecord') }}</button>
@@ -139,7 +143,7 @@ const groups = ref<{ id: number; name: string }[]>([])
 const total = ref(0), page = ref(1), loading = ref(false), error = ref('')
 const filters = reactive({ user: '', group: '', account: '', model: '', from: '', to: '' })
 const settingsOpen = ref(false), saving = ref(false), settingsError = ref('')
-const draft = reactive<ImageArchiveConfig>({ enabled: false, account_ids: [], group_ids: [], retention_days: 30, max_bytes: 20 * 2 ** 30 })
+const draft = reactive<ImageArchiveConfig>({ enabled: false, preview_only: false, close_on_backdrop: false, account_ids: [], group_ids: [], retention_days: 30, max_bytes: 20 * 2 ** 30 })
 const capacityGiB = ref(20), accountSearch = ref(''), findingAccounts = ref(false)
 const accountOptions = ref<{ id: number; name: string }[]>([])
 const detailOpen = ref(false), detailLoading = ref(false), detailError = ref('')
@@ -201,7 +205,7 @@ function search() { page.value = 1; void loadRecords() }
 function changePage(delta: number) { page.value += delta; void loadRecords() }
 function openSettings() {
   if (!stats.value) return
-  Object.assign(draft, { ...stats.value.config, account_ids: [...stats.value.config.account_ids], group_ids: [...stats.value.config.group_ids] })
+  Object.assign(draft, { ...stats.value.config, preview_only: stats.value.config.preview_only ?? false, close_on_backdrop: stats.value.config.close_on_backdrop ?? false, account_ids: [...stats.value.config.account_ids], group_ids: [...stats.value.config.group_ids] })
   capacityGiB.value = draft.max_bytes / 2 ** 30
   settingsError.value = ''; settingsOpen.value = true
 }

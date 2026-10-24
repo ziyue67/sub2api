@@ -21,8 +21,8 @@
       data-testid="archive-viewport"
       @wheel.prevent="wheel" @pointerdown="startPointer" @pointermove="movePointer"
       @pointerup="endPointer" @pointercancel="endPointer" @lostpointercapture="endPointer"
-      @dblclick="resetView">
-      <img v-if="viewerOpen && src" :src="src" :alt="t(`imageArchive.roles.${file.role}`)" draggable="false"
+      @click="clickBackdrop" @dblclick="resetView">
+      <img ref="viewerImage" v-if="viewerOpen && src" :src="src" :alt="t(`imageArchive.roles.${file.role}`)" draggable="false"
         class="pointer-events-none h-[calc(100%_-_9rem)] w-[calc(100%_-_2rem)] object-contain"
         :style="{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }" />
     </div>
@@ -43,16 +43,38 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import { useI18n } from 'vue-i18n'
 import { imageArchiveAPI, type ImageArchiveFile } from '@/api/admin/imageArchive'
 
-const props = defineProps<{ recordID: string; file: ImageArchiveFile; full?: boolean }>()
+const props = defineProps<{ recordID: string; file: ImageArchiveFile; full?: boolean; closeOnBackdrop?: boolean }>()
 const { t } = useI18n()
 const src = ref('')
 const failed = ref(false)
 const viewerOpen = ref(false), scale = ref(1), dragging = ref(false)
 const viewport = ref<HTMLElement>()
+const viewerImage = ref<HTMLImageElement>()
 const offset = reactive({ x: 0, y: 0 })
 type Point = { x: number; y: number }
 const pointers = new Map<number, Point>()
 let dragOrigin: Point = { x: 0, y: 0 }
+let backdropPress: Point | undefined
+let backdropMoved = false
+function insideImage(point: Point) {
+  const img = viewerImage.value
+  if (!img?.naturalWidth || !img.naturalHeight) return true
+  const rect = img.getBoundingClientRect()
+  // object-contain leaves letterboxing inside the element's CSS box. Test the
+  // actual rendered image, including its current scale and translation.
+  const ratio = Math.min(rect.width / img.naturalWidth, rect.height / img.naturalHeight)
+  const width = img.naturalWidth * ratio, height = img.naturalHeight * ratio
+  const left = rect.left + (rect.width - width) / 2, top = rect.top + (rect.height - height) / 2
+  return point.x >= left && point.x <= left + width && point.y >= top && point.y <= top + height
+}
+function clickBackdrop(event: MouseEvent) {
+  const press = backdropPress
+  backdropPress = undefined
+  if (!props.closeOnBackdrop || !press || backdropMoved) return
+  const point = { x: event.clientX, y: event.clientY }
+  if (Math.hypot(point.x - press.x, point.y - press.y) > 5) return
+  if (!insideImage(press) && !insideImage(point)) viewerOpen.value = false
+}
 let pinch: { distance: number; scale: number; anchor: Point } | undefined
 function center(): Point {
   const rect = viewport.value?.getBoundingClientRect()
@@ -61,6 +83,7 @@ function center(): Point {
 function clearPointers() {
   const ids = [...pointers.keys()]
   pointers.clear(); pinch = undefined; dragging.value = false
+  backdropPress = undefined; backdropMoved = false
   for (const id of ids) {
     if (viewport.value?.hasPointerCapture(id)) viewport.value.releasePointerCapture(id)
   }
@@ -77,6 +100,7 @@ function zoom(value: number, origin = center()) {
 }
 function wheel(event: WheelEvent) {
   if (event.deltaY) {
+    backdropMoved = true
     zoom(scale.value * (event.deltaY < 0 ? 1.1 : 1 / 1.1), { x: event.clientX, y: event.clientY })
     rebaseGesture()
   }
@@ -100,12 +124,19 @@ function rebaseGesture() {
 function startPointer(event: PointerEvent) {
   if (event.pointerType === 'mouse' && event.button !== 0) return
   if (pointers.size >= 2) return
+  if (pointers.size === 0) {
+    backdropPress = { x: event.clientX, y: event.clientY }
+    backdropMoved = false
+  } else {
+    backdropMoved = true
+  }
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
   viewport.value?.setPointerCapture(event.pointerId)
   rebaseGesture()
 }
 function movePointer(event: PointerEvent) {
   if (!pointers.has(event.pointerId)) return
+  if (backdropPress && Math.hypot(event.clientX - backdropPress.x, event.clientY - backdropPress.y) > 5) backdropMoved = true
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
   if (pointers.size >= 2 && pinch && pinch.distance > 0) {
     const [a, b] = [...pointers.values()], c = center()
@@ -120,6 +151,7 @@ function movePointer(event: PointerEvent) {
 }
 function endPointer(event: PointerEvent) {
   if (!pointers.delete(event.pointerId)) return
+  if (event.type !== 'pointerup') backdropPress = undefined
   if (viewport.value?.hasPointerCapture(event.pointerId)) viewport.value.releasePointerCapture(event.pointerId)
   rebaseGesture()
 }
