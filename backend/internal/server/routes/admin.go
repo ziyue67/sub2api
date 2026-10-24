@@ -999,6 +999,8 @@ func registerImageArchiveRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	archive.PUT("/config", h.Admin.ImageArchive.UpdateConfig)
 	archive.GET("/:id", h.Admin.ImageArchive.Get)
 	archive.GET("/:id/files/:file", h.Admin.ImageArchive.File)
+	archive.DELETE("/:id", h.Admin.ImageArchive.Delete)
+	archive.DELETE("/:id/files/:file", h.Admin.ImageArchive.Delete)
 }
 
 func registerErrorPassthroughRoutes(admin *gin.RouterGroup, h *handler.Handlers) {

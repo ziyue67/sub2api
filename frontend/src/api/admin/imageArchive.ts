@@ -88,6 +88,9 @@ export const imageArchiveAPI = {
     const { data } = await apiClient.get<ImageArchiveRecord>(`/admin/image-archive/${id}`, { signal })
     return data
   },
+  async remove(id: string, fileID?: number) {
+    await apiClient.delete(fileID === undefined ? `/admin/image-archive/${id}` : `/admin/image-archive/${id}/files/${fileID}`)
+  },
   async file(id: string, fileID: number, thumbnail: boolean, signal?: AbortSignal) {
     const { data } = await apiClient.get<Blob>(`/admin/image-archive/${id}/files/${fileID}`, {
       params: { thumbnail }, responseType: 'blob', signal,

@@ -147,3 +147,19 @@ func (r *imageArchiveRepository) Delete(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM image_request_archives WHERE id=$1`, id)
 	return err
 }
+
+func (r *imageArchiveRepository) UpdateFiles(ctx context.Context, id string, files []service.ImageArchiveFile, size int64) error {
+	data, err := json.Marshal(files)
+	if err != nil {
+		return err
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE image_request_archives SET files=$2::jsonb,byte_size=$3 WHERE id=$1`, id, string(data), size)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n == 0 {
+		return sql.ErrNoRows
+	}
+	return err
+}

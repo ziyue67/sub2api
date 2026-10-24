@@ -70,3 +70,19 @@ func TestImageArchiveRepositoryWriteAndStorageLock(t *testing.T) {
 	require.ErrorContains(t, err, "lock timeout")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestImageArchiveRepositoryUpdateFiles(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := NewImageArchiveRepository(db)
+	id := uuid.NewString()
+	query := regexp.QuoteMeta(`UPDATE image_request_archives SET files=$2::jsonb,byte_size=$3 WHERE id=$1`)
+	mock.ExpectExec(query).WithArgs(id, "[]", int64(0)).WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, repo.UpdateFiles(context.Background(), id, []service.ImageArchiveFile{}, 0))
+	mock.ExpectExec(query).WithArgs(id, "[]", int64(0)).WillReturnResult(sqlmock.NewResult(0, 0))
+	require.ErrorIs(t, repo.UpdateFiles(context.Background(), id, []service.ImageArchiveFile{}, 0), sql.ErrNoRows)
+	mock.ExpectExec(query).WithArgs(id, "[]", int64(0)).WillReturnError(fmt.Errorf("database unavailable"))
+	require.Error(t, repo.UpdateFiles(context.Background(), id, []service.ImageArchiveFile{}, 0))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

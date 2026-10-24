@@ -30,6 +30,7 @@ type archiveTestRepository struct {
 	records   map[string]*ImageArchiveRecord
 	expired   []string
 	insertErr error
+	deleteErr error
 }
 
 func (r *archiveTestRepository) Insert(_ context.Context, v *ImageArchiveRecord) error {
@@ -52,6 +53,9 @@ func (r *archiveTestRepository) Expired(context.Context, time.Time, int) ([]stri
 	return r.expired, nil
 }
 func (r *archiveTestRepository) Delete(_ context.Context, id string) error {
+	if r.deleteErr != nil {
+		return r.deleteErr
+	}
 	delete(r.records, id)
 	r.expired = nil
 	return nil
@@ -339,4 +343,77 @@ func TestImageArchiveStopConcurrentWithFinish(t *testing.T) {
 	require.Zero(t, s.memory.Load())
 	require.Zero(t, s.active.Load())
 	require.Empty(t, s.queue)
+}
+
+func (r *archiveTestRepository) UpdateFiles(_ context.Context, id string, files []ImageArchiveFile, size int64) error {
+	if r.deleteErr != nil {
+		return r.deleteErr
+	}
+	r.records[id].Files = files
+	r.records[id].ByteSize = size
+	return nil
+}
+
+func TestImageArchiveDeleteFilesAndRecord(t *testing.T) {
+	s, repo := archiveTestService(t)
+	c, _ := archiveTestContext()
+	job := archiveTestCapture(s, c)
+	archiveObserveImage(t, c)
+	job.add(imageArchiveAsset{role: "reference", data: archiveTestImage(t)})
+	job.Finish(c, &OpenAIForwardResult{ImageCount: 1})
+	s.process(<-s.queue)
+	record := repo.records[job.record.ID]
+	require.Len(t, record.Files, 2)
+	dir := filepath.Join(s.root, record.ID)
+	originalSize := record.ByteSize
+
+	// A database failure restores the original and thumbnail and keeps metadata.
+	repo.deleteErr = fmt.Errorf("database unavailable")
+	require.Error(t, s.Delete(context.Background(), record.ID, 1))
+	require.FileExists(t, filepath.Join(dir, "1"))
+	require.FileExists(t, filepath.Join(dir, "1.jpg"))
+	require.Len(t, record.Files, 2)
+	require.Equal(t, originalSize, record.ByteSize)
+	repo.deleteErr = nil
+
+	require.NoError(t, s.Delete(context.Background(), record.ID, 1))
+	require.NoFileExists(t, filepath.Join(dir, "1"))
+	require.NoFileExists(t, filepath.Join(dir, "1.jpg"))
+	require.FileExists(t, filepath.Join(dir, "2"))
+	require.Len(t, record.Files, 1)
+	require.Equal(t, 2, record.Files[0].ID) // IDs stay stable after a deletion.
+	require.Less(t, record.ByteSize, originalSize)
+	require.Equal(t, record.ByteSize, s.Stats().StoredBytes)
+	_, _, err := s.OpenFile(context.Background(), record.ID, 1, false)
+	require.Error(t, err)
+	require.ErrorIs(t, s.Delete(context.Background(), record.ID, 999), sql.ErrNoRows)
+	require.ErrorIs(t, s.Delete(context.Background(), "../outside", 0), sql.ErrNoRows)
+
+	repo.deleteErr = fmt.Errorf("database unavailable")
+	require.Error(t, s.Delete(context.Background(), record.ID, 0))
+	require.DirExists(t, dir)
+	require.Contains(t, repo.records, record.ID)
+	repo.deleteErr = nil
+	require.NoError(t, s.Delete(context.Background(), record.ID, 0))
+	require.NoDirExists(t, dir)
+	require.NotContains(t, repo.records, record.ID)
+	require.Zero(t, s.Stats().StoredBytes)
+	entries, err := os.ReadDir(s.root)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestImageArchiveDeleteLastImageKeepsPrompt(t *testing.T) {
+	s, repo := archiveTestService(t)
+	c, _ := archiveTestContext()
+	job := archiveTestCapture(s, c)
+	archiveObserveImage(t, c)
+	job.Finish(c, &OpenAIForwardResult{ImageCount: 1})
+	s.process(<-s.queue)
+	require.NoError(t, s.Delete(context.Background(), job.record.ID, 1))
+	record := repo.records[job.record.ID]
+	require.Empty(t, record.Files)
+	require.NotEmpty(t, record.Prompt)
+	require.Zero(t, record.ByteSize)
+	require.Zero(t, s.Stats().StoredBytes)
 }

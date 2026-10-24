@@ -1,6 +1,8 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/components/admin/__tests__/ImageArchiveAsset.spec.ts \
+	src/views/admin/__tests__/ImageArchiveView.spec.ts \
 	src/components/common/__tests__/PlatformTypeBadge.openaiPlans.spec.ts \
 	src/components/common/__tests__/PlatformTypeBadge.grok.spec.ts \
 	src/views/admin/__tests__/AutoConfigView.spec.ts \

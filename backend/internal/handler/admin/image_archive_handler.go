@@ -116,3 +116,24 @@ func archiveReadError(c *gin.Context, err error) {
 	}
 	response.InternalError(c, "Unable to read image archive")
 }
+
+func (h *ImageArchiveHandler) Delete(c *gin.Context) {
+	fileID := 0
+	if raw := c.Param("file"); raw != "" {
+		id, err := strconv.Atoi(raw)
+		if err != nil || id <= 0 {
+			response.NotFound(c, "Image not found")
+			return
+		}
+		fileID = id
+	}
+	if err := h.service.Delete(c.Request.Context(), c.Param("id"), fileID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, os.ErrNotExist) {
+			response.NotFound(c, "Image archive not found")
+		} else {
+			response.InternalError(c, "Unable to delete image archive")
+		}
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
+}

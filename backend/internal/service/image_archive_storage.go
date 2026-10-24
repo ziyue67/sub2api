@@ -473,3 +473,103 @@ func (s *ImageArchiveService) Get(ctx context.Context, id string) (*ImageArchive
 	}
 	return s.repo.Get(ctx, id)
 }
+
+// Delete removes a whole archive when fileID is zero, or one saved image otherwise.
+// Files are staged on the same volume before the DB change. Failed DB writes restore
+// the files; successful writes leave any interrupted cleanup to the orphan sweep.
+func (s *ImageArchiveService) Delete(ctx context.Context, id string, fileID int) error {
+	if !imageArchiveValidID(id) || fileID < 0 {
+		return sql.ErrNoRows
+	}
+	unlock, err := s.repo.Lock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	defer s.updateDiskStats()
+	record, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.root, id)
+	staged := filepath.Join(s.root, uuid.NewString())
+	type move struct{ from, to string }
+	moves := []move{}
+	committed := false
+	defer func() {
+		if !committed {
+			for i := len(moves) - 1; i >= 0; i-- {
+				if err := os.Rename(moves[i].to, moves[i].from); err != nil {
+					s.warn("delete_restore_failed")
+					return
+				}
+			}
+		}
+		if err := os.RemoveAll(staged); err != nil {
+			s.warn("delete_cleanup_failed")
+		}
+	}()
+	stage := func(from, to string, directory bool) error {
+		info, err := os.Lstat(from)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || (directory && !info.IsDir()) || (!directory && !info.Mode().IsRegular()) {
+			return fmt.Errorf("invalid archive file")
+		}
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+		moves = append(moves, move{from, to})
+		return nil
+	}
+	if fileID == 0 {
+		if err := stage(dir, staged, true); err != nil {
+			return err
+		}
+		if err := s.repo.Delete(ctx, id); err != nil {
+			return err
+		}
+	} else {
+		remaining := make([]ImageArchiveFile, 0, len(record.Files))
+		found := false
+		for _, file := range record.Files {
+			if file.ID == fileID {
+				found = true
+			} else {
+				remaining = append(remaining, file)
+			}
+		}
+		if !found {
+			return sql.ErrNoRows
+		}
+		if info, err := os.Lstat(dir); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("invalid archive directory")
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Mkdir(staged, 0700); err != nil {
+			return err
+		}
+		name := strconv.Itoa(fileID)
+		for _, suffix := range []string{"", ".jpg"} {
+			if err := stage(filepath.Join(dir, name+suffix), filepath.Join(staged, name+suffix), false); err != nil {
+				return err
+			}
+		}
+		size, err := imageArchiveDirectoryBytes(dir)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := s.repo.UpdateFiles(ctx, id, remaining, size); err != nil {
+			return err
+		}
+	}
+	committed = true
+	return nil
+}

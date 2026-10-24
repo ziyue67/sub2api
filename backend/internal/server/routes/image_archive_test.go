@@ -42,6 +42,7 @@ func TestImageArchiveRoutesRequireAdminForFilesAndMetadata(t *testing.T) {
 	require.NoError(t, err)
 	for _, route := range []struct{ method, path string }{
 		{"GET", "/api/v1/admin/image-archive"}, {"GET", "/api/v1/admin/image-archive/stats"}, {"PUT", "/api/v1/admin/image-archive/config"},
+		{"DELETE", "/api/v1/admin/image-archive/00000000-0000-4000-8000-000000000000"}, {"DELETE", "/api/v1/admin/image-archive/00000000-0000-4000-8000-000000000000/files/1"},
 		{"GET", "/api/v1/admin/image-archive/00000000-0000-4000-8000-000000000000"}, {"GET", "/api/v1/admin/image-archive/00000000-0000-4000-8000-000000000000/files/1"},
 	} {
 		for _, header := range []string{"", "Bearer " + token} {
