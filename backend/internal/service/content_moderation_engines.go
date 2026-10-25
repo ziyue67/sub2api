@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"maps"
+	"math"
 	"strings"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -13,15 +15,53 @@ const (
 	ContentModerationEngineTypeSafe = "typesafe"
 )
 
+// CategorySettings applies only to the two optional TypeSafe categories.
+// The original thirteen categories retain their existing always-enabled behavior.
+type ContentModerationCategorySetting struct {
+	Enabled bool `json:"enabled"`
+}
+
+func mergeModerationCategorySettings(engine string, base, override map[string]ContentModerationCategorySetting) map[string]ContentModerationCategorySetting {
+	out := map[string]ContentModerationCategorySetting{}
+	if engine == ContentModerationEngineTypeSafe {
+		for _, category := range []string{"jailbreak", "control_bypass"} {
+			out[category] = base[category]
+			if setting, ok := override[category]; ok {
+				out[category] = setting
+			}
+		}
+	}
+	return out
+}
+
+func moderationCategoryEnabled(engine string, settings map[string]ContentModerationCategorySetting, category string) bool {
+	if category == "jailbreak" || category == "control_bypass" {
+		return engine == ContentModerationEngineTypeSafe && settings[category].Enabled
+	}
+	return true
+}
+
+func validateModerationThresholds(engine string, thresholds *map[string]float64) error {
+	if thresholds != nil {
+		for _, category := range ContentModerationCategories(engine) {
+			if value, ok := (*thresholds)[category]; ok && (math.IsNaN(value) || math.IsInf(value, 0)) {
+				return infraerrors.BadRequest("INVALID_CONTENT_MODERATION_THRESHOLD", "审计阈值必须为有限数值")
+			}
+		}
+	}
+	return nil
+}
+
 type ContentModerationEngineConfig struct {
-	BaseURL        string             `json:"base_url"`
-	Model          string             `json:"model"`
-	ProxyID        *int64             `json:"proxy_id,omitempty"`
-	APIKeyBaseURLs map[string]string  `json:"api_key_base_urls,omitempty"`
-	APIKeys        []string           `json:"api_keys,omitempty"`
-	TimeoutMS      int                `json:"timeout_ms"`
-	RetryCount     int                `json:"retry_count"`
-	Thresholds     map[string]float64 `json:"thresholds"`
+	BaseURL          string                                      `json:"base_url"`
+	Model            string                                      `json:"model"`
+	ProxyID          *int64                                      `json:"proxy_id,omitempty"`
+	APIKeyBaseURLs   map[string]string                           `json:"api_key_base_urls,omitempty"`
+	APIKeys          []string                                    `json:"api_keys,omitempty"`
+	TimeoutMS        int                                         `json:"timeout_ms"`
+	RetryCount       int                                         `json:"retry_count"`
+	Thresholds       map[string]float64                          `json:"thresholds"`
+	CategorySettings map[string]ContentModerationCategorySetting `json:"category_settings"`
 }
 
 type ContentModerationKeyURLUpdate struct {
@@ -31,25 +71,28 @@ type ContentModerationKeyURLUpdate struct {
 }
 
 type UpdateContentModerationEngineInput struct {
-	KeyURLUpdates      []ContentModerationKeyURLUpdate `json:"key_url_updates"`
-	BaseURL            *string                         `json:"base_url"`
-	Model              *string                         `json:"model"`
-	ProxyID            *int64                          `json:"proxy_id"`
-	APIKey             *string                         `json:"api_key"`
-	APIKeys            *[]string                       `json:"api_keys"`
-	APIKeysMode        string                          `json:"api_keys_mode"`
-	DeleteAPIKeyHashes *[]string                       `json:"delete_api_key_hashes"`
-	ClearAPIKey        bool                            `json:"clear_api_key"`
-	TimeoutMS          *int                            `json:"timeout_ms"`
-	RetryCount         *int                            `json:"retry_count"`
-	Thresholds         *map[string]float64             `json:"thresholds"`
+	KeyURLUpdates      []ContentModerationKeyURLUpdate              `json:"key_url_updates"`
+	BaseURL            *string                                      `json:"base_url"`
+	Model              *string                                      `json:"model"`
+	ProxyID            *int64                                       `json:"proxy_id"`
+	APIKey             *string                                      `json:"api_key"`
+	APIKeys            *[]string                                    `json:"api_keys"`
+	APIKeysMode        string                                       `json:"api_keys_mode"`
+	DeleteAPIKeyHashes *[]string                                    `json:"delete_api_key_hashes"`
+	ClearAPIKey        bool                                         `json:"clear_api_key"`
+	TimeoutMS          *int                                         `json:"timeout_ms"`
+	RetryCount         *int                                         `json:"retry_count"`
+	Thresholds         *map[string]float64                          `json:"thresholds"`
+	CategorySettings   *map[string]ContentModerationCategorySetting `json:"category_settings"`
 }
 
 type ContentModerationEngineMeta struct {
-	Engine        string `json:"engine"`
-	Model         string `json:"model"`
-	RulesVersion  string `json:"rules_version"`
-	SkippedImages int    `json:"skipped_images"`
+	CategorySettings  map[string]ContentModerationCategorySetting `json:"category_settings,omitempty"`
+	MatchedCategories []string                                    `json:"matched_categories,omitempty"`
+	Engine            string                                      `json:"engine"`
+	Model             string                                      `json:"model"`
+	RulesVersion      string                                      `json:"rules_version"`
+	SkippedImages     int                                         `json:"skipped_images"`
 }
 
 func moderationEngine(engine string) string {
@@ -64,7 +107,7 @@ func validModerationEngine(engine string) bool {
 }
 
 func moderationEngineDefaults(engine string) *ContentModerationEngineConfig {
-	p := &ContentModerationEngineConfig{BaseURL: defaultContentModerationBaseURL, Model: defaultContentModerationModel, TimeoutMS: 3000, RetryCount: 2, Thresholds: ContentModerationDefaultThresholds()}
+	p := &ContentModerationEngineConfig{BaseURL: defaultContentModerationBaseURL, Model: defaultContentModerationModel, TimeoutMS: 3000, RetryCount: 2, Thresholds: ContentModerationDefaultThresholds(engine), CategorySettings: mergeModerationCategorySettings(engine, nil, nil)}
 	if engine == ContentModerationEngineTypeSafe {
 		p.BaseURL, p.Model = typesafe.DefaultBaseURL, typesafe.JevLatestModel
 	}
@@ -86,12 +129,13 @@ func (cfg *ContentModerationConfig) engineProfile(engine string) *ContentModerat
 			p.Model = defaults.Model
 		}
 	} else {
-		p = ContentModerationEngineConfig{BaseURL: cfg.BaseURL, Model: cfg.Model, ProxyID: cfg.ProxyID, APIKeys: cfg.apiKeys(), TimeoutMS: cfg.TimeoutMS, RetryCount: cfg.RetryCount, Thresholds: cfg.Thresholds}
+		p = ContentModerationEngineConfig{BaseURL: cfg.BaseURL, Model: cfg.Model, ProxyID: cfg.ProxyID, APIKeys: cfg.apiKeys(), TimeoutMS: cfg.TimeoutMS, RetryCount: cfg.RetryCount, Thresholds: cfg.Thresholds, CategorySettings: cfg.CategorySettings}
 	}
 	p.APIKeyBaseURLs = cloneModerationKeyURLs(p.APIKeyBaseURLs)
 	p.ProxyID = cloneInt64Ptr(p.ProxyID)
 	p.APIKeys = append([]string(nil), p.APIKeys...)
-	p.Thresholds = cloneFloatMap(p.Thresholds)
+	p.Thresholds = mergeContentModerationThresholds(ContentModerationDefaultThresholds(engine), p.Thresholds)
+	p.CategorySettings = mergeModerationCategorySettings(engine, nil, p.CategorySettings)
 	return &p
 }
 
@@ -101,6 +145,7 @@ func (cfg *ContentModerationConfig) applyEngineProfile(p *ContentModerationEngin
 	cfg.APIKeyBaseURLs = cloneModerationKeyURLs(p.APIKeyBaseURLs)
 	cfg.TimeoutMS, cfg.RetryCount = p.TimeoutMS, p.RetryCount
 	cfg.Thresholds = cloneFloatMap(p.Thresholds)
+	cfg.CategorySettings = maps.Clone(p.CategorySettings)
 }
 
 func (cfg *ContentModerationConfig) effectiveEngine(engine string) *ContentModerationConfig {
@@ -139,6 +184,12 @@ func (s *ContentModerationService) updateEngineProfile(ctx context.Context, cfg 
 	}
 	if input.RetryCount != nil {
 		p.RetryCount = *input.RetryCount
+	}
+	if err := validateModerationThresholds(engine, input.Thresholds); err != nil {
+		return err
+	}
+	if input.CategorySettings != nil {
+		p.CategorySettings = mergeModerationCategorySettings(engine, p.CategorySettings, *input.CategorySettings)
 	}
 	if input.Thresholds != nil {
 		p.Thresholds = mergeContentModerationThresholds(defaults.Thresholds, *input.Thresholds)
@@ -214,10 +265,10 @@ func (s *ContentModerationService) updateEngineProfile(ctx context.Context, cfg 
 	check := cloneContentModerationConfig(cfg)
 	check.Engine = engine
 	check.applyEngineProfile(p)
-	if err := s.validateConfig(ctx, check); err != nil {
+	if err := s.validateConfig(ctx, check, engine); err != nil {
 		return err
 	}
-	p = &ContentModerationEngineConfig{BaseURL: check.BaseURL, Model: check.Model, ProxyID: check.ProxyID, APIKeys: check.APIKeys, APIKeyBaseURLs: check.APIKeyBaseURLs, TimeoutMS: check.TimeoutMS, RetryCount: check.RetryCount, Thresholds: check.Thresholds}
+	p = &ContentModerationEngineConfig{BaseURL: check.BaseURL, Model: check.Model, ProxyID: check.ProxyID, APIKeys: check.APIKeys, APIKeyBaseURLs: check.APIKeyBaseURLs, TimeoutMS: check.TimeoutMS, RetryCount: check.RetryCount, Thresholds: check.Thresholds, CategorySettings: check.CategorySettings}
 	if engine == ContentModerationEngineTypeSafe {
 		cfg.TypeSafe = p
 	} else {

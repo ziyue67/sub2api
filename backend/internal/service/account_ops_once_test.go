@@ -140,7 +140,7 @@ func TestAccountOpsRecoveryUsesHistoricalSnapshotAfterNewLowEpisode(t *testing.T
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 	criteria, _, _, _ := opsCriteria(cfg, 41, "balance_threshold")
 	e := &AccountOpsEvent{ID: "historical", EpisodeID: "old-cycle", Phase: "recovery", AccountID: 41, Kind: "balance_threshold", Criteria: criteria, Identity: opsAccountIdentity(a), Details: &AccountOpsDetails{Balance: &value, Threshold: &threshold, Unit: "USD"}, LastSeen: now}
-	svc.deliverEvent(context.Background(), e)
+	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, 1, sender.calls)
 	require.Contains(t, sender.body, "恢复时余额")
 	require.Contains(t, sender.body, "8 USD")
@@ -149,7 +149,7 @@ func TestAccountOpsRecoveryUsesHistoricalSnapshotAfterNewLowEpisode(t *testing.T
 	cfg.BalanceThresholds[0].Threshold = 6
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 	e.Deliveries = nil
-	svc.deliverEvent(context.Background(), e)
+	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, 1, sender.calls)
 	require.Equal(t, "suppressed", repo.state)
 }
@@ -173,16 +173,16 @@ func TestAccountOpsOnceWarningDefersUnknownAndHealthyThenSendsFreshAdverse(t *te
 	require.NoError(t, svc.SaveConfig(ctx, cfg))
 	criteria, _, _, _ := opsCriteria(cfg, 41, "balance_threshold")
 	e := &AccountOpsEvent{ID: "historical", EpisodeID: "cycle", Phase: "alert", AccountID: 41, Kind: "balance_threshold", Criteria: criteria, Identity: opsAccountIdentity(a), Details: &AccountOpsDetails{Balance: &value, Threshold: &threshold, Unit: "USD"}, LastSeen: now}
-	svc.deliverEvent(ctx, e)
+	svc.deliverNotification(ctx, e)
 	require.Zero(t, sender.calls)
 	require.Equal(t, "deferred", repo.state)
 	balance.Status = "ok"
 	balance.Data["remaining"] = 8.0
-	svc.deliverEvent(ctx, e)
+	svc.deliverNotification(ctx, e)
 	require.Zero(t, sender.calls)
 	require.Equal(t, "deferred", repo.state)
 	balance.Data["remaining"] = 2.0
-	svc.deliverEvent(ctx, e)
+	svc.deliverNotification(ctx, e)
 	require.Equal(t, 1, sender.calls)
 	require.Equal(t, "sent", repo.state)
 	require.Contains(t, sender.body, "4 USD")

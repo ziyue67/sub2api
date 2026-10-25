@@ -322,8 +322,8 @@ func TestGatewayServiceRecordUsage_GeminiFlashThinkingTierUsesCatalogPrice(t *te
 			require.NotNil(t, usageRepo.lastLog)
 			require.Equal(t, model, usageRepo.lastLog.Model)
 			require.InDelta(t, 0.02007585, usageRepo.lastLog.TotalCost, 1e-12)
-			require.InDelta(t, 0.0030113775, usageRepo.lastLog.ActualCost, 1e-12)
-			require.InDelta(t, 0.0030113775, userRepo.lastAmount, 1e-12)
+			require.InDelta(t, 0.00301138, usageRepo.lastLog.ActualCost, 1e-12)
+			require.InDelta(t, 0.00301138, userRepo.lastAmount, 1e-12)
 		})
 	}
 }
@@ -475,8 +475,8 @@ func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *
 
 	require.InDelta(t, textInput+textOutput+imageOutput, usageRepo.lastLog.TotalCost, 1e-12)
 	require.InDelta(t, imageOutput, usageRepo.lastLog.ImageOutputCost, 1e-12)
-	require.InDelta(t, expectedActual, usageRepo.lastLog.ActualCost, 1e-12)
-	require.InDelta(t, expectedActual, userRepo.lastAmount, 1e-12)
+	require.InDelta(t, QuantizeUsageBillingAmount(expectedActual), usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, QuantizeUsageBillingAmount(expectedActual), userRepo.lastAmount, 1e-12)
 }
 
 func TestGatewayServiceRecordUsage_TimePricingUsesPricingAt(t *testing.T) {
@@ -508,7 +508,7 @@ func TestGatewayServiceRecordUsage_TimePricingUsesPricingAt(t *testing.T) {
 	require.NotNil(t, usageRepo.lastLog)
 	baseCost := 1000*3e-6 + 500*15e-6
 	require.InDelta(t, baseCost*2, usageRepo.lastLog.TotalCost, 1e-12)
-	require.InDelta(t, baseCost*2*0.8, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, QuantizeUsageBillingAmount(baseCost*2*0.8), usageRepo.lastLog.ActualCost, 1e-12)
 	require.InDelta(t, 0.8, usageRepo.lastLog.RateMultiplier, 1e-12)
 }
 func TestGatewayServiceRecordUsage_UsesExplicitPricingAtForPeakRate(t *testing.T) {
@@ -610,9 +610,9 @@ func TestGatewayServiceRecordUsage_DeepSeekAccountStatsUsesRequestPricingAtAndUp
 				require.False(t, log.CreatedAt.Equal(slot.pricingAt), "request pricing time must differ from record creation")
 				customerTotal := 1000*inputPrice + 500*outputPrice + 1000*cachePrice
 				require.InDelta(t, customerTotal, log.TotalCost, 1e-12)
-				require.InDelta(t, customerTotal*0.8, log.ActualCost, 1e-12)
+				require.InDelta(t, QuantizeUsageBillingAmount(customerTotal*0.8), log.ActualCost, 1e-12)
 				require.Equal(t, 1, userRepo.deductCalls)
-				require.InDelta(t, customerTotal*0.8, userRepo.lastAmount, 1e-12)
+				require.InDelta(t, QuantizeUsageBillingAmount(customerTotal*0.8), userRepo.lastAmount, 1e-12)
 				require.NotNil(t, log.AccountStatsCost)
 				require.InDelta(t, model.offPeakCost*slot.multiplier, *log.AccountStatsCost, 1e-12,
 					"account cost must use the upstream model and historical PricingAt")
@@ -767,7 +767,7 @@ func TestGatewayServiceRecordUsage_DroppedUsageLogFallsBackToSyncCreate(t *testi
 	require.NoError(t, usageRepo.lastCtxErr)
 }
 
-func TestGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *testing.T) {
+func TestGatewayServiceRecordUsage_BillingErrorDoesNotWriteFalseZeroCostLog(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingErr := errors.New("billing tx failed")
 	billingRepo := &openAIRecordUsageBillingRepoStub{err: billingErr}
@@ -792,14 +792,8 @@ func TestGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *testin
 
 	require.ErrorIs(t, err, billingErr)
 	require.Equal(t, 1, billingRepo.calls)
-	require.Equal(t, 1, usageRepo.calls)
-	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, 10, usageRepo.lastLog.InputTokens)
-	require.Equal(t, 6, usageRepo.lastLog.OutputTokens)
-	require.Greater(t, usageRepo.lastLog.InputCost, 0.0)
-	require.Greater(t, usageRepo.lastLog.OutputCost, 0.0)
-	require.Greater(t, usageRepo.lastLog.TotalCost, 0.0)
-	require.Zero(t, usageRepo.lastLog.ActualCost)
+	require.Zero(t, usageRepo.calls)
+	require.Nil(t, usageRepo.lastLog, "unknown settlement is not a successful zero-cost usage row")
 }
 
 func TestGatewayServiceRecordUsage_ReasoningEffortPersisted(t *testing.T) {

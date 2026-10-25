@@ -134,7 +134,7 @@ func (s RegionalBudgetScope) Reserve(ctx context.Context, tx *sql.Tx, id string,
 	}
 	if err == nil {
 		for _, window := range []string{"daily", "weekly", "monthly"} {
-			query := "SELECT " + window + "_limit_usd IS NULL OR " + window + "_usage_usd+$2::numeric+COALESCE((SELECT SUM(maximum-spent)::numeric/1000000000 FROM regional_budget_allocations WHERE user_id=$3 AND platform=$4 AND state='held'),0)<=" + window + "_limit_usd FROM user_platform_quotas WHERE id=$1"
+			query := "SELECT " + window + "_limit_usd IS NULL OR " + window + "_usage_usd+$2::numeric+COALESCE((SELECT SUM(maximum-spent)::numeric/1000000000 FROM regional_budget_allocations WHERE user_id=$3 AND platform=$4 AND state='held'),0)<=" + window + "_limit_usd FROM usage_platform_quota_effective WHERE id=$1"
 			if err = tx.QueryRowContext(ctx, query, quotaID, amount, user, platform).Scan(&enough); err != nil {
 				return err
 			}

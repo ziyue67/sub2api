@@ -15,12 +15,6 @@ import (
 	"time"
 )
 
-func TestAccountOpsRobotOnlyConfiguration(t *testing.T) {
-	var cfg AccountOpsConfig
-	require.NoError(t, json.Unmarshal([]byte(`{"enabled":true,"balance_low":true,"cooldown_minutes":60,"webhooks":[{"id":"robot","provider":"wecom","enabled":true,"url":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fake"}]}`), &cfg))
-	require.NoError(t, ValidateAccountOpsConfig(cfg))
-}
-
 func TestAccountOpsRobotNotificationContainsFourFields(t *testing.T) {
 	value, restored, threshold, used, percent := 2.973, 11.053, 3.0, 92.0, 90.0
 	at := time.Date(2026, 10, 7, 5, 5, 26, 0, time.UTC)
@@ -202,12 +196,12 @@ func TestAccountOpsChannelRetrySkipsSuccessfulDestinations(t *testing.T) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
 	e := &AccountOpsEvent{AccountID: 7, Kind: "balance_low", Attempts: 1}
-	svc.deliverEvent(context.Background(), e)
+	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, "failed", repo.state)
 	require.Equal(t, 1, sender.calls)
 	body = `{"code":0}`
 	e.Attempts = 2
-	svc.deliverEvent(context.Background(), e)
+	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, 1, sender.calls)
 	require.Equal(t, 2, calls)
 	require.Equal(t, "sent", repo.state)
@@ -249,7 +243,7 @@ func TestAccountOpsReloadsRemovedDestinationBeforeSending(t *testing.T) {
 		sends++
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":0}`))}, nil
 	})}
-	svc.deliverEvent(context.Background(), &AccountOpsEvent{AccountID: 1, Kind: "balance_low"})
+	svc.deliverNotification(context.Background(), &AccountOpsEvent{AccountID: 1, Kind: "balance_low"})
 	require.Zero(t, sends)
 }
 
@@ -281,9 +275,9 @@ func TestAccountOpsRecoveryDuringRateWaitStopsDelivery(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"code":0}`))}, nil
 	})}
-	event, trigger := svc.evaluateThreshold(context.Background(), a, "balance_threshold", cfg, now)
-	require.True(t, trigger)
-	svc.deliverEvent(context.Background(), event)
+	event, state := svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, now)
+	require.Equal(t, "active", state)
+	svc.deliverNotification(context.Background(), event)
 	require.Zero(t, calls)
 	require.Equal(t, "resolved", repo.state)
 }

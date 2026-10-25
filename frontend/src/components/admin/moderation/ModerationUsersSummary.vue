@@ -39,13 +39,14 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ModerationUserPanel from './ModerationUserPanel.vue'
 import { listModerationUsers, type ModerationUserState } from '@/api/admin/riskControl'
 const { t } = useI18n()
-const tabs = ['exempt', 'all', 'enforced', 'auto_ban_exempt', 'keyword_exempt', 'api_audit_exempt'] as const
+const tabs = ['exempt', 'all', 'enforced', 'auto_ban_exempt', 'keyword_exempt', 'api_audit_exempt', 'email_exempt'] as const
 const filter = ref<typeof tabs[number]>('exempt')
 function exemptionLabels(item: ModerationUserState) {
   return [
     item.auto_ban_exempt && t('admin.moderationUsers.exemption'),
     item.keyword_exempt && t('admin.moderationUsers.keywordExemption'),
     item.api_audit_exempt && t('admin.moderationUsers.apiAuditExemption'),
+    item.email_exempt && t('admin.moderationUsers.emailExemption'),
   ].filter(Boolean)
 }
 const items = ref<ModerationUserState[]>([])

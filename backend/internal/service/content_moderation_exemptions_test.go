@@ -14,10 +14,11 @@ import (
 )
 
 // Decode the wire contract so this behavioral regression also compiles on the old schema.
-func exemptionFixture(t *testing.T, keyword, api, ban bool) ModerationUserState {
+func exemptionFixture(t *testing.T, keyword, api, ban bool, email ...bool) ModerationUserState {
 	t.Helper()
 	var state ModerationUserState
-	require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"version":2,"keyword_exempt":%t,"api_audit_exempt":%t,"auto_ban_exempt":%t}`, keyword, api, ban)), &state))
+	mail := len(email) > 0 && email[0]
+	require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"version":2,"keyword_exempt":%t,"api_audit_exempt":%t,"auto_ban_exempt":%t,"email_exempt":%t}`, keyword, api, ban, mail)), &state))
 	return state
 }
 
@@ -49,11 +50,11 @@ func exemptionInput(hit bool) ContentModerationCheckInput {
 
 func TestModerationExemptionsPolicyMatrix(t *testing.T) {
 	for _, policy := range []string{ContentModerationKeywordModeKeywordAndAPI, ContentModerationKeywordModeKeywordOnly, ContentModerationKeywordModeAPIOnly} {
-		for mask := 0; mask < 8; mask++ {
+		for mask := 0; mask < 16; mask++ {
 			for _, hit := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/mask%d/hit%t", policy, mask, hit), func(t *testing.T) {
 					keyword, api, ban := mask&1 != 0, mask&2 != 0, mask&4 != 0
-					svc, _, calls := exemptionService(t, ContentModerationModePreBlock, policy, exemptionFixture(t, keyword, api, ban))
+					svc, _, calls := exemptionService(t, ContentModerationModePreBlock, policy, exemptionFixture(t, keyword, api, ban, mask&8 != 0))
 					decision, err := svc.Check(context.Background(), exemptionInput(hit))
 					require.NoError(t, err)
 					keywordBlock := hit && !keyword && policy != ContentModerationKeywordModeAPIOnly
@@ -74,8 +75,8 @@ func TestModerationExemptionsPolicyMatrix(t *testing.T) {
 
 func TestModerationExemptionsObserveHasNoKeywordLayer(t *testing.T) {
 	for _, policy := range []string{ContentModerationKeywordModeKeywordAndAPI, ContentModerationKeywordModeKeywordOnly, ContentModerationKeywordModeAPIOnly} {
-		for mask := 0; mask < 4; mask++ {
-			svc, _, calls := exemptionService(t, ContentModerationModeObserve, policy, exemptionFixture(t, mask&1 != 0, mask&2 != 0, false))
+		for mask := 0; mask < 16; mask++ {
+			svc, _, calls := exemptionService(t, ContentModerationModeObserve, policy, exemptionFixture(t, mask&1 != 0, mask&2 != 0, mask&4 != 0, mask&8 != 0))
 			decision, err := svc.Check(context.Background(), exemptionInput(true))
 			require.NoError(t, err)
 			require.True(t, decision.Allowed)
@@ -155,9 +156,10 @@ func TestModerationExemptionsLegacyDefaults(t *testing.T) {
 	require.Contains(t, string(raw), `"auto_ban_exempt":true`)
 	require.Contains(t, string(raw), `"keyword_exempt":false`)
 	require.Contains(t, string(raw), `"api_audit_exempt":false`)
+	require.Contains(t, string(raw), `"email_exempt":false`)
 	// Auto-ban exemption continues to count without disabling; audit exemptions do not suppress cyber hits.
-	for mask := 0; mask < 8; mask++ {
-		repo := &moderationRecoveryRepo{contentModerationTestRepo: &contentModerationTestRepo{}, state: exemptionFixture(t, mask&1 != 0, mask&2 != 0, mask&4 != 0), user: &User{ID: 306, Status: StatusActive}}
+	for mask := 0; mask < 16; mask++ {
+		repo := &moderationRecoveryRepo{contentModerationTestRepo: &contentModerationTestRepo{}, state: exemptionFixture(t, mask&1 != 0, mask&2 != 0, mask&4 != 0, mask&8 != 0), user: &User{ID: 306, Status: StatusActive}}
 		svc := &ContentModerationService{repo: repo}
 		cfg := defaultContentModerationConfig()
 		cfg.AutoBanEnabled = true
@@ -171,52 +173,55 @@ func TestModerationExemptionsLegacyDefaults(t *testing.T) {
 }
 
 func TestModerationExemptionsTypeSafeAdapter(t *testing.T) {
-	for mask := 0; mask < 8; mask++ {
-		svc, _, _ := exemptionService(t, ContentModerationModePreBlock, ContentModerationKeywordModeKeywordAndAPI, exemptionFixture(t, mask&1 != 0, mask&2 != 0, mask&4 != 0))
-		snapshot, err := svc.loadRuntimeSnapshot(context.Background())
-		require.NoError(t, err)
-		cfg := cloneContentModerationConfig(snapshot.config)
-		cfg.Engine = ContentModerationEngineTypeSafe
-		cfg.Model = "jev-latest"
-		cfg.BaseURL = "https://offline.invalid"
-		cfg.TypeSafe = moderationEngineDefaults(ContentModerationEngineTypeSafe)
-		cfg.TypeSafe.BaseURL = cfg.BaseURL
-		cfg.TypeSafe.APIKeys = append([]string(nil), cfg.APIKeys...)
-		// Exercise the merged exemption gates and persisted per-key URL routing
-		// through the real Check -> scheduler -> TypeSafe adapter path.
-		cfg.TypeSafe.APIKeyBaseURLs = map[string]string{
-			scopedModerationKeyHash(cfg.TypeSafe.APIKeys[0], ContentModerationEngineTypeSafe): "https://per-key.invalid/relay/v1",
-		}
-		raw, err := json.Marshal(cfg)
-		require.NoError(t, err)
-		svc.replaceRuntimeConfig(cfg, raw)
-		calls := 0
-		svc.httpClient = &http.Client{Transport: typeSafeURLRoundTripper(func(req *http.Request) (*http.Response, error) {
-			calls++
-			require.Equal(t, "https://per-key.invalid/relay/v1/systemone", req.URL.String())
-			var body struct {
-				State     string         `json:"state"`
-				Questions map[string]any `json:"questions"`
-			}
-			require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
-			require.Contains(t, body.State, "blocked-word")
-			require.Len(t, body.Questions, 13)
-			answers := make(map[string]any)
-			for category := range body.Questions {
-				answers[category] = map[string]any{"type": "noul", "noul": 0.0}
-			}
-			answers["violence"] = map[string]any{"type": "noul", "noul": 1.0}
-			raw, err := json.Marshal(map[string]any{"model": "jev-fixed", "answers": answers})
+	for _, hitCategory := range []string{"violence", "jailbreak", "control_bypass"} {
+		for mask := 0; mask < 16; mask++ {
+			svc, _, _ := exemptionService(t, ContentModerationModePreBlock, ContentModerationKeywordModeKeywordAndAPI, exemptionFixture(t, mask&1 != 0, mask&2 != 0, mask&4 != 0, mask&8 != 0))
+			snapshot, err := svc.loadRuntimeSnapshot(context.Background())
 			require.NoError(t, err)
-			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
-		})}
-		decision, err := svc.Check(context.Background(), exemptionInput(true))
-		require.NoError(t, err)
-		wantCalls := 0
-		if mask&3 == 1 {
-			wantCalls = 1
+			cfg := cloneContentModerationConfig(snapshot.config)
+			cfg.Engine = ContentModerationEngineTypeSafe
+			cfg.Model = "jev-latest"
+			cfg.BaseURL = "https://offline.invalid"
+			cfg.TypeSafe = moderationEngineDefaults(ContentModerationEngineTypeSafe)
+			cfg.TypeSafe.CategorySettings[hitCategory] = ContentModerationCategorySetting{Enabled: true}
+			cfg.TypeSafe.BaseURL = cfg.BaseURL
+			cfg.TypeSafe.APIKeys = append([]string(nil), cfg.APIKeys...)
+			// Exercise the merged exemption gates and persisted per-key URL routing
+			// through the real Check -> scheduler -> TypeSafe adapter path.
+			cfg.TypeSafe.APIKeyBaseURLs = map[string]string{
+				scopedModerationKeyHash(cfg.TypeSafe.APIKeys[0], ContentModerationEngineTypeSafe): "https://per-key.invalid/relay/v1",
+			}
+			raw, err := json.Marshal(cfg)
+			require.NoError(t, err)
+			svc.replaceRuntimeConfig(cfg, raw)
+			calls := 0
+			svc.httpClient = &http.Client{Transport: typeSafeURLRoundTripper(func(req *http.Request) (*http.Response, error) {
+				calls++
+				require.Equal(t, "https://per-key.invalid/relay/v1/systemone", req.URL.String())
+				var body struct {
+					State     string         `json:"state"`
+					Questions map[string]any `json:"questions"`
+				}
+				require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
+				require.Contains(t, body.State, "blocked-word")
+				require.Len(t, body.Questions, 15)
+				answers := make(map[string]any)
+				for category := range body.Questions {
+					answers[category] = map[string]any{"type": "noul", "noul": 0.0}
+				}
+				answers[hitCategory] = map[string]any{"type": "noul", "noul": 1.0}
+				raw, err := json.Marshal(map[string]any{"model": "jev-fixed", "answers": answers})
+				require.NoError(t, err)
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+			})}
+			decision, err := svc.Check(context.Background(), exemptionInput(true))
+			require.NoError(t, err)
+			wantCalls := 0
+			if mask&3 == 1 {
+				wantCalls = 1
+			}
+			require.Equal(t, wantCalls, calls)
+			require.Equal(t, mask&3 != 3, decision.Blocked)
 		}
-		require.Equal(t, wantCalls, calls)
-		require.Equal(t, mask&3 != 3, decision.Blocked)
 	}
 }

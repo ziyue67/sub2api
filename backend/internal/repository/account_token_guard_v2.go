@@ -38,8 +38,10 @@ func NewAccountTokenGuardV2Repository(db *sql.DB) service.AccountTokenGuardV2Rep
 
 func (r *accountTokenGuardV2Repository) UpsertAccount(ctx context.Context, accountID int64, enabled, autoRelogin bool) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO account_token_guard_v2_accounts (account_id, enabled, auto_relogin_enabled, next_probe_at)
-		VALUES ($1, $2, $3, NOW())
+		INSERT INTO account_token_guard_v2_accounts (account_id, enabled, auto_relogin_enabled, next_probe_at, last_counted_task_id)
+		VALUES ($1, $2, $3, NOW(), COALESCE((SELECT MAX(task.id) FROM openai_oauth_reauth_tasks task
+            WHERE task.account_id=$1 AND task.oauth_profile='codex' AND task.status IN ('failed','succeeded')
+              AND NOT EXISTS(SELECT 1 FROM openai_totp_rotations rotation WHERE rotation.task_id=task.id)),0))
 		ON CONFLICT (account_id) DO UPDATE
 		SET enabled = EXCLUDED.enabled,
 			auto_relogin_enabled = EXCLUDED.auto_relogin_enabled,
@@ -114,7 +116,7 @@ func (r *accountTokenGuardV2Repository) ClaimDue(ctx context.Context, owner stri
 			updated_at = NOW()
 		FROM due
 		WHERE guard.account_id = due.account_id
-		RETURNING guard.account_id, guard.enabled, guard.auto_relogin_enabled,
+		RETURNING guard.account_id, guard.relogin_fail_streak, guard.last_counted_task_id, guard.auto_relogin_exhausted, guard.enabled, guard.auto_relogin_enabled,
 			guard.probe_state, guard.probe_detail, guard.fail_streak,
 			guard.last_probe_at, guard.last_reauth_at, guard.next_probe_at,
 			guard.cooldown_until, guard.blocked_reason,
@@ -143,7 +145,7 @@ func (r *accountTokenGuardV2Repository) ClaimAccount(ctx context.Context, accoun
 			lease_until = NOW() + ($3 * INTERVAL '1 second'),
 			updated_at = NOW()
 		WHERE account_id = $1 AND (lease_until IS NULL OR lease_until < NOW())
-		RETURNING account_id, enabled, auto_relogin_enabled,
+		RETURNING account_id, relogin_fail_streak, last_counted_task_id, auto_relogin_exhausted, enabled, auto_relogin_enabled,
 			probe_state, probe_detail, fail_streak,
 			last_probe_at, last_reauth_at, next_probe_at,
 			cooldown_until, blocked_reason,
@@ -164,7 +166,7 @@ func (r *accountTokenGuardV2Repository) CompleteProbe(ctx context.Context, accou
 			last_probe_at = $6,
 			last_reauth_at = COALESCE($7, last_reauth_at),
 			next_probe_at = $8,
-			cooldown_until = $9,
+			cooldown_until = GREATEST(cooldown_until, $9::timestamptz),
 			blocked_reason = $10,
 			lease_owner = NULL,
 			lease_until = NULL,
@@ -190,7 +192,7 @@ func (r *accountTokenGuardV2Repository) MarkReauthRequested(ctx context.Context,
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE account_token_guard_v2_accounts
 		SET last_reauth_at = $2,
-			cooldown_until = $3,
+			cooldown_until = GREATEST(cooldown_until, $3::timestamptz),
 			updated_at = NOW()
 		WHERE account_id = $1
 	`, accountID, requestedAt, cooldownUntil)
@@ -207,7 +209,7 @@ func (r *accountTokenGuardV2Repository) RescheduleEnabled(ctx context.Context) e
 }
 
 const accountTokenGuardV2Select = `
-	SELECT account_id, enabled, auto_relogin_enabled,
+	SELECT account_id, relogin_fail_streak, last_counted_task_id, auto_relogin_exhausted, enabled, auto_relogin_enabled,
 		probe_state, probe_detail, fail_streak,
 		last_probe_at, last_reauth_at, next_probe_at,
 		cooldown_until, blocked_reason,
@@ -222,7 +224,7 @@ func scanAccountTokenGuardV2(row accountTokenGuardV2Row) (*service.AccountTokenG
 	var record service.AccountTokenGuardV2Record
 	var lastProbeAt, lastReauthAt, cooldownUntil, leaseUntil sql.NullTime
 	if err := row.Scan(
-		&record.AccountID, &record.Enabled, &record.AutoReloginEnabled,
+		&record.AccountID, &record.ReloginFailStreak, &record.LastCountedTaskID, &record.AutoReloginExhausted, &record.Enabled, &record.AutoReloginEnabled,
 		&record.ProbeState, &record.ProbeDetail, &record.FailStreak,
 		&lastProbeAt, &lastReauthAt, &record.NextProbeAt,
 		&cooldownUntil, &record.BlockedReason,

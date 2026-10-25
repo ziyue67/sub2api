@@ -438,6 +438,8 @@ func TestUpstreamBillingProbeSyncsResolvedRateForAllAPIKeyPlatforms(t *testing.T
 		PlatformGrok,
 	} {
 		t.Run(platform, func(t *testing.T) {
+			logs, restore := captureStructuredLog(t)
+			defer restore()
 			initialRate := 0.25
 			account := &Account{
 				ID:             17,
@@ -456,7 +458,10 @@ func TestUpstreamBillingProbeSyncsResolvedRateForAllAPIKeyPlatforms(t *testing.T
 				},
 			}
 			repo := &upstreamBillingProbeAccountRepo{accounts: map[int64]*Account{account.ID: account}}
-			svc := newUpstreamBillingProbeTestService(repo, &upstreamBillingProbeHTTPStub{}, &upstreamBillingProbeSettingRepo{})
+			upstream := &upstreamBillingProbeHTTPStub{}
+			svc := newUpstreamBillingProbeTestService(repo, upstream, &upstreamBillingProbeSettingRepo{})
+			now := time.Date(2026, time.July, 13, 2, 0, 0, 0, time.UTC)
+			svc.now = func() time.Time { return now }
 
 			snapshot, err := svc.ProbeAccount(context.Background(), account.ID)
 
@@ -464,6 +469,19 @@ func TestUpstreamBillingProbeSyncsResolvedRateForAllAPIKeyPlatforms(t *testing.T
 			require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
 			require.NotNil(t, account.RateMultiplier)
 			require.Equal(t, 0.8, *account.RateMultiplier)
+			require.True(t, logs.ContainsMessageAtLevel("upstream_billing_rate_sync_applied", "info"))
+
+			logs.mu.Lock()
+			logs.events = nil
+			logs.mu.Unlock()
+			now = now.Add(30 * time.Minute)
+			snapshot, err = svc.ProbeAccount(context.Background(), account.ID)
+			require.NoError(t, err)
+			require.Equal(t, int64(2), upstream.calls.Load())
+			require.Equal(t, int64(2), upstream.balanceCalls.Load())
+			require.Equal(t, now, *snapshot.ReceivedAt)
+			require.Same(t, snapshot, account.Extra[UpstreamBillingProbeExtraKey])
+			require.False(t, logs.ContainsMessageAtLevel("upstream_billing_rate_sync_applied", "info"))
 		})
 	}
 }

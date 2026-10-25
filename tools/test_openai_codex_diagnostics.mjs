@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import {createProtocolDiagnostics, validateCodexCallback} from './openai_codex_diagnostics.mjs';
+
+test('callback requires the bound state, origin, single code and PKCE verifier', () => {
+  const redirect = 'http://localhost:1455/auth/callback';
+  const valid = {callbackUrl: redirect + '?code=synthetic-code&state=synthetic-state',
+    state: 'synthetic-state', codeVerifier: 'v'.repeat(64)};
+  assert.doesNotThrow(() => validateCodexCallback(valid, redirect));
+  for (const [change, reason] of [
+    [{callbackUrl: ''}, 'callback_missing'],
+    [{callbackUrl: redirect + '?state=synthetic-state'}, 'callback_missing'],
+    [{state: 'wrong-state'}, 'callback_state_mismatch'],
+    [{callbackUrl: valid.callbackUrl + '&state=other'}, 'callback_state_mismatch'],
+    [{callbackUrl: valid.callbackUrl + '&code=other'}, 'callback_missing'],
+    [{callbackUrl: 'https://other.example/callback?code=secret'}, 'callback_invalid'],
+    [{callbackUrl: valid.callbackUrl + '#synthetic-private'}, 'callback_invalid'],
+    [{codeVerifier: ''}, 'pkce_invalid'],
+  ]) {
+    assert.throws(() => validateCodexCallback({...valid, ...change}, redirect), {message: reason});
+  }
+});
+
+test('private snapshots contain only bounded enums, time and the task binding', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-diagnostic-test-'));
+  try {
+    const file = path.join(root, 'diagnostic.json');
+    const channel = createProtocolDiagnostics(file, 7);
+    channel.mark('mfa_accepted');
+    channel.mark('synthetic-private'); // Unknown progress cannot inject content.
+    channel.fail(new Error('synthetic-private https://example.test/?code=private'));
+    let value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepEqual(Object.keys(value).sort(), ['elapsed_ms', 'reason', 'stage', 'task_id', 'version']);
+    assert.equal(value.stage, 'mfa_accepted');
+    assert.equal(value.reason, 'protocol_error');
+    assert.equal(value.task_id, 7);
+    assert.ok(Number.isInteger(value.elapsed_ms) && value.elapsed_ms <= 3600000);
+    assert.ok(!fs.readFileSync(file, 'utf8').includes('private'));
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    channel.mark('token_exchange');
+    channel.fail(new Error('synthetic-provider-body'));
+    value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(value.reason, 'token_exchange_failed');
+    channel.fail({get message() { throw new Error('synthetic-private'); }});
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).reason, 'protocol_error');
+  } finally { fs.rmSync(root, {recursive: true, force: true}); }
+});

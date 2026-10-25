@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
+	"strconv"
 	"strings"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -54,12 +56,34 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
 		return nil, err
 	}
+	if err := insertUsageBillingQuote(ctx, tx, cmd); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	tx = nil
 	return result, nil
+}
+
+func insertUsageBillingQuote(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
+	if cmd.QuotedActualCost == nil {
+		return nil
+	}
+	if math.IsNaN(*cmd.QuotedActualCost) || math.IsInf(*cmd.QuotedActualCost, 0) {
+		return errors.New("non-finite usage quotation")
+	}
+	// Preserve the original float64 quotation as an exact decimal round-trip.
+	// NUMERIC without a typmod does not introduce a second ten-place rounding.
+	// Canonical money is the already-normalized customer command, independently
+	// of the quote (and independently of AccountQuotaCost's upstream cost basis).
+	quoted := strconv.FormatFloat(*cmd.QuotedActualCost, 'f', -1, 64)
+	canonical := max(cmd.BalanceCost, cmd.SubscriptionCost, cmd.APIKeyQuotaCost, cmd.APIKeyRateLimitCost)
+	_, err := tx.ExecContext(ctx, `INSERT INTO usage_billing_quotes
+		(request_id,api_key_id,request_fingerprint,quoted_actual_cost,canonical_actual_cost,quote_encoding_version)
+		VALUES($1,$2,$3,$4::numeric,$5,1)`, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint, quoted, canonical)
+	return err
 }
 
 func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (bool, error) {
@@ -110,20 +134,21 @@ func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, t
 }
 
 func (r *usageBillingRepository) ReserveBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
-	return r.applyBatchImageBalanceHold(ctx, cmd, reserveUsageBillingBatchImageBalance)
+	return r.applyBatchImageBalanceHold(ctx, cmd, "hold", reserveUsageBillingBatchImageBalance)
 }
 
 func (r *usageBillingRepository) CaptureBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
-	return r.applyBatchImageBalanceHold(ctx, cmd, captureUsageBillingBatchImageBalance)
+	return r.applyBatchImageBalanceHold(ctx, cmd, "capture", captureUsageBillingBatchImageBalance)
 }
 
 func (r *usageBillingRepository) ReleaseBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
-	return r.applyBatchImageBalanceHold(ctx, cmd, releaseUsageBillingBatchImageBalance)
+	return r.applyBatchImageBalanceHold(ctx, cmd, "release", releaseUsageBillingBatchImageBalance)
 }
 
 func (r *usageBillingRepository) applyBatchImageBalanceHold(
 	ctx context.Context,
 	cmd *service.BatchImageBalanceHoldCommand,
+	operation string,
 	apply func(context.Context, *sql.Tx, *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error),
 ) (_ *service.BatchImageBalanceHoldResult, err error) {
 	if cmd == nil {
@@ -154,8 +179,29 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 	if !applied {
 		return &service.BatchImageBalanceHoldResult{Applied: false}, nil
 	}
+	// Check after dedup so retries of an already committed historical operation
+	// remain idempotent. Unapplied high-precision holds require explicit review.
+	if math.IsNaN(cmd.HoldAmount) || math.IsInf(cmd.HoldAmount, 0) || cmd.HoldAmount < 0 ||
+		math.IsNaN(cmd.ActualAmount) || math.IsInf(cmd.ActualAmount, 0) || cmd.ActualAmount < 0 ||
+		cmd.HoldAmount != service.QuantizeUsageBillingAmount(cmd.HoldAmount) || cmd.ActualAmount != service.QuantizeUsageBillingAmount(cmd.ActualAmount) {
+		return nil, service.ErrBatchImageLegacyMoneyPrecision
+	}
+	// Only exact legacy amounts are unambiguous. New version-2 tasks quantize
+	// both values before constructing this command.
 
-	result, err := apply(ctx, tx, cmd)
+	var result *service.BatchImageBalanceHoldResult
+	if cmd.MonetaryVersion >= 2 {
+		result, err = applyOwnedBatchImageMoney(ctx, tx, cmd, operation, apply)
+	} else {
+		var owned bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM batch_image_money_holds WHERE batch_id=$1 AND api_key_id=$2)`, cmd.BatchID, cmd.APIKeyID).Scan(&owned); err != nil {
+			return nil, err
+		}
+		if owned {
+			return nil, service.ErrBatchImageLegacyMoneyPrecision
+		}
+		result, err = apply(ctx, tx, cmd)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +255,12 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 			return err
 		}
 		result.QuotaState = quotaState
+	}
+	if cmd.PlatformQuotaCost > 0 && cmd.PlatformQuotaPlatform != "" {
+		if err := incrementUsageBillingPlatformQuota(ctx, tx, cmd); err != nil {
+			return err
+		}
+		result.PlatformQuotaApplied = true
 	}
 
 	return nil

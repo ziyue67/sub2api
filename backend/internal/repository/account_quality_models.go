@@ -139,6 +139,15 @@ func transitionQualityModelsScoped(account *service.Account, state *qualityState
 				return "action_conflict", nil
 			}
 		}
+		if state.PersistentModels {
+			for key := range targeted {
+				if _, owned := state.ModelApplied[key]; !owned && limits[key] != nil {
+					// A relinquished/external restriction must not be overwritten by
+					// the next failed round merely because this rule no longer owns it.
+					return "action_conflict", nil
+				}
+			}
+		}
 		for _, model := range models {
 			key := account.GetMappedModel(model)
 			previous, err := json.Marshal(limits[key])

@@ -46,6 +46,24 @@ jobs:
             sudo apt-get install -y --no-install-recommends redis-server
           fi
           redis-server --version
+      - name: Verify scope conflict regression against original handlers
+        if: github.head_ref == 'fix/quality-template-switch-conflicts' || github.ref_name == 'fix/quality-template-switch-conflicts'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=backend/internal/handler/admin/scheduled_test_handler.go
+          cp "$target" "$RUNNER_TEMP/quality-current-handler.go"
+          trap 'cp "$RUNNER_TEMP/quality-current-handler.go" "$target"' EXIT
+          git fetch --no-tags --depth=1 origin 9fcfe25d600a331abcc28a1788e597e5542d4cd3
+          git show 9fcfe25d600a331abcc28a1788e597e5542d4cd3:"$target" > "$target"
+          set +e
+          (cd backend && go test ./internal/handler/admin -run '^TestQualityScopeConflictsUse409ForUpdateAndDelete$' -count=1) > "$RUNNER_TEMP/quality-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/quality-red.log"
+          test "$result" -ne 0
+          grep -q 'FAIL: TestQualityScopeConflictsUse409ForUpdateAndDelete' "$RUNNER_TEMP/quality-red.log"
+          grep -Eq 'actual.*(400|500)' "$RUNNER_TEMP/quality-red.log"
       - name: Unit tests
         working-directory: backend
         run: make test-unit

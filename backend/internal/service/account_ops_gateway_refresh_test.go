@@ -129,14 +129,14 @@ func TestFullAccountOpsStartupKeepsSharedGroupReconciliation(t *testing.T) {
 			svc := ProvideAccountOpsService(settings, events, nil, accounts, nil, cfg, nil, nil, nil, nil, nil)
 			defer svc.Stop()
 			require.Eventually(t, func() bool { return svc.currentConfig().GroupsInitialized }, time.Second, time.Millisecond)
-			require.EqualValues(t, 1, accounts.scans.Load())
+			require.EqualValues(t, 2, accounts.scans.Load(), "initial group persistence requires a fresh account snapshot")
 			stored, err := svc.GetConfig(context.Background())
 			require.NoError(t, err)
 			require.True(t, stored.GroupsInitialized)
 			require.Len(t, stored.Groups, 1)
 			require.Equal(t, []int64{42}, stored.Groups[0].AccountIDs)
 			svc.refreshConfig(context.Background(), true)
-			require.EqualValues(t, 2, accounts.scans.Load(), "full periodic refresh must retain reconciliation")
+			require.EqualValues(t, 3, accounts.scans.Load(), "unchanged full periodic refresh adds only one account scan")
 		})
 	}
 }

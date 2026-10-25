@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
+	"github.com/Wei-Shaw/sub2api/internal/repository"
 	middleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -68,8 +69,14 @@ type compatStreamUsageRun struct {
 // runCompatStreamUsageHandler 经 GatewayHandler 转发一次流式请求；上游写完 upstreamStream 后，
 // closeUpstream 为 false 时保持连接不再发送数据。
 func runCompatStreamUsageHandler(t *testing.T, endpoint, upstreamStream string, closeUpstream bool) compatStreamUsageRun {
+	return runCompatStreamUsageHandlerWithDelivery(t, endpoint, upstreamStream, closeUpstream, nil, "")
+}
+
+func runCompatStreamUsageHandlerWithDelivery(t *testing.T, endpoint, upstreamStream string, closeUpstream bool, durable service.UsageBillingRepository, baseURL string) compatStreamUsageRun {
 	t.Helper()
 	cfg := &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}}
+	cfg.Security.URLAllowlist.AllowPrivateHosts = true
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
 	groupID := int64(9300)
 	group := &service.Group{ID: groupID, Hydrated: true, Platform: service.PlatformAnthropic, Status: service.StatusActive, RateMultiplier: 1}
 	account := &service.Account{
@@ -99,9 +106,18 @@ func runCompatStreamUsageHandler(t *testing.T, endpoint, upstreamStream string, 
 		StatusCode: http.StatusOK, Body: pr,
 		Header: http.Header{"X-Request-Id": []string{"compat-stream-usage"}},
 	}}
+	var billing service.UsageBillingRepository = run.billingRepo
+	var transport service.HTTPUpstream = run.upstream
+	if durable != nil {
+		billing = durable
+	}
+	if baseURL != "" {
+		account.Credentials["base_url"] = baseURL
+		transport = repository.NewHTTPUpstream(cfg)
+	}
 	gw := service.NewGatewayService(
-		nil, &fakeGroupRepo{group: group}, run.usageRepo, run.billingRepo, nil, nil, nil, nil, cfg,
-		snapshot, nil, service.NewBillingService(cfg, nil), nil, nil, nil, run.upstream,
+		nil, &fakeGroupRepo{group: group}, run.usageRepo, billing, nil, nil, nil, nil, cfg,
+		snapshot, nil, service.NewBillingService(cfg, nil), nil, nil, nil, transport,
 		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	h := &GatewayHandler{

@@ -51,6 +51,18 @@ func (r *moderationUserHandlerRepo) ListModerationUsers(context.Context, int, in
 func (r *moderationUserHandlerRepo) ManageModerationUser(_ context.Context, _ int64, in service.ModerationUserAction) error {
 	r.actions = append(r.actions, in)
 	r.state.Version++
+	if in.Exempt != nil {
+		r.state.AutoBanExempt = *in.Exempt
+	}
+	if in.KeywordExempt != nil {
+		r.state.KeywordExempt = *in.KeywordExempt
+	}
+	if in.APIAuditExempt != nil {
+		r.state.APIAuditExempt = *in.APIAuditExempt
+	}
+	if in.EmailExempt != nil {
+		r.state.EmailExempt = *in.EmailExempt
+	}
 	return nil
 }
 func (r *moderationUserHandlerRepo) ApplyModerationHit(context.Context, service.ModerationHit) (service.ModerationHitResult, error) {
@@ -117,7 +129,30 @@ func TestModerationUserHandlerListFilterPrivacy(t *testing.T) {
 	w := moderationUserRequest(t, h, "GET", "/users?state=exempt&page=1&page_size=20", "admin", "")
 	require.Equal(t, 200, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"user_id":306`)
-	require.NotContains(t, w.Body.String(), "email")
+	// email_exempt is a boolean control, not a mailbox. Check the complete
+	// response shape so actual email/body/credential fields remain forbidden.
+	keys := func(object map[string]json.RawMessage) []string {
+		result := make([]string, 0, len(object))
+		for key := range object {
+			result = append(result, key)
+		}
+		return result
+	}
+	var envelope map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+	require.ElementsMatch(t, []string{"code", "message", "data"}, keys(envelope))
+	var page map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(envelope["data"], &page))
+	require.ElementsMatch(t, []string{"items", "total", "page", "page_size", "pages"}, keys(page))
+	var items []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(page["items"], &items))
+	require.Len(t, items, 1)
+	require.ElementsMatch(t, []string{
+		"user_id", "version", "generation", "auto_ban_exempt", "keyword_exempt",
+		"api_audit_exempt", "email_exempt", "owned_disable", "status",
+		"current_count", "reason", "actor_id", "updated_at",
+	}, keys(items[0]))
+	require.JSONEq(t, "false", string(items[0]["email_exempt"]))
 	require.NotContains(t, w.Body.String(), "prompt")
 	require.NotContains(t, w.Body.String(), "api_key")
 }
@@ -153,7 +188,7 @@ func TestModerationUserHandlerCacheFailureCannotReportSuccess(t *testing.T) {
 }
 
 func TestModerationUserHandlerIndependentExemptions(t *testing.T) {
-	for _, field := range []string{"keyword_exempt", "api_audit_exempt"} {
+	for _, field := range []string{"keyword_exempt", "api_audit_exempt", "email_exempt"} {
 		repo := &moderationUserHandlerRepo{state: service.ModerationUserState{UserID: 306, Status: "disabled", CurrentCount: 10}}
 		h := NewContentModerationHandler(service.NewContentModerationService(&moderationUserHandlerSettings{}, repo, nil, nil, nil, nil, nil, nil))
 		body := `{"action":"exemption","version":0,"confirm":true,"reason":"review","` + field + `":true,"actor_id":999}`
@@ -178,8 +213,44 @@ func TestModerationUserHandlerIndependentExemptions(t *testing.T) {
 	}
 	repo := &moderationUserHandlerRepo{}
 	h := NewContentModerationHandler(service.NewContentModerationService(&moderationUserHandlerSettings{}, repo, nil, nil, nil, nil, nil, nil))
-	for _, filter := range []string{"auto_ban_exempt", "keyword_exempt", "api_audit_exempt"} {
+	for _, filter := range []string{"auto_ban_exempt", "keyword_exempt", "api_audit_exempt", "email_exempt"} {
 		w := moderationUserRequest(t, h, "GET", "/users?state="+filter, "admin", "")
 		require.Equal(t, 200, w.Code, w.Body.String())
 	}
+}
+
+func TestModerationEmailExemptionHandlerReadbackAndLegacyOmission(t *testing.T) {
+	repo := &moderationUserHandlerRepo{state: service.ModerationUserState{UserID: 42, EmailExempt: true, AutoBanExempt: true, KeywordExempt: true, APIAuditExempt: true, CurrentCount: 10, Status: "disabled"}}
+	h := NewContentModerationHandler(service.NewContentModerationService(&moderationUserHandlerSettings{}, repo, nil, nil, nil, nil, nil, nil))
+	w := moderationUserRequest(t, h, "POST", "/users/42/actions", "admin", `{"action":"exemption","version":0,"confirm":true,"reason":"legacy update","auto_ban_exempt":false}`)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.Nil(t, repo.actions[0].EmailExempt)
+	require.Contains(t, w.Body.String(), `"auto_ban_exempt":false`)
+	require.Contains(t, w.Body.String(), `"keyword_exempt":true`)
+	require.Contains(t, w.Body.String(), `"api_audit_exempt":true`)
+	require.Contains(t, w.Body.String(), `"email_exempt":true`)
+	w = moderationUserRequest(t, h, "POST", "/users/42/actions", "admin", `{"action":"exemption","version":1,"confirm":true,"reason":"revoke mail only","email_exempt":false}`)
+	require.Equal(t, 200, w.Code, w.Body.String())
+	require.NotNil(t, repo.actions[1].EmailExempt)
+	require.False(t, *repo.actions[1].EmailExempt)
+	require.Nil(t, repo.actions[1].Exempt)
+	require.Nil(t, repo.actions[1].KeywordExempt)
+	require.Nil(t, repo.actions[1].APIAuditExempt)
+	require.Contains(t, w.Body.String(), `"email_exempt":false`)
+	require.Contains(t, w.Body.String(), `"auto_ban_exempt":false`)
+	require.Contains(t, w.Body.String(), `"keyword_exempt":true`)
+	require.Contains(t, w.Body.String(), `"api_audit_exempt":true`)
+	require.Contains(t, w.Body.String(), `"current_count":10`)
+	require.Contains(t, w.Body.String(), `"status":"disabled"`)
+}
+
+func TestModerationEmailExemptionHandlerCacheFailureCannotReportSuccess(t *testing.T) {
+	repo := &moderationUserHandlerRepo{state: service.ModerationUserState{UserID: 42, Status: "active"}}
+	h := NewContentModerationHandler(service.NewContentModerationService(&moderationUserHandlerSettings{}, repo, nil, nil, nil, nil, &moderationUserFailingInvalidator{}, nil))
+	w := moderationUserRequest(t, h, "POST", "/users/42/actions", "admin", `{"action":"exemption","version":0,"confirm":true,"reason":"mail only","email_exempt":true}`)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "MODERATION_CACHE_INVALIDATION_FAILED")
+	require.True(t, repo.state.EmailExempt)
+	require.Len(t, repo.actions, 1)
+	require.Zero(t, repo.reads)
 }

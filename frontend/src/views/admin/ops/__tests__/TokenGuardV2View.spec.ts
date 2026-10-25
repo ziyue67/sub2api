@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 
 import TokenGuardV2View from '../TokenGuardV2View.vue'
+import { getCredentialEncryption } from '@/api/admin/credentialEncryption'
 
 const api = vi.hoisted(() => ({
   listGuard: vi.fn(),
@@ -18,6 +19,7 @@ const api = vi.hoisted(() => ({
   saveRules: vi.fn(),
   saveRuntime: vi.fn(),
   updateSwitches: vi.fn(),
+  resumeBudget: vi.fn(),
   listAccounts: vi.fn(),
   listGroups: vi.fn(),
   listProxies: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock('@/api/admin/accountTokenGuardV2', () => ({
   saveTokenGuardV2Rules: api.saveRules,
   saveTokenGuardV2Runtime: api.saveRuntime,
   updateTokenGuardV2Switches: api.updateSwitches,
+  resumeTokenGuardV2Budget: api.resumeBudget,
 }))
 vi.mock('@/api/admin/accounts', () => ({ list: api.listAccounts, default: { list: api.listAccounts } }))
 vi.mock('@/api/admin/groups', () => ({ getByPlatform: api.listGroups, default: { getByPlatform: api.listGroups } }))
@@ -51,9 +54,11 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 let wrapper: VueWrapper | undefined
+let restoreConfirmation: (() => void) | undefined
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(getCredentialEncryption).mockResolvedValue({ configured: true, source: 'server_config' })
   api.listGuard.mockResolvedValue({
     runtime_settings: { engine: 'local_worker', worker_concurrency: 3 },
     probe_interval_seconds: 1800,
@@ -108,6 +113,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  restoreConfirmation?.()
+  restoreConfirmation = undefined
   wrapper?.unmount()
   wrapper = undefined
 })
@@ -346,6 +353,8 @@ describe('TokenGuardV2View', () => {
     await flushPromises()
 
     expect(api.saveRules).toHaveBeenCalledWith({
+      relogin_backoff_max_seconds: 7200,
+      relogin_max_failures: 3,
       probe_interval_seconds: 900,
       retry_interval_seconds: 120,
       relogin_cooldown_seconds: 7200,
@@ -403,6 +412,56 @@ describe('TokenGuardV2View', () => {
 })
 
 describe('managed re-login availability', () => {
+  it('requires confirmation to restore an exhausted budget without creating a login', async () => {
+    const data = await api.listGuard()
+    const exhausted = { ...data.accounts[0], relogin_fail_streak: 3, auto_relogin_exhausted: true,
+      cooldown_until: '2026-10-24T16:00:00Z' }
+    api.listGuard.mockResolvedValue({ ...data, relogin_max_failures: 3, accounts: [exhausted] })
+    api.resumeBudget.mockResolvedValue({ ...exhausted, relogin_fail_streak: 0, auto_relogin_exhausted: false })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    restoreConfirmation = () => confirm.mockRestore()
+    wrapper = mount(TokenGuardV2View, { global: { stubs: {
+      AppLayout: { template: '<div><slot /></div>' }, SmartOpsNav: true, Pagination: true, OpenAITOTPDialog: true
+    } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('tokenGuardV2.reloginBudgetExhausted')
+    await wrapper.get('[data-testid="resume-budget-42"]').trigger('click')
+    expect(api.resumeBudget).not.toHaveBeenCalled()
+    confirm.mockReturnValue(true)
+    await wrapper.get('[data-testid="resume-budget-42"]').trigger('click')
+    await flushPromises()
+    expect(api.resumeBudget).toHaveBeenCalledWith(42)
+    expect(api.reloginGuard).not.toHaveBeenCalled()
+    expect(api.updateSwitches).not.toHaveBeenCalled()
+  })
+  it('shows the safe protocol phase without presenting failed as successful', async () => {
+    const data = await api.listGuard()
+    api.listGuard.mockResolvedValue({ ...data, accounts: [{
+      ...data.accounts[0], latest_task: { id: 7, account_id: 42, status: 'failed', stage: 'failed',
+        error: 'synthetic-private', attempt: 1,
+        diagnostic: { stage: 'token_exchange', reason: 'token_exchange_failed', elapsed_ms: 120, exit_code: 1 } }
+    }] })
+    wrapper = mount(TokenGuardV2View, { global: { stubs: {
+      AppLayout: { template: '<div><slot /></div>' }, SmartOpsNav: true, Pagination: true, OpenAITOTPDialog: true
+    } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('failed: token_exchange · token_exchange_failed · 120 ms')
+    expect(wrapper.text()).not.toContain('synthetic-private')
+  })
+  it('shows a Session Studio HTTP rejection as a failed client phase', async () => {
+    const data = await api.listGuard()
+    api.listGuard.mockResolvedValue({ ...data, accounts: [{
+      ...data.accounts[0], latest_task: { id: 7, account_id: 42, status: 'failed', stage: 'failed',
+        error: 'synthetic-private', attempt: 1,
+        diagnostic: { engine: 'session_studio', stage: 'http_request', reason: 'http_rejected', elapsed_ms: 120, http_status: 403 } }
+    }] })
+    wrapper = mount(TokenGuardV2View, { global: { stubs: {
+      AppLayout: { template: '<div><slot /></div>' }, SmartOpsNav: true, Pagination: true, OpenAITOTPDialog: true
+    } } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('failed: http_request · http_rejected · 120 ms · HTTP 403')
+    expect(wrapper.text()).not.toContain('synthetic-private')
+  })
   it('separates encrypted credential readiness from a failed runtime', async () => {
     const data = await api.listGuard()
     api.listGuard.mockResolvedValue({
@@ -427,6 +486,23 @@ async function mountControls() {
   await flushPromises()
   return wrapper
 }
+
+it('loads the configured encryption fixture before allowing account editing', async () => {
+  const view = await mountControls()
+  const add = view.findAll('button').find(button => button.text() === 'tokenGuardV2.addAccount')!
+  expect(add.attributes('disabled')).toBeUndefined()
+  expect(getCredentialEncryption).toHaveBeenCalled()
+})
+
+it('still blocks account creation when encryption is actually unconfigured', async () => {
+  vi.mocked(getCredentialEncryption).mockResolvedValueOnce({ configured: false, source: 'unconfigured' })
+  const view = await mountControls()
+  const add = view.findAll('button').find(button => button.text() === 'tokenGuardV2.addAccount')!
+  expect(add.attributes('disabled')).toBeDefined()
+  await add.trigger('click')
+  expect(view.find('#token-guard-v2-editor').exists()).toBe(false)
+  expect(api.createGuard).not.toHaveBeenCalled()
+})
 
 it('moves engine and worker count into encryption settings and saves immediately', async () => {
   const view = await mountControls()

@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"strings"
 	"time"
@@ -59,17 +58,20 @@ func regionalSubscriptionWindows(ctx context.Context, tx *sql.Tx, id int64, admi
 }
 func regionalPlatformWindows(ctx context.Context, tx *sql.Tx, user int64, platform string, admitted time.Time) error {
 	var id int64
-	var starts [3]sql.NullTime
-	err := tx.QueryRowContext(ctx, "SELECT id,daily_window_start,weekly_window_start,monthly_window_start FROM user_platform_quotas WHERE user_id=$1 AND platform=$2 AND deleted_at IS NULL FOR UPDATE", user, platform).Scan(&id, &starts[0], &starts[1], &starts[2])
+	err := tx.QueryRowContext(ctx, "SELECT id FROM user_platform_quotas WHERE user_id=$1 AND platform=$2 AND deleted_at IS NULL FOR UPDATE", user, platform).Scan(&id)
 	if err == sql.ErrNoRows {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	desired := [3]time.Time{timezone.StartOfDay(admitted), timezone.StartOfWeek(admitted), admitted}
-	if starts[2].Valid && admitted.Before(starts[2].Time.Add(30*24*time.Hour)) {
-		desired[2] = starts[2].Time
+	// Ordinary delivery may already have advanced its durable projection while
+	// the legacy baseline still has an expired anchor. Join that effective
+	// window before admission checks; inventing a newer baseline would hide
+	// current ordinary usage. The shared helper also retains exact reset cutoffs.
+	desired, err := effectivePlatformQuotaWindows(ctx, tx, id, admitted)
+	if err != nil {
+		return err
 	}
 	for i, w := range []string{"daily", "weekly", "monthly"} {
 		if err := advanceRegionalWindow(ctx, tx, "user_platform_quotas", w+"_usage_usd", w+"_window_start", id, desired[i]); err != nil {

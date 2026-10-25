@@ -56,6 +56,14 @@ func scanAccountOps(row scannable) (*service.AccountOpsEvent, error) {
 	return &e, err
 }
 func (r *accountOpsRepository) Claim(ctx context.Context) (*service.AccountOpsEvent, error) {
+	// Empty queues are the common case. Keep the existing atomic claims and
+	// expired-lease cleanup when work is visible, without issuing four UPDATEs
+	// on every idle poll. A concurrently added event is seen by the next poll.
+	var ready bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_ops_threshold_events WHERE state IN ('pending','failed') AND attempts<3 AND next_send_at<=NOW()) OR EXISTS(SELECT 1 FROM account_ops_threshold_events WHERE state='sending' AND lease_until<NOW()) OR EXISTS(SELECT 1 FROM account_ops_alerts WHERE state IN ('pending','failed') AND attempts<3 AND next_send_at<=NOW()) OR EXISTS(SELECT 1 FROM account_ops_alerts WHERE state='sending' AND lease_until<NOW())`).Scan(&ready)
+	if err != nil || !ready {
+		return nil, err
+	}
 	if e, err := r.claimTransition(ctx); err != nil || e != nil {
 		return e, err
 	}
@@ -85,6 +93,37 @@ type opsConfigExecutor interface {
 }
 
 func (r *accountOpsRepository) SuppressDisabled(ctx context.Context, c service.AccountOpsConfig) error {
+	// Configuration saves still run suppression in their own write transaction.
+	// Periodic refreshes first read the current database state, so another
+	// replica's new work is noticed without caching a local "already checked" bit.
+	rows, err := r.db.QueryContext(ctx, `SELECT group_id,kind,false FROM account_ops_threshold_monitors WHERE criteria<>'invalid' UNION ALL SELECT '','',true WHERE EXISTS(SELECT 1 FROM account_ops_threshold_events WHERE state IN ('pending','failed','sending')) OR EXISTS(SELECT 1 FROM account_ops_alerts WHERE state IN ('pending','failed','sending'))`)
+	if err != nil {
+		return err
+	}
+	needed := false
+	for rows.Next() {
+		var groupID, kind string
+		var pending bool
+		if err = rows.Scan(&groupID, &kind, &pending); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		_, enabled, _, _ := c.ThresholdGroupCriteria(groupID, kind)
+		if pending || !enabled {
+			needed = true
+			break
+		}
+	}
+	if err = rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	if !needed {
+		return nil
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -127,25 +166,22 @@ func (r *accountOpsRepository) List(ctx context.Context, offset, limit int) ([]s
 
 // Progress is durable before another channel is attempted. Expired or invalidated leases cannot overwrite outcomes.
 func (r *accountOpsRepository) SaveDelivery(ctx context.Context, e *service.AccountOpsEvent, key string, out service.AccountOpsDelivery) (bool, error) {
-	if e.Phase != "" {
-		return r.saveTransitionDelivery(ctx, e, key, out)
-	}
 	raw, err := json.Marshal(out)
 	if err != nil {
 		return false, err
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE account_ops_alerts SET deliveries=jsonb_set(deliveries,ARRAY[$4]::text[],COALESCE(deliveries->$4,'{}'::jsonb)||$5::jsonb,true) WHERE group_id=$1 AND kind=$2 AND lease=$3 AND state='sending' AND lease_until>NOW()`, accountOpsEventGroupID(e), e.Kind, e.Lease, key, string(raw))
+	var result sql.Result
+	if e.Phase != "" {
+		result, err = r.db.ExecContext(ctx, `UPDATE account_ops_threshold_events SET deliveries=jsonb_set(deliveries,ARRAY[$3]::text[],COALESCE(deliveries->$3,'{}'::jsonb)||$4::jsonb,true) WHERE id=$1 AND lease=$2 AND state='sending' AND lease_until>NOW()`, e.ID, e.Lease, key, string(raw))
+	} else {
+		result, err = r.db.ExecContext(ctx, `UPDATE account_ops_alerts SET deliveries=jsonb_set(deliveries,ARRAY[$4]::text[],COALESCE(deliveries->$4,'{}'::jsonb)||$5::jsonb,true) WHERE group_id=$1 AND kind=$2 AND lease=$3 AND state='sending' AND lease_until>NOW()`, accountOpsEventGroupID(e), e.Kind, e.Lease, key, string(raw))
+	}
 	if err != nil {
 		return false, err
 	}
 	n, err := result.RowsAffected()
 	return n == 1, err
 }
-func (r *accountOpsRepository) ResolveThreshold(ctx context.Context, id int64, kind string, cooldown time.Duration) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE account_ops_alerts SET state='resolved',lease='',lease_until=NULL,next_send_at=CASE WHEN GREATEST(last_sent_at,(SELECT MAX((x->>'last_sent_at')::timestamptz) FROM jsonb_each(deliveries) j(k,x))) IS NULL OR (state IN ('pending','failed','sending') AND GREATEST(last_sent_at,(SELECT MAX((x->>'last_sent_at')::timestamptz) FROM jsonb_each(deliveries) j(k,x)))+($3*INTERVAL '1 second')<=NOW()) THEN NOW() ELSE GREATEST(next_send_at,GREATEST(last_sent_at,(SELECT MAX((x->>'last_sent_at')::timestamptz) FROM jsonb_each(deliveries) j(k,x)))+($3*INTERVAL '1 second')) END WHERE account_id=$1 AND kind=$2 AND state<>'resolved'`, id, kind, int64(cooldown/time.Second))
-	return err
-}
-
 func (r *accountOpsRepository) DeliveryLeaseValid(ctx context.Context, e *service.AccountOpsEvent) (bool, error) {
 	var valid bool
 	if e.Phase != "" {
@@ -234,10 +270,5 @@ func reserveOpsRobotSlot(ctx context.Context, tx *sql.Tx, identity string) error
 		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES($1,clock_timestamp()::text,clock_timestamp()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=EXCLUDED.updated_at`, key)
-	return err
-}
-
-func (r *accountOpsRepository) SuppressThreshold(ctx context.Context, id int64, kind string, cooldown time.Duration) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE account_ops_alerts SET state='suppressed',lease='',lease_until=NULL,next_send_at=CASE WHEN GREATEST(last_sent_at,(SELECT MAX((x->>'last_sent_at')::timestamptz) FROM jsonb_each(deliveries) j(k,x))) IS NULL OR (state IN ('pending','failed','sending') AND GREATEST(last_sent_at,(SELECT MAX((x->>'last_sent_at')::timestamptz) FROM jsonb_each(deliveries) j(k,x)))+($3*INTERVAL '1 second')<=NOW()) THEN NOW() ELSE GREATEST(next_send_at,GREATEST(last_sent_at,(SELECT MAX((x->>'last_sent_at')::timestamptz) FROM jsonb_each(deliveries) j(k,x)))+($3*INTERVAL '1 second')) END WHERE account_id=$1 AND kind=$2 AND state IN ('pending','failed','sending')`, id, kind, int64(cooldown/time.Second))
 	return err
 }

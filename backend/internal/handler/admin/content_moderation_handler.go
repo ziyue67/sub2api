@@ -240,6 +240,7 @@ func (h *ContentModerationHandler) manageUser(c *gin.Context, action string) {
 		Exempt         *bool  `json:"auto_ban_exempt"`
 		KeywordExempt  *bool  `json:"keyword_exempt"`
 		APIAuditExempt *bool  `json:"api_audit_exempt"`
+		EmailExempt    *bool  `json:"email_exempt"`
 		Reason         string `json:"reason"`
 		Confirm        bool   `json:"confirm"`
 	}
@@ -247,7 +248,7 @@ func (h *ContentModerationHandler) manageUser(c *gin.Context, action string) {
 		response.BadRequest(c, "Invalid action")
 		return
 	}
-	in := service.ModerationUserAction{Action: req.Action, Version: *req.Version, Exempt: req.Exempt, KeywordExempt: req.KeywordExempt, APIAuditExempt: req.APIAuditExempt, Reason: req.Reason, Confirm: req.Confirm}
+	in := service.ModerationUserAction{Action: req.Action, Version: *req.Version, Exempt: req.Exempt, KeywordExempt: req.KeywordExempt, APIAuditExempt: req.APIAuditExempt, EmailExempt: req.EmailExempt, Reason: req.Reason, Confirm: req.Confirm}
 	if action != "" {
 		in.Action = action
 	}

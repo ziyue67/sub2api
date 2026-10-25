@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -145,6 +146,10 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 
 	updated, err := h.scheduledTestSvc.UpdatePlan(c.Request.Context(), existing)
 	if err != nil {
+		if infraerrors.Reason(err) == service.QualityScopeConflictReason {
+			response.ErrorFrom(c, err)
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -160,6 +165,10 @@ func (h *ScheduledTestHandler) Delete(c *gin.Context) {
 	}
 
 	if err := h.scheduledTestSvc.DeletePlan(c.Request.Context(), planID); err != nil {
+		if infraerrors.Reason(err) == service.QualityScopeConflictReason {
+			response.ErrorFrom(c, err)
+			return
+		}
 		response.InternalError(c, err.Error())
 		return
 	}

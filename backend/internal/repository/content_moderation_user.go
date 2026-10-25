@@ -12,7 +12,7 @@ import (
 )
 
 const moderationUserProjection = `SELECT u.id, COALESCE(s.version,0), COALESCE(s.generation,0),
- COALESCE(s.auto_ban_exempt,FALSE), COALESCE(s.keyword_exempt,FALSE), COALESCE(s.api_audit_exempt,FALSE),
+ COALESCE(s.auto_ban_exempt,FALSE), COALESCE(s.keyword_exempt,FALSE), COALESCE(s.api_audit_exempt,FALSE), COALESCE(s.email_exempt,FALSE),
  COALESCE(u.status='disabled' AND s.owned_status_revision=u.moderation_status_revision,FALSE),
  u.status, (SELECT COUNT(*) FROM content_moderation_user_hits h WHERE h.user_id=u.id
  AND h.generation=COALESCE(s.generation,0) AND h.created_at >= $1
@@ -24,7 +24,7 @@ type moderationScanner interface{ Scan(...any) error }
 
 func scanModerationUser(row moderationScanner) (*service.ModerationUserState, error) {
 	s := new(service.ModerationUserState)
-	err := row.Scan(&s.UserID, &s.Version, &s.Generation, &s.AutoBanExempt, &s.KeywordExempt, &s.APIAuditExempt, &s.OwnedDisable, &s.Status, &s.CurrentCount, &s.Reason, &s.ActorID, &s.UpdatedAt)
+	err := row.Scan(&s.UserID, &s.Version, &s.Generation, &s.AutoBanExempt, &s.KeywordExempt, &s.APIAuditExempt, &s.EmailExempt, &s.OwnedDisable, &s.Status, &s.CurrentCount, &s.Reason, &s.ActorID, &s.UpdatedAt)
 	return s, err
 }
 
@@ -62,19 +62,20 @@ func (r *contentModerationRepository) ListModerationUsers(ctx context.Context, p
 // Parameters are fixed placeholders supplied by this repository, never user input.
 func moderationExemptionFilter(parameter string) string {
 	return `(` + parameter + `='all'
- OR (` + parameter + `='exempt' AND (s.auto_ban_exempt OR s.keyword_exempt OR s.api_audit_exempt))
- OR (` + parameter + `='enforced' AND NOT (s.auto_ban_exempt OR s.keyword_exempt OR s.api_audit_exempt))
+ OR (` + parameter + `='exempt' AND (s.auto_ban_exempt OR s.keyword_exempt OR s.api_audit_exempt OR s.email_exempt))
+ OR (` + parameter + `='enforced' AND NOT (s.auto_ban_exempt OR s.keyword_exempt OR s.api_audit_exempt OR s.email_exempt))
  OR (` + parameter + `='auto_ban_exempt' AND s.auto_ban_exempt)
  OR (` + parameter + `='keyword_exempt' AND s.keyword_exempt)
- OR (` + parameter + `='api_audit_exempt' AND s.api_audit_exempt))`
+ OR (` + parameter + `='api_audit_exempt' AND s.api_audit_exempt)
+ OR (` + parameter + `='email_exempt' AND s.email_exempt))`
 }
 
 type lockedModerationUser struct {
-	status, role                  string
-	revision, version, generation int64
-	exempt                        bool
-	keywordExempt, apiAuditExempt bool
-	owned                         sql.NullInt64
+	status, role                               string
+	revision, version, generation              int64
+	exempt                                     bool
+	keywordExempt, apiAuditExempt, emailExempt bool
+	owned                                      sql.NullInt64
 }
 
 func lockModerationUser(ctx context.Context, tx *sql.Tx, id int64) (lockedModerationUser, error) {
@@ -90,7 +91,7 @@ func lockModerationUser(ctx context.Context, tx *sql.Tx, id int64) (lockedModera
 	if err != nil {
 		return u, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT version, generation, auto_ban_exempt, owned_status_revision, keyword_exempt, api_audit_exempt FROM content_moderation_user_state WHERE user_id=$1 FOR UPDATE`, id).Scan(&u.version, &u.generation, &u.exempt, &u.owned, &u.keywordExempt, &u.apiAuditExempt)
+	err = tx.QueryRowContext(ctx, `SELECT version, generation, auto_ban_exempt, owned_status_revision, keyword_exempt, api_audit_exempt, email_exempt FROM content_moderation_user_state WHERE user_id=$1 FOR UPDATE`, id).Scan(&u.version, &u.generation, &u.exempt, &u.owned, &u.keywordExempt, &u.apiAuditExempt, &u.emailExempt)
 	return u, err
 }
 
@@ -136,6 +137,9 @@ func (r *contentModerationRepository) ManageModerationUser(ctx context.Context, 
 		if in.APIAuditExempt != nil {
 			u.apiAuditExempt = *in.APIAuditExempt
 		}
+		if in.EmailExempt != nil {
+			u.emailExempt = *in.EmailExempt
+		}
 	default:
 		return fmt.Errorf("invalid moderation action")
 	}
@@ -143,11 +147,11 @@ func (r *contentModerationRepository) ManageModerationUser(ctx context.Context, 
 	if u.owned.Valid {
 		owned = u.owned.Int64
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE content_moderation_user_state SET version=version+1,generation=$2,auto_ban_exempt=$3,owned_status_revision=$4,reason=$5,actor_id=$6,keyword_exempt=$7,api_audit_exempt=$8,updated_at=NOW() WHERE user_id=$1`, id, u.generation, u.exempt, owned, in.Reason, in.ActorID, u.keywordExempt, u.apiAuditExempt)
+	_, err = tx.ExecContext(ctx, `UPDATE content_moderation_user_state SET version=version+1,generation=$2,auto_ban_exempt=$3,owned_status_revision=$4,reason=$5,actor_id=$6,keyword_exempt=$7,api_audit_exempt=$8,email_exempt=$9,updated_at=NOW() WHERE user_id=$1`, id, u.generation, u.exempt, owned, in.Reason, in.ActorID, u.keywordExempt, u.apiAuditExempt, u.emailExempt)
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO content_moderation_user_actions(user_id,actor_id,action,reason,version,auto_ban_exempt,keyword_exempt,api_audit_exempt) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, in.ActorID, in.Action, in.Reason, u.version+1, u.exempt, u.keywordExempt, u.apiAuditExempt)
+	_, err = tx.ExecContext(ctx, `INSERT INTO content_moderation_user_actions(user_id,actor_id,action,reason,version,auto_ban_exempt,keyword_exempt,api_audit_exempt,email_exempt) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, in.ActorID, in.Action, in.Reason, u.version+1, u.exempt, u.keywordExempt, u.apiAuditExempt, u.emailExempt)
 	if err != nil {
 		return err
 	}

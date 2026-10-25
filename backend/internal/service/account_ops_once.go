@@ -127,3 +127,14 @@ func (s *AccountOpsService) observeThreshold(ctx context.Context, a *Account, id
 func (c AccountOpsConfig) ThresholdCriteria(id int64, kind string) (string, bool, bool, bool) {
 	return opsCriteria(c, id, kind)
 }
+
+// ThresholdGroupCriteria matches the fingerprint used by grouped observations.
+func (c AccountOpsConfig) ThresholdGroupCriteria(groupID, kind string) (string, bool, bool, bool) {
+	members := make([]accountOpsThresholdMember, 0)
+	for _, id := range thresholdRuleIDs(c, kind) {
+		if thresholdAccountGroup(nil, id, c).ID == groupID {
+			members = append(members, accountOpsThresholdMember{id: id})
+		}
+	}
+	return accountOpsGroupCriteria(c, kind, members)
+}

@@ -96,6 +96,9 @@
                   <div class="flex flex-col gap-2">
                     <label class="inline-flex items-center gap-2" :title="t('tokenGuardV2.autoInspectHint')"><input type="checkbox" role="switch" class="automation-switch" :checked="item.enabled" :aria-label="t('tokenGuardV2.autoInspect')" :data-testid="'auto-inspect-' + item.account_id" :disabled="busyId !== 0 || loading" @change="toggleSwitch(item, 'enabled', $event)" />{{ t('tokenGuardV2.autoInspect') }}</label>
                     <label class="inline-flex items-center gap-2" :title="t('tokenGuardV2.autoReloginHint')"><input type="checkbox" role="switch" class="automation-switch" :checked="item.auto_relogin_enabled" :aria-label="t('tokenGuardV2.autoRelogin')" :data-testid="'auto-relogin-' + item.account_id" :disabled="busyId !== 0 || loading" @change="toggleSwitch(item, 'auto_relogin_enabled', $event)" />{{ t('tokenGuardV2.autoRelogin') }}</label>
+                    <small>{{ t('tokenGuardV2.reloginBudgetCount', { count: item.relogin_fail_streak || 0, limit: status.relogin_max_failures || 3 }) }}</small>
+                    <span v-if="item.auto_relogin_exhausted" class="badge danger">{{ t('tokenGuardV2.reloginBudgetExhausted') }}</span>
+                    <small v-if="item.relogin_fail_streak && item.cooldown_until">{{ t('tokenGuardV2.reloginBackoffUntil') }} {{ date(item.cooldown_until) }}</small>
                   </div>
                 </td>
                 <td><span class="badge" :class="probeClass(item.probe_state)">{{ t(`tokenGuardV2.probeStates.${item.probe_state || 'pending'}`) }}</span><small>{{ item.blocked_reason || item.probe_detail || '-' }}</small></td>
@@ -107,6 +110,7 @@
                     <button class="link-btn" @click="openEdit(item)">{{ t('tokenGuardV2.edit') }}</button>
                     <button class="link-btn" :disabled="busyId === item.account_id" @click="probe(item)">{{ t('tokenGuardV2.inspectNow') }}</button>
                     <button class="link-btn" :disabled="busyId === item.account_id" @click="relogin(item)">{{ t('tokenGuardV2.reloginNow') }}</button>
+                    <button v-if="item.auto_relogin_exhausted" class="link-btn" :data-testid="'resume-budget-' + item.account_id" :disabled="busyId !== 0 || loading" @click="resumeBudget(item)">{{ t('tokenGuardV2.resumeReloginBudget') }}</button>
                     <OpenAITOTPDialog :account-id="item.account_id" :account-name="item.account_name" :configured="!!(item.login_config?.password_configured && item.login_config?.totp_configured)" />
                     <button class="link-btn danger-text" :disabled="busyId === item.account_id" @click="remove(item)">{{ t('tokenGuardV2.remove') }}</button>
                   </div>
@@ -142,6 +146,8 @@
             <label><span>{{ t('tokenGuardV2.ruleRetryInterval') }}</span><input id="token-guard-v2-rule-retry" v-model.number="rulesDraft.retry_interval_minutes" class="input" type="number" min="1" max="1440" required @input="rulesDirty = true" /><small>{{ t('tokenGuardV2.minutes') }}</small></label>
             <label><span>{{ t('tokenGuardV2.ruleFailureThreshold') }}</span><input id="token-guard-v2-rule-threshold" v-model.number="rulesDraft.fail_streak_threshold" class="input" type="number" min="1" max="10" required @input="rulesDirty = true" /><small>{{ t('tokenGuardV2.times') }}</small></label>
             <label><span>{{ t('tokenGuardV2.ruleCooldown') }}</span><input id="token-guard-v2-rule-cooldown" v-model.number="rulesDraft.relogin_cooldown_minutes" class="input" type="number" min="1" max="10080" required @input="rulesDirty = true" /><small>{{ t('tokenGuardV2.minutes') }}</small></label>
+            <label><span>{{ t('tokenGuardV2.ruleReloginBackoffMax') }}</span><input id="token-guard-v2-rule-backoff-max" v-model.number="rulesDraft.relogin_backoff_max_minutes" class="input" type="number" :min="rulesDraft.relogin_cooldown_minutes" max="10080" required @input="rulesDirty = true" /><small>{{ t('tokenGuardV2.minutes') }}</small></label>
+            <label><span>{{ t('tokenGuardV2.ruleReloginMaxFailures') }}</span><input id="token-guard-v2-rule-max-failures" v-model.number="rulesDraft.relogin_max_failures" class="input" type="number" min="1" max="20" required @input="rulesDirty = true" /><small>{{ t('tokenGuardV2.reloginBudgetHint') }}</small></label>
           </div>
           <div class="rules-actions"><button type="submit" class="btn btn-primary" :disabled="rulesSaving || !rulesDirty">{{ rulesSaving ? t('tokenGuardV2.saving') : t('tokenGuardV2.saveRules') }}</button></div>
         </form>
@@ -229,6 +235,7 @@ import {
   listTokenGuardV2Accounts,
   probeTokenGuardV2Account,
   reloginTokenGuardV2Account,
+  resumeTokenGuardV2Budget,
   saveTokenGuardV2Rules,
   saveTokenGuardV2Runtime,
   updateTokenGuardV2Switches,
@@ -287,6 +294,8 @@ const blankDraft = (): SaveTokenGuardV2Account => ({
 })
 const draft = reactive<SaveTokenGuardV2Account>(blankDraft())
 const rulesDraft = reactive({
+  relogin_backoff_max_minutes: 60,
+  relogin_max_failures: 3,
   probe_interval_minutes: 30,
   retry_interval_minutes: 5,
   relogin_cooldown_minutes: 30,
@@ -395,7 +404,9 @@ const taskErrorLabel = (errorCode: string) => {
   const path = `tokenGuardV2.reauthErrors.${errorCode}`
   return te(path) ? t(path) : errorCode
 }
-const taskLabel = (task: TokenGuardV2Task) => task.error ? `${task.status}: ${taskErrorLabel(task.error)}` : `${task.status} · ${task.stage}`
+const taskLabel = (task: TokenGuardV2Task) => task.diagnostic
+  ? `${task.status}: ${task.diagnostic.stage} · ${task.diagnostic.reason} · ${task.diagnostic.elapsed_ms} ms${task.diagnostic.http_status ? ` · HTTP ${task.diagnostic.http_status}` : ''}`
+  : task.error ? `${task.status}: ${taskErrorLabel(task.error)}` : `${task.status} · ${task.stage}`
 const configurationDetail = (item: TokenGuardV2Account) => {
   const config = item.login_config
   if (!config) return '-'
@@ -409,6 +420,8 @@ const configurationDetail = (item: TokenGuardV2Account) => {
 function resetDraft() { Object.assign(draft, blankDraft()) }
 function syncRulesDraft(rules: TokenGuardV2Rules) {
   Object.assign(rulesDraft, {
+    relogin_backoff_max_minutes: Math.round((rules.relogin_backoff_max_seconds ?? Math.max(3600, rules.relogin_cooldown_seconds)) / 60),
+    relogin_max_failures: rules.relogin_max_failures ?? 3,
     probe_interval_minutes: Math.round(rules.probe_interval_seconds / 60),
     retry_interval_minutes: Math.round(rules.retry_interval_seconds / 60),
     relogin_cooldown_minutes: Math.round(rules.relogin_cooldown_seconds / 60),
@@ -464,6 +477,8 @@ async function saveRulesConfig() {
   rulesSaving.value = true; error.value = ''; notice.value = ''
   try {
     const saved = await saveTokenGuardV2Rules({
+      relogin_backoff_max_seconds: Math.max(rulesDraft.relogin_backoff_max_minutes, rulesDraft.relogin_cooldown_minutes) * 60,
+      relogin_max_failures: rulesDraft.relogin_max_failures,
       probe_interval_seconds: rulesDraft.probe_interval_minutes * 60,
       retry_interval_seconds: rulesDraft.retry_interval_minutes * 60,
       relogin_cooldown_seconds: rulesDraft.relogin_cooldown_minutes * 60,
@@ -513,6 +528,10 @@ async function act(item: TokenGuardV2Account, action: () => Promise<unknown>, su
 
 const probe = (item: TokenGuardV2Account) => act(item, () => probeTokenGuardV2Account(item.account_id), 'tokenGuardV2.inspectionQueued')
 const relogin = (item: TokenGuardV2Account) => act(item, () => reloginTokenGuardV2Account(item.account_id), 'tokenGuardV2.reloginQueued')
+async function resumeBudget(item: TokenGuardV2Account) {
+  if (!window.confirm(t('tokenGuardV2.resumeReloginBudgetConfirm'))) return
+  await act(item, async () => { Object.assign(item, await resumeTokenGuardV2Budget(item.account_id)) }, 'tokenGuardV2.reloginBudgetResumed')
+}
 async function toggleSwitch(item: TokenGuardV2Account, field: 'enabled' | 'auto_relogin_enabled', event: Event) {
   const input = event.target as HTMLInputElement
   if (busyId.value) { input.checked = item[field]; return }

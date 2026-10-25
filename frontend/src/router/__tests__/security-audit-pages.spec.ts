@@ -70,7 +70,7 @@ beforeEach(() => {
   state.prompt.listEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
   state.risk.get.mockResolvedValue(riskSnapshot())
   state.risk.save.mockImplementation(async config => structuredClone(config))
-  state.risk.events.mockResolvedValue([])
+  state.risk.events.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
   state.risk.bans.mockResolvedValue([])
   state.risk.anonymousBans.mockResolvedValue([])
   state.listIPAudit.mockResolvedValue({ items: [], sources: [], has_more: false, next_cursor: 0, unrestricted: false })
@@ -154,6 +154,19 @@ describe('security audit real routes', () => {
 
 
 describe('IP settings migration through real routes', () => {
+  it('closes the blacklist dialog and releases scroll lock when leaving the cached configuration tab', async () => {
+    const page = await open('/admin/ip-audit?tab=config')
+    await page.get('[data-testid="risk-manage-blacklist"]').trigger('click'); await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(document.body.classList.contains('modal-open')).toBe(true)
+    await router.push('/admin/ip-audit?tab=sources'); await flushPromises()
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull())
+    expect(document.body.classList.contains('modal-open')).toBe(false)
+    await router.push('/admin/ip-audit?tab=config'); await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(state.risk.save).not.toHaveBeenCalled()
+  })
+
   it.each([
     '/admin/settings?tab=security#ip-risk-settings',
     '/admin/settings#ip-risk-settings',

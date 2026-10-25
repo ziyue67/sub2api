@@ -3,6 +3,10 @@ on:
   pull_request:
     paths:
       - 'tools/openai_oauth_reauth_worker.py'
+      - 'tools/openai_codex_*'
+      - 'tools/test_openai_codex_*'
+      - 'tools/fixtures/codex-http-transport.mjs'
+      - 'tools/fixtures/session-studio/**'
       - 'tools/openai_totp_*'
       - 'tools/test_openai_totp_*'
       - 'tools/openai_siwc_*'

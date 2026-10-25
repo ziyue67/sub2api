@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -33,10 +34,8 @@ func cloneAccountOpsGroups(groups []AccountOpsGroup) []AccountOpsGroup {
 
 func hasAccountOpsGroupMember(groups []AccountOpsGroup, accountID int64) bool {
 	for _, group := range groups {
-		for _, id := range group.AccountIDs {
-			if id == accountID {
-				return true
-			}
+		if slices.Contains(group.AccountIDs, accountID) {
+			return true
 		}
 	}
 	return false
@@ -73,10 +72,8 @@ func accountOpsGroupSite(group AccountOpsGroup, accounts map[int64]*Account) (pr
 }
 
 func appendUniqueAccountOpsGroupMember(group *AccountOpsGroup, accountID int64) bool {
-	for _, id := range group.AccountIDs {
-		if id == accountID {
-			return false
-		}
+	if slices.Contains(group.AccountIDs, accountID) {
+		return false
 	}
 	group.AccountIDs = append(group.AccountIDs, accountID)
 	return true
@@ -85,12 +82,10 @@ func appendUniqueAccountOpsGroupMember(group *AccountOpsGroup, accountID int64) 
 func copyBalanceRuleForAccount(rule AccountOpsBalanceRule, accountID int64) AccountOpsBalanceRule {
 	rule.AccountID = accountID
 	if rule.NotifyAlert != nil {
-		value := *rule.NotifyAlert
-		rule.NotifyAlert = &value
+		rule.NotifyAlert = opsBool(*rule.NotifyAlert)
 	}
 	if rule.NotifyRecovery != nil {
-		value := *rule.NotifyRecovery
-		rule.NotifyRecovery = &value
+		rule.NotifyRecovery = opsBool(*rule.NotifyRecovery)
 	}
 	return rule
 }
@@ -98,12 +93,10 @@ func copyBalanceRuleForAccount(rule AccountOpsBalanceRule, accountID int64) Acco
 func copyQuotaRuleForAccount(rule AccountOpsQuotaRule, accountID int64) AccountOpsQuotaRule {
 	rule.AccountID = accountID
 	if rule.NotifyAlert != nil {
-		value := *rule.NotifyAlert
-		rule.NotifyAlert = &value
+		rule.NotifyAlert = opsBool(*rule.NotifyAlert)
 	}
 	if rule.NotifyRecovery != nil {
-		value := *rule.NotifyRecovery
-		rule.NotifyRecovery = &value
+		rule.NotifyRecovery = opsBool(*rule.NotifyRecovery)
 	}
 	return rule
 }
@@ -124,7 +117,6 @@ func normalizeAccountOpsGroupRules(c *AccountOpsConfig, accounts map[int64]*Acco
 	for _, rule := range c.QuotaThresholds {
 		quotaByID[rule.AccountID] = rule
 	}
-	assigned := make(map[int64]bool)
 	newBalance := make([]AccountOpsBalanceRule, 0, len(c.BalanceThresholds))
 	newQuota := make([]AccountOpsQuotaRule, 0, len(c.QuotaThresholds))
 	changed := false
@@ -154,7 +146,6 @@ func normalizeAccountOpsGroupRules(c *AccountOpsConfig, accounts map[int64]*Acco
 			if account == nil {
 				continue
 			}
-			assigned[id] = true
 			switch account.Type {
 			case AccountTypeAPIKey:
 				if balanceSource != nil {
@@ -169,7 +160,11 @@ func normalizeAccountOpsGroupRules(c *AccountOpsConfig, accounts map[int64]*Acco
 	}
 	// Rules of ungrouped accounts no longer participate in the group-only
 	// threshold page or scanner, so drop them instead of exposing orphan rows.
-	if !reflect.DeepEqual(c.BalanceThresholds, newBalance) || !reflect.DeepEqual(c.QuotaThresholds, newQuota) {
+	if !slices.EqualFunc(c.BalanceThresholds, newBalance, func(a, b AccountOpsBalanceRule) bool {
+		return reflect.DeepEqual(a, b)
+	}) || !slices.EqualFunc(c.QuotaThresholds, newQuota, func(a, b AccountOpsQuotaRule) bool {
+		return reflect.DeepEqual(a, b)
+	}) {
 		changed = true
 		c.BalanceThresholds = newBalance
 		c.QuotaThresholds = newQuota
@@ -180,9 +175,9 @@ func normalizeAccountOpsGroupRules(c *AccountOpsConfig, accounts map[int64]*Acco
 // reconcileAccountOpsGroups performs the one-time automatic-to-manual
 // conversion and then assigns later accounts to the first group for their
 // canonical site. It returns whether the persisted config changed.
-func (s *AccountOpsService) reconcileAccountOpsGroups(ctx context.Context, c *AccountOpsConfig, accounts []Account) (bool, error) {
+func (s *AccountOpsService) reconcileAccountOpsGroups(ctx context.Context, c *AccountOpsConfig, accounts []Account) bool {
 	if c == nil {
-		return false, nil
+		return false
 	}
 	byID := make(map[int64]*Account, len(accounts))
 	for i := range accounts {
@@ -246,13 +241,13 @@ func (s *AccountOpsService) reconcileAccountOpsGroups(ctx context.Context, c *Ac
 	legacyGroupsToRemove := make(map[string]bool)
 	for i := range accounts {
 		account := &accounts[i]
-		desired := s.legacyAccountOpsGroupAssignment(ctx, account, AccountOpsConfig{})
 		legacyID := legacyManualAccountOpsAccountGroupID(account.ID)
-		if desired.ID == "account:"+strconv.FormatInt(account.ID, 10) {
-			continue
-		}
 		legacyIndex := accountOpsGroupMemberIndex(groups, legacyID)
 		if legacyIndex < 0 {
+			continue
+		}
+		desired := s.legacyAccountOpsGroupAssignment(ctx, account, AccountOpsConfig{})
+		if desired.ID == "account:"+strconv.FormatInt(account.ID, 10) {
 			continue
 		}
 		group := &groups[legacyIndex]
@@ -314,16 +309,15 @@ func (s *AccountOpsService) reconcileAccountOpsGroups(ctx context.Context, c *Ac
 		if !bootstrap {
 			// Once the initial conversion is complete, a new account inherits the
 			// first existing group for its site, regardless of its provider user ID.
-			provider, site, _ := accountOpsUpstreamIdentity(account)
+			_, site, _ := accountOpsUpstreamIdentity(account)
 			if assignment.Site != "" {
-				provider, site = assignment.Provider, assignment.Site
+				site = assignment.Site
 			}
 			for groupIndex := range groups {
 				if canonicalAccountOpsSite(groups[groupIndex].Site) == canonicalAccountOpsSite(site) && site != "" {
 					if appendUniqueAccountOpsGroupMember(&groups[groupIndex], account.ID) {
 						changed = true
 					}
-					assignment = AccountOpsGroupAssignment{ID: groups[groupIndex].ID, Name: groups[groupIndex].Name, Provider: provider, Site: site, Mode: "manual"}
 					break
 				}
 			}
@@ -373,7 +367,7 @@ func (s *AccountOpsService) reconcileAccountOpsGroups(ctx context.Context, c *Ac
 			newUngrouped = append(newUngrouped, account.ID)
 		}
 	}
-	if !reflect.DeepEqual(c.UngroupedAccountIDs, newUngrouped) {
+	if !slices.Equal(c.UngroupedAccountIDs, newUngrouped) {
 		c.UngroupedAccountIDs = newUngrouped
 		changed = true
 	}
@@ -383,37 +377,62 @@ func (s *AccountOpsService) reconcileAccountOpsGroups(ctx context.Context, c *Ac
 	if normalizeAccountOpsGroupRules(c, byID) {
 		changed = true
 	}
-	return changed, nil
+	return changed
 }
 
-func (s *AccountOpsService) persistReconciledAccountOpsConfig(ctx context.Context, c AccountOpsConfig) error {
-	update := func(lockedCtx context.Context) error { return s.saveConfig(lockedCtx, c) }
-	if lock, ok := s.repo.(accountOpsConfigLocker); ok {
-		return lock.WithAccountOpsConfigLock(ctx, update)
+func (s *AccountOpsService) persistReconciledAccountOpsConfig(ctx context.Context) (AccountOpsConfig, error) {
+	result := &opsConfigResult{}
+	ctx = context.WithValue(ctx, opsConfigResultKey{}, result)
+	update := func(lockedCtx context.Context) error {
+		c, err := s.loadConfig(lockedCtx)
+		if err != nil {
+			return err
+		}
+		// Accounts may already be stale before the first config read; refresh
+		// under the lock before deciding which rules still exist.
+		accounts, err := s.listAccountOpsAccounts(lockedCtx)
+		if err != nil {
+			return err
+		}
+		if s.reconcileAccountOpsGroups(lockedCtx, &c, accounts) {
+			return s.saveConfig(lockedCtx, c)
+		}
+		result.cfg, result.set = c, true
+		return nil
 	}
-	return update(ctx)
+	var err error
+	if lock, ok := s.repo.(accountOpsConfigLocker); ok {
+		err = lock.WithAccountOpsConfigLock(ctx, update)
+	} else {
+		err = update(ctx)
+	}
+	if err != nil {
+		return AccountOpsConfig{}, err
+	}
+	return result.cfg, nil
 }
 
 func (s *AccountOpsService) ensureManualAccountOpsGroups(ctx context.Context) (AccountOpsConfig, error) {
 	if s.accounts == nil {
 		return s.currentConfig(), nil
 	}
-	accounts, err := s.accounts.ListAllWithFilters(ctx, "", "", "", "", 0, "")
+	accounts, err := s.listAccountOpsAccounts(ctx)
 	if err != nil {
 		return AccountOpsConfig{}, err
 	}
+	return s.ensureManualAccountOpsGroupsFromAccounts(ctx, accounts)
+}
+
+func (s *AccountOpsService) ensureManualAccountOpsGroupsFromAccounts(ctx context.Context, accounts []Account) (AccountOpsConfig, error) {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
 	c, err := s.loadConfig(ctx)
 	if err != nil {
 		return AccountOpsConfig{}, err
 	}
-	changed, err := s.reconcileAccountOpsGroups(ctx, &c, accounts)
-	if err != nil {
-		return AccountOpsConfig{}, err
-	}
-	if changed {
-		if err := s.persistReconciledAccountOpsConfig(ctx, c); err != nil {
+	if s.reconcileAccountOpsGroups(ctx, &c, accounts) {
+		c, err = s.persistReconciledAccountOpsConfig(ctx)
+		if err != nil {
 			return AccountOpsConfig{}, err
 		}
 	}

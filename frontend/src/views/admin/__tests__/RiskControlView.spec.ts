@@ -696,3 +696,113 @@ describe('admin RiskControlView', () => {
     ]))
   })
 })
+
+describe('TypeSafe optional category contract', () => {
+  const mountView = () => mount(RiskControlView, { global: { stubs: {
+    AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true,
+    Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true,
+  } } })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    listModerationUsers.mockResolvedValue({ items: [], total: 0 })
+    getConfig.mockResolvedValue(baseConfig())
+    getStatus.mockResolvedValue(runtimeStatus())
+    listLogs.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
+    getGroups.mockResolvedValue([])
+    getProxies.mockResolvedValue([])
+  })
+
+  it('defaults off, preserves both drafts and reloads saved category switches and thresholds', async () => {
+    let stored = { ...baseConfig(), engine: 'openai' as const } as ContentModerationConfig
+    updateConfig.mockImplementation(async (payload: UpdateContentModerationConfig) => {
+      const profiles = Object.fromEntries(Object.entries(payload.engine_configs!).map(([engine, profile]) => [engine, { ...baseConfig(), ...profile, engine }]))
+      stored = { ...baseConfig(), ...profiles[payload.engine!], engine: payload.engine!, engine_configs: profiles } as ContentModerationConfig
+      return stored
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.riskThresholds').trigger('click')
+    expect(wrapper.find('[data-test="risk-enabled-jailbreak"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-test^="risk-threshold-"]')).toHaveLength(13)
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.basic').trigger('click')
+    const engine = () => wrapper.findComponent('[data-test="audit-engine-select"]')
+    engine().vm.$emit('update:modelValue', 'typesafe')
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.riskThresholds').trigger('click')
+    expect(wrapper.findAll('[data-test^="risk-threshold-"]')).toHaveLength(15)
+    expect(wrapper.get<HTMLInputElement>('[data-test="risk-enabled-jailbreak"]').element.checked).toBe(false)
+    expect(wrapper.get<HTMLInputElement>('[data-test="risk-enabled-control_bypass"]').element.checked).toBe(false)
+    expect(wrapper.get<HTMLInputElement>('[data-test="risk-threshold-jailbreak"]').element.disabled).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('[data-test="risk-threshold-jailbreak"]').element.value).toBe('95')
+    await wrapper.get('[data-test="risk-enabled-jailbreak"]').setValue(true)
+    await wrapper.get('[data-test="risk-threshold-jailbreak"]').setValue('80')
+    await wrapper.get('[data-test="risk-enabled-control_bypass"]').setValue(true)
+    await wrapper.get('[data-test="risk-threshold-control_bypass"]').setValue('91')
+    await wrapper.get('[data-test="risk-enabled-control_bypass"]').setValue(false)
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.basic').trigger('click')
+    engine().vm.$emit('update:modelValue', 'openai')
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+    const payload = updateConfig.mock.calls[0]![0] as UpdateContentModerationConfig
+    expect(Object.keys(payload.engine_configs!.openai!.thresholds!)).toHaveLength(13)
+    expect(payload.engine_configs!.openai!.category_settings).toEqual({})
+    expect(payload.engine_configs!.openai!.thresholds).not.toHaveProperty('jailbreak')
+    expect(payload.engine_configs!.typesafe!.category_settings).toEqual({ jailbreak: { enabled: true }, control_bypass: { enabled: false } })
+    expect(payload.engine_configs!.typesafe!.thresholds).toMatchObject({ jailbreak: 0.80, control_bypass: 0.91 })
+    wrapper.unmount()
+    getConfig.mockResolvedValue(stored)
+    const reloaded = mountView()
+    await flushPromises()
+    await findButtonByText(reloaded, 'admin.riskControl.openSettings').trigger('click')
+    reloaded.findComponent('[data-test="audit-engine-select"]').vm.$emit('update:modelValue', 'typesafe')
+    await flushPromises()
+    await findButtonByText(reloaded, 'admin.riskControl.tabs.riskThresholds').trigger('click')
+    expect(reloaded.get<HTMLInputElement>('[data-test="risk-enabled-jailbreak"]').element.checked).toBe(true)
+    expect(reloaded.get<HTMLInputElement>('[data-test="risk-enabled-control_bypass"]').element.checked).toBe(false)
+    expect(reloaded.get<HTMLInputElement>('[data-test="risk-threshold-jailbreak"]').element.value).toBe('80')
+    expect(reloaded.get<HTMLInputElement>('[data-test="risk-threshold-control_bypass"]').element.value).toBe('91')
+    reloaded.unmount()
+  })
+
+  it('sends draft enablement to the test API and distinguishes disabled scores of one', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig(), engine: 'typesafe', category_settings: { jailbreak: { enabled: true }, control_bypass: { enabled: false } }, thresholds: { jailbreak: 0.80, control_bypass: 0.80 } })
+    testAPIKeys.mockResolvedValue({ items: [], image_count: 0, audit_result: {
+      engine_meta: { engine: 'typesafe', model: 'jev-fixture', rules_version: 'content-audit-15-zh-v2', skipped_images: 0 },
+      flagged: true, highest_category: 'control_bypass', highest_score: 1, composite_score: 1,
+      category_scores: { jailbreak: 0.80, control_bypass: 1 }, thresholds: { jailbreak: 0.80, control_bypass: 0.80 },
+      category_settings: { jailbreak: { enabled: true }, control_bypass: { enabled: false } }, matched_categories: ['jailbreak'],
+    } })
+    const wrapper = mountView()
+    await flushPromises()
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await wrapper.get('textarea[autocomplete="new-password"]').setValue('offline-fixture')
+    await findButtonByText(wrapper, 'admin.riskControl.testInputApiKeys').trigger('click')
+    await flushPromises()
+    expect(testAPIKeys).toHaveBeenCalledWith(expect.objectContaining({ category_settings: { jailbreak: { enabled: true }, control_bypass: { enabled: false } }, thresholds: expect.objectContaining({ jailbreak: 0.80 }) }))
+    expect(wrapper.text()).toContain('content-audit-15-zh-v2')
+    expect(wrapper.text()).toContain('jailbreak · admin.riskControl.categoryHit')
+    expect(wrapper.text()).toContain('control_bypass · admin.riskControl.categoryDisabled')
+    wrapper.unmount()
+  })
+
+  it('renders log scores using the saved enablement and thresholds', async () => {
+    listLogs.mockResolvedValue({ total: 1, page: 1, page_size: 20, pages: 1, items: [{
+      id: 554, created_at: '2026-10-24T00:00:00Z', action: 'block', mode: 'pre_block', flagged: true,
+      highest_category: 'control_bypass', highest_score: 1, input_excerpt: 'synthetic fixture',
+      category_scores: { jailbreak: 0.80, control_bypass: 1 }, threshold_snapshot: { jailbreak: 0.80, control_bypass: 0.80 },
+      engine_meta: { engine: 'typesafe', model: 'jev-fixture', rules_version: 'content-audit-15-zh-v2', skipped_images: 0,
+        category_settings: { jailbreak: { enabled: true }, control_bypass: { enabled: false } }, matched_categories: ['jailbreak'] },
+    }] })
+    const wrapper = mountView()
+    await flushPromises()
+    await findButtonByText(wrapper, 'synthetic fixture').trigger('click')
+    expect(wrapper.get('[data-test="audit-engine-meta"]').text()).toContain('content-audit-15-zh-v2')
+    expect(wrapper.get('[data-test="audit-score-jailbreak"]').text()).toContain('admin.riskControl.categoryHit')
+    expect(wrapper.get('[data-test="audit-score-jailbreak"]').text()).toContain('80.0% / 80.0%')
+    expect(wrapper.get('[data-test="audit-score-control_bypass"]').text()).toContain('admin.riskControl.categoryDisabled')
+    wrapper.unmount()
+  })
+})

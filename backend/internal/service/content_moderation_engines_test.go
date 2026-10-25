@@ -150,7 +150,7 @@ func TestContentModerationEngineProfilesPreserveLegacy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "openai", view.Engine)
 	require.Equal(t, 1, view.APIKeyCount)
-	require.Equal(t, ContentModerationDefaultThresholds(), view.EngineConfigs["typesafe"].Thresholds)
+	require.Equal(t, ContentModerationDefaultThresholds("typesafe"), view.EngineConfigs["typesafe"].Thresholds)
 	engine := "typesafe"
 	base := "https://typesafe.example"
 	model := "jev-test"
@@ -188,10 +188,14 @@ func TestContentModerationEngineProfilesPreserveLegacy(t *testing.T) {
 func TestContentModerationEngineThresholdDefaultsAreIndependent(t *testing.T) {
 	openai := moderationEngineDefaults(ContentModerationEngineOpenAI)
 	typeSafe := moderationEngineDefaults(ContentModerationEngineTypeSafe)
-	require.Equal(t, openai.Thresholds, typeSafe.Thresholds)
+	require.Len(t, openai.Thresholds, 13)
+	require.Len(t, typeSafe.Thresholds, 15)
+	for category, threshold := range openai.Thresholds {
+		require.Equal(t, threshold, typeSafe.Thresholds[category])
+	}
 	typeSafe.Thresholds["sexual"] = 0.8
 	require.Equal(t, 0.65, openai.Thresholds["sexual"])
-	require.Equal(t, openai.Thresholds, moderationEngineDefaults(ContentModerationEngineTypeSafe).Thresholds)
+	require.Equal(t, ContentModerationDefaultThresholds("typesafe"), moderationEngineDefaults(ContentModerationEngineTypeSafe).Thresholds)
 }
 
 func TestContentModerationTypeSafeAllCategoriesAndImages(t *testing.T) {
@@ -202,9 +206,9 @@ func TestContentModerationTypeSafeAllCategoriesAndImages(t *testing.T) {
 		var request typesafe.Request
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 		require.Equal(t, "需要审核的文字", request.State)
-		require.Len(t, request.Questions, 13)
+		require.Len(t, request.Questions, 15)
 		answers := map[string]any{}
-		for _, category := range ContentModerationCategories() {
+		for _, category := range ContentModerationCategories("typesafe") {
 			q, ok := request.Questions[category]
 			require.True(t, ok)
 			require.NotEmpty(t, q.Instructions)
@@ -225,9 +229,9 @@ func TestContentModerationTypeSafeAllCategoriesAndImages(t *testing.T) {
 	result, err := s.callModeration(context.Background(), cfg, content.ModerationInput())
 	require.NoError(t, err)
 	require.Equal(t, int32(1), calls.Load())
-	require.Len(t, result.CategoryScores, 13)
-	require.Equal(t, &ContentModerationEngineMeta{Engine: "typesafe", Model: "jev-fixed", RulesVersion: TypeSafeModerationRulesVersion, SkippedImages: 1}, result.EngineMeta)
-	trial := buildContentModerationTestAuditResult(result, cfg.Thresholds)
+	require.Len(t, result.CategoryScores, 15)
+	require.Equal(t, &ContentModerationEngineMeta{Engine: "typesafe", Model: "jev-fixed", RulesVersion: TypeSafeModerationRulesVersion, SkippedImages: 1, CategorySettings: mergeModerationCategorySettings("typesafe", nil, nil)}, result.EngineMeta)
+	trial := buildContentModerationTestAuditResult(result, cfg)
 	require.Equal(t, result.EngineMeta, trial.EngineMeta)
 	_, err = s.callModeration(context.Background(), cfg, ContentModerationInput{Images: content.Images}.ModerationInput())
 	require.ErrorContains(t, err, "no text to audit")
@@ -267,7 +271,7 @@ func TestContentModerationTypeSafeTestDoesNotSwitchActiveEngine(t *testing.T) {
 		require.Equal(t, "Bearer typesafe-key", r.Header.Get("Authorization"))
 		require.Equal(t, "/v1/systemone", r.URL.Path)
 		answers := map[string]any{}
-		for _, k := range ContentModerationCategories() {
+		for _, k := range ContentModerationCategories("typesafe") {
 			answers[k] = map[string]any{"type": "noul", "noul": 0.4}
 		}
 		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"model": "jev-test", "answers": answers}))

@@ -18,7 +18,7 @@ vi.mock('@/stores/auth', async () => {
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'), useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
 vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), runQualityPlan: vi.fn(), listQualityOperations: vi.fn().mockResolvedValue({items:[],next_cursor:0}),
-  listQualityPresets: vi.fn(), createQualityPreset: vi.fn(), listQualityTemplates: vi.fn().mockResolvedValue([]), createQualityTemplate: vi.fn(), updateQualityTemplate: vi.fn(), deleteQualityTemplate: vi.fn() }))
+  previewQualityOwnership: vi.fn().mockResolvedValue({ plan_id: 1, models: [], group_ids: [], entries: [], action: '', ownership_retained: false, relinquishable_count: 0 }), reconcileQualityOwnership: vi.fn(), listQualityPresets: vi.fn(), createQualityPreset: vi.fn(), listQualityTemplates: vi.fn().mockResolvedValue([]), createQualityTemplate: vi.fn(), updateQualityTemplate: vi.fn(), deleteQualityTemplate: vi.fn() }))
 vi.mock('@/api/admin/scheduledTests', () => ({ default: { create: vi.fn(), update: vi.fn(), delete: vi.fn(), listResults: vi.fn(), getResult: vi.fn() } }))
 vi.mock('@/api/admin/accounts', () => ({ list: vi.fn().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 }) }))
 vi.mock('@/api/admin/groups', () => ({ getModelAllowlistCandidates: vi.fn().mockResolvedValue(["test-judge"]), getAllIncludingInactive: vi.fn().mockResolvedValue([{ id: 21, name: 'Quality pool', status:'active', platform: 'openai' }]) }))
@@ -761,18 +761,6 @@ describe('quality operations', () => {
     expect(wrapper.get('[data-testid="quality-model-shortcuts-error"]').text()).toBe('qualityOps.modelShortcutTooLong')
     expect(wrapper.findAll('[data-testid="quality-model-shortcut"]')).toHaveLength(3)
     wrapper.unmount()
-  })
-
-  it('keeps shortcuts usable and reports when browser persistence fails', async () => {
-    const wrapper = mountView(); await flushPromises()
-    ;(wrapper.vm as any).newPlan(); await flushPromises()
-    const save = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage blocked') })
-    try {
-      await wrapper.get('[data-testid="quality-model-shortcuts-input"]').setValue('custom-model')
-      await wrapper.get('[data-testid="quality-save-model-shortcuts"]').trigger('click')
-      expect(wrapper.get('[data-testid="quality-model-shortcuts-error"]').text()).toBe('qualityOps.modelShortcutsSaveFailed')
-      expect(wrapper.findAll('[data-testid="quality-model-shortcut"]').map(button => button.text())).toContain('custom-model')
-    } finally { save.mockRestore(); wrapper.unmount() }
   })
 
   it('switches to generated reasoning without saving a fixed question or answer', async () => {

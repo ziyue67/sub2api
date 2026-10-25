@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -170,18 +171,6 @@ func (r *accountOpsRepository) completeTransition(ctx context.Context, e *servic
 	_, err := r.db.ExecContext(ctx, `UPDATE account_ops_threshold_events SET state=$3,lease='',lease_until=NULL,next_send_at=NOW()+($4*INTERVAL '1 second'),last_sent_at=CASE WHEN $3='sent' THEN NOW() ELSE last_sent_at END WHERE id=$1 AND lease=$2 AND state='sending' AND lease_until>NOW()`, e.ID, e.Lease, state, int64(delay/time.Second))
 	return err
 }
-func (r *accountOpsRepository) saveTransitionDelivery(ctx context.Context, e *service.AccountOpsEvent, key string, out service.AccountOpsDelivery) (bool, error) {
-	raw, err := json.Marshal(out)
-	if err != nil {
-		return false, err
-	}
-	result, err := r.db.ExecContext(ctx, `UPDATE account_ops_threshold_events SET deliveries=jsonb_set(deliveries,ARRAY[$3]::text[],COALESCE(deliveries->$3,'{}'::jsonb)||$4::jsonb,true) WHERE id=$1 AND lease=$2 AND state='sending' AND lease_until>NOW()`, e.ID, e.Lease, key, string(raw))
-	if err != nil {
-		return false, err
-	}
-	n, err := result.RowsAffected()
-	return n == 1, err
-}
 
 // A transaction advisory lock coordinates full and scoped config updates across
 // replicas, including inserts into a previously absent settings row.
@@ -202,24 +191,34 @@ func (r *accountOpsRepository) WithAccountOpsConfigLock(ctx context.Context, fn 
 
 func (r *accountOpsRepository) suppressTransitions(ctx context.Context, exec opsConfigExecutor, c service.AccountOpsConfig) error {
 	type rule struct {
-		AccountID int64  `json:"account_id"`
-		Kind      string `json:"kind"`
-		Criteria  string `json:"criteria"`
-		Alert     bool   `json:"alert"`
-		Recovery  bool   `json:"recovery"`
+		GroupID  string `json:"group_id"`
+		Kind     string `json:"kind"`
+		Criteria string `json:"criteria"`
+		Alert    bool   `json:"alert"`
+		Recovery bool   `json:"recovery"`
 	}
 	rules := []rule{}
-	for _, v := range c.BalanceThresholds {
-		criteria, enabled, a, b := c.ThresholdCriteria(v.AccountID, "balance_threshold")
+	seen := map[[2]string]bool{}
+	addRule := func(groupID, kind string) {
+		key := [2]string{groupID, kind}
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		criteria, enabled, a, b := c.ThresholdGroupCriteria(groupID, kind)
 		if enabled {
-			rules = append(rules, rule{v.AccountID, "balance_threshold", criteria, a, b})
+			rules = append(rules, rule{groupID, kind, criteria, a, b})
 		}
 	}
+	for _, group := range c.Groups {
+		addRule(group.ID, "balance_threshold")
+		addRule(group.ID, "quota_threshold")
+	}
+	for _, v := range c.BalanceThresholds {
+		addRule("account:"+strconv.FormatInt(v.AccountID, 10), "balance_threshold")
+	}
 	for _, v := range c.QuotaThresholds {
-		criteria, enabled, a, b := c.ThresholdCriteria(v.AccountID, "quota_threshold")
-		if enabled {
-			rules = append(rules, rule{v.AccountID, "quota_threshold", criteria, a, b})
-		}
+		addRule("account:"+strconv.FormatInt(v.AccountID, 10), "quota_threshold")
 	}
 	raw, err := json.Marshal(rules)
 	if err != nil {
@@ -227,11 +226,11 @@ func (r *accountOpsRepository) suppressTransitions(ctx context.Context, exec ops
 	}
 	// Disabled/removed rules invalidate the baseline. Merely pausing the master or
 	// notification switches retains the episode and cannot invent a recovery.
-	_, err = exec.ExecContext(ctx, `UPDATE account_ops_threshold_monitors m SET adverse=false,eligible=false,healthy_since=NULL,criteria='invalid' WHERE criteria<>'invalid' AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($1::jsonb) x WHERE (x->>'account_id')::bigint=m.account_id AND x->>'kind'=m.kind)`, string(raw))
+	_, err = exec.ExecContext(ctx, `UPDATE account_ops_threshold_monitors m SET adverse=false,eligible=false,healthy_since=NULL,criteria='invalid' WHERE criteria<>'invalid' AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($1::jsonb) x WHERE x->>'group_id'=m.group_id AND x->>'kind'=m.kind)`, string(raw))
 	if err != nil {
 		return err
 	}
-	_, err = exec.ExecContext(ctx, `UPDATE account_ops_threshold_events e SET state='suppressed',lease='',lease_until=NULL WHERE state IN ('pending','failed','sending') AND (NOT $1 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements($2::jsonb) x WHERE (x->>'account_id')::bigint=e.account_id AND x->>'kind'=e.kind AND (e.criteria='' OR x->>'criteria'=e.criteria) AND ((e.phase='alert' AND (x->>'alert')::boolean) OR (e.phase='recovery' AND (x->>'recovery')::boolean))))`, c.Enabled, string(raw))
+	_, err = exec.ExecContext(ctx, `UPDATE account_ops_threshold_events e SET state='suppressed',lease='',lease_until=NULL WHERE state IN ('pending','failed','sending') AND (NOT $1 OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements($2::jsonb) x WHERE x->>'group_id'=e.group_id AND x->>'kind'=e.kind AND (e.criteria='' OR x->>'criteria'=e.criteria) AND ((e.phase='alert' AND (x->>'alert')::boolean) OR (e.phase='recovery' AND (x->>'recovery')::boolean))))`, c.Enabled, string(raw))
 	if err != nil {
 		return err
 	}

@@ -65,6 +65,9 @@ func (r *moderationRecoveryRepo) ManageModerationUser(_ context.Context, _ int64
 		if in.APIAuditExempt != nil {
 			r.state.APIAuditExempt = *in.APIAuditExempt
 		}
+		if in.EmailExempt != nil {
+			r.state.EmailExempt = *in.EmailExempt
+		}
 	}
 	return nil
 }

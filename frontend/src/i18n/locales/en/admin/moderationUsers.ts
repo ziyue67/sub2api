@@ -1,12 +1,15 @@
 export default {
   moderationUsers: {
     "title": "Content moderation user controls",
-    "scope": "Three independent allowlists: auto-ban exemption still reviews and blocks; keyword exemption skips only pre-block keywords; API exemption sends no external audit request (TypeSafe AI reviews text only). Combined policy blocks keyword hits, otherwise audits; keyword-only never calls the API; API-only ignores keywords. Upstream cyber_policy termination, authentication, balance, quotas, permissions, IP security and separate penalties still apply.",
+    "scope": "Four independent allowlists: auto-ban exemption still reviews and blocks; keyword exemption skips only pre-block keywords; API exemption sends no external audit request (TypeSafe AI reviews text only). Combined policy blocks keyword hits, otherwise audits; keyword-only never calls the API; API-only ignores keywords. Upstream cyber_policy termination, authentication, balance, quotas, permissions, IP security and separate penalties still apply.",
     "current": "Current count {count} · User status {status} · Count generation {generation}",
     "lastAction": "Last management action",
     "exemption": "Automatic account ban allowlist",
     "keywordExemption": "Keyword blocking allowlist",
     "apiAuditExemption": "External audit API allowlist",
+    "emailExemption": "Moderation email allowlist",
+    "emailScope": "Stops only this user’s moderation violation, moderation account disable and cyber_policy emails. Review, blocking, counting and penalties still apply. Verification, login security, balance and other emails continue. Revoking restores future sends; skipped emails are not replayed.",
+    "email_exempt": "Moderation email exempt",
     "exemptionTypes": "Allowlist types",
     "auto_ban_exempt": "Auto-ban exempt",
     "keyword_exempt": "Keyword exempt",

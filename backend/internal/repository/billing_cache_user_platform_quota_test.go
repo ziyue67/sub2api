@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -86,10 +87,10 @@ func TestUserPlatformQuotaCache_NilLimitSetThenGet(t *testing.T) {
 	}
 }
 
-func TestUserPlatformQuotaCache_IncrMissIsNoop(t *testing.T) {
+func TestUserPlatformQuotaCache_IncrMissReportsNotApplied(t *testing.T) {
 	c, _ := newMiniRedisCache(t)
-	if err := c.IncrUserPlatformQuotaUsageCache(context.Background(), 1, "openai", 0.5, time.Minute, false); err != nil {
-		t.Fatal(err)
+	if err := c.IncrUserPlatformQuotaUsageCache(context.Background(), 1, "openai", 0.5, time.Minute, false); !errors.Is(err, service.ErrUserPlatformQuotaCacheNotUpdated) {
+		t.Fatalf("missing cache must report not applied, got %v", err)
 	}
 	_, ok, _ := c.GetUserPlatformQuotaCache(context.Background(), 1, "openai")
 	if ok {

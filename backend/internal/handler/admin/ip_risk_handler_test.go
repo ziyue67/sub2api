@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -204,4 +205,64 @@ func TestAnonymousAPIHandlerConfigurationAndScopedRelease(t *testing.T) {
 	w = ipRiskHandlerRequest(t, h.GetAnonymousAPIBans, http.MethodGet, nil)
 	require.Equal(t, 200, w.Code)
 	require.Contains(t, w.Body.String(), `"items":[]`)
+}
+
+func TestIPRiskHandlerEventPagination(t *testing.T) {
+	h, _ := ipRiskHandlerFixture()
+	server := miniredis.RunT(t)
+	m := testutil.NewRedisIPRiskManager(t, h.settingService.IPRiskStore(), server)
+	h.settingService.IPRisk = m
+	cfg := iprisk.DefaultConfig()
+	cfg.Enabled = true
+	cfg.ObserveOnly = true
+	cfg.LoginAttempts.Limit = 0
+	require.NoError(t, m.Save(context.Background(), cfg))
+	r := gin.New()
+	require.NoError(t, r.SetTrustedProxies(nil))
+	r.Use(m.Middleware())
+	r.POST("/api/v1/auth/login", func(c *gin.Context) { c.Status(http.StatusOK) })
+	for i := 0; i < 25; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "198.51.100.1:1234"
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+	}
+	for _, test := range []struct {
+		query                           string
+		page, size, total, pages, count int
+	}{
+		{"", 1, 20, 25, 2, 20},
+		{"page=2&page_size=10&ip=198.51.100.1&category=login", 2, 10, 25, 3, 10},
+		{"page=3&page_size=10", 3, 10, 25, 3, 5},
+		{"page=99&page_size=10", 3, 10, 25, 3, 5},
+		{"page=-1&page_size=invalid", 1, 20, 25, 2, 20},
+		{"page=2&category=register", 1, 20, 0, 1, 0},
+		{"reason=ip_blacklist", 1, 20, 0, 1, 0},
+	} {
+		t.Run(test.query, func(t *testing.T) {
+			w := ipRiskHandlerRequest(t, func(c *gin.Context) {
+				c.Request.URL.RawQuery = test.query
+				h.GetIPRiskEvents(c)
+			}, http.MethodGet, nil)
+			require.Equal(t, http.StatusOK, w.Code)
+			var response struct {
+				Data iprisk.EventPage `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			require.Equal(t, test.page, response.Data.Page)
+			require.Equal(t, test.size, response.Data.PageSize)
+			require.Equal(t, test.total, response.Data.Total)
+			require.Equal(t, test.pages, response.Data.Pages)
+			require.Len(t, response.Data.Items, test.count)
+			require.NotNil(t, response.Data.Items)
+		})
+	}
+	for _, query := range []string{"ip=" + url.QueryEscape("invalid"), "category=invalid"} {
+		w := ipRiskHandlerRequest(t, func(c *gin.Context) {
+			c.Request.URL.RawQuery = query
+			h.GetIPRiskEvents(c)
+		}, http.MethodGet, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code)
+	}
 }
