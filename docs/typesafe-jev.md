@@ -2,6 +2,8 @@
 
 > 整理自上游 [Wei-Shaw/sub2api v0.2.13](https://github.com/Wei-Shaw/sub2api/tree/v0.2.13) README 中的 TypeSafe / Jev 小节（上游 PR [#7425](https://github.com/Wei-Shaw/sub2api/pull/7425)）。本 fork 的 README 结构不同，因此单独成文。
 
+内容审计的新增分类、默认关闭策略和验证边界见 [TypeSafe 内容审计分类](typesafe-content-audit.md)。
+
 ## 使用说明
 
 Sub2API 支持使用 TypeSafe API Key 账户，通过 Jev 原生、非流式的 System One 协议调用模型。

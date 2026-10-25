@@ -155,6 +155,8 @@ class OpenAIOAuthReauthWorkerTest(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_REAUTH_WORKER_TOKEN": "synthetic-worker-token"}), patch(
             "tools.openai_oauth_reauth_worker.shutil.which", return_value="node"
         ), patch.object(Path, "is_file", return_value=True), patch(
+            "tools.openai_codex_oauth_adapter.prepare_codex_runtime", return_value=Path("synthetic-runner.mjs")
+        ), patch(
             "tools.openai_oauth_reauth_worker.subprocess.run", return_value=result
         ) as runner:
             with self.assertRaises(WorkerError) as raised:
@@ -568,7 +570,9 @@ class OpenAIOAuthReauthWorkerTest(unittest.TestCase):
                 "password": "password-secret",
                 "totp_secret": "totp-secret",
             }
-            with patch("tools.openai_oauth_reauth_worker.subprocess.run", side_effect=fake_run):
+            with patch("tools.openai_codex_oauth_adapter.prepare_codex_runtime", return_value=root / "src/protocol-login.mjs"), patch(
+                "tools.openai_oauth_reauth_worker.subprocess.run", side_effect=fake_run
+            ):
                 process_claim(FakeAPI(), None, claim)
 
         stages = [event[2] for event in events if event[0] == "progress"]

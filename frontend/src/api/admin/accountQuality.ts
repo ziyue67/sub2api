@@ -89,3 +89,41 @@ export async function createQualityPreset(body: QualityRulePresetRequest): Promi
   const { data } = await apiClient.post<QualityRulePreset>('/admin/account-quality-presets', body)
   return data
 }
+
+export interface QualityOwnershipEntry {
+  kind: 'model' | 'group'
+  model?: string
+  group_id?: number
+  status: string
+  expected_present: boolean
+  current_present: boolean
+  expected_owner: string
+  current_owner: string
+  current_owner_rule_id?: number
+  expected_digest: string
+  current_digest: string
+  changed_fields: string[]
+  can_relinquish: boolean
+}
+export interface QualityOwnershipPreview {
+  plan_id: number
+  account_id: number
+  rule_version: string
+  account_version: string
+  fence: string
+  action: string
+  models: string[]
+  group_ids: number[]
+  entries: QualityOwnershipEntry[]
+  relinquishable_count: number
+  ownership_retained: boolean
+  restrictions_changed: boolean
+}
+export async function previewQualityOwnership(id: number): Promise<QualityOwnershipPreview> {
+  const { data } = await apiClient.get<QualityOwnershipPreview>(`/admin/account-quality-plans/${id}/ownership`)
+  return data
+}
+export async function reconcileQualityOwnership(id: number, fence: string): Promise<QualityOwnershipPreview> {
+  const { data } = await apiClient.post<QualityOwnershipPreview>(`/admin/account-quality-plans/${id}/ownership/reconcile`, { fence, confirm: true })
+  return data
+}

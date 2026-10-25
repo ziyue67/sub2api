@@ -30,7 +30,7 @@ func TestContentModerationTypeSafeLive(t *testing.T) {
 		cancel()
 		require.NoError(t, err)
 		require.Equal(t, 200, status)
-		require.Len(t, result.Scores, 13)
+		require.Len(t, result.Scores, 15)
 		t.Logf("sample=%s model=%s rules=%s latency_ms=%d within_3s=%t input_tokens=%d output_tokens=%d scores=%v", sample.id, result.Model, TypeSafeModerationRulesVersion, elapsed.Milliseconds(), elapsed <= 3*time.Second, result.Usage.InputTokens, result.Usage.OutputTokens, result.Scores)
 	}
 }

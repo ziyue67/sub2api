@@ -57,10 +57,10 @@ func checkQualityIsolationScope(plan *service.ScheduledTestPlan, state *qualityS
 	if state.Action == service.QualityActionIsolateModels {
 		if q == nil || q.Quality == nil || q.Quality.Action != service.QualityActionIsolateModels ||
 			!sameQualityScope(state.IsolationModels, service.QualityModels(plan)) || !sameQualityScope(state.IsolationGroupIDs, q.Quality.RemoveGroupIDs) {
-			return fmt.Errorf("restore this rule's isolated models and groups before changing its action or targets")
+			return service.QualityScopeConflict("restore this rule's isolated models and groups before changing its action or targets")
 		}
 	} else if state.Action != "" && q != nil && q.Quality != nil && q.Quality.Action == service.QualityActionIsolateModels {
-		return fmt.Errorf("restore this rule's previous account action before enabling model isolation")
+		return service.QualityScopeConflict("restore this rule's previous account action before enabling model isolation")
 	}
 	return nil
 }

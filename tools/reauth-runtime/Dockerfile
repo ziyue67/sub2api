@@ -17,12 +17,16 @@ RUN python -m pip install --no-cache-dir --only-binary=:all: -r /build/requireme
 COPY tools/openai_oauth_reauth_worker.py /build/worker.py
 COPY tools/openai_totp_rotation.py tools/openai_totp_journal.mjs tools/test_openai_totp_rotation.py tools/test_openai_totp_journal.mjs /build/tools/
 COPY tools/test_openai_oauth_reauth_worker.py tools/test_openai_oauth_reauth_engines.py tools/test_openai_oauth_reauth_runtime_controls.py /build/tools/
+COPY tools/openai_codex_oauth_adapter.py tools/openai_codex_diagnostics.mjs tools/test_openai_codex_oauth_adapter.py tools/test_openai_codex_diagnostics.mjs /build/tools/
 COPY tools/openai_excel_oauth_adapter.py tools/openai_excel_2fa_login.py tools/test_openai_excel_oauth_adapter.py /build/tools/
 COPY tools/openai_excel_password_flow.mjs tools/test_openai_excel_password_flow.mjs /build/tools/
 COPY tools/openai_siwc_oauth_adapter.py tools/openai_siwc_password_flow.mjs tools/test_openai_siwc_oauth_adapter.py tools/test_openai_siwc_password_flow.mjs /build/tools/
 COPY tools/fixtures/siwc-http-transport.mjs /build/tools/fixtures/
+COPY tools/fixtures/codex-http-transport.mjs /build/tools/fixtures/
+COPY tools/fixtures/session-studio/ /build/tools/fixtures/session-studio/
 RUN cp /build/worker.py /build/tools/openai_oauth_reauth_worker.py \
-    && cd /build && EXCEL_TEST_TOSUB2_ROOT=/build/tosub2 python -m unittest tools.test_openai_totp_rotation tools.test_openai_oauth_reauth_worker tools.test_openai_oauth_reauth_engines tools.test_openai_oauth_reauth_runtime_controls tools.test_openai_excel_oauth_adapter tools.test_openai_siwc_oauth_adapter -q \
+    && cd /build && EXCEL_TEST_TOSUB2_ROOT=/build/tosub2 python -m unittest tools.test_openai_totp_rotation tools.test_openai_oauth_reauth_worker tools.test_openai_oauth_reauth_engines tools.test_openai_oauth_reauth_runtime_controls tools.test_openai_excel_oauth_adapter tools.test_openai_siwc_oauth_adapter tools.test_openai_codex_oauth_adapter -q \
+    && node --test /build/tools/test_openai_codex_diagnostics.mjs \
     && node --test /build/tools/test_openai_totp_journal.mjs \
     && node /build/tools/test_openai_excel_password_flow.mjs \
     && node --test /build/tools/test_openai_siwc_password_flow.mjs \

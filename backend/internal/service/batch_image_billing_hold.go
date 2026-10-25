@@ -3,10 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
-
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
-	"go.uber.org/zap"
 )
 
 const (
@@ -38,6 +36,8 @@ func buildBatchImageHoldCommand(job *BatchImageJob, requestID string, actualAmou
 	if job.HoldAmount != nil {
 		holdAmount = *job.HoldAmount
 	}
+	// Preserve the original amounts for receipt verification. A legacy operation
+	// may already have committed before the task's status write failed.
 	if holdAmount < 0 {
 		holdAmount = 0
 	}
@@ -51,8 +51,34 @@ func buildBatchImageHoldCommand(job *BatchImageJob, requestID string, actualAmou
 		BatchID:            job.BatchID,
 		HoldAmount:         holdAmount,
 		ActualAmount:       actualAmount,
+		MonetaryVersion:    job.PricingSnapshotVersion,
 		RequestPayloadHash: strings.TrimSpace(payloadHash),
 	}, nil
+}
+
+// This is a read-only compatibility check, never permission to execute an
+// ambiguous amount. Only the exact committed operation fingerprint can succeed.
+func confirmAmbiguousBatchImageRetry(ctx context.Context, repo UsageBillingRepository, cmd *BatchImageBalanceHoldCommand) (bool, error) {
+	if math.IsNaN(cmd.HoldAmount) || math.IsInf(cmd.HoldAmount, 0) || math.IsNaN(cmd.ActualAmount) || math.IsInf(cmd.ActualAmount, 0) {
+		return true, ErrBatchImageLegacyMoneyPrecision
+	}
+	if cmd.HoldAmount == QuantizeUsageBillingAmount(cmd.HoldAmount) && cmd.ActualAmount == QuantizeUsageBillingAmount(cmd.ActualAmount) {
+		return false, nil
+	}
+	reader, ok := repo.(interface {
+		ConfirmBatchImageBillingReceipt(context.Context, *BatchImageBalanceHoldCommand) (bool, error)
+	})
+	if !ok {
+		return true, ErrBatchImageLegacyMoneyPrecision
+	}
+	confirmed, err := reader.ConfirmBatchImageBillingReceipt(ctx, cmd)
+	if err != nil {
+		return true, err
+	}
+	if !confirmed {
+		return true, ErrBatchImageLegacyMoneyPrecision
+	}
+	return true, nil
 }
 
 func reserveBatchImageBalanceHold(ctx context.Context, repo UsageBillingRepository, job *BatchImageJob, payloadHash string) error {
@@ -61,6 +87,9 @@ func reserveBatchImageBalanceHold(ctx context.Context, repo UsageBillingReposito
 	}
 	cmd, err := buildBatchImageHoldCommand(job, BatchImageHoldRequestID(job.BatchID), 0, payloadHash)
 	if err != nil {
+		return err
+	}
+	if handled, err := confirmAmbiguousBatchImageRetry(ctx, repo, cmd); handled {
 		return err
 	}
 	if cmd.HoldAmount <= 0 {
@@ -83,6 +112,9 @@ func captureBatchImageBalanceHold(ctx context.Context, repo UsageBillingReposito
 	if err != nil {
 		return err
 	}
+	if handled, err := confirmAmbiguousBatchImageRetry(ctx, repo, cmd); handled {
+		return err
+	}
 	if _, err := repo.CaptureBatchImageBalance(ctx, cmd); err != nil {
 		return ErrBatchImageSettlementBillingFailed.WithCause(err)
 	}
@@ -97,19 +129,13 @@ func releaseBatchImageBalanceHold(ctx context.Context, repo UsageBillingReposito
 	if err != nil {
 		return err
 	}
+	if handled, err := confirmAmbiguousBatchImageRetry(ctx, repo, cmd); handled {
+		return err
+	}
 	if cmd.HoldAmount <= 0 {
 		return nil
 	}
 	if _, err := repo.ReleaseBatchImageBalance(ctx, cmd); err != nil {
-		// 同一 release request id 出现指纹冲突，说明此前已有一次携带不同
-		// payloadHash 的释放成功提交（资金已归还）。视为幂等成功，
-		// 避免历史指纹不一致的 job 永远卡在释放失败的毒消息循环里。
-		if errors.Is(err, ErrUsageBillingRequestConflict) {
-			logger.L().Warn("batch_image.release_fingerprint_conflict_treated_as_released",
-				zap.String("batch_id", job.BatchID),
-			)
-			return nil
-		}
 		return ErrBatchImageBillingHoldFailed.WithCause(err)
 	}
 	return nil

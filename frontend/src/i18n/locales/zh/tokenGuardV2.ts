@@ -1,4 +1,13 @@
 export default {
+  reloginBudgetCount: '重登失败预算：{count}/{limit}',
+  reloginBudgetExhausted: '自动重登预算已耗尽，巡检继续',
+  reloginBackoffUntil: '重登冷却至',
+  resumeReloginBudget: '恢复预算（不立即重登）',
+  resumeReloginBudgetConfirm: '确认恢复自动重登预算？不会创建任务、启用开关或更改账号状态；保留现有冷却，且至少等待一次基础冷却。存在活跃任务或巡检时会拒绝。',
+  reloginBudgetResumed: '已恢复重登预算，等待冷却和下一次巡检',
+  ruleReloginBackoffMax: '重登递增冷却上限',
+  ruleReloginMaxFailures: '连续重登失败上限',
+  reloginBudgetHint: '达到上限只暂停自动重登；保存成功后还须巡检鉴权通过才清零。',
   totpManage: {
   "close": "关闭",
   "title": "2FA 管理",

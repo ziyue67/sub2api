@@ -130,7 +130,7 @@ func TestAccountOpsDeliveryNamesSnapshotLatestConfigAndPreserveSentHistory(t *te
 		return &http.Response{StatusCode: 204, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})}
 	event := &AccountOpsEvent{AccountID: 7, Kind: "balance_low", Attempts: 1}
-	svc.deliverEvent(ctx, event)
+	svc.deliverNotification(ctx, event)
 	require.Equal(t, 1, sender.calls)
 	require.Equal(t, 1, requests)
 	before, err := json.Marshal(event.Deliveries)
@@ -145,7 +145,7 @@ func TestAccountOpsDeliveryNamesSnapshotLatestConfigAndPreserveSentHistory(t *te
 	require.NoError(t, json.Unmarshal([]byte(`{"email_name":"新邮箱"}`), &email))
 	_, err = svc.SaveNotificationSettings(ctx, email)
 	require.NoError(t, err)
-	svc.deliverEvent(ctx, event)
+	svc.deliverNotification(ctx, event)
 	require.Equal(t, 1, sender.calls, "a display rename must not resend successful mail")
 	require.Equal(t, 1, requests, "a display rename must not create a new webhook delivery identity")
 	after, err := json.Marshal(event.Deliveries)

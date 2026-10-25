@@ -18,6 +18,7 @@ type ModerationUserState struct {
 	AutoBanExempt  bool       `json:"auto_ban_exempt"`
 	KeywordExempt  bool       `json:"keyword_exempt"`
 	APIAuditExempt bool       `json:"api_audit_exempt"`
+	EmailExempt    bool       `json:"email_exempt"`
 	OwnedDisable   bool       `json:"owned_disable"`
 	Status         string     `json:"status"`
 	CurrentCount   int        `json:"current_count"`
@@ -32,6 +33,7 @@ type ModerationUserAction struct {
 	Exempt         *bool  `json:"auto_ban_exempt"`
 	KeywordExempt  *bool  `json:"keyword_exempt"`
 	APIAuditExempt *bool  `json:"api_audit_exempt"`
+	EmailExempt    *bool  `json:"email_exempt"`
 	Reason         string `json:"reason"`
 	Confirm        bool   `json:"confirm"`
 	ActorID        int64  `json:"-"`
@@ -88,7 +90,7 @@ func (s *ContentModerationService) GetModerationUser(ctx context.Context, userID
 
 func validModerationUserFilter(state string) bool {
 	switch state {
-	case "all", "exempt", "enforced", "auto_ban_exempt", "keyword_exempt", "api_audit_exempt":
+	case "all", "exempt", "enforced", "auto_ban_exempt", "keyword_exempt", "api_audit_exempt", "email_exempt":
 		return true
 	default:
 		return false
@@ -118,7 +120,7 @@ func (s *ContentModerationService) ManageModerationUser(ctx context.Context, use
 	if in.Action != "unban" && in.Action != "reset" && in.Action != "exemption" {
 		return nil, infraerrors.BadRequest("INVALID_MODERATION_ACTION", "Invalid action")
 	}
-	if (in.Action == "exemption") != (in.Exempt != nil || in.KeywordExempt != nil || in.APIAuditExempt != nil) {
+	if (in.Action == "exemption") != (in.Exempt != nil || in.KeywordExempt != nil || in.APIAuditExempt != nil || in.EmailExempt != nil) {
 		return nil, infraerrors.BadRequest("INVALID_MODERATION_ACTION", "Exemption requires at least one explicit boolean; other actions cannot change exemptions")
 	}
 	repo, err := s.moderationUserRepository()

@@ -698,7 +698,7 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	if err := s.updateSnapshot(ctx, account, snapshot, syncRate); err != nil {
 		return nil, err
 	}
-	if syncRate != nil {
+	if syncRate != nil && previousRate != *syncRate {
 		// 写回是后台任务的裸 SQL，不经过管理端路由，因此不会产生 audit_logs 行。
 		// old_rate_multiplier 是本次探测开始时读到的值（写回的 CAS 不比对该列）。
 		slog.Info("upstream_billing_rate_sync_applied",

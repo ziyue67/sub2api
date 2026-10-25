@@ -26,8 +26,8 @@ func (u *exemptionCyberUpstream) DoWithTLS(req *http.Request, proxy string, id i
 
 func TestModerationExemptionsNeverAuthorizeCyberRetry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, ban := range []bool{false, true} {
-		moderator, _, calls := exemptionService(t, ContentModerationModePreBlock, ContentModerationKeywordModeKeywordAndAPI, exemptionFixture(t, true, true, ban))
+	for mask := 0; mask < 4; mask++ {
+		moderator, _, calls := exemptionService(t, ContentModerationModePreBlock, ContentModerationKeywordModeKeywordAndAPI, exemptionFixture(t, true, true, mask&1 != 0, mask&2 != 0))
 		decision, err := moderator.Check(context.Background(), exemptionInput(true))
 		require.NoError(t, err)
 		require.True(t, decision.Allowed)

@@ -1,4 +1,5 @@
 import { apiClient } from '@/api/client'
+import type { PaginatedResponse } from '@/types'
 
 export interface IPThreshold { limit: number; window_seconds: number }
 export interface IPBlockRule { network: string; note: string; enabled: boolean; expires_at: number }
@@ -51,7 +52,7 @@ const base = '/admin/settings/ip-risk'
 export const ipRiskAPI = {
   async get() { return (await apiClient.get<IPRiskSnapshot>(base)).data },
   async save(config: IPRiskConfig) { return (await apiClient.put<IPRiskConfig>(base, config)).data },
-  async events(ip = '', reason = '', category = '') { return (await apiClient.get<{ items: IPRiskEvent[] }>(base + '/events', { params: { ip, reason, category } })).data.items },
+  async events(ip = '', reason = '', category = '', page = 1, pageSize = 20) { return (await apiClient.get<PaginatedResponse<IPRiskEvent>>(base + '/events', { params: { ip, reason, category, page, page_size: pageSize } })).data },
   async bans() { return (await apiClient.get<{ items: IPBan[] }>(base + '/bans')).data.items },
   async anonymousBans() { return (await apiClient.get<{ items: IPBan[] }>(base + '/anonymous-bans')).data.items },
   async unbanAnonymous(network: string) { await apiClient.post(base + '/anonymous-unban', { network }) },

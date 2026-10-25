@@ -137,6 +137,7 @@ deploy/docker-compose.override.yml
 vite.config.js
 docs/*
 !docs/image-request-archive.md
+!docs/typesafe-content-audit.md
 !docs/multi-host-session-owner.md
 !docs/security-penalties.md
 !docs/ip-risk-control.md
@@ -147,6 +148,7 @@ docs/*
 !docs/openai-outbound-identity.md
 !docs/openai-2fa-dual-oauth.md
 !docs/openai-siwc.md
+!docs/admin-api-keys.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

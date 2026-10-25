@@ -1,4 +1,13 @@
 export default {
+  reloginBudgetCount: 'Re-login failure budget: {count}/{limit}',
+  reloginBudgetExhausted: 'Automatic re-login exhausted; inspections continue',
+  reloginBackoffUntil: 'Re-login cooldown until',
+  resumeReloginBudget: 'Restore budget (no immediate login)',
+  resumeReloginBudgetConfirm: 'Restore the automatic re-login budget? This creates no task and changes no switch or account state. Existing cooldown is retained, with at least one base cooldown. Active tasks or inspections prevent recovery.',
+  reloginBudgetResumed: 'Budget restored; waiting for cooldown and the next inspection',
+  ruleReloginBackoffMax: 'Maximum re-login backoff',
+  ruleReloginMaxFailures: 'Consecutive re-login failure limit',
+  reloginBudgetHint: 'Only automatic re-login pauses at the limit. Saved credentials must pass a later authentication inspection to reset it.',
   totpManage: {
   "close": "Close",
   "title": "Manage 2FA",

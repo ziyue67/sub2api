@@ -81,9 +81,9 @@ func TestAccountOpsDeliveryRechecksAmountUnitTypeIdentityAndRules(t *testing.T) 
 	cfg.WeeklyQuota = false
 	cfg.BalanceThresholds = []AccountOpsBalanceRule{{AccountID: 1, Enabled: true, Threshold: 5, Unit: "USD"}}
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
-	e, trigger := svc.evaluateThreshold(context.Background(), a, "balance_threshold", cfg, now)
-	require.True(t, trigger)
-	svc.deliverEvent(context.Background(), e)
+	e, state := svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, now)
+	require.Equal(t, "active", state)
+	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, 1, sender.calls)
 	for _, change := range []func(){func() {
 		snapshot.Balance.Data["remaining"] = 5.1
@@ -101,7 +101,7 @@ func TestAccountOpsDeliveryRechecksAmountUnitTypeIdentityAndRules(t *testing.T) 
 		b.Data["unit"] = "USD"
 		change()
 		e.Deliveries = nil
-		svc.deliverEvent(context.Background(), e)
+		svc.deliverNotification(context.Background(), e)
 		require.Equal(t, 1, sender.calls)
 	}
 }
@@ -114,12 +114,12 @@ func TestAccountOpsQuotaThresholdBoundaryAndPercentValidation(t *testing.T) {
 	cfg.Enabled = true
 	cfg.Recipient = "ops@example.test"
 	cfg.QuotaThresholds = []AccountOpsQuotaRule{{AccountID: 2, Enabled: true, ThresholdPercent: 90, Window: "any"}}
-	e, trigger := svc.evaluateThreshold(context.Background(), a, "quota_threshold", cfg, now)
-	require.True(t, trigger)
+	e, state := svc.assessThreshold(context.Background(), a, "quota_threshold", cfg, now)
+	require.Equal(t, "active", state)
 	require.Equal(t, "7d", e.Details.Window)
 	cfg.QuotaThresholds[0].Window = "5h"
-	_, trigger = svc.evaluateThreshold(context.Background(), a, "quota_threshold", cfg, now)
-	require.False(t, trigger)
+	_, state = svc.assessThreshold(context.Background(), a, "quota_threshold", cfg, now)
+	require.Equal(t, "resolved", state)
 	cfg.QuotaThresholds[0].ThresholdPercent = 0
 	require.Error(t, svc.SaveConfig(context.Background(), cfg))
 	cfg.QuotaThresholds[0].ThresholdPercent = 101
@@ -161,10 +161,10 @@ func TestAccountOpsStaleQueuedBalanceIsSuppressedNotRecovered(t *testing.T) {
 	cfg.Recipient = "ops@example.test"
 	cfg.BalanceThresholds = []AccountOpsBalanceRule{{AccountID: 1, Enabled: true, Threshold: 5, Unit: "USD"}}
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
-	e, trigger := svc.evaluateThreshold(context.Background(), a, "balance_threshold", cfg, now)
-	require.True(t, trigger)
+	e, state := svc.assessThreshold(context.Background(), a, "balance_threshold", cfg, now)
+	require.Equal(t, "active", state)
 	b.FreshUntil = &received
-	svc.deliverEvent(context.Background(), e)
+	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, "suppressed", repo.state)
 	require.Zero(t, sender.calls)
 }

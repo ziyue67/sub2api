@@ -169,8 +169,6 @@ type accountOpsLeaseRepository interface {
 }
 type accountOpsDeliveryRepository interface {
 	SaveDelivery(context.Context, *AccountOpsEvent, string, AccountOpsDelivery) (bool, error)
-	ResolveThreshold(context.Context, int64, string, time.Duration) error
-	SuppressThreshold(context.Context, int64, string, time.Duration) error
 }
 
 func opsEmailIdentity(recipient string) string {

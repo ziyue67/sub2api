@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -136,7 +135,7 @@ func (r *scheduledTestPlanRepository) Delete(ctx context.Context, id int64) erro
 		return err
 	}
 	if state.Action == service.QualityActionIsolateModels {
-		return fmt.Errorf("restore this rule's isolated models and groups before deleting it")
+		return service.QualityScopeConflict("restore this rule's isolated models and groups before deleting it")
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM scheduled_test_plans WHERE id=$1`, id); err != nil {
 		return err

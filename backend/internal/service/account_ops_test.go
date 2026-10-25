@@ -99,7 +99,7 @@ func TestAccountOpsExplicitOptInAndRedaction(t *testing.T) {
 	require.NotContains(t, event.Signal, "secret")
 	event.Attempts = 1
 	event.AccountName = "<script>"
-	svc.deliverEvent(context.Background(), &event)
+	svc.deliverNotification(context.Background(), &event)
 	require.Equal(t, 1, sender.calls)
 	require.Equal(t, "ops@example.com", sender.to)
 	require.Equal(t, "sent", repo.state)
@@ -108,7 +108,7 @@ func TestAccountOpsExplicitOptInAndRedaction(t *testing.T) {
 	require.Contains(t, sender.body, "&lt;script&gt;")
 	cfg.Enabled = false
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
-	svc.deliverEvent(context.Background(), &event)
+	svc.deliverNotification(context.Background(), &event)
 	require.Equal(t, 1, sender.calls)
 	require.Equal(t, "suppressed", repo.state)
 }
@@ -120,11 +120,11 @@ func TestAccountOpsMailFailureDoesNotBecomeSent(t *testing.T) {
 	cfg.Recipient = "ops@example.com"
 	require.NoError(t, svc.SaveConfig(context.Background(), cfg))
 	e := &AccountOpsEvent{AccountID: 7, Kind: "weekly_quota", Attempts: 1}
-	svc.deliverEvent(context.Background(), e)
+	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, "failed", repo.state)
 	require.Equal(t, 5*time.Minute, repo.delay)
 	e.Attempts = 3
-	svc.deliverEvent(context.Background(), e)
+	svc.deliverNotification(context.Background(), e)
 	require.Equal(t, time.Hour, repo.delay)
 }
 func TestAccountOpsRejectsMultipleRecipients(t *testing.T) {

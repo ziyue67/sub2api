@@ -256,12 +256,12 @@ func (s *AccountOpsService) thresholdAccounts(ctx context.Context, apiOnly bool)
 	if s.accounts == nil {
 		return nil, errors.New("account repository unavailable")
 	}
-	accounts, err := s.accounts.ListAllWithFilters(ctx, "", "", "", "", 0, "")
+	accounts, err := s.listAccountOpsAccounts(ctx)
 	if err != nil {
 		return nil, err
 	}
 	items := []AccountOpsBalanceAccount{}
-	c, err := s.ensureManualAccountOpsGroups(ctx)
+	c, err := s.ensureManualAccountOpsGroupsFromAccounts(ctx, accounts)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (s *AccountOpsService) thresholdAccounts(ctx context.Context, apiOnly bool)
 			continue
 		}
 		item := opsBalanceAccount(a, now)
-		group := s.accountOpsGroupAssignment(ctx, a, c)
+		group := accountOpsGroupAssignment(a, c)
 		item.GroupID, item.GroupName, item.GroupMode = group.ID, group.Name, group.Mode
 		if a.Type == AccountTypeOAuth {
 			item.UsageWindows = s.usageWindows(ctx, a, now)
@@ -338,17 +338,13 @@ func opsPickWindow(windows []AccountOpsUsageWindow, selected string) *AccountOps
 	}
 	return best
 }
-func (s *AccountOpsService) evaluateThreshold(ctx context.Context, a *Account, kind string, c AccountOpsConfig, now time.Time) (*AccountOpsEvent, bool) {
-	e, state := s.assessThreshold(ctx, a, kind, c, now)
-	return e, state == "active"
-}
 
 // Missing or stale samples cancel delivery without asserting that the account recovered.
 func (s *AccountOpsService) assessThreshold(ctx context.Context, a *Account, kind string, c AccountOpsConfig, now time.Time) (*AccountOpsEvent, string) {
 	if a == nil {
 		return nil, "suppressed"
 	}
-	group := s.accountOpsGroupAssignment(ctx, a, c)
+	group := accountOpsGroupAssignment(a, c)
 	e := &AccountOpsEvent{AccountID: a.ID, AccountName: a.Name, GroupID: group.ID, GroupName: group.Name, Kind: kind, Signal: kind, Identity: opsAccountIdentity(a)}
 	if group.Mode != "account" {
 		e.Identity = group.ID
@@ -405,10 +401,9 @@ func (s *AccountOpsService) assessThreshold(ctx context.Context, a *Account, kin
 }
 
 type accountOpsThresholdMember struct {
-	id         int64
-	account    *Account
-	lookupErr  error
-	assignment AccountOpsGroupAssignment
+	id        int64
+	account   *Account
+	lookupErr error
 }
 
 // thresholdRuleIDs keeps the configured rule set stable while scanBalances
@@ -477,40 +472,45 @@ func groupAccountID(members []accountOpsThresholdMember) int64 {
 	return members[0].id
 }
 
+// Keep deleted or temporarily unreadable accounts in their configured group so
+// both scanning and delivery rechecks can invalidate or defer the same episode.
+func thresholdAccountGroup(a *Account, id int64, c AccountOpsConfig) AccountOpsGroupAssignment {
+	if a != nil {
+		return accountOpsGroupAssignment(a, c)
+	}
+	assignment := AccountOpsGroupAssignment{ID: "account:" + fmt.Sprint(id), Name: fmt.Sprint(id), DefaultName: fmt.Sprint(id), Mode: "account"}
+	for _, configured := range c.Groups {
+		for _, memberID := range configured.AccountIDs {
+			if memberID == id {
+				name := strings.TrimSpace(configured.Name)
+				assignment = AccountOpsGroupAssignment{ID: configured.ID, Name: name, DefaultName: name, Provider: "manual", Mode: "manual"}
+			}
+		}
+	}
+	return assignment
+}
+
 func (s *AccountOpsService) loadThresholdGroupMembers(ctx context.Context, groupID, kind string, c AccountOpsConfig) (AccountOpsGroupAssignment, []accountOpsThresholdMember, error) {
 	if s.accounts == nil {
 		return AccountOpsGroupAssignment{}, nil, errors.New("account repository unavailable")
 	}
 	var assignment AccountOpsGroupAssignment
 	members := make([]accountOpsThresholdMember, 0)
-	for _, id := range thresholdRuleIDs(c, kind) {
-		a, err := s.accounts.GetByID(ctx, id)
+	ids := thresholdRuleIDs(c, kind)
+	accounts := s.loadThresholdAccounts(ctx, ids)
+	for _, id := range ids {
+		a, err := accounts[id].account, accounts[id].lookupErr
 		if err != nil && !errors.Is(err, ErrAccountNotFound) {
 			return AccountOpsGroupAssignment{}, nil, err
 		}
-		var current AccountOpsGroupAssignment
-		if a != nil {
-			current = s.accountOpsGroupAssignment(ctx, a, c)
-		} else {
-			for _, configured := range c.Groups {
-				for _, memberID := range configured.AccountIDs {
-					if memberID == id {
-						name := strings.TrimSpace(configured.Name)
-						current = AccountOpsGroupAssignment{ID: configured.ID, Name: name, DefaultName: name, Provider: "manual", Mode: "manual"}
-					}
-				}
-			}
-			if current.ID == "" {
-				current = AccountOpsGroupAssignment{ID: "account:" + fmt.Sprint(id), Name: fmt.Sprint(id), DefaultName: fmt.Sprint(id), Mode: "account"}
-			}
-		}
+		current := thresholdAccountGroup(a, id, c)
 		if current.ID != groupID {
 			continue
 		}
 		if assignment.ID == "" {
 			assignment = current
 		}
-		members = append(members, accountOpsThresholdMember{id: id, account: a, lookupErr: err, assignment: current})
+		members = append(members, accountOpsThresholdMember{id: id, account: a, lookupErr: err})
 	}
 	return assignment, members, nil
 }
@@ -522,9 +522,6 @@ func (s *AccountOpsService) observeThresholdGroup(ctx context.Context, group Acc
 	}
 	criteria, enabled, alert, recovery := accountOpsGroupCriteria(c, kind, members)
 	e, state := s.assessThresholdGroup(ctx, group, members, kind, c, now)
-	if e == nil {
-		e = &AccountOpsEvent{AccountID: groupAccountID(members), AccountName: group.Name, GroupID: group.ID, GroupName: group.Name, Kind: kind, Signal: kind, Identity: group.ID, Criteria: criteria}
-	}
 	e.GroupID, e.GroupName, e.Identity, e.Criteria = group.ID, group.Name, group.ID, criteria
 	if e.AccountName == "" {
 		e.AccountName = group.Name
@@ -540,6 +537,8 @@ func (s *AccountOpsService) scanBalances(ctx context.Context) {
 	if !c.Enabled || s.accounts == nil {
 		return
 	}
+	ids := append(thresholdRuleIDs(c, "balance_threshold"), thresholdRuleIDs(c, "quota_threshold")...)
+	accounts := s.loadThresholdAccounts(ctx, ids)
 
 	for _, kind := range []string{"balance_threshold", "quota_threshold"} {
 		groups := map[string]struct {
@@ -547,32 +546,15 @@ func (s *AccountOpsService) scanBalances(ctx context.Context) {
 			members    []accountOpsThresholdMember
 		}{}
 		for _, id := range thresholdRuleIDs(c, kind) {
-			lookupTimeout := s.thresholdLookupTimeout
-			if lookupTimeout <= 0 {
-				lookupTimeout = 5 * time.Second
-			}
-			query, cancel := context.WithTimeout(ctx, lookupTimeout)
-			a, err := s.accounts.GetByID(query, id)
-			cancel()
+			a, err := accounts[id].account, accounts[id].lookupErr
 			if err != nil && !errors.Is(err, ErrAccountNotFound) {
 				a = nil
 			}
-			assignment := AccountOpsGroupAssignment{ID: "account:" + fmt.Sprint(id), Name: fmt.Sprint(id), DefaultName: fmt.Sprint(id), Mode: "account"}
-			if a != nil {
-				assignment = s.accountOpsGroupAssignment(ctx, a, c)
-			} else {
-				for _, configured := range c.Groups {
-					for _, memberID := range configured.AccountIDs {
-						if memberID == id {
-							assignment = AccountOpsGroupAssignment{ID: configured.ID, Name: strings.TrimSpace(configured.Name), DefaultName: strings.TrimSpace(configured.Name), Provider: "manual", Mode: "manual"}
-						}
-					}
-				}
-			}
+			assignment := thresholdAccountGroup(a, id, c)
 			key := assignment.ID
 			entry := groups[key]
 			entry.assignment = assignment
-			entry.members = append(entry.members, accountOpsThresholdMember{id: id, account: a, lookupErr: err, assignment: assignment})
+			entry.members = append(entry.members, accountOpsThresholdMember{id: id, account: a, lookupErr: err})
 			groups[key] = entry
 		}
 		for _, group := range groups {
@@ -601,7 +583,7 @@ func (s *AccountOpsService) recheckThreshold(ctx context.Context, e *AccountOpsE
 	if a == nil {
 		return "suppressed", nil
 	}
-	group := s.accountOpsGroupAssignment(query, a, c)
+	group := accountOpsGroupAssignment(a, c)
 	if e.GroupID != "" {
 		if strings.HasPrefix(e.GroupID, "account:") {
 			if group.ID != e.GroupID {

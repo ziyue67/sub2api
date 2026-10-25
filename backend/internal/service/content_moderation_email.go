@@ -1,11 +1,49 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"html"
 	"strings"
 	"time"
 )
+
+// Suppression is distinct from successful delivery and from template failures.
+var errModerationEmailExempt = errors.New("content moderation email exempt")
+
+// Query current user state, never a queued/auth/config snapshot. Revocation takes
+// effect on future sends; an SMTP delivery already in flight cannot be recalled.
+// Read errors stop this email attempt without bypassing enforcement or falling back.
+func (s *ContentModerationService) checkModerationEmailExemption(ctx context.Context, log *ContentModerationLog) error {
+	id := contentModerationEmailUserID(log)
+	if id <= 0 {
+		return nil
+	}
+	repo, err := s.moderationUserRepository()
+	if err != nil {
+		return err
+	}
+	state, err := repo.GetModerationUser(ctx, id, time.Now(), false)
+	if err != nil {
+		return fmt.Errorf("read content moderation email exemption: %w", err)
+	}
+	if state == nil {
+		return errors.New("content moderation email state unavailable")
+	}
+	if state.EmailExempt {
+		return errModerationEmailExempt
+	}
+	return nil
+}
+
+// Both built-in bodies and template fallbacks recheck at the send boundary.
+func (s *ContentModerationService) sendModerationEmail(ctx context.Context, log *ContentModerationLog, subject, body string) error {
+	if err := s.checkModerationEmailExemption(ctx, log); err != nil {
+		return err
+	}
+	return s.emailService.SendEmail(ctx, log.UserEmail, subject, body)
+}
 
 func buildContentModerationViolationEmailBody(siteName string, log *ContentModerationLog, cfg *ContentModerationConfig) string {
 	if log == nil {

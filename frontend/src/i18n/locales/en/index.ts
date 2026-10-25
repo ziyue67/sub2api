@@ -10,6 +10,7 @@ import tokenGuard from './tokenGuard'
 import pelicanTests from './pelicanTests'
 import modelTrace from './modelTrace'
 import tokenGuardV2 from './tokenGuardV2'
+import adminAccessKeys from './adminAccessKeys'
 import landing from './landing'
 import common from './common'
 import dashboard from './dashboard'
@@ -45,6 +46,7 @@ export default {
   pelicanTests,
   modelTrace,
   tokenGuardV2,
+  adminAccessKeys,
   requestTiming,
   ...landing,
   ...common,

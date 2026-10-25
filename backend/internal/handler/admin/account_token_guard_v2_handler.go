@@ -79,13 +79,15 @@ func (h *AccountTokenGuardV2Handler) List(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{
-		"runtime_settings":         runtimeSettings,
-		"accounts":                 accounts,
-		"worker":                   h.service.WorkerStatus(),
-		"probe_interval_seconds":   rules.ProbeIntervalSeconds,
-		"retry_interval_seconds":   rules.RetryIntervalSeconds,
-		"relogin_cooldown_seconds": rules.ReloginCooldownSeconds,
-		"fail_streak_threshold":    rules.FailStreakThreshold,
+		"relogin_backoff_max_seconds": rules.ReloginBackoffMaxSeconds,
+		"relogin_max_failures":        rules.ReloginMaxFailures,
+		"runtime_settings":            runtimeSettings,
+		"accounts":                    accounts,
+		"worker":                      h.service.WorkerStatus(),
+		"probe_interval_seconds":      rules.ProbeIntervalSeconds,
+		"retry_interval_seconds":      rules.RetryIntervalSeconds,
+		"relogin_cooldown_seconds":    rules.ReloginCooldownSeconds,
+		"fail_streak_threshold":       rules.FailStreakThreshold,
 	})
 }
 
@@ -129,6 +131,21 @@ func (h *AccountTokenGuardV2Handler) SaveRules(c *gin.Context) {
 	if err := c.ShouldBindJSON(&rules); err != nil {
 		response.BadRequest(c, "Invalid request")
 		return
+	}
+	// Old clients omit the two new fields. Preserve a previously configured
+	// budget; initial old settings still receive the documented safe defaults.
+	if rules.ReloginMaxFailures == 0 || rules.ReloginBackoffMaxSeconds == 0 {
+		current, err := h.service.GetRules(c.Request.Context())
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		if rules.ReloginMaxFailures == 0 {
+			rules.ReloginMaxFailures = current.ReloginMaxFailures
+		}
+		if rules.ReloginBackoffMaxSeconds == 0 {
+			rules.ReloginBackoffMaxSeconds = max(current.ReloginBackoffMaxSeconds, rules.ReloginCooldownSeconds)
+		}
 	}
 	saved, err := h.service.SaveRules(c.Request.Context(), rules)
 	if err != nil {
@@ -206,4 +223,24 @@ func (h *AccountTokenGuardV2Handler) Relogin(c *gin.Context) {
 		return
 	}
 	response.Accepted(c, task)
+}
+
+func (h *AccountTokenGuardV2Handler) ResumeReloginBudget(c *gin.Context) {
+	id, ok := parseTokenGuardV2AccountID(c)
+	if !ok {
+		return
+	}
+	var input struct {
+		Confirm bool `json:"confirm"`
+	}
+	if c.ShouldBindJSON(&input) != nil || !input.Confirm {
+		response.BadRequest(c, "Explicit confirmation is required to restore the automatic re-login budget")
+		return
+	}
+	account, err := h.service.ResumeReloginBudget(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, account)
 }

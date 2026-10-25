@@ -3,6 +3,8 @@
 FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/__tests__/ImageArchiveAsset.spec.ts \
 	src/views/admin/__tests__/ImageArchiveView.spec.ts \
+	src/views/admin/__tests__/RiskControlView.spec.ts \
+	src/i18n/__tests__/riskControlLocales.spec.ts \
 	src/components/common/__tests__/PlatformTypeBadge.openaiPlans.spec.ts \
 	src/components/common/__tests__/PlatformTypeBadge.grok.spec.ts \
 	src/views/admin/__tests__/AutoConfigView.spec.ts \
@@ -44,6 +46,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/AccountQualityView.spec.ts \
 	src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts \
 	src/utils/__tests__/qualityRulePatch.spec.ts \
+	src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts \
 	src/utils/__tests__/accountAutoBPS.spec.ts \
 	src/components/admin/operations/__tests__/QualityProbeSchedule.spec.ts \
 	src/components/admin/operations/__tests__/SmartOpsNav.spec.ts \
@@ -87,6 +90,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/keys/__tests__/BulkEditKeysModal.spec.ts \
 	src/components/admin/user/__tests__/UserPlatformQuotaModal.spec.ts \
 	src/components/admin/user/__tests__/UserEditModal.spec.ts \
+	src/components/admin/moderation/__tests__/ModerationUsers.spec.ts \
 	src/views/user/__tests__/KeysView.spec.ts \
 	src/api/__tests__/channelMonitorV2.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \

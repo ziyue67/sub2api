@@ -168,14 +168,6 @@ func (s *AccountOpsService) legacyAccountOpsGroupAssignment(ctx context.Context,
 	return resolved
 }
 
-func (s *AccountOpsService) accountOpsGroupAssignment(_ context.Context, a *Account, c AccountOpsConfig) AccountOpsGroupAssignment {
-	return accountOpsGroupAssignment(a, c)
-}
-
-func (s *AccountOpsService) cachedAccountOpsGroupAssignment(a *Account, c AccountOpsConfig) AccountOpsGroupAssignment {
-	return accountOpsGroupAssignment(a, c)
-}
-
 func accountOpsUpstreamIdentity(a *Account) (provider, site string, userID int64) {
 	provider, _ = a.Extra[UpstreamBillingProviderExtraKey].(string)
 	site, _ = a.Extra[UpstreamBillingSiteExtraKey].(string)

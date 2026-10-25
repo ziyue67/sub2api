@@ -181,7 +181,7 @@ func (s *AccountOpsService) Observe(account *Account, status int, headers http.H
 	if len(name) > 120 {
 		name = name[:120]
 	}
-	group := s.cachedAccountOpsGroupAssignment(account, c)
+	group := accountOpsGroupAssignment(account, c)
 	event := AccountOpsEvent{AccountID: account.ID, AccountName: string(name), GroupID: group.ID, GroupName: group.Name, Kind: kind, Signal: signal, HTTPStatus: status}
 	// The hot request path never waits for SMTP or the database. Raw errors and credentials do not enter the queue.
 	select {
@@ -279,11 +279,8 @@ func (s *AccountOpsService) deliver(ctx context.Context) {
 		if event == nil {
 			return
 		}
-		s.deliverEvent(ctx, event)
+		s.deliverNotification(ctx, event)
 	}
-}
-func (s *AccountOpsService) deliverEvent(ctx context.Context, event *AccountOpsEvent) {
-	s.deliverNotification(ctx, event)
 }
 
 func (s *AccountOpsService) List(ctx context.Context, offset, limit int) ([]AccountOpsEvent, error) {

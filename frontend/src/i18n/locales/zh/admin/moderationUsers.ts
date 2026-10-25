@@ -1,12 +1,15 @@
 export default {
   moderationUsers: {
     "title": "内容审查用户管理",
-    "scope": "三类白名单独立组合：自动封号豁免仍审仍拦；关键词豁免仅跳过前置关键词层；API 豁免不发送外部审核请求（TypeSafe AI 仅审文字）。策略仍生效：关键词+API 命中即拦，否则调用 API；仅关键词不调用 API；仅 API 不看关键词。均不豁免上游明确 cyber_policy 终止/止发、认证、余额配额、权限、IP 安全或其他独立处罚。",
+    "scope": "四类白名单独立组合：自动封号豁免仍审仍拦；关键词豁免仅跳过前置关键词层；API 豁免不发送外部审核请求（TypeSafe AI 仅审文字）。策略仍生效：关键词+API 命中即拦，否则调用 API；仅关键词不调用 API；仅 API 不看关键词。均不豁免上游明确 cyber_policy 终止/止发、认证、余额配额、权限、IP 安全或其他独立处罚。",
     "current": "当前计数 {count} · 用户状态 {status} · 计数代次 {generation}",
     "lastAction": "最近管理操作",
     "exemption": "自动封号白名单",
     "keywordExemption": "关键词拦截白名单",
     "apiAuditExemption": "外部审核 API 白名单",
+    "emailExemption": "邮件通知白名单",
+    "emailScope": "仅停止该用户的内容审查违规、审查封号及 cyber_policy 通知邮件，仍审查、拦截、计数并按规则处罚；验证码、登录安全、余额等其他邮件照常。撤销后恢复未来发送，不补发已跳过的邮件。",
+    "email_exempt": "审查邮件豁免",
     "exemptionTypes": "白名单类型",
     "auto_ban_exempt": "自动封号豁免",
     "keyword_exempt": "关键词豁免",

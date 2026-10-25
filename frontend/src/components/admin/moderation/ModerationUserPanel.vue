@@ -19,6 +19,10 @@
         <input v-model="apiAuditExempt" type="checkbox" data-test="api-audit-exempt" class="mt-1" />
         <span>{{ t('admin.moderationUsers.apiAuditExemption') }}</span>
       </label>
+      <label class="flex items-start gap-2 text-sm">
+        <input v-model="emailExempt" type="checkbox" data-test="email-exempt" class="mt-1" />
+        <span>{{ t('admin.moderationUsers.emailExemption') }}<small class="mt-1 block text-gray-500">{{ t('admin.moderationUsers.emailScope') }}</small></span>
+      </label>
       <label class="block text-sm">{{ t('admin.moderationUsers.reason') }}
         <input v-model.trim="reason" class="input mt-1" maxlength="500" data-test="reason" />
       </label>
@@ -48,12 +52,14 @@ const state = ref<ModerationUserState | null>(null)
 const exempt = ref(false)
 const keywordExempt = ref(false)
 const apiAuditExempt = ref(false)
-const exemptionsChanged = computed(() => state.value && (exempt.value !== state.value.auto_ban_exempt || keywordExempt.value !== (state.value.keyword_exempt ?? false) || apiAuditExempt.value !== (state.value.api_audit_exempt ?? false)))
+const emailExempt = ref(false)
+const exemptionsChanged = computed(() => state.value && (exempt.value !== state.value.auto_ban_exempt || keywordExempt.value !== (state.value.keyword_exempt ?? false) || apiAuditExempt.value !== (state.value.api_audit_exempt ?? false) || emailExempt.value !== (state.value.email_exempt ?? false)))
 function readState(data: ModerationUserState) {
   state.value = data
   exempt.value = data.auto_ban_exempt
   keywordExempt.value = data.keyword_exempt ?? false
   apiAuditExempt.value = data.api_audit_exempt ?? false
+  emailExempt.value = data.email_exempt ?? false
 }
 const reason = ref('')
 const confirmed = ref(false)
@@ -81,7 +87,7 @@ async function apply(action: ModerationUserAction['action']) {
   const version = loadVersion
   busy.value = true; error.value = ''; success.value = false
   try {
-    const data = await manageModerationUser(props.userId, { action, version: state.value.version, reason: reason.value, confirm: confirmed.value, ...(action === 'exemption' ? { auto_ban_exempt: exempt.value, keyword_exempt: keywordExempt.value, api_audit_exempt: apiAuditExempt.value } : {}) })
+    const data = await manageModerationUser(props.userId, { action, version: state.value.version, reason: reason.value, confirm: confirmed.value, ...(action === 'exemption' ? { auto_ban_exempt: exempt.value, keyword_exempt: keywordExempt.value, api_audit_exempt: apiAuditExempt.value, email_exempt: emailExempt.value } : {}) })
     if (version !== loadVersion) return
     readState(data); confirmed.value = false; reason.value = ''; success.value = true
     emit('changed', data)
