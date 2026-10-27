@@ -158,7 +158,7 @@ func TestPelicanKeepaliveHTTP(t *testing.T) {
 			require.GreaterOrEqual(t, beats, 1, "shared test entry must immediately flush a keepalive comment")
 			require.NoError(t, <-result)
 			<-upstreamDone
-			text, errMsg, _ := parseTestSSEOutput(body.String())
+			text, errMsg, _ := parseTestSSEOutputWithModel(body.String())
 			require.Equal(t, "<!doctype html><html>verified</html>", text)
 			require.Empty(t, errMsg)
 			require.Equal(t, 1, strings.Count(body.String(), `"type":"test_complete"`))

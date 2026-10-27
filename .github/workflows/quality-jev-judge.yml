@@ -14,7 +14,8 @@ permissions:
   contents: read
 jobs:
   protocol-and-db:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
@@ -79,7 +80,8 @@ jobs:
           name: quality-jev-logs-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name }}
           path: ${{ runner.temp }}/quality-jev-*
   offline-ui:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6

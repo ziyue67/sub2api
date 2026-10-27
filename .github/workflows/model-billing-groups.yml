@@ -16,7 +16,8 @@ permissions:
   contents: read
 jobs:
   billing-regressions:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       GOMAXPROCS: '2'
@@ -34,7 +35,8 @@ jobs:
         working-directory: backend
         run: go test -tags=unit ./internal/service ./internal/handler/admin -run '^(TestModelBilling|TestAutoConfigModelBilling)' -count=1 -v -timeout=15m
   scope-ui:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

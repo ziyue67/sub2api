@@ -3798,7 +3798,7 @@ func (s *AccountTestService) RunTestBackgroundDetailed(ctx context.Context, acco
 
 	finishedAt := time.Now()
 	body := timingWriter.body.String()
-	responseText, errMsg, upstreamModel := parseTestSSEOutput(body)
+	responseText, errMsg, upstreamModel := parseTestSSEOutputWithModel(body)
 
 	status := "success"
 	if testErr != nil || errMsg != "" {
@@ -3864,7 +3864,17 @@ func (w *accountTestTimingWriter) firstContentLatencyMs() int64 {
 }
 
 // parseTestSSEOutput extracts response text and error message from captured SSE output.
-func parseTestSSEOutput(body string) (responseText, errMsg, upstreamModel string) {
+//
+// 保留最初的两返回值签名：接受度工作流会把 pelican_scheduled.go 回退到历史基线
+// （e0823136 等）后再编译，旧调用点按两返回值使用，签名一旦变化会让红门禁变成
+// 编译失败而不是断言失败。上游模型名改用 parseTestSSEOutputWithModel 读取。
+func parseTestSSEOutput(body string) (responseText, errMsg string) {
+	responseText, errMsg, _ = parseTestSSEOutputWithModel(body)
+	return responseText, errMsg
+}
+
+// parseTestSSEOutputWithModel 在 parseTestSSEOutput 的基础上额外返回上游自报模型名。
+func parseTestSSEOutputWithModel(body string) (responseText, errMsg, upstreamModel string) {
 	var texts []string
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)

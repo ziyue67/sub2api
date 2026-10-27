@@ -374,7 +374,7 @@ func (w *pelicanRecorder) WriteString(data string) (int, error) { return w.Write
 
 func parsePelicanOutput(body string) (string, string) {
 	// parseTestSSEOutput 在移植后额外返回上游模型名，Pelican 仅需要正文与错误信息。
-	output, message, _ := parseTestSSEOutput(body)
+	output, message, _ := parseTestSSEOutputWithModel(body)
 	complete := false
 	for _, line := range strings.Split(body, "\n") {
 		if !strings.HasPrefix(line, "data:") {
