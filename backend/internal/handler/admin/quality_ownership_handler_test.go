@@ -50,3 +50,30 @@ func TestQualityOwnershipRequiresExplicitConfirmationAndReturnsFencedConflict(t 
 	require.Equal(t, 409, w.Code)
 	require.Contains(t, w.Body.String(), "QUALITY_OWNERSHIP_PREVIEW_CHANGED")
 }
+
+func TestQualityLiveRestoreRequiresAdminAndExplicitConsent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, observer := range []bool{false, true} {
+		repo := &ownershipHandlerRepo{}
+		h := NewScheduledTestHandler(service.NewScheduledTestService(repo, nil))
+		r := gin.New()
+		if observer {
+			r.Use(func(c *gin.Context) {
+				c.Request = c.Request.WithContext(service.WithObserverScope(c.Request.Context(), []int64{1}))
+				c.Next()
+			})
+		}
+		r.POST("/plans/:id/restore", h.QualityOwnershipRestore)
+		req := httptest.NewRequest("POST", "/plans/7/restore", strings.NewReader(`{"confirm":true,"fence":"`+strings.Repeat("a", 64)+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if observer {
+			require.Equal(t, 403, w.Code)
+			require.Zero(t, repo.calls)
+		} else {
+			require.Equal(t, 409, w.Code)
+			require.Equal(t, 1, repo.calls)
+		}
+	}
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildQualityRulePatch, copyQualityRuleConfig, qualityBPSError, qualityBPSForm, qualityBPSPayload, type QualityRuleDraft } from '../qualityRulePatch'
+import { buildQualityRulePatch, copyQualityRuleConfig, qualityBPSError, qualityBPSForm, qualityBPSPayload, qualityJudgeConfigured, qualityRuleFieldValue, type QualityRuleDraft } from '../qualityRulePatch'
 import type { QualityBPSPolicy, ScheduledTestPlan } from '@/types'
 
 const draft = (): QualityRuleDraft => ({
@@ -29,6 +29,21 @@ const probePlan = () => {
 }
 
 describe('quality rule copy inputs', () => {
+  it('retains Jev choice in copy and bulk patches without importing arbitrary fields', () => {
+    const source = draft()
+    source.pelican_config.quality.judge = { kind: 'jev', group_id: 0, model_id: '', prompt: 'Compare values' }
+    Object.assign(source.pelican_config.quality.judge, { api_key: 'synthetic-secret', base_url: 'https://example.com?key=secret' })
+    const copy = copyQualityRuleConfig(source.pelican_config)
+    expect(copy.quality.judge).toEqual({ kind: 'jev', group_id: 0, model_id: '', prompt: 'Compare values' })
+    expect(qualityJudgeConfigured(copy.quality.judge)).toBe(true)
+    const patch = buildQualityRulePatch(plan(), source, ['test'])
+    expect(patch.pelican_config!.quality!.judge).toEqual(copy.quality.judge)
+    expect(JSON.stringify(patch)).not.toContain('synthetic-secret')
+    expect(qualityRuleFieldValue({ ...plan(), pelican_config: copy }, 'test')).not.toEqual(qualityRuleFieldValue(plan(), 'test'))
+    expect(qualityJudgeConfigured({ kind: 'jev', group_id: 21, model_id: 'chat', prompt: 'grade' })).toBe(false)
+    expect(qualityJudgeConfigured({ group_id: 21, model_id: 'chat', prompt: 'grade' })).toBe(true)
+    expect(qualityJudgeConfigured({ kind: 'llm', group_id: 0, model_id: '', prompt: 'grade' })).toBe(false)
+  })
   it('accepts null group and BPS model arrays returned by normalized observation and BPS rules', () => {
     const source = plan().pelican_config!
     source.quality!.action = 'enable_bps'

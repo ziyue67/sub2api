@@ -1042,6 +1042,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 // UpdateAccountExtra 仅对 Extra JSONB 做 key 级合并，避免覆盖其它运行态键
 // （如 model_rate_limits / passive_usage_* 等）。
 func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, updates map[string]any) error {
+	// Ordinary partial saves cannot write server-owned quality isolation.
+	// Dedicated quality restore/runtime paths use their own transaction/UpdateExtra.
+	updates = maps.Clone(updates)
+	delete(updates, QualityModelIsolationKey)
 	if err := ValidateAccountCostMultiplierExtra(updates); err != nil {
 		return err
 	}

@@ -12,12 +12,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const recoveryActiveKey = "sub2api.recovery.active"
+
 // Recovery converts panics into the project's standard JSON error envelope.
 //
 // It preserves Gin's broken-pipe handling by not attempting to write a response
 // when the client connection is already gone.
 func Recovery() gin.HandlerFunc {
-	return gin.CustomRecoveryWithWriter(gin.DefaultErrorWriter, func(c *gin.Context, recovered any) {
+	recoverRequest := gin.CustomRecoveryWithWriter(gin.DefaultErrorWriter, func(c *gin.Context, recovered any) {
 		recoveredErr, _ := recovered.(error)
 
 		if isBrokenPipe(recoveredErr) {
@@ -42,6 +44,13 @@ func Recovery() gin.HandlerFunc {
 		)
 		c.Abort()
 	})
+	return func(c *gin.Context) {
+		c.Set(recoveryActiveKey, true)
+		// This must surround Gin's entire recovery handler, including its own
+		// broken-pipe path which does not invoke the custom callback above.
+		defer finishTrafficAfterRecovery(c)
+		recoverRequest(c)
+	}
 }
 
 func isBrokenPipe(err error) bool {

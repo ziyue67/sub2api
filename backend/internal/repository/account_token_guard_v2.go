@@ -121,7 +121,7 @@ func (r *accountTokenGuardV2Repository) ClaimDue(ctx context.Context, owner stri
 			guard.last_probe_at, guard.last_reauth_at, guard.next_probe_at,
 			guard.cooldown_until, guard.blocked_reason,
 			COALESCE(guard.lease_owner, ''), guard.lease_until,
-			guard.created_at, guard.updated_at
+			guard.created_at, guard.updated_at, guard.refresh_failure_code, guard.last_refresh_failure_at
 	`, limit, owner, int64(leaseDuration.Seconds()))
 	if err != nil {
 		return nil, err
@@ -149,7 +149,7 @@ func (r *accountTokenGuardV2Repository) ClaimAccount(ctx context.Context, accoun
 			probe_state, probe_detail, fail_streak,
 			last_probe_at, last_reauth_at, next_probe_at,
 			cooldown_until, blocked_reason,
-			COALESCE(lease_owner, ''), lease_until, created_at, updated_at
+			COALESCE(lease_owner, ''), lease_until, created_at, updated_at, refresh_failure_code, last_refresh_failure_at
 	`, accountID, owner, int64(leaseDuration.Seconds())))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -213,7 +213,7 @@ const accountTokenGuardV2Select = `
 		probe_state, probe_detail, fail_streak,
 		last_probe_at, last_reauth_at, next_probe_at,
 		cooldown_until, blocked_reason,
-		COALESCE(lease_owner, ''), lease_until, created_at, updated_at
+		COALESCE(lease_owner, ''), lease_until, created_at, updated_at, refresh_failure_code, last_refresh_failure_at
 	FROM account_token_guard_v2_accounts`
 
 type accountTokenGuardV2Row interface {
@@ -222,13 +222,13 @@ type accountTokenGuardV2Row interface {
 
 func scanAccountTokenGuardV2(row accountTokenGuardV2Row) (*service.AccountTokenGuardV2Record, error) {
 	var record service.AccountTokenGuardV2Record
-	var lastProbeAt, lastReauthAt, cooldownUntil, leaseUntil sql.NullTime
+	var lastProbeAt, lastReauthAt, cooldownUntil, leaseUntil, lastRefreshFailureAt sql.NullTime
 	if err := row.Scan(
 		&record.AccountID, &record.ReloginFailStreak, &record.LastCountedTaskID, &record.AutoReloginExhausted, &record.Enabled, &record.AutoReloginEnabled,
 		&record.ProbeState, &record.ProbeDetail, &record.FailStreak,
 		&lastProbeAt, &lastReauthAt, &record.NextProbeAt,
 		&cooldownUntil, &record.BlockedReason,
-		&record.LeaseOwner, &leaseUntil, &record.CreatedAt, &record.UpdatedAt,
+		&record.LeaseOwner, &leaseUntil, &record.CreatedAt, &record.UpdatedAt, &record.RefreshFailureCode, &lastRefreshFailureAt,
 	); err != nil {
 		return nil, err
 	}
@@ -244,5 +244,17 @@ func scanAccountTokenGuardV2(row accountTokenGuardV2Row) (*service.AccountTokenG
 	if leaseUntil.Valid {
 		record.LeaseUntil = &leaseUntil.Time
 	}
+	if lastRefreshFailureAt.Valid {
+		record.LastRefreshFailureAt = &lastRefreshFailureAt.Time
+	}
 	return &record, nil
+}
+
+// Recording history never changes scheduling, credentials, leases or budgets.
+func (r *accountTokenGuardV2Repository) RecordRefreshFailure(ctx context.Context, id int64, code string, at time.Time) error {
+	failure := service.SafeCredentialOperationFailure(code, "refresh_token", &at)
+	_, err := r.db.ExecContext(ctx, `UPDATE account_token_guard_v2_accounts
+		SET refresh_failure_code = $2, last_refresh_failure_at = $3
+		WHERE account_id = $1 AND (last_refresh_failure_at IS NULL OR last_refresh_failure_at < $3)`, id, failure.Code, at)
+	return err
 }

@@ -194,6 +194,7 @@ func (s *AccountOpsService) GetOAuthAutoConfig(ctx context.Context) (OAuthAutoCo
 func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAutoConfig) (OAuthAutoConfig, error) {
 	s.autoConfigMu.Lock()
 	defer s.autoConfigMu.Unlock()
+	c.ModelBilling = normalizeModelBillingConfig(c.ModelBilling)
 	if c.ModelMappings == nil {
 		c.ModelMappings = []OAuthModelMappingRule{}
 	}
@@ -212,6 +213,12 @@ func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAuto
 	if s.autoGroups == nil {
 		return c, errors.New("group repository unavailable")
 	}
+	// Existing scopes may reference a group deleted/disabled since saving. Keep
+	// those stable IDs; only newly selected IDs must resolve to active groups.
+	if err := s.validateModelBillingGroupSelections(ctx, c.ModelBilling); err != nil {
+		return c, err
+	}
+
 	if c.Enabled {
 		for _, id := range c.GroupIDs {
 			g, err := s.autoGroups.GetByID(ctx, id)
@@ -261,6 +268,41 @@ func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAuto
 	s.autoConfig.Store(c)
 	s.autoBlocked.Store(false)
 	return c, nil
+}
+
+func (s *AccountOpsService) validateModelBillingGroupSelections(ctx context.Context, cfg ModelBillingConfig) error {
+	scoped := false
+	for _, rule := range cfg.Rules {
+		scoped = scoped || len(rule.GroupIDs) > 0
+	}
+	if !scoped {
+		return nil
+	}
+	current, err := GetOAuthAutoConfig(ctx, s.settings)
+	if err != nil {
+		return err
+	}
+	previous := make(map[string][]int64, len(current.ModelBilling.Rules))
+	for _, rule := range current.ModelBilling.Rules {
+		previous[modelBillingRuleKey(rule.Model)] = rule.GroupIDs
+	}
+	checked := map[int64]bool{}
+	for _, rule := range cfg.Rules {
+		for _, id := range rule.GroupIDs {
+			if slices.Contains(previous[modelBillingRuleKey(rule.Model)], id) || checked[id] {
+				continue
+			}
+			group, err := s.autoGroups.GetByID(ctx, id)
+			if err != nil {
+				return err
+			}
+			if group == nil || group.Status != StatusActive {
+				return infraerrors.BadRequest("MODEL_BILLING_GROUP_INVALID", "select active model billing groups")
+			}
+			checked[id] = true
+		}
+	}
+	return nil
 }
 
 type AccountConcurrencyResult struct {

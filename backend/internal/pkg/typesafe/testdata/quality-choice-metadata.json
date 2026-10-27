@@ -1,0 +1,14 @@
+{
+  "id": "synthetic-request-00000000-0000-0000-000000",
+  "provider": "synthetic",
+  "model": "jev-latest",
+  "answers": {
+    "quality": {
+      "type": "choice",
+      "choice": "correct",
+      "confidence": 1.0,
+      "probabilities": {"correct": 0.98, "incorrect": 0.01, "unknown": 0.01}
+    }
+  },
+  "usage": {"input_tokens": 100, "output_tokens": 10, "synthetic_flag": false}
+}

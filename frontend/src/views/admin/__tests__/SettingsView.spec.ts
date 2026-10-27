@@ -1214,6 +1214,27 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
+  it("saves localized custom menu names with a legacy fallback", async () => {
+    getSettings.mockResolvedValue({ ...baseSettingsResponse, custom_menu_items: [] });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get('[data-testid="custom-menu-add"]').trigger("click");
+    await wrapper.get('[data-testid="custom-menu-label-zh"]').setValue("充值中心");
+    await wrapper.get('[data-testid="custom-menu-label-en"]').setValue("Recharge Center");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings.mock.calls[0]?.[0].custom_menu_items).toEqual([
+      expect.objectContaining({
+        label: "充值中心",
+        label_zh: "充值中心",
+        label_en: "Recharge Center",
+      }),
+    ]);
+    wrapper.unmount();
+  });
+
   it("submits the compact home page toggle", async () => {
     const wrapper = mountView();
     await flushPromises();

@@ -1,4 +1,6 @@
+import channelOps from './channelOps'
 import ipAudit from './ipAudit'
+import traffic from './traffic'
 import connections from './connections'
 import securityRecords from './securityRecords'
 import siwc from './siwc'
@@ -33,6 +35,7 @@ import requestTiming from './requestTiming'
 import autoConfig from './autoConfig'
 
 export default {
+  traffic,
   ipAudit,
   connections,
   securityRecords,
@@ -40,6 +43,7 @@ export default {
   autoConfig,
   priorityScheduling,
   qualityOps,
+  channelOps,
   controlledExperiments,
   accountOps,
   tokenGuard,

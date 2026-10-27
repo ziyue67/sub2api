@@ -135,8 +135,10 @@ backend/cmd/server/server
 deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
+user-traffic-pending/
 docs/*
 !docs/image-request-archive.md
+!docs/user-traffic.md
 !docs/typesafe-content-audit.md
 !docs/multi-host-session-owner.md
 !docs/security-penalties.md

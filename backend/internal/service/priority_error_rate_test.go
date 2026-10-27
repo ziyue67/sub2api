@@ -17,15 +17,15 @@ import (
 func TestPriorityErrorRateWindowScopeAndPrior(t *testing.T) {
 	stats := newOpenAIAccountRuntimeStats()
 	now := time.Unix(1800000000, 0).Truncate(time.Minute)
-	key := priorityAttemptKey{1, "gpt-6.1-sol", "/v1/responses"}
+	key := priorityAttemptKey{accountID: 1, model: "gpt-6.1-sol", endpoint: "/v1/responses"}
 	stats.attempts.report(key, false, now)
 	got := stats.attempts.snapshot(key, now, 10, 5)
 	require.Equal(t, int64(1), got.Failures)
 	require.Equal(t, 5, got.PriorSamples)
 	require.Equal(t, now, got.ObservedAt, "read time must be the clock used for the window, not the report time")
 	require.InDelta(t, 1.0/6, got.SmoothedRate, 1e-9)
-	require.Equal(t, int64(0), stats.attempts.snapshot(priorityAttemptKey{1, "other", "/v1/responses"}, now, 10, 5).Failures)
-	require.Equal(t, int64(0), stats.attempts.snapshot(priorityAttemptKey{1, key.model, "/v1/chat/completions"}, now, 10, 5).Failures)
+	require.Equal(t, int64(0), stats.attempts.snapshot(priorityAttemptKey{accountID: 1, model: "other", endpoint: "/v1/responses"}, now, 10, 5).Failures)
+	require.Equal(t, int64(0), stats.attempts.snapshot(priorityAttemptKey{accountID: 1, model: key.model, endpoint: "/v1/chat/completions"}, now, 10, 5).Failures)
 	expired := stats.attempts.snapshot(key, now.Add(10*time.Minute), 10, 5)
 	require.Nil(t, expired.ErrorRate, "expired evidence must stay unknown, never zero percent")
 	require.Equal(t, 5, expired.PriorSamples)
@@ -49,16 +49,16 @@ func TestPriorityErrorRateConcurrentBounded(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 100; i++ {
-				stats.attempts.report(priorityAttemptKey{1, "model", "/v1/responses"}, i%2 == 0, now)
+				stats.attempts.report(priorityAttemptKey{accountID: 1, model: "model", endpoint: "/v1/responses"}, i%2 == 0, now)
 			}
 		}()
 	}
 	wg.Wait()
-	got := stats.attempts.snapshot(priorityAttemptKey{1, "model", "/v1/responses"}, now, 10, 5)
+	got := stats.attempts.snapshot(priorityAttemptKey{accountID: 1, model: "model", endpoint: "/v1/responses"}, now, 10, 5)
 	require.Equal(t, int64(400), got.Successes)
 	require.Equal(t, int64(400), got.Failures)
 	for i := 0; i < priorityAttemptMaxKeys+20; i++ {
-		stats.attempts.report(priorityAttemptKey{int64(i + 2), "model", "/v1/responses"}, false, now)
+		stats.attempts.report(priorityAttemptKey{accountID: int64(i + 2), model: "model", endpoint: "/v1/responses"}, false, now)
 	}
 	require.Len(t, stats.attempts.entries, priorityAttemptMaxKeys)
 }
@@ -101,7 +101,7 @@ func TestPriorityErrorRateBodyOutcomes(t *testing.T) {
 			stats := newOpenAIAccountRuntimeStats()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			key := priorityAttemptKey{1, "gpt-6.1-sol", "/v1/responses"}
+			key := priorityAttemptKey{accountID: 1, model: "gpt-6.1-sol", endpoint: "/v1/responses"}
 			b := newPriorityAttemptBody(io.NopCloser(strings.NewReader(tc.body)), stats, key, ctx, tc.status, tc.stream)
 			_, err := io.ReadAll(b)
 			require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestPriorityErrorRateScoringAndZeroCompatibility(t *testing.T) {
 	c.ErrorRateWeight = 100
 	now := time.Now()
 	stats := newOpenAIAccountRuntimeStats()
-	key := priorityAttemptKey{1, "m", "/v1/responses"}
+	key := priorityAttemptKey{accountID: 1, model: "m", endpoint: "/v1/responses"}
 	for i := 0; i < 20; i++ {
 		stats.attempts.report(key, false, now)
 	}

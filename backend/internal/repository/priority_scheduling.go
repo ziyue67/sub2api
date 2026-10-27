@@ -30,6 +30,10 @@ func (r *usageLogRepository) ReadPrioritySchedulingSignals(ctx context.Context, 
 	if err := service.ValidatePrioritySchedulingConfig(cfg); err != nil {
 		return nil, fmt.Errorf("priority signal query: %w", err)
 	}
+	qualityModel := query.QualityModel
+	if qualityModel == "" {
+		qualityModel = query.Model
+	}
 	rows, err := r.sql.QueryContext(ctx, `
  WITH base_usage AS (
   SELECT id, account_id, created_at, stream, first_token_ms, actual_cost,
@@ -114,7 +118,7 @@ func (r *usageLogRepository) ReadPrioritySchedulingSignals(ctx context.Context, 
    bool_and(COALESCE(r.quality_judgment->>'verdict'='correct' AND r.status='success',false)) AS passed
   FROM scheduled_test_plans p JOIN scheduled_test_results r ON r.plan_id=p.id
   WHERE p.account_id=ANY($1) AND p.enabled
-   AND COALESCE(NULLIF(r.pelican_config->>'model_id',''),p.model_id)=$2
+   AND COALESCE(NULLIF(r.pelican_config->>'model_id',''),p.model_id)=$10
    AND jsonb_typeof(p.pelican_config->'quality')='object' AND r.quality_round_id<>''
    AND r.created_at >= $4 AND r.created_at >= p.updated_at AND r.created_at <= NOW()
    AND r.quality_action<>'' AND r.quality_action<>'stale_run'
@@ -140,7 +144,7 @@ func (r *usageLogRepository) ReadPrioritySchedulingSignals(ctx context.Context, 
  FROM unnest($1::bigint[]) ids(id)
  LEFT JOIN usage u ON u.account_id=ids.id LEFT JOIN quality q ON q.account_id=ids.id
  LEFT JOIN latest_quality lq ON lq.account_id=ids.id
- `, pq.Array(query.AccountIDs), query.Model, query.UsageSince, query.QualitySince, query.GroupID, query.LatencyPercentile, query.LatencyMeasurement, query.TargetTTFTMs, query.UsageUntil)
+ `, pq.Array(query.AccountIDs), query.Model, query.UsageSince, query.QualitySince, query.GroupID, query.LatencyPercentile, query.LatencyMeasurement, query.TargetTTFTMs, query.UsageUntil, qualityModel)
 	if err != nil {
 		return nil, err
 	}

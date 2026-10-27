@@ -25,7 +25,10 @@ export default {
   latencyMeasurement: "测量口径",
   latencyPercentile: "延迟分位数",
   latency_penalty_minutes: '延迟惩罚时长（分钟）',
-  latencyPenaltyHint: "默认惩罚 10 分钟；0 分钟表示持续降档。只有新近超目标样本才续罚，快速流量和刷新不延长惩罚。恢复探索默认 0%，显式启用后（最多 10%）仍要求质量达标、最新检测通过且无错误、亏损和拥堵风险。未知质量探索和新增高风险策略留待后续实现。",
+  latencyPenaltyHint: "默认惩罚 10 分钟；0 分钟表示持续惩罚（软模式持续降档，停止模式持续阻止新准入）。只有新近超目标样本才续罚，快速流量和刷新不延长惩罚。恢复探索默认 0%，显式启用后（最多 10%）仍要求质量达标、最新检测通过且无错误、亏损和拥堵风险。未知质量探索和新增高风险策略留待后续实现。",
+  latencyPenaltyMode: '延迟惩罚方式',
+  latencyPenaltyModes: { deprioritize: '延迟优先调度', stop: '停止调度' },
+  latencyPenaltyModeHint: '延迟优先调度：保留慢账号作为后备。停止调度：有效惩罚期间，不向该账号、模型和分组发送新请求；绑定的续接暂不可用，已有输出继续完成。沿用下方惩罚分钟数和原测量门槛。',
   latencyPenaltyUntil: '延迟惩罚截止',
 
   oauthQuotaPriority: '优先消耗 OAuth 额度，末位 API Key 自动后备',

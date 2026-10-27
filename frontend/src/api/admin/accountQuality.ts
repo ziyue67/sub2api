@@ -117,6 +117,8 @@ export interface QualityOwnershipPreview {
   entries: QualityOwnershipEntry[]
   relinquishable_count: number
   ownership_retained: boolean
+  restore_ready?: boolean
+  restore_blocked_reason?: string
   restrictions_changed: boolean
 }
 export async function previewQualityOwnership(id: number): Promise<QualityOwnershipPreview> {
@@ -125,5 +127,10 @@ export async function previewQualityOwnership(id: number): Promise<QualityOwners
 }
 export async function reconcileQualityOwnership(id: number, fence: string): Promise<QualityOwnershipPreview> {
   const { data } = await apiClient.post<QualityOwnershipPreview>(`/admin/account-quality-plans/${id}/ownership/reconcile`, { fence, confirm: true })
+  return data
+}
+
+export async function restoreQualityOwnership(id: number, fence: string): Promise<QualityOwnershipPreview> {
+  const { data } = await apiClient.post<QualityOwnershipPreview>(`/admin/account-quality-plans/${id}/ownership/restore`, { fence, confirm: true })
   return data
 }

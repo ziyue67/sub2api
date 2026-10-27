@@ -2006,7 +2006,7 @@ func (s *OpenAIGatewayService) fetchOpenAIModelsUpstream(ctx context.Context, re
 	}
 	if err != nil {
 		return nil, &codexModelsManifestUpstreamError{
-			err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest request failed: %v", err),
+			err:       infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "模型列表请求失败，请稍后重试"),
 			retryable: isRetryableCodexModelsManifestTransportError(err),
 		}
 	}
@@ -2018,12 +2018,26 @@ func (s *OpenAIGatewayService) fetchOpenAIModelsUpstream(ctx context.Context, re
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		body = s.redactAgentIdentitySensitiveBody(reqCtx, request.credentialAccount, body)
-		message := strings.TrimSpace(string(body))
-		if message == "" {
-			message = resp.Status
+		publicErr := infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest upstream error %d: [redacted]", resp.StatusCode).WithMetadata(map[string]string{"upstream_status": fmt.Sprint(resp.StatusCode)})
+		if resp.StatusCode == http.StatusUnauthorized {
+			credentialState := "rejected"
+			var envelope struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if json.Unmarshal(body, &envelope) == nil {
+				switch envelope.Error.Code {
+				case "token_revoked", "token_invalidated":
+					credentialState = "revoked"
+				}
+			}
+			// Keep 502: this is the selected upstream credential, not the
+			// administrator's login. Never return provider text or arbitrary codes.
+			publicErr = infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_CREDENTIALS_INVALID", "模型列表凭据已失效或被拒绝，请在账号管理中检查凭据并重新授权；此错误不表示封号或模型不支持").WithMetadata(map[string]string{"upstream_status": "401", "credential_state": credentialState})
 		}
 		return nil, &codexModelsManifestUpstreamError{
-			err:        infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "codex models manifest upstream error %d: %s", resp.StatusCode, message),
+			err:        publicErr,
 			statusCode: resp.StatusCode,
 			headers:    resp.Header.Clone(),
 			body:       body,
@@ -2035,7 +2049,7 @@ func (s *OpenAIGatewayService) fetchOpenAIModelsUpstream(ctx context.Context, re
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit+1))
 	if err != nil {
 		return nil, &codexModelsManifestUpstreamError{
-			err:       infraerrors.Newf(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "read codex models manifest response: %v", err),
+			err:       infraerrors.New(http.StatusBadGateway, "OPENAI_CODEX_MODELS_UPSTREAM_FAILED", "无法读取模型列表响应"),
 			retryable: isRetryableCodexModelsManifestTransportError(err),
 		}
 	}

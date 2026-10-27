@@ -179,7 +179,7 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 	var allowed []string
 	var catalogErr error
 	if plan.PelicanConfig.Quality != nil {
-		allowed, _, catalogErr = s.scheduledSvc.supportedQualityModels(runCtx, plan)
+		allowed, _, catalogErr = s.scheduledSvc.eligibleQualityModels(runCtx, plan)
 	}
 	var wg sync.WaitGroup
 	workers := len(results)
@@ -207,7 +207,10 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 				}
 				_, excluded := unsupported.Load(samplePlan.ModelID)
 				if plan.PelicanConfig.Quality != nil && (catalogErr != nil || excluded || !containsString(allowed, samplePlan.ModelID)) {
-					reason := "model_unsupported"
+					reason := "model_unavailable"
+					if excluded {
+						reason = "model_unsupported"
+					}
 					if catalogErr != nil {
 						reason = "model_catalog_unavailable"
 					}
@@ -345,7 +348,9 @@ func (s *ScheduledTestRunnerService) runPelicanSample(ctx context.Context, plan 
 		}
 		applyQualityJudgment(result, judgment)
 		result.FinishedAt = time.Now()
-		result.LatencyMs = result.FinishedAt.Sub(result.StartedAt).Milliseconds()
+		if judgment == nil || judgment.Kind != "jev" {
+			result.LatencyMs = result.FinishedAt.Sub(result.StartedAt).Milliseconds()
+		}
 	}
 	return result
 }
@@ -369,7 +374,7 @@ func (w *pelicanRecorder) WriteString(data string) (int, error) { return w.Write
 
 func parsePelicanOutput(body string) (string, string) {
 	// parseTestSSEOutput 在移植后额外返回上游模型名，Pelican 仅需要正文与错误信息。
-	output, message, _ := parseTestSSEOutput(body)
+	output, message := parseTestSSEOutput(body)
 	complete := false
 	for _, line := range strings.Split(body, "\n") {
 		if !strings.HasPrefix(line, "data:") {

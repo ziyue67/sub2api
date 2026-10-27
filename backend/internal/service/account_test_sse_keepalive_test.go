@@ -36,7 +36,7 @@ func TestAccountTestKeepaliveContinuesAfterEventsAndHeaders(t *testing.T) {
 	require.NoError(t, c.Request.Context().Err())
 	require.GreaterOrEqual(t, strings.Count(body, ": keepalive\n\n"), 3)
 	require.Contains(t, strings.Split(body, `"type":"content"`)[1], ": keepalive\n\n")
-	text, errMsg, _ := parseTestSSEOutput(body)
+	text, errMsg := parseTestSSEOutput(body)
 	require.Empty(t, errMsg)
 	require.Equal(t, "<!doctype html><html>ok</html>", text)
 	require.Equal(t, 1, strings.Count(body, `"type":"test_complete"`))
@@ -80,7 +80,7 @@ func TestAccountTestKeepaliveStreamTerminalSemantics(t *testing.T) {
 			<-producerDone
 			stop()
 			require.Equal(t, tc.success, err == nil)
-			text, errMsg, _ := parseTestSSEOutput(rec.Body.String())
+			text, errMsg := parseTestSSEOutput(rec.Body.String())
 			require.Equal(t, tc.text, text)
 			require.Equal(t, tc.errorText, errMsg)
 			require.Equal(t, tc.success, strings.Contains(rec.Body.String(), `"type":"test_complete"`))

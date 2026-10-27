@@ -201,8 +201,9 @@ func TestAccountTokenGuardV2PolicyClassifierDoesNotTrustMessagesOrEchoes(t *test
 			err: errors.New("synthetic-private"), statusCode: http.StatusForbidden, body: []byte(body),
 		}}}
 		state, detail := svc.probeAccount(context.Background(), &Account{Platform: PlatformOpenAI, Credentials: map[string]any{"access_token": "synthetic"}})
-		require.Equal(t, AccountTokenGuardV2ProbeAuth, state)
-		require.Equal(t, "upstream returned 403", detail)
+		require.Equal(t, AccountTokenGuardV2ProbeTransient, state)
+		require.Equal(t, credentialOperationDetail("account_deactivated"), detail)
+		require.Equal(t, "account_deactivated", probeOperationFailure(state, detail, nil).Code)
 	}
 }
 

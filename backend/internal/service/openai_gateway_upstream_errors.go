@@ -123,21 +123,7 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 		return false
 	}
 
-	hasOpenAIServerOverloadedCode := func(payload []byte) bool {
-		code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "error.code").String()))
-		if code == "" {
-			code = strings.ToLower(strings.TrimSpace(gjson.GetBytes(payload, "response.error.code").String()))
-		}
-		return code == "server_is_overloaded" || code == "slow_down"
-	}
-
-	if len(upstreamBody) > 0 && hasOpenAIServerOverloadedCode(upstreamBody) {
-		return true
-	}
-	if isOpenAICapacityShedMessage(upstreamMsg) ||
-		isOpenAICapacityShedMessage(gjson.GetBytes(upstreamBody, "error.message").String()) ||
-		isOpenAICapacityShedMessage(gjson.GetBytes(upstreamBody, "response.error.message").String()) ||
-		(!gjson.ValidBytes(upstreamBody) && isOpenAICapacityShedMessage(string(upstreamBody))) {
+	if isOpenAIRequestScopedCapacityShed(upstreamMsg, upstreamBody) {
 		return true
 	}
 	if upstreamStatusCode != http.StatusBadRequest && upstreamStatusCode != http.StatusServiceUnavailable {
@@ -153,9 +139,6 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 			return false
 		}
 		if strings.Contains(lower, "an error occurred while processing your request") {
-			return true
-		}
-		if strings.Contains(lower, "selected model is at capacity") {
 			return true
 		}
 		return strings.Contains(lower, "you can retry your request") &&
@@ -184,15 +167,33 @@ func isOpenAITransientProcessingError(upstreamStatusCode int, upstreamMsg string
 
 func isOpenAICapacityShedMessage(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
-	return strings.Contains(lower, "server is overloaded") ||
+	return strings.Contains(lower, "selected model is at capacity") ||
+		strings.Contains(lower, "server is overloaded") ||
 		strings.Contains(lower, "servers are overloaded") ||
 		strings.Contains(lower, "servers are currently overloaded")
 }
 
 func isOpenAIRequestScopedCapacityShed(upstreamMsg string, upstreamBody []byte) bool {
-	return isOpenAIUpstreamCapacityShedEvent(upstreamBody) ||
-		isOpenAICapacityShedMessage(upstreamMsg) ||
-		(!gjson.ValidBytes(upstreamBody) && isOpenAICapacityShedMessage(string(upstreamBody)))
+	if gjson.ValidBytes(upstreamBody) {
+		return isOpenAIUpstreamCapacityShedEvent(upstreamBody)
+	}
+	return isOpenAICapacityShedMessage(upstreamMsg) || isOpenAICapacityShedMessage(string(upstreamBody))
+}
+
+// OpenAIUpstreamCapacityCode preserves transient capacity across relay hops.
+// model_capacity_exhausted already denotes persisted quota in selection errors.
+const OpenAIUpstreamCapacityCode = "upstream_capacity_exhausted"
+
+func isOpenAIRequestScopedCapacityResponse(status int, headers http.Header, body []byte, message ...string) bool {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return false
+	}
+	if status == http.StatusTooManyRequests {
+		if disposition, _ := classifyOpenAIOAuth429(headers, body); disposition != openAIOAuth429Transient {
+			return false
+		}
+	}
+	return isOpenAIRequestScopedCapacityShed(firstNonEmpty(message...), body)
 }
 
 const openAIRequestScopedRetryMaxDelay = 8 * time.Second
@@ -390,7 +391,7 @@ func newOpenAIUpstreamFailoverError(
 	upstreamMsg string,
 	retryableOnSameAccount bool,
 ) *UpstreamFailoverError {
-	requestScopedCapacity := isOpenAIRequestScopedCapacityShed(upstreamMsg, responseBody)
+	requestScopedCapacity := isOpenAIRequestScopedCapacityResponse(statusCode, responseHeaders, responseBody, upstreamMsg)
 	failoverErr := &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           responseBody,
@@ -536,7 +537,7 @@ func (e *UpstreamFailoverError) IsOpenAIRequestBodyTooLarge() bool {
 // IsOpenAICapacityShed reports whether typed client fields were derived from a
 // recognized provider overload rather than supplied by an unrelated failure.
 func (e *UpstreamFailoverError) IsOpenAICapacityShed() bool {
-	return e != nil && e.RequestScopedTransient && isOpenAIRequestScopedCapacityShed("", e.ResponseBody)
+	return e != nil && e.RequestScopedTransient && isOpenAIRequestScopedCapacityResponse(e.StatusCode, e.ResponseHeaders, e.ResponseBody)
 }
 
 func marshalOpenAIUpstreamJSON(v any) ([]byte, error) {

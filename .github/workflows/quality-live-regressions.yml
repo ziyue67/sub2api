@@ -1,0 +1,125 @@
+name: Quality live regressions
+on:
+  push:
+    branches: [fix/quality-operations-live-regressions]
+  pull_request:
+    paths:
+      - 'backend/internal/service/quality*'
+      - 'backend/internal/service/openai_codex_models_service.go'
+      - 'backend/internal/repository/quality*'
+      - 'frontend/src/components/admin/operations/QualityOwnershipReview.vue'
+      - 'frontend/src/views/admin/AccountQualityView.vue'
+      - '.github/workflows/quality-live-regressions.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Record exact head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/head.txt
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Original behavior must fail the unchanged boundary regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          sources=(backend/internal/service/quality_supported_models.go backend/internal/service/openai_codex_models_service.go backend/internal/service/pelican_scheduled.go)
+          for source in "${sources[@]}"; do cp "$source" "$RUNNER_TEMP/$(basename "$source")"; done
+          trap 'for source in "${sources[@]}"; do cp "$RUNNER_TEMP/$(basename "$source")" "$source"; done' EXIT
+          git fetch --no-tags --depth=1 origin e082313679d5269eef3e3cce4101c22692695371
+          for source in "${sources[@]}"; do git show "e082313679d5269eef3e3cce4101c22692695371:$source" > "$source"; done
+          set +e
+          (cd backend && go test -tags=unit ./internal/service -run '^TestQualityLive' -count=1 -v) > evidence/red-service.log 2>&1
+          result=$?
+          set -e
+          cat evidence/red-service.log
+          test "$result" -ne 0
+          if grep -Eq '\[build failed\]|\[setup failed\]|undefined:|syntax error:|no tests to run|panic:' evidence/red-service.log; then exit 1; fi
+          grep -F -- '--- FAIL: TestQualityLiveManualModelMissingFromManifest' evidence/red-service.log
+          grep -F -- '--- FAIL: TestQualityLiveUnknownProbeCatalogIsNotUnsupported' evidence/red-service.log
+          grep -F -- '--- FAIL: TestQualityLiveModelListCredentialErrorIsStructured' evidence/red-service.log
+      - name: Current behavior and retained safety assertions
+        working-directory: backend
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -tags=unit ./internal/service -run 'Test(QualityLive|QualitySupportedModels|QualityUnsupportedResponse|QualityModelSync|CandyConfiguredModels|FetchOpenAIAccountModels|FetchCodexModelsManifest|OpenAIModelsList)' -count=1 -v 2>&1 | tee ../evidence/green-service.log
+      - name: Original storage behavior must fail restoration boundary regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=backend/internal/repository/quality_ownership.go
+          cp "$source" "$RUNNER_TEMP/quality-ownership-current.go"
+          trap 'cp "$RUNNER_TEMP/quality-ownership-current.go" "$source"' EXIT
+          git show "e082313679d5269eef3e3cce4101c22692695371:$source" > "$source"
+          set +e
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestQualityLiveDeleteHTTP' -count=1 -v) > evidence/red-storage.log 2>&1
+          result=$?
+          set -e
+          cat evidence/red-storage.log
+          test "$result" -ne 0
+          if grep -Eq '\[build failed\]|\[setup failed\]|undefined:|syntax error:|no tests to run|panic:|--- SKIP:' evidence/red-storage.log; then exit 1; fi
+          grep -F -- '--- FAIL: TestQualityLiveDeleteHTTPRestoresMatchingOwnershipThenDeletes' evidence/red-storage.log
+      - name: Current real HTTP and temporary PostgreSQL ownership seam
+        working-directory: backend
+        shell: bash
+        env:
+          CI: 'true'
+        run: |
+          set -o pipefail
+          go test -tags=integration ./internal/repository -run 'Test(QualityLiveDeleteHTTP|QualityOwnership|QualityIsolation)' -count=1 -v 2>&1 | tee ../evidence/green-storage.log
+          if grep -q -- '--- SKIP:' ../evidence/green-storage.log; then exit 1; fi
+      - name: Admin confirmation and model error response boundaries
+        working-directory: backend
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./internal/handler -run 'TestCodexModels(ReturnsLastUpstreamError|HonorsAccountSwitchLimit|PinnedAccountsAllFailed)' -count=1 -v 2>&1 | tee ../evidence/green-gateway-handler.log
+          go test ./internal/handler/admin -run 'Test(QualityOwnership|QualityLive|QualityScopeConflicts)' -count=1 -v 2>&1 | tee ../evidence/green-handler.log
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Unchanged deletion interaction must fail against original components
+        shell: bash
+        run: |
+          set -euo pipefail
+          sources=(frontend/src/components/admin/operations/QualityOwnershipReview.vue frontend/src/views/admin/AccountQualityView.vue)
+          for source in "${sources[@]}"; do cp "$source" "$RUNNER_TEMP/$(basename "$source")"; done
+          trap 'for source in "${sources[@]}"; do cp "$RUNNER_TEMP/$(basename "$source")" "$source"; done' EXIT
+          for source in "${sources[@]}"; do git show "e082313679d5269eef3e3cce4101c22692695371:$source" > "$source"; done
+          set +e
+          pnpm --dir frontend exec vitest run src/views/admin/__tests__/AccountQualityView.spec.ts -t 'restores isolated ownership before deletion' > evidence/red-ui.log 2>&1
+          result=$?
+          set -e
+          cat evidence/red-ui.log
+          test "$result" -ne 0
+          grep -F 'AssertionError' evidence/red-ui.log
+      - name: Current offline UI and retained interaction assertions
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm --dir frontend exec vitest run src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts src/views/admin/__tests__/AccountQualityView.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts 2>&1 | tee evidence/green-ui.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-live-${{ github.event_name }}-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: error

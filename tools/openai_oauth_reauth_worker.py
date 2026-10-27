@@ -64,8 +64,84 @@ CONTEXT_CODE_RE = re.compile(
 )
 
 
+# Canonical labels only; arbitrary provider text never enters task storage/logs.
+OPERATION_CODES = {
+    "phone_verification_required": "phone_verification_required", "phone_number_required": "phone_verification_required",
+    "account_deactivated": "account_deactivated", "account_disabled": "account_deactivated", "account_banned": "account_deactivated",
+    "account_deleted": "account_deleted", "account_retired": "account_retired",
+    "auth_failed": "requires_relogin", "invalid_token": "requires_relogin", "token_invalid": "requires_relogin",
+    "requires_relogin": "requires_relogin", "invalid_grant": "requires_relogin", "revoked": "requires_relogin",
+    "token_invalidated": "requires_relogin", "token_revoked": "requires_relogin", "refresh_token_reused": "requires_relogin",
+    "refresh_token_invalidated": "requires_relogin", "invalid_refresh_token": "requires_relogin",
+    "token_expired": "requires_relogin", "app_session_terminated": "requires_relogin", "session_unavailable": "requires_relogin",
+    "password_rejected": "password_rejected", "invalid_password": "password_rejected", "incorrect_password": "password_rejected",
+    "totp_rejected": "mfa_required", "mfa_required": "mfa_required", "otp_required": "mfa_required",
+    "email_verification_required": "mfa_required", "interaction_required": "mfa_required",
+    "security_check": "security_check", "security_check_required": "security_check", "challenge_required": "security_check",
+    "session_blocked_by_cyber_policy": "security_check", "cyber_policy": "security_check",
+    "access_denied": "authorization_denied", "authorization_denied": "authorization_denied", "permission_denied": "authorization_denied",
+    "rate_limit_exceeded": "rate_limited", "rate_limit_error": "rate_limited", "rate_limited": "rate_limited", "too_many_requests": "rate_limited",
+    "timeout": "timeout", "request_timeout": "timeout", "worker_timeout": "timeout", "idle_timeout": "timeout",
+    "transport_error": "transport_error", "connection_error": "transport_error", "proxy_unavailable": "transport_error",
+    "server_error": "service_error", "service_unavailable": "service_error", "service_error": "service_error",
+}
+OPERATION_TEXTS = {
+    "You must provide a phone number to continue.": "phone_verification_required",
+    "Phone verification required.": "phone_verification_required",
+    "Your account has been deactivated.": "account_deactivated",
+    "Your account has been deleted.": "account_deleted",
+    "Your account has been deleted or deactivated.": "account_retired",
+    "This account has been deleted or deactivated.": "account_retired",
+}
+SESSION_STUDIO_PHASE_REASONS["terminal_result"].update(OPERATION_CODES.values())
+
+
+def credential_operation_reason(payload):
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, str):
+        return OPERATION_CODES.get(error, "unknown")
+    if not isinstance(error, dict):
+        return "unknown"
+    if "code" in error:
+        code = error["code"]
+        return OPERATION_CODES.get(code, "unknown") if isinstance(code, str) else "unknown"
+    kind = error.get("type")
+    if isinstance(kind, str) and kind in OPERATION_CODES:
+        return OPERATION_CODES[kind]
+    message = error.get("message")
+    return OPERATION_TEXTS.get(message, "unknown") if isinstance(message, str) else "unknown"
+
+
 class WorkerError(RuntimeError):
     pass
+
+
+class OperationWorkerError(WorkerError):
+    """Created only from this adapter's validated response envelope."""
+    def __init__(self, code: str):
+        self.code = code if code in OPERATION_CODES.values() else "unknown"
+        super().__init__(self.code)
+
+
+def operation_response_reason(response):
+    raw = getattr(response, 'text', '')
+    if not isinstance(raw, str) or len(raw.encode('utf-8')) > 32768:
+        return 'unknown'
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate field')
+            result[key] = value
+        return result
+    try:
+        payload = json.loads(raw, object_pairs_hook=unique)
+    except (ValueError, RecursionError):
+        return 'unknown'
+    code = credential_operation_reason(payload)
+    if code == 'unknown' and isinstance(payload, dict) and 'error' not in payload and payload.get('page') == {'type': 'add_phone'}:
+        return 'phone_verification_required'
+    return code
 
 
 class SessionStudioError(WorkerError):
@@ -458,7 +534,7 @@ class WorkerAPI:
     def fail(self, task_id: int, reason: str) -> None:
         self._post(
             f"/api/v1/internal/openai-reauth/{task_id}/fail",
-            {"worker_id": self.config.worker_id, "reason": sanitize_error(reason)},
+            {"worker_id": self.config.worker_id, "reason": safe_worker_failure(WorkerError(reason))},
         )
 
 
@@ -613,8 +689,6 @@ def load_protocol(root: Path) -> SimpleNamespace:
     )
     from core.openai_auth import (
         AccountUnusableError,
-        _extract_error_code,
-        detect_account_unusable_response_body,
         send_email_otp,
     )
     # Turb keeps this class name for historical reasons; it is a curl_cffi
@@ -632,6 +706,9 @@ def load_protocol(root: Path) -> SimpleNamespace:
             sentinel_header=sentinel_header,
             so_header=so_header,
         )
+        code = operation_response_reason(response)
+        if code != 'unknown':
+            raise OperationWorkerError(code)
         if response.status_code not in (200, 204):
             raise WorkerError(f"OpenAI email submission returned HTTP {response.status_code}")
         try:
@@ -652,21 +729,10 @@ def load_protocol(root: Path) -> SimpleNamespace:
             so_header=so_header,
         )
         if response.status_code != 200:
-            error_code = _extract_error_code(response)
-            if error_code in ("account_deactivated", "account_deleted", "account_banned"):
-                raise AccountUnusableError(
-                    f"[Codex] 账号已废（{error_code}）status={response.status_code}: {(response.text or '')[:200]}",
-                    error_code=error_code,
-                )
-            body_error_code = detect_account_unusable_response_body(response.text or "")
-            if body_error_code:
-                raise AccountUnusableError(
-                    f"[Codex] 账号已废（{body_error_code}）status={response.status_code}: {(response.text or '')[:200]}",
-                    error_code=body_error_code,
-                )
-            raise RuntimeError(
-                f"[Codex] 邮箱 OTP 验证失败 status={response.status_code}: {(response.text or '')[:300]}"
-            )
+            code = operation_response_reason(response)
+            if code != 'unknown':
+                raise OperationWorkerError(code)
+            raise WorkerError("email OTP verification failed")
         # OpenAI can return workspaces in the OTP JSON without setting the
         # oai-client-auth-session cookie expected by Turb's next step.
         workspace_id = _workspace_id_from_auth_payload(_resp_json(response))
@@ -725,7 +791,7 @@ def _best_effort_progress(api: WorkerAPI, task_id: int, stage: str) -> None:
     try:
         api.progress(task_id, stage)
     except WorkerError as exc:
-        LOGGER.warning("task=%s progress=%s failed: %s", task_id, stage, sanitize_error(str(exc)))
+        LOGGER.warning("task=%s progress=%s failed: %s", task_id, stage, safe_worker_failure(exc))
 
 
 def sanitize_error(value: str) -> str:
@@ -963,16 +1029,9 @@ def process_claim(api: WorkerAPI, protocol: SimpleNamespace | None, claim: dict[
         otp_after_ts = time.time()
         submission = protocol.submit_email(session, email)
         page_type, continue_path = _email_submission_state(submission)
-        flow = _auth_session_flow(session)
-        LOGGER.info(
-            "task=%s auth page=%s path=%s mode=%s passwordless_disabled=%s signup_mode=%s",
-            task_id,
-            page_type,
-            continue_path or "unknown",
-            flow.get("email_verification_mode", "unknown"),
-            flow.get("passwordless_disabled", "unknown"),
-            flow.get("signup_mode", "unknown"),
-        )
+        LOGGER.info("task=%s email submission completed", task_id)
+        if page_type == 'add_phone' or continue_path == '/add-phone':
+            raise OperationWorkerError('phone_verification_required')
         if page_type in {"login_password", "login-password", "password_login"} or continue_path == "/log-in/password":
             passwordless_url = _email_submission_url(submission)
             if not passwordless_url:
@@ -1001,9 +1060,14 @@ def process_claim(api: WorkerAPI, protocol: SimpleNamespace | None, claim: dict[
             except protocol.AccountUnusableError:
                 raise
             except Exception as exc:
+                if isinstance(exc, OperationWorkerError) and exc.code in {
+                    'phone_verification_required', 'account_deactivated', 'account_deleted', 'account_retired',
+                    'mfa_required', 'security_check', 'authorization_denied',
+                }:
+                    raise
                 if attempt >= max_otp_attempts:
                     raise
-                LOGGER.warning("task=%s OTP attempt %s/%s failed: %s", task_id, attempt, max_otp_attempts, sanitize_error(str(exc)))
+                LOGGER.warning("task=%s OTP attempt %s/%s failed: %s", task_id, attempt, max_otp_attempts, safe_worker_failure(exc))
                 protocol.resend_email_otp(session)
                 otp_after_ts = time.time()
                 _best_effort_progress(api, task_id, "email_submitted")
@@ -1022,7 +1086,7 @@ def process_claim(api: WorkerAPI, protocol: SimpleNamespace | None, claim: dict[
             try:
                 _close_protocol_session(session)
             except Exception as exc:
-                LOGGER.warning("task=%s protocol session cleanup failed: %s", task_id, sanitize_error(str(exc)))
+                LOGGER.warning("task=%s protocol session cleanup failed: %s", task_id, safe_worker_failure(exc))
 
 
 def _session_studio_result(response: Any) -> dict[str, Any]:
@@ -1164,7 +1228,8 @@ def process_session_studio_claim(api: WorkerAPI, claim: dict[str, Any]) -> None:
     credentials = payload.get("credential")
     if payload.get("error") or str(payload.get("status", "")).lower() in {"failed", "error", "auth_failed"}:
         # Provider errors may echo secrets. Do not relay their message or code.
-        raise fail("Session Studio login failed", "terminal_result", "provider_failed")
+        code = credential_operation_reason(payload)
+        raise fail("Session Studio login failed", "terminal_result", code if code != "unknown" else "provider_failed")
     if not isinstance(credentials, dict) or not all(
         isinstance(credentials.get(key), str) and credentials[key].strip()
         for key in ("access_token", "refresh_token", "id_token")
@@ -1507,7 +1572,7 @@ def _best_effort_session_progress(api: WorkerAPI, task_id: int, stage: str) -> N
     try:
         api.session_export_progress(task_id, stage)
     except WorkerError as exc:
-        LOGGER.warning("task=%s Session export progress=%s failed: %s", task_id, stage, sanitize_error(str(exc)))
+        LOGGER.warning("task=%s Session export progress=%s failed: %s", task_id, stage, safe_worker_failure(exc))
 
 
 def session_export_error_code(exc: BaseException) -> str:
@@ -1552,13 +1617,13 @@ def run_once(api: WorkerAPI, protocol: SimpleNamespace | None) -> bool:
     try:
         claim = api.claim()
     except WorkerError as exc:
-        LOGGER.warning("claim failed: %s", sanitize_error(str(exc)))
+        LOGGER.warning("claim failed: %s", safe_worker_failure(exc))
         return False
     if not claim:
         try:
             claim = api.claim_session_export()
         except WorkerError as exc:
-            LOGGER.warning("Session export claim failed: %s", sanitize_error(str(exc)))
+            LOGGER.warning("Session export claim failed: %s", safe_worker_failure(exc))
             return False
         if not claim:
             return False
@@ -1572,20 +1637,49 @@ def run_once(api: WorkerAPI, protocol: SimpleNamespace | None) -> bool:
                 try:
                     api.session_export_fail(task_id, reason)
                 except WorkerError as fail_exc:
-                    LOGGER.error("Session export task=%s failure report rejected: %s", task_id, sanitize_error(str(fail_exc)))
+                    LOGGER.error("Session export task=%s failure report rejected: %s", task_id, safe_worker_failure(fail_exc))
         return True
     task_id = int(claim.get("task_id") or 0)
     try:
         process_claim(api, protocol, claim)
     except Exception as exc:
-        reason = exc.diagnostic() if isinstance(exc, SessionStudioError) else sanitize_error(f"{type(exc).__name__}: {exc}")
+        reason = safe_worker_failure(exc)
         LOGGER.error("task=%s failed: %s", task_id or "?", reason)
         if task_id > 0:
             try:
                 api.fail(task_id, reason)
             except WorkerError as fail_exc:
-                LOGGER.error("task=%s failure report rejected: %s", task_id, sanitize_error(str(fail_exc)))
+                LOGGER.error("task=%s failure report rejected: %s", task_id, safe_worker_failure(fail_exc))
     return True
+
+
+def safe_worker_failure(exc: BaseException) -> str:
+    """Allowlist the durable/logged failure boundary, including old workers."""
+    if isinstance(exc, SessionStudioError):
+        return exc.diagnostic()
+    raw = str(exc).strip()
+    if raw.startswith("session_studio_failed"):
+        return sanitize_error(raw)  # Whole-protocol validator; never generic prose.
+    if raw.startswith("local_protocol_failed"):
+        try:
+            from .openai_codex_oauth_adapter import STAGES, REASONS
+        except ImportError:
+            from openai_codex_oauth_adapter import STAGES, REASONS
+        match = re.fullmatch(r"local_protocol_failed stage=([a-z_]+) reason=([a-z_]+) elapsed_ms=([0-9]{1,7}) exit=(-?[0-9]{1,3})", raw if len(raw) <= 256 else "")
+        if match:
+            stage, reason, elapsed, exit_code = match.groups()
+            if stage in STAGES and reason in REASONS and reason != "none" and int(elapsed) <= 3600000 and -255 <= int(exit_code) <= 255:
+                return raw
+        return "local protocol failed; invalid diagnostic omitted"
+    if isinstance(exc, OperationWorkerError):
+        return exc.code
+    if raw in OPERATION_CODES:
+        return OPERATION_CODES[raw]
+    if raw in OPERATION_TEXTS:
+        return OPERATION_TEXTS[raw]
+    if isinstance(exc, (TimeoutError, socket.timeout)) or raw == "password/TOTP protocol timed out":
+        return "timeout"
+    return "worker_failed"
 
 
 def terminate_worker(_signum: int, _frame: Any) -> None:
@@ -1682,7 +1776,7 @@ def main() -> int:
         protocol = load_protocol(config.protocol_root) if config.protocol_root is not None else None
         api = WorkerAPI(config)
     except Exception as exc:
-        LOGGER.error("worker startup failed: %s", sanitize_error(f"{type(exc).__name__}: {exc}"))
+        LOGGER.error("worker startup failed: %s", safe_worker_failure(exc))
         return 2
 
     if args.check:
@@ -1701,7 +1795,7 @@ def main() -> int:
             if not worked:
                 time.sleep(config.poll_seconds)
     except WorkerError as exc:
-        LOGGER.error("worker pool failed: %s", sanitize_error(str(exc)))
+        LOGGER.error("worker pool failed: %s", safe_worker_failure(exc))
         return 1
     except KeyboardInterrupt:
         LOGGER.info("worker stopped")

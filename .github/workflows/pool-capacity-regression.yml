@@ -1,0 +1,59 @@
+name: Pool model cooldown regression
+
+on:
+  push:
+    branches: [fix/pool-model-cooldown-cascade]
+  pull_request:
+    branches: [production]
+    paths:
+      - 'backend/internal/service/openai*'
+      - 'backend/internal/handler/openai*'
+      - 'backend/internal/service/pool_model_negative_cache*'
+      - 'backend/internal/handler/pool_model_negative_cache*'
+      - 'backend/internal/service/*model*availability*'
+      - 'backend/internal/service/ratelimit_service*'
+      - '.github/workflows/pool-capacity-regression.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    if: github.head_ref == 'fix/pool-model-cooldown-cascade' || github.ref_name == 'fix/pool-model-cooldown-cascade'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Prove blocking regressions fail on previously reviewed head
+        shell: bash
+        run: |
+          set -euo pipefail
+          targets=(
+            backend/internal/service/ratelimit_service.go
+            backend/internal/service/gateway_model_availability.go
+            backend/internal/service/openai_gateway_model_availability.go
+          )
+          trap 'git restore --source=HEAD -- "${targets[@]}"' EXIT
+          for target in "${targets[@]}"; do
+            git show a11c678d0ba8b899177682b8e54acccf14eeca2f:"$target" > "$target"
+          done
+          set +e
+          (cd backend && go test -tags=unit ./internal/service ./internal/handler -run '^TestPoolModelNegativeCache' -count=1) > "$RUNNER_TEMP/pool-capacity-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/pool-capacity-red.log"
+          test "$result" -ne 0
+          ! grep -q '\[build failed\]' "$RUNNER_TEMP/pool-capacity-red.log"
+          grep -q -- '--- FAIL: TestPoolModelNegativeCacheWriterRespectsPoolDefaultAndOverrides' "$RUNNER_TEMP/pool-capacity-red.log"
+          grep -q -- '--- FAIL: TestPoolModelNegativeCacheTwoLayersHistoricalObservationsDoNotRenew' "$RUNNER_TEMP/pool-capacity-red.log"
+      - name: Verify exact head and existing boundary regressions
+        working-directory: backend
+        run: |
+          git diff --exit-code
+          go test -tags=unit ./internal/service ./internal/handler -run 'Test(PoolModelNegativeCache|PoolCapacity|ModelCapabilityCooldownDiagnosis|AnthropicModelCapabilityCooldownDiagnosis|DiagnoseModelAvailability|OpenAIDiagnoseModelAvailability|RateLimitService_.*Model|NonStreaming.*SSEToJSON|OpenAI.*Capacity|OpenAI.*TempRule|OpenAI.*ReplayBoundary|OpenAI.*ModelNotFound|OpenAIAdmissionPreservesCapabilityCooldownCause|ClassifyNoAccountError)' -count=1

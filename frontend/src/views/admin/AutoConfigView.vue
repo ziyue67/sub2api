@@ -17,12 +17,24 @@
               <label class="flex items-center gap-2 text-sm"><input v-model="draft.model_billing.enabled" data-testid="model-billing-enabled" type="checkbox" role="switch" />{{ t('autoConfig.enable') }}</label>
             </header>
             <p class="text-sm leading-6 text-gray-500">{{ t('autoConfig.modelBilling.hint') }}</p>
+            <p v-if="modelBillingGroupsLoading" class="text-sm text-gray-500">{{ t('autoConfig.modelBilling.loadingGroups') }}</p>
+            <p v-if="modelBillingGroupsFailed" role="alert" data-testid="model-billing-groups-error" class="text-sm text-red-600">{{ t('autoConfig.modelBilling.groupsFailed') }} <button type="button" class="underline" data-testid="model-billing-groups-retry" @click="loadModelBillingGroups">{{ t('autoConfig.retry') }}</button></p>
             <div v-for="(rule, index) in draft.model_billing.rules" :key="index" class="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
               <label class="min-w-0"><span class="field-label">{{ t('autoConfig.modelBilling.model') }}</span><input v-model="rule.model" :data-testid="'model-billing-model-' + index" type="text" maxlength="200" placeholder="gpt-6-luna*" required class="input w-full" /></label>
               <label><span class="field-label">{{ t('autoConfig.modelBilling.multiplier') }}</span><div class="flex items-center gap-2"><input v-model.number="rule.multiplier" :data-testid="'model-billing-multiplier-' + index" type="number" min="1" max="1000" step="any" required class="input min-w-0 w-full" /><span class="text-sm text-gray-500">×</span></div></label>
               <button type="button" :data-testid="'model-billing-remove-' + index" class="btn btn-secondary" @click="draft.model_billing.rules.splice(index, 1)">{{ t('autoConfig.modelBilling.remove') }}</button>
+              <fieldset class="min-w-0 space-y-2 sm:col-span-3" :disabled="modelBillingGroupsLoading || modelBillingGroupsFailed">
+                <legend class="field-label">{{ t('autoConfig.modelBilling.groups') }}</legend>
+                <p :data-testid="'model-billing-scope-' + index" class="text-xs text-gray-500">{{ rule.group_ids?.length ? t('autoConfig.modelBilling.selectedGroups', { count: rule.group_ids.length }) : t('autoConfig.modelBilling.allGroups') }}</p>
+                <div class="group-list">
+                  <label v-for="g in modelBillingGroups" :key="g.id" class="group-option"><input v-model="rule.group_ids" :value="g.id" type="checkbox" :data-testid="'model-billing-group-' + index + '-' + g.id" /><span>{{ g.name }} <small class="text-gray-400">{{ g.platform }} · #{{ g.id }}</small></span></label>
+                  <label v-for="id in unavailableModelBillingGroups(rule)" :key="id" :data-testid="'model-billing-unavailable-' + index + '-' + id" class="group-option text-amber-700 dark:text-amber-300"><input v-model="rule.group_ids" :value="id" type="checkbox" /><span>#{{ id }} · {{ t('autoConfig.modelBilling.unavailableGroup') }}</span></label>
+                  <p v-if="!modelBillingGroups.length && !modelBillingGroupsLoading && !modelBillingGroupsFailed" class="text-sm text-gray-500">{{ t('autoConfig.noGroups') }}</p>
+                </div>
+                <button v-if="rule.group_ids?.length" type="button" :data-testid="'model-billing-clear-groups-' + index" class="text-sm text-primary-600 underline" @click="rule.group_ids = []">{{ t('autoConfig.modelBilling.clearGroups') }}</button>
+              </fieldset>
             </div>
-            <button type="button" data-testid="model-billing-add" class="btn btn-secondary" :disabled="draft.model_billing.rules.length >= 100" @click="draft.model_billing.rules.push({ model: '', multiplier: 10 })">{{ t('autoConfig.modelBilling.add') }}</button>
+            <button type="button" data-testid="model-billing-add" class="btn btn-secondary" :disabled="draft.model_billing.rules.length >= 100" @click="draft.model_billing.rules.push({ model: '', multiplier: 10, group_ids: [] })">{{ t('autoConfig.modelBilling.add') }}</button>
             <p class="text-xs leading-5 text-gray-500">{{ t('autoConfig.modelBilling.matchHint') }}</p>
             <p class="rounded-xl bg-amber-50 p-3 text-sm leading-6 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{{ t('autoConfig.modelBilling.example') }}</p>
           </section>
@@ -86,14 +98,16 @@ import { defaultOpenAITwoFAAdmissionConfig, openaiTwoFAAdmissionError, type Open
 import { defaultOAuthModelMappings, oauthModelMappingsError, oauthModelMappingsPayload, type OAuthModelMappingRule } from '@/utils/oauthModelMappings'
 import { defaultExcelBPSDefaults, excelBPSDefaultsError, excelBPSDefaultsPayload, type ExcelBPSDefaults } from '@/utils/excelBPSDefaults'
 import AutoConfigHistory from '@/components/admin/operations/AutoConfigHistory.vue'
+import { getModelBillingGroups } from '@/api/admin/autoConfig'
 import { getAll } from '@/api/admin/groups'
 import { getAutoConfig, saveAutoConfig, type AutoConfig } from '@/api/admin/autoConfig'
 import { listQualityPlans } from '@/api/admin/accountQuality'
 import type { ScheduledTestPlan } from '@/types'
 import type { Group } from '@/types'
-import { defaultModelBillingConfig, modelBillingConfigError, modelBillingPayload, type ModelBillingConfig } from '@/utils/modelBilling'
+import { defaultModelBillingConfig, modelBillingConfigError, modelBillingPayload, type ModelBillingConfig, type ModelBillingRule } from '@/utils/modelBilling'
 const { t } = useI18n(), auth = useAuthStore()
 const draft = ref<(AutoConfig & { openai_two_fa_admission: OpenAITwoFAAdmissionConfig; excel_bps: ExcelBPSDefaults; model_billing: ModelBillingConfig; model_mappings: OAuthModelMappingRule[] }) | null>(null), groups = ref<Group[]>([])
+const modelBillingGroups = ref<Group[]>([]), modelBillingGroupsLoading = ref(true), modelBillingGroupsFailed = ref(false)
 const loading = ref(false), saving = ref(false), error = ref(''), notice = ref('')
 const qualityPlans = ref<ScheduledTestPlan[]>([]), selectedQualityRule = ref(''), qualityLoadFailed = ref(false)
 const availableQualityPlans = computed(() => qualityPlans.value.filter(p => p.pelican_config?.quality && p.pelican_config.quality.action !== 'openai_two_fa_admission' && (draft.value?.platform === 'openai' || p.pelican_config.question_kind !== 'state_probe')))
@@ -119,9 +133,21 @@ const platforms = [{ value: 'openai', label: 'OpenAI' }, { value: 'anthropic', l
 const initialFields = [{ key: 'priority', min: 0 }, { key: 'load_factor', min: 1 }, { key: 'concurrency', min: 1 }] as const
 const upgradeFields = [{ key: 'successes_per_step', max: 100000 }, { key: 'upgrade_step', max: 1000 }, { key: 'max_concurrency', max: 10000 }, { key: 'cooldown_seconds', max: 86400 }] as const
 const initialGroups = computed(() => groups.value.filter(g => g.platform === draft.value?.platform))
+async function loadModelBillingGroups() {
+ const v = generation
+ modelBillingGroupsLoading.value = true; modelBillingGroupsFailed.value = false
+ try { const available = await getModelBillingGroups(); if (validGeneration(v)) modelBillingGroups.value = available }
+ catch { if (validGeneration(v)) modelBillingGroupsFailed.value = true }
+ finally { if (validGeneration(v)) modelBillingGroupsLoading.value = false }
+}
+function unavailableModelBillingGroups(rule: ModelBillingRule) {
+ if (modelBillingGroupsLoading.value || modelBillingGroupsFailed.value) return []
+ return (rule.group_ids ?? []).filter(id => !modelBillingGroups.value.some(group => group.id === id))
+}
+
 async function load() {
  const v = generation; loading.value = true; error.value = ''
- try { const [config, available] = await Promise.all([getAutoConfig(), getAll()]); if (validGeneration(v)) { draft.value = { ...config, openai_two_fa_admission: config.openai_two_fa_admission ?? defaultOpenAITwoFAAdmissionConfig(), cost_multiplier: config.cost_multiplier ?? 0.07, model_mappings: config.model_mappings ?? defaultOAuthModelMappings(config.platform), model_billing: config.model_billing ?? defaultModelBillingConfig(), excel_bps: config.excel_bps ?? defaultExcelBPSDefaults() }; selectedQualityRule.value = config.quality_rule ? 'saved' : ''; groups.value = available.filter(g => g.status === 'active') } }
+ try { const [config, available] = await Promise.all([getAutoConfig(), getAll()]); if (validGeneration(v)) { draft.value = { ...config, openai_two_fa_admission: config.openai_two_fa_admission ?? defaultOpenAITwoFAAdmissionConfig(), cost_multiplier: config.cost_multiplier ?? 0.07, model_mappings: config.model_mappings ?? defaultOAuthModelMappings(config.platform), model_billing: modelBillingPayload(config.model_billing ?? defaultModelBillingConfig()), excel_bps: config.excel_bps ?? defaultExcelBPSDefaults() }; selectedQualityRule.value = config.quality_rule ? 'saved' : ''; groups.value = available.filter(g => g.status === 'active') } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.loadFailed') }
  finally { if (validGeneration(v)) loading.value = false }
 }
@@ -139,12 +165,12 @@ async function save() {
  const costMultiplier = c.cost_multiplier ?? 0.07
  if (c.enabled && !c.group_ids.length || c.upgrade_enabled && !c.upgrade_group_ids.length || !Number.isFinite(costMultiplier) || costMultiplier < 0 || costMultiplier > 1000000 || [...initialFields, ...upgradeFields].some(f => !Number.isInteger(c[f.key]) || c[f.key] < ('min' in f ? f.min : 1) || c[f.key] > ('max' in f ? f.max : 10000))) { error.value = t('autoConfig.invalid'); return }
  const v = generation; saving.value = true; error.value = ''; notice.value = ''
- try { const { runtime_blocked: _blocked, ...payload } = c; const result = await saveAutoConfig({ ...payload, cost_multiplier: costMultiplier, model_mappings: oauthModelMappingsPayload(c.model_mappings), model_billing: modelBillingPayload(c.model_billing), excel_bps: excelBPSDefaultsPayload(c.excel_bps) }); if (validGeneration(v)) { draft.value = { ...result, openai_two_fa_admission: result.openai_two_fa_admission ?? defaultOpenAITwoFAAdmissionConfig(), cost_multiplier: result.cost_multiplier ?? 0.07, model_mappings: result.model_mappings ?? defaultOAuthModelMappings(result.platform), model_billing: result.model_billing ?? defaultModelBillingConfig(), excel_bps: result.excel_bps ?? defaultExcelBPSDefaults() }; selectedQualityRule.value = result.quality_rule ? 'saved' : ''; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
+ try { const { runtime_blocked: _blocked, ...payload } = c; const result = await saveAutoConfig({ ...payload, cost_multiplier: costMultiplier, model_mappings: oauthModelMappingsPayload(c.model_mappings), model_billing: modelBillingPayload(c.model_billing), excel_bps: excelBPSDefaultsPayload(c.excel_bps) }); if (validGeneration(v)) { draft.value = { ...result, openai_two_fa_admission: result.openai_two_fa_admission ?? defaultOpenAITwoFAAdmissionConfig(), cost_multiplier: result.cost_multiplier ?? 0.07, model_mappings: result.model_mappings ?? defaultOAuthModelMappings(result.platform), model_billing: modelBillingPayload(result.model_billing ?? defaultModelBillingConfig()), excel_bps: result.excel_bps ?? defaultExcelBPSDefaults() }; selectedQualityRule.value = result.quality_rule ? 'saved' : ''; notice.value = t('autoConfig.saved'); historyRefreshKey.value++ } }
  catch { if (validGeneration(v)) error.value = t('autoConfig.saveFailed') }
  finally { if (validGeneration(v)) saving.value = false }
 }
-watch(() => auth.user ? auth.user.id + ':' + auth.user.role : '', () => { generation++; draft.value = null; groups.value = []; qualityPlans.value = []; selectedQualityRule.value = ''; qualityLoadFailed.value = false; error.value = notice.value = ''; loading.value = saving.value = false }, { flush: 'sync' })
-onMounted(() => { void load(); void loadQualityPlans() })
+watch(() => auth.user ? auth.user.id + ':' + auth.user.role : '', () => { generation++; draft.value = null; groups.value = []; modelBillingGroups.value = []; modelBillingGroupsFailed.value = false; modelBillingGroupsLoading.value = true; qualityPlans.value = []; selectedQualityRule.value = ''; qualityLoadFailed.value = false; error.value = notice.value = ''; loading.value = saving.value = false }, { flush: 'sync' })
+onMounted(() => { void load(); void loadQualityPlans(); void loadModelBillingGroups() })
 onBeforeUnmount(() => { alive = false; generation++ })
 </script>
 <style scoped>

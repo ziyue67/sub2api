@@ -267,10 +267,11 @@ import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveRouteMetaKeys } from '@/router/title'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
+import { getCustomMenuLabel } from '@/utils/customMenu'
 
 const router = useRouter()
 const route = useRoute()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const adminSettingsStore = useAdminSettingsStore()
@@ -330,7 +331,7 @@ const pageTitle = computed(() => {
     const publicItems = appStore.cachedPublicSettings?.custom_menu_items ?? []
     const menuItem = publicItems.find((item) => item.id === id)
       ?? (authStore.isAdmin ? adminSettingsStore.customMenuItems.find((item) => item.id === id) : undefined)
-    if (menuItem?.label) return menuItem.label
+    if (menuItem) return getCustomMenuLabel(menuItem, locale.value)
   }
   const titleKey = routeMetaKeys.value.titleKey
   if (titleKey) {

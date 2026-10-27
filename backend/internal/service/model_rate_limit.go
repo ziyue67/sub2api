@@ -210,8 +210,9 @@ func (a *Account) modelRateLimitReason(scope string) string {
 	return reason
 }
 
-// modelCapabilityRejected reports only an unexpired, explicit upstream model
-// rejection. Ordinary quota/capacity cooldowns and unknown reasons stay faults.
+// modelCapabilityRejected identifies an unexpired upstream observation for
+// scheduling/admission. It is not authoritative configured support: availability
+// diagnostics must not use it to manufacture a new downstream model_not_found.
 func (a *Account) modelCapabilityRejected(scope string) bool {
 	if !a.isRateLimitActiveForKey(scope) {
 		return false

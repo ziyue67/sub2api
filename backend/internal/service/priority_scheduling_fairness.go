@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"math"
+	"slices"
 	"sort"
 	"time"
 )
@@ -34,7 +35,7 @@ func (s *OpenAIGatewayService) balancesPriorityProtocols(req OpenAIAccountSchedu
 		return false
 	}
 	cfg := s.prioritySchedulingRuntimeConfig()
-	return cfg.BalanceProtocols && cfg.applies(req.GroupID, req.RequestedModel)
+	return cfg.BalanceProtocols && priorityApplies(cfg, req)
 }
 
 // Count distinct bindings, not group price/name or an inferred account class.
@@ -105,7 +106,7 @@ func (s *defaultOpenAIAccountScheduler) shouldRebalancePrioritySticky(ctx contex
 		return false
 	}
 	cfg := s.service.prioritySchedulingRuntimeConfig()
-	if !cfg.applies(req.GroupID, req.RequestedModel) {
+	if !priorityApplies(cfg, req) {
 		return false
 	}
 	balanceProtocols := cfg.BalanceProtocols
@@ -194,8 +195,8 @@ func (s *defaultOpenAIAccountScheduler) shouldRebalancePrioritySticky(ctx contex
 			continue
 		}
 		candidate := openAIAccountCandidateScore{account: account, loadKnown: true, loadInfo: load}
-		applyPriorityCandidate(cfg, &candidate, history.signals[account.ID], now)
-		if candidate.priorityUnhealthy {
+		score := applyPriorityCandidate(cfg, &candidate, history.signals[account.ID], now)
+		if candidate.priorityUnhealthy || slices.Contains(score.Reasons, "latency_above_target") {
 			continue
 		}
 		if rpm, ok := accountRPMStateFromContext(ctx, account); ok && rpm.Enabled && rpm.Limit > 0 && rpm.Current >= rpm.Limit {

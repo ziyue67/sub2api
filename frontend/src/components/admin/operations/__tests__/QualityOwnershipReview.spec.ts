@@ -1,9 +1,9 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import QualityOwnershipReview from '../QualityOwnershipReview.vue'
-import { previewQualityOwnership, reconcileQualityOwnership, type QualityOwnershipPreview } from '@/api/admin/accountQuality'
+import { previewQualityOwnership, reconcileQualityOwnership, restoreQualityOwnership, type QualityOwnershipPreview } from '@/api/admin/accountQuality'
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin/accountQuality', () => ({ previewQualityOwnership: vi.fn(), reconcileQualityOwnership: vi.fn() }))
+vi.mock('@/api/admin/accountQuality', () => ({ previewQualityOwnership: vi.fn(), reconcileQualityOwnership: vi.fn(), restoreQualityOwnership: vi.fn() }))
 const preview = (): QualityOwnershipPreview => ({ plan_id: 7, account_id: 42, rule_version: 'v1', account_version: 'v2', fence: 'a'.repeat(64), action: 'isolate_models', models: ['astra'], group_ids: [21], relinquishable_count: 1, ownership_retained: true, restrictions_changed: false,
   entries: [{ kind: 'model', model: 'astra', status: 'managed', expected_present: true, current_present: true, expected_owner: 'this_rule', current_owner: 'this_rule', expected_digest: 'a', current_digest: 'a', changed_fields: [], can_relinquish: false },
     { kind: 'model', model: 'sol', status: 'missing', expected_present: true, current_present: false, expected_owner: 'this_rule', current_owner: 'absent', expected_digest: 'a', current_digest: 'b', changed_fields: ['reason'], can_relinquish: true }] })
@@ -36,4 +36,36 @@ describe('quality ownership explicit preview and confirmation', () => {
     expect(wrapper.text()).toContain('qualityOps.ownershipStates.changed_same_owner'); expect(wrapper.find('[data-testid="quality-ownership-confirm"]').exists()).toBe(false)
     expect(reconcileQualityOwnership).not.toHaveBeenCalled(); wrapper.unmount()
   })
+})
+
+describe('quality deletion restoration', () => {
+ it('requires separate consent, restores once, and enables deletion only after fresh preview', async () => {
+  vi.mocked(previewQualityOwnership).mockResolvedValueOnce({ ...preview(), restore_ready: true }).mockResolvedValueOnce({ ...preview(), action: '', entries: [] })
+  vi.mocked(restoreQualityOwnership).mockResolvedValue({ ...preview(), restrictions_changed: true, fence: '' })
+  const wrapper = mount(QualityOwnershipReview, { props: { planId: 7, deleting: true } }); await flushPromises()
+  expect(wrapper.get('[data-testid="quality-restore-owned"]').attributes('disabled')).toBeDefined()
+  expect(restoreQualityOwnership).not.toHaveBeenCalled()
+  expect(wrapper.emitted('deletable')?.at(-1)).toEqual([false])
+  await wrapper.get('[data-testid="quality-restore-confirm"]').setValue(true)
+  await wrapper.get('[data-testid="quality-restore-owned"]').trigger('click'); await flushPromises()
+  expect(restoreQualityOwnership).toHaveBeenCalledTimes(1); expect(restoreQualityOwnership).toHaveBeenCalledWith(7, 'a'.repeat(64))
+  expect(wrapper.emitted('deletable')?.at(-1)).toEqual([true]); wrapper.unmount()
+ })
+ it.each(['ownership_conflict', 'rule_running', 'account_unavailable'])('shows %s and keeps deletion blocked', async reason => {
+  vi.mocked(previewQualityOwnership).mockResolvedValueOnce({ ...preview(), restore_ready: false, restore_blocked_reason: reason })
+  const wrapper = mount(QualityOwnershipReview, { props: { planId: 7, deleting: true } }); await flushPromises()
+  expect(wrapper.get('[data-testid="quality-delete-restore-blocked"]').text()).toContain(reason)
+  expect(wrapper.find('[data-testid="quality-restore-owned"]').exists()).toBe(false)
+  expect(wrapper.emitted('deletable')?.at(-1)).toEqual([false]); expect(restoreQualityOwnership).not.toHaveBeenCalled(); wrapper.unmount()
+ })
+ it('invalidates consent after normalized API 409 and requires preview again', async () => {
+  vi.mocked(previewQualityOwnership).mockResolvedValueOnce({ ...preview(), restore_ready: true })
+  vi.mocked(restoreQualityOwnership).mockRejectedValueOnce({ status: 409, reason: 'QUALITY_OWNERSHIP_PREVIEW_CHANGED' })
+  const wrapper = mount(QualityOwnershipReview, { props: { planId: 7, deleting: true } }); await flushPromises()
+  await wrapper.get('[data-testid="quality-restore-confirm"]').setValue(true)
+  await wrapper.get('[data-testid="quality-restore-owned"]').trigger('click'); await flushPromises()
+  expect(wrapper.text()).toContain('qualityOps.ownershipPreviewChanged')
+  expect(wrapper.find('[data-testid="quality-restore-owned"]').exists()).toBe(false)
+  expect(wrapper.emitted('deletable')?.at(-1)).toEqual([false]); expect(restoreQualityOwnership).toHaveBeenCalledTimes(1); wrapper.unmount()
+ })
 })

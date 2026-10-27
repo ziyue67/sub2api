@@ -112,6 +112,31 @@ class CodexDiagnosticTests(unittest.TestCase):
 
 @unittest.skipUnless(os.getenv('EXCEL_TEST_TOSUB2_ROOT'), 'pinned runtime supplied by packaging CI')
 class PinnedCodexProtocolTests(unittest.TestCase):
+    def test_structured_failure_does_not_send_mfa_or_tokens(self):
+        dependency = Path(os.environ['EXCEL_TEST_TOSUB2_ROOT'])
+        cases = json.loads((Path(__file__).parent / 'fixtures/credential-operation-errors.json').read_text())
+        for case in cases:
+            with self.subTest(name=case['name']), tempfile.TemporaryDirectory() as directory:
+                temporary = Path(directory)
+                script = adapter.prepare_codex_runtime(dependency, temporary)
+                script.with_name('tls-transport.mjs').write_bytes((Path(__file__).parent / 'fixtures/codex-http-transport.mjs').read_bytes())
+                diagnostic, routes, output = (temporary / n for n in ('diagnostic.json', 'routes.txt', 'oauth.json'))
+                env = dict(os.environ, SUB2API_PROTOCOL_TASK_ID='7', SUB2API_PROTOCOL_DIAGNOSTIC_PATH=str(diagnostic),
+                           CHATGPT_LOGIN_PASSWORD='synthetic-password', CODEX_TEST_MODE='operation-error',
+                           CODEX_TEST_ERROR=json.dumps(case['payload']), CODEX_TEST_ROUTES=str(routes))
+                result = subprocess.run([os.getenv('NODE_EXECUTABLE', 'node'), str(script), '--email',
+                                         'fixture', '--output-mode', 'sub2api', '--sub2api-out', str(output)],
+                                        cwd=temporary, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
+                safe = adapter.read_protocol_diagnostic(diagnostic, 7)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout + result.stderr, '')
+                self.assertEqual(safe['reason'], case['code'] if case['code'] != 'unknown' else 'protocol_error')
+                trace = routes.read_text()
+                self.assertEqual(trace.count('POST /api/accounts/password/verify'), 1)
+                self.assertNotIn('POST /api/accounts/mfa/', trace)
+                self.assertNotIn('POST /oauth/token', trace)
+                self.assertFalse(output.exists())
+
     def test_real_pinned_cli_with_only_mock_http(self):
         dependency = Path(os.environ['EXCEL_TEST_TOSUB2_ROOT'])
         original = (dependency / 'src/protocol-login.mjs').read_bytes()

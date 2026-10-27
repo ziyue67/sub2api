@@ -1,5 +1,5 @@
 <template>
-  <div :class="flat ? 'p-4 sm:p-6' : 'card p-6'">
+  <div :class="identityOnly ? 'w-full lg:w-auto' : flat ? 'p-4 sm:p-6' : 'card p-6'">
     <!-- Toolbar: left filters (multi-line) + right actions -->
     <div class="flex flex-wrap items-end justify-between gap-4">
       <!-- Left: filters (allowed to wrap to multiple rows) -->
@@ -50,8 +50,8 @@
             type="text"
             class="input pr-8 disabled:cursor-not-allowed disabled:opacity-60"
             :placeholder="t('admin.usage.searchApiKeyPlaceholder')"
-            :disabled="!observerMode && !filters.user_id"
-            :title="!observerMode && !filters.user_id ? t('admin.usage.selectUserBeforeApiKey') : undefined"
+            :disabled="needsUserForApiKeySearch"
+            :title="needsUserForApiKeySearch ? t('admin.usage.selectUserBeforeApiKey') : undefined"
             @input="debounceApiKeySearch"
             @focus="onApiKeyFocus"
           />
@@ -77,106 +77,110 @@
               class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
             >
               <span class="truncate">{{ k.name || `#${k.id}` }}</span>
+              <span v-if="k.deleted" class="ml-1 text-xs text-gray-400">({{ t('traffic.deletedKey') }})</span>
               <span class="ml-2 text-xs text-gray-400">#{{ k.id }}</span>
             </button>
           </div>
+          <p v-if="apiKeySearchError" role="alert" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ t('traffic.keysFailed') }}</p>
         </div>
 
-        <!-- Account Filter -->
-        <div ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('admin.usage.account') }}</label>
-          <input
-            v-model="accountKeyword"
-            type="text"
-            class="input pr-8"
-            :placeholder="t('admin.usage.searchAccountPlaceholder')"
-            @input="debounceAccountSearch"
-            @focus="showAccountDropdown = true"
-          />
-          <button
-            v-if="filters.account_id"
-            type="button"
-            @click="clearAccount"
-            class="absolute right-2 top-9 text-gray-400"
-            aria-label="Clear account filter"
-          >
-            ✕
-          </button>
-          <div
-            v-if="showAccountDropdown && (accountResults.length > 0 || accountKeyword)"
-            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
-          >
-            <button
-              v-for="a in accountResults"
-              :key="a.id"
-              type="button"
-              @click="selectAccount(a)"
-              class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
-            >
-              <span class="truncate">{{ a.name }}</span>
-              <span class="ml-2 text-xs text-gray-400">#{{ a.id }}</span>
-            </button>
+        <template v-if="!identityOnly">
+          <!-- Model Filter -->
+          <div class="w-full sm:w-auto sm:min-w-[220px]">
+            <label class="input-label">{{ t('usage.model') }}</label>
+            <Select v-model="filters.model" :options="modelOptions" searchable :creatable="modelCreatable" @change="emitChange" />
           </div>
-        </div>
 
-        <!-- Model Filter -->
-        <div class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('usage.model') }}</label>
-          <Select v-model="filters.model" :options="modelOptions" searchable :creatable="modelCreatable" @change="emitChange" />
-        </div>
+          <!-- Account Filter -->
+          <div ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
+            <label class="input-label">{{ t('admin.usage.account') }}</label>
+            <input
+              v-model="accountKeyword"
+              type="text"
+              class="input pr-8"
+              :placeholder="t('admin.usage.searchAccountPlaceholder')"
+              @input="debounceAccountSearch"
+              @focus="showAccountDropdown = true"
+            />
+            <button
+              v-if="filters.account_id"
+              type="button"
+              @click="clearAccount"
+              class="absolute right-2 top-9 text-gray-400"
+              aria-label="Clear account filter"
+            >
+              ✕
+            </button>
+            <div
+              v-if="showAccountDropdown && (accountResults.length > 0 || accountKeyword)"
+              class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
+            >
+              <button
+                v-for="a in accountResults"
+                :key="a.id"
+                type="button"
+                @click="selectAccount(a)"
+                class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
+              >
+                <span class="truncate">{{ a.name }}</span>
+                <span class="ml-2 text-xs text-gray-400">#{{ a.id }}</span>
+              </button>
+            </div>
+          </div>
 
-        <!-- Request Type Filter (usage only) -->
-        <div v-if="mode !== 'errors' && mode !== 'connections'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.type') }}</label>
-          <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
-        </div>
+          <!-- Request Type Filter (usage only) -->
+          <div v-if="mode !== 'errors' && mode !== 'connections'" class="w-full sm:w-auto sm:min-w-[180px]">
+            <label class="input-label">{{ t('usage.type') }}</label>
+            <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
+          </div>
 
-        <!-- Native compaction is independent of the transport request type. -->
-        <div v-if="mode !== 'errors' && mode !== 'connections'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.compactionFilter') }}</label>
-          <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
-        </div>
+          <!-- Native compaction is independent of the transport request type. -->
+          <div v-if="mode !== 'errors' && mode !== 'connections'" class="w-full sm:w-auto sm:min-w-[180px]">
+            <label class="input-label">{{ t('usage.compactionFilter') }}</label>
+            <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
+          </div>
 
-        <!-- Billing Type Filter (usage only) -->
-        <div v-if="mode !== 'errors' && mode !== 'connections'" class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.billingType') }}</label>
-          <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
-        </div>
+          <!-- Billing Type Filter (usage only) -->
+          <div v-if="mode !== 'errors' && mode !== 'connections'" class="w-full sm:w-auto sm:min-w-[200px]">
+            <label class="input-label">{{ t('admin.usage.billingType') }}</label>
+            <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
+          </div>
 
-        <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
-        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
-          <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitChange" />
-        </div>
+          <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
+          <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
+            <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
+            <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitChange" />
+          </div>
 
-        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
-          <label class="input-label">{{ t('admin.usage.upstreamModelAudit') }}</label>
-          <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
-        </div>
+          <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
+            <label class="input-label">{{ t('admin.usage.upstreamModelAudit') }}</label>
+            <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
+          </div>
 
-        <!-- Error Phase Filter (errors only) -->
-        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
-          <Select v-model="filters.error_phase" :options="errorPhaseOptions" @change="emitChange" />
-        </div>
+          <!-- Error Phase Filter (errors only) -->
+          <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+            <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
+            <Select v-model="filters.error_phase" :options="errorPhaseOptions" @change="emitChange" />
+          </div>
 
-        <!-- Error Category Filter (errors only) -->
-        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('usage.errors.category') }}</label>
-          <Select v-model="filters.error_category" :options="errorCategoryOptions" @change="emitChange" />
-        </div>
+          <!-- Error Category Filter (errors only) -->
+          <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+            <label class="input-label">{{ t('usage.errors.category') }}</label>
+            <Select v-model="filters.error_category" :options="errorCategoryOptions" @change="emitChange" />
+          </div>
 
-        <!-- Status Code Filter (errors only) -->
-        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-          <label class="input-label">{{ t('admin.ops.errorLog.status') }}</label>
-          <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitChange" />
-        </div>
+          <!-- Status Code Filter (errors only) -->
+          <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+            <label class="input-label">{{ t('admin.ops.errorLog.status') }}</label>
+            <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitChange" />
+          </div>
 
-        <!-- Group Filter -->
-        <div class="w-full sm:w-auto sm:min-w-[200px]">
-          <label class="input-label">{{ t('admin.usage.group') }}</label>
-          <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
-        </div>
+          <!-- Group Filter -->
+          <div class="w-full sm:w-auto sm:min-w-[200px]">
+            <label class="input-label">{{ t('admin.usage.group') }}</label>
+            <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
+          </div>
+        </template>
 
         <slot name="after-filters" />
       </div>
@@ -231,13 +235,17 @@ interface Props {
   flat?: boolean
   /** 模型筛选是否允许输入任意值（creatable） */
   modelCreatable?: boolean
+  /** Reuse user/key search without token, account, model or group filters. */
+  identityOnly?: boolean
+  apiKeySearch?: (userId: number | undefined, query: string) => Promise<UsageFilterOption[]>
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showActions: true,
   mode: 'usage',
   flat: false,
-  modelCreatable: false
+  modelCreatable: false,
+  identityOnly: false
 })
 const emit = defineEmits([
   'update:modelValue',
@@ -251,6 +259,8 @@ const emit = defineEmits([
 const { t } = useI18n()
 const observerMode = inject(observerUsageContext, false)
 const filters = toRef(props, 'modelValue')
+// 观察者自带作用域、identityOnly 由调用方负责过滤作用域，这两种情况无需先选用户。
+const needsUserForApiKeySearch = computed(() => !observerMode && !props.identityOnly && !filters.value.user_id)
 
 const userSearchRef = ref<HTMLElement | null>(null)
 const apiKeySearchRef = ref<HTMLElement | null>(null)
@@ -265,7 +275,9 @@ let userSearchSequence = 0
 const apiKeyKeyword = ref('')
 const apiKeyResults = ref<UsageFilterOption[]>([])
 const showApiKeyDropdown = ref(false)
+const apiKeySearchError = ref(false)
 let apiKeySearchTimeout: ReturnType<typeof setTimeout> | null = null
+let apiKeySearchSequence = 0
 
 interface SimpleAccount {
   id: number
@@ -376,23 +388,42 @@ const debounceUserSearch = () => {
   }, 300)
 }
 
+const clearPendingApiKeySearch = () => {
+  if (apiKeySearchTimeout) {
+    clearTimeout(apiKeySearchTimeout)
+    apiKeySearchTimeout = null
+  }
+  apiKeySearchSequence += 1
+}
+
+const searchApiKeys = async (userId: number | undefined, query: string, sequence: number) => {
+  try {
+    const results = props.apiKeySearch && !observerMode
+      ? await props.apiKeySearch(userId, query)
+      : observerMode
+      ? await observerUsageAPI.filterOptions('api_key', query)
+      : await adminAPI.usage.searchApiKeys(userId, query)
+    if (sequence === apiKeySearchSequence && userId === filters.value.user_id) { apiKeyResults.value = results; apiKeySearchError.value = false }
+  } catch {
+    if (sequence === apiKeySearchSequence && userId === filters.value.user_id) { apiKeyResults.value = []; apiKeySearchError.value = Boolean(props.apiKeySearch) }
+  }
+}
+
 const debounceApiKeySearch = () => {
-  if (apiKeySearchTimeout) clearTimeout(apiKeySearchTimeout)
-  // Admins must pick a user before searching API keys; observers only ever see
-  // their own choices, so the search runs without a user_id.
-  if (!observerMode && !filters.value.user_id) {
-    apiKeyResults.value = []
+  clearPendingApiKeySearch()
+  apiKeyResults.value = []
+  // Admins must pick a user before searching API keys; observers and
+  // caller-scoped (identityOnly) searches run without a user_id.
+  if (needsUserForApiKeySearch.value) {
     showApiKeyDropdown.value = false
     return
   }
-  apiKeySearchTimeout = setTimeout(async () => {
-    try {
-      apiKeyResults.value = observerMode
-        ? await observerUsageAPI.filterOptions('api_key', apiKeyKeyword.value || '')
-        : await adminAPI.usage.searchApiKeys(filters.value.user_id, apiKeyKeyword.value || '')
-    } catch {
-      apiKeyResults.value = []
-    }
+  const sequence = apiKeySearchSequence
+  const userId = filters.value.user_id
+  const query = apiKeyKeyword.value || ''
+  apiKeySearchTimeout = setTimeout(() => {
+    apiKeySearchTimeout = null
+    void searchApiKeys(userId, query, sequence)
   }, 300)
 }
 
@@ -405,6 +436,8 @@ const selectUser = async (u: SimpleUser) => {
   clearApiKey()
 
   emitChange()
+  // Auto-load keys in the selected user's scope without delaying filtering.
+  await searchApiKeys(u.id, '', apiKeySearchSequence)
 }
 
 const clearUser = () => {
@@ -418,14 +451,17 @@ const clearUser = () => {
 }
 
 const selectApiKey = (k: UsageFilterOption) => {
-  apiKeyKeyword.value = k.name || String(k.id)
+  clearPendingApiKeySearch()
+  apiKeyKeyword.value = `${k.name || String(k.id)}${k.deleted ? ` (${t('traffic.deletedKey')})` : ''}`
   showApiKeyDropdown.value = false
   filters.value.api_key_id = k.id
   emitChange()
 }
 
 const clearApiKey = () => {
+  clearPendingApiKeySearch()
   apiKeyKeyword.value = ''
+  apiKeySearchError.value = false
   apiKeyResults.value = []
   showApiKeyDropdown.value = false
   filters.value.api_key_id = undefined
@@ -450,13 +486,6 @@ const clearAccount = () => {
   showAccountDropdown.value = false
 }
 
-const clearPendingApiKeySearch = () => {
-  if (apiKeySearchTimeout) {
-    clearTimeout(apiKeySearchTimeout)
-    apiKeySearchTimeout = null
-  }
-}
-
 const debounceAccountSearch = () => {
   if (accountSearchTimeout) clearTimeout(accountSearchTimeout)
   accountSearchTimeout = setTimeout(async () => {
@@ -477,7 +506,7 @@ const debounceAccountSearch = () => {
 
 
 const onApiKeyFocus = () => {
-  if (!filters.value.user_id) return
+  if (needsUserForApiKeySearch.value) return
   showApiKeyDropdown.value = true
   // Trigger search if no results yet
   if (apiKeyResults.value.length === 0) {
@@ -501,7 +530,7 @@ const onDocumentClick = (e: MouseEvent) => {
 watch(
   () => props.startDate,
   (value) => {
-    filters.value.start_date = value
+    if (!props.identityOnly) filters.value.start_date = value
   },
   { immediate: true }
 )
@@ -509,7 +538,7 @@ watch(
 watch(
   () => props.endDate,
   (value) => {
-    filters.value.end_date = value
+    if (!props.identityOnly) filters.value.end_date = value
   },
   { immediate: true }
 )
@@ -531,10 +560,12 @@ watch(
   () => filters.value.api_key_id,
   (apiKeyId) => {
     if (!apiKeyId) {
+      clearPendingApiKeySearch()
       apiKeyKeyword.value = ''
       apiKeyResults.value = []
     }
-  }
+  },
+  { flush: 'sync' }
 )
 
 watch(
@@ -550,6 +581,7 @@ watch(
 
 onMounted(async () => {
   document.addEventListener('click', onDocumentClick)
+  if (props.identityOnly) return
   try {
     const gs = observerMode
       ? { items: await observerUsageAPI.filterOptions('group') }
@@ -563,6 +595,7 @@ onMounted(async () => {
 onUnmounted(() => {
   clearPendingUserSearch()
   clearPendingApiKeySearch()
+  if (accountSearchTimeout) clearTimeout(accountSearchTimeout)
   document.removeEventListener('click', onDocumentClick)
 })
 

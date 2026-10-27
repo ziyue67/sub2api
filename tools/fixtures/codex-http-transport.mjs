@@ -31,6 +31,7 @@ export class TlsFingerprintTransport {
     if (route === 'GET /log-in/password' || route === 'GET /log-in') return html();
     if (route === 'POST /api/accounts/password/verify') {
       assert.equal(JSON.parse(options.body).password, 'synthetic-password');
+      if (mode === 'operation-error') return Response.json(JSON.parse(process.env.CODEX_TEST_ERROR), {status: 400});
       return Response.json({page: {type: 'mfa_challenge'}, 'oai-client-auth-session': {
         mfa_factors: [{factor_type: 'totp', id: 'synthetic-factor'}],
       }});

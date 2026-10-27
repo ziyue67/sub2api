@@ -1,4 +1,40 @@
 export default {
+  operationFailure: {
+  manual: {"busy": "An operation is already active; wait and review the existing task.", "worker": "Re-login service is unavailable; check the worker status.", "configuration": "Save a complete login configuration first.", "encryption": "Enable credential encryption first.", "changed": "Credentials or task ownership changed; refresh the list and review manually."},
+  refreshAttempt: 'Last failed refresh attempt (a later retry may have recovered)',
+  "details": "View failure details",
+  "code": "Safe code",
+  "stage": "Failure stage",
+  "time": "Occurred at",
+  "unknownTime": "Time not recorded",
+  "automationBlocked": "Automation is restricted; review this failure and the re-login budget",
+  "reasons": {
+    "phone_verification_required": "Phone verification required",
+    "account_deactivated": "Account deactivated",
+    "account_deleted": "Account deleted",
+    "account_retired": "Account deleted or deactivated",
+    "requires_relogin": "Credentials invalid; re-login required",
+    "password_rejected": "Password rejected",
+    "mfa_required": "MFA / verification code required",
+    "security_check": "Security verification required",
+    "authorization_denied": "Authorization denied",
+    "rate_limited": "Upstream rate limited",
+    "timeout": "Request timed out",
+    "transport_error": "Network connection failed",
+    "service_error": "Upstream service failed",
+    "unknown": "Unknown failure; cause unconfirmed"
+  },
+  "actions": {
+    "complete_phone_verification": "Complete phone verification manually on the official site, then check credentials.",
+    "contact_provider": "Confirm the account status through official support.",
+    "reauthorize": "Check login settings and authorize again.",
+    "update_password": "Verify and update the saved login password.",
+    "complete_verification": "Complete official verification manually and check MFA / verification code settings.",
+    "review_authorization": "Review official authorization or security verification requirements manually.",
+    "check_service_later": "Check network or service availability; retry later under the existing policy.",
+    "review_diagnostics": "Review this operation’s safe stage and code to confirm the cause manually."
+  }
+},
   reloginBudgetCount: 'Re-login failure budget: {count}/{limit}',
   reloginBudgetExhausted: 'Automatic re-login exhausted; inspections continue',
   reloginBackoffUntil: 'Re-login cooldown until',

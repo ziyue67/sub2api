@@ -67,11 +67,17 @@ type priorityReaderStub struct {
 	err    error
 }
 
-func (r *priorityReaderStub) ReadPrioritySchedulingSignals(_ context.Context, _ PrioritySchedulingQuery) (map[int64]PrioritySchedulingSignal, error) {
+func (r *priorityReaderStub) ReadPrioritySchedulingSignals(_ context.Context, query PrioritySchedulingQuery) (map[int64]PrioritySchedulingSignal, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++
-	return r.signal, r.err
+	// The SQL reader returns one aggregate row per requested account, including
+	// explicitly empty history. Keep this test adapter faithful to that contract.
+	signals := make(map[int64]PrioritySchedulingSignal, len(query.AccountIDs))
+	for _, id := range query.AccountIDs {
+		signals[id] = r.signal[id]
+	}
+	return signals, r.err
 }
 func priorityGateway(c PrioritySchedulingConfig, r *priorityReaderStub) *OpenAIGatewayService {
 	settings := &SettingService{settingRepo: &prioritySettingStub{}}

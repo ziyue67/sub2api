@@ -1,4 +1,6 @@
 import type { OpenAITwoFAAdmissionConfig } from '@/utils/openaiTwoFAAdmission'
+import { list as listGroups } from './groups'
+import type { AdminGroup } from '@/types'
 import type { ScheduledTestPlan } from '@/types'
 import { apiClient } from '../client'
 import type { ModelBillingConfig } from '@/utils/modelBilling'
@@ -55,4 +57,21 @@ export interface AutoConfigEventsPage {
 }
 export async function getAutoConfigEvents(params: { before?: number; kind?: AutoConfigEventKind | ''; limit?: number } = {}): Promise<AutoConfigEventsPage> {
   return (await apiClient.get('/admin/account-ops/auto-config/events', { params })).data
+}
+
+// Collect every page before exposing scope options. A partial list must never
+// turn selected IDs into an empty (global) scope.
+export async function getModelBillingGroups(): Promise<AdminGroup[]> {
+ const groups = new Map<number, AdminGroup>()
+ for (let page = 1; ; page++) {
+  const batch = await listGroups(page, 100, { status: 'active', sort_by: 'id', sort_order: 'asc' })
+  if (batch.page !== page || !Number.isSafeInteger(batch.pages) || batch.pages < 0 ||
+      !Number.isSafeInteger(batch.total) || batch.total < 0) throw new Error('Incomplete group list')
+  for (const group of batch.items) groups.set(group.id, group)
+  if (page >= batch.pages) {
+   if (groups.size < batch.total) throw new Error('Incomplete group list')
+   return [...groups.values()]
+  }
+  if (!batch.items.length) throw new Error('Incomplete group list')
+ }
 }

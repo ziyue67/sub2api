@@ -53,6 +53,11 @@ func RegisterGatewayRoutes(
 	}
 	r.GET("/api/bps-images/:token", imageOwner, h.OpenAIGateway.ExcelBPSImage)
 	r.HEAD("/api/bps-images/:token", imageOwner, h.OpenAIGateway.ExcelBPSImage)
+	var trafficRecorder middleware.TrafficRecorder
+	if h.Admin != nil && h.Admin.Usage != nil {
+		trafficRecorder = h.Admin.Usage
+	}
+	traffic := middleware.UserTraffic(trafficRecorder)
 	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize)
 	imageAdmission := middleware.ExcelBPSImageAdmission()
@@ -239,7 +244,7 @@ func RegisterGatewayRoutes(
 
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
-	gateway.Use(bodyLimit)
+	gateway.Use(traffic, bodyLimit)
 	gateway.Use(clientRequestID)
 	gateway.Use(opsErrorLogger)
 	gateway.Use(endpointNorm)
@@ -411,7 +416,7 @@ func RegisterGatewayRoutes(
 
 	// Gemini 原生 API 兼容层（Gemini SDK/CLI 直连）
 	gemini := r.Group("/v1beta")
-	gemini.Use(bodyLimit)
+	gemini.Use(traffic, bodyLimit)
 	gemini.Use(clientRequestID)
 	gemini.Use(opsErrorLogger)
 	gemini.Use(endpointNorm)
@@ -446,7 +451,7 @@ func RegisterGatewayRoutes(
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
 	// 之前，避免逐条路由手工维护链导致漏挂。
 	rootRoute := func(method, path string, limit gin.HandlerFunc, handler gin.HandlerFunc) {
-		r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, groupCodexCLIOnly, groupBlockSubagents, groupStreamOnly, podRoute, compositeTarget, requireGroupAnthropic, handler)
+		r.Handle(method, path, traffic, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, groupCodexCLIOnly, groupBlockSubagents, groupStreamOnly, podRoute, compositeTarget, requireGroupAnthropic, handler)
 	}
 	for _, prefix := range []string{"/api/v3", "/v3", "/v1", ""} {
 		rootRoute(http.MethodPost, prefix+"/contents/generations/tasks", bodyLimit, h.OpenAIGateway.SeedanceTasks)
@@ -463,7 +468,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, groupCodexCLIOnly, groupBlockSubagents, groupStreamOnly, podRoute, compositeTarget, requireGroupAnthropic)
+	codexDirect.Use(traffic, bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, groupCodexCLIOnly, groupBlockSubagents, groupStreamOnly, podRoute, compositeTarget, requireGroupAnthropic)
 	{
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)
@@ -574,11 +579,11 @@ func RegisterGatewayRoutes(
 	})
 
 	// Antigravity 模型列表
-	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)
+	r.GET("/antigravity/models", traffic, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)
 
 	// Antigravity 专用路由（仅使用 antigravity 账户，不混合调度）
 	antigravityV1 := r.Group("/antigravity/v1")
-	antigravityV1.Use(bodyLimit)
+	antigravityV1.Use(traffic, bodyLimit)
 	antigravityV1.Use(clientRequestID)
 	antigravityV1.Use(opsErrorLogger)
 	antigravityV1.Use(endpointNorm)
@@ -597,7 +602,7 @@ func RegisterGatewayRoutes(
 	}
 
 	antigravityV1Beta := r.Group("/antigravity/v1beta")
-	antigravityV1Beta.Use(bodyLimit)
+	antigravityV1Beta.Use(traffic, bodyLimit)
 	antigravityV1Beta.Use(clientRequestID)
 	antigravityV1Beta.Use(opsErrorLogger)
 	antigravityV1Beta.Use(endpointNorm)

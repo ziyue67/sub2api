@@ -57,6 +57,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/observerUsage.spec.ts \
 	src/views/admin/__tests__/UsageView.spec.ts \
 	src/views/user/__tests__/UsageView.spec.ts \
+	src/components/usage/__tests__/TrafficPanel.spec.ts \
+	src/api/__tests__/traffic.spec.ts \
 	src/views/user/__tests__/UsageEntryView.spec.ts \
 	src/components/admin/usage/__tests__/UsageFilters.spec.ts \
 	src/components/admin/usage/__tests__/UsageTimingDialog.spec.ts \
