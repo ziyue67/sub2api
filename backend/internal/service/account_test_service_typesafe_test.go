@@ -67,7 +67,7 @@ func TestTypeSafeAccountTestMarksRejectedKey(t *testing.T) {
 			require.Error(t, svc.TestAccountConnection(c, 31, "", "", AccountTestModeDefault))
 			require.Equal(t, 1, repo.errorCalls)
 			// 本 Fork 的 parseTestSSEOutput 额外返回上游模型名（第三个返回值）。
-			responseText, errMsg, _ := parseTestSSEOutputWithModel(rec.Body.String())
+			responseText, errMsg := parseTestSSEOutput(rec.Body.String())
 			require.Empty(t, responseText)
 			require.Contains(t, errMsg, "API returned")
 		})
