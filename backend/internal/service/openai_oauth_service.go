@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -14,10 +15,18 @@ import (
 
 // OpenAIOAuthService handles OpenAI OAuth authentication flows
 type OpenAIOAuthService struct {
-	sessionStore         *openai.SessionStore
-	proxyRepo            ProxyRepository
-	oauthClient          OpenAIOAuthClient
-	privacyClientFactory PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
+	sessionStore           *openai.SessionStore
+	proxyRepo              ProxyRepository
+	oauthClient            OpenAIOAuthClient
+	privacyClientFactory   PrivacyClientFactory               // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
+	refreshFailureRecorder CredentialOperationRefreshRecorder // wired before serving
+	refreshRecorderMu      sync.RWMutex
+}
+
+func (s *OpenAIOAuthService) SetRefreshFailureRecorder(recorder CredentialOperationRefreshRecorder) {
+	s.refreshRecorderMu.Lock()
+	defer s.refreshRecorderMu.Unlock()
+	s.refreshFailureRecorder = recorder
 }
 
 // NewOpenAIOAuthService creates a new OpenAI OAuth service
@@ -413,7 +422,22 @@ func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *A
 	}
 
 	clientID := account.GetCredential("client_id")
-	return s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
+	info, err := s.RefreshTokenWithClientID(ctx, refreshToken, proxyURL, clientID)
+	s.refreshRecorderMu.RLock()
+	recorder := s.refreshFailureRecorder
+	s.refreshRecorderMu.RUnlock()
+	if err != nil && recorder != nil && !account.IsCredentialShadow() {
+		// This is an observed failed attempt, not a claim about the final
+		// background retry outcome or the account's present health.
+		at := time.Now()
+		failure := refreshOperationFailure(err, &at)
+		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		if recordErr := recorder.RecordRefreshFailure(persistCtx, account.ID, failure.Code, at); recordErr != nil {
+			slog.Warn("credential_operation_refresh_failure_save_failed", "account_id", account.ID)
+		}
+	}
+	return info, err
 }
 
 // BuildAccountCredentials builds credentials map from token info

@@ -48,7 +48,8 @@
             </template>
           </div>
 
-          <section v-if="candyHistories(row).length" class="mt-4 border-t border-gray-100 pt-3 dark:border-dark-700/70" data-testid="candy-history">
+          <section class="mt-4 border-t border-gray-100 pt-3 dark:border-dark-700/70" data-testid="candy-history">
+            <template v-if="candyHistories(row).length">
               <h4 class="text-xs font-medium text-gray-700 dark:text-gray-200">{{ t('channelMonitorV2.candy.title') }}</h4>
               <div v-for="(history, historyIndex) in candyHistories(row)" :key="`${history.model}-${history.reasoning_effort}-${historyIndex}`" class="mt-2" data-testid="candy-model-history">
                 <div class="flex items-center justify-between gap-2 text-xs">
@@ -69,6 +70,14 @@
                 <p v-if="!history.results.length" class="mt-3 text-[10px] text-gray-400">{{ t('channelMonitorV2.candy.waiting') }}</p>
               </div>
               <div class="mt-2 flex items-center justify-between gap-2 text-[9px] text-gray-500 dark:text-gray-400"><span>{{ t('channelMonitorV2.candy.legend') }}</span><span>{{ latestCandyTime(row) }}</span></div>
+            </template>
+            <template v-else>
+              <div class="flex items-center justify-between gap-2 text-xs">
+                <h4 class="font-medium text-gray-700 dark:text-gray-200">{{ t('channelMonitorV2.candy.title') }}</h4>
+                <span class="flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400"><i class="h-2 w-2 rounded-full bg-gray-400" />{{ t('channelMonitorV2.candy.disabled') }}</span>
+              </div>
+              <p class="mt-2 text-[10px] leading-relaxed text-gray-500 dark:text-gray-400" data-testid="candy-not-configured">{{ t('channelMonitorV2.candy.disabledHint') }}</p>
+            </template>
           </section>
         </article>
       </div>

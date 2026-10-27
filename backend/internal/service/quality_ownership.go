@@ -30,28 +30,37 @@ type QualityOwnershipEntry struct {
 	CanRelinquish      bool     `json:"can_relinquish"`
 }
 type QualityOwnershipPreview struct {
-	PlanID              int64                   `json:"plan_id"`
-	AccountID           int64                   `json:"account_id"`
-	RuleVersion         string                  `json:"rule_version"`
-	AccountVersion      string                  `json:"account_version"`
-	Fence               string                  `json:"fence"`
-	Action              string                  `json:"action"`
-	Models              []string                `json:"models"`
-	GroupIDs            []int64                 `json:"group_ids"`
-	Entries             []QualityOwnershipEntry `json:"entries"`
-	RelinquishableCount int                     `json:"relinquishable_count"`
-	OwnershipRetained   bool                    `json:"ownership_retained"`
-	RestrictionsChanged bool                    `json:"restrictions_changed"`
+	PlanID               int64                   `json:"plan_id"`
+	AccountID            int64                   `json:"account_id"`
+	RuleVersion          string                  `json:"rule_version"`
+	AccountVersion       string                  `json:"account_version"`
+	Fence                string                  `json:"fence"`
+	Action               string                  `json:"action"`
+	Models               []string                `json:"models"`
+	GroupIDs             []int64                 `json:"group_ids"`
+	Entries              []QualityOwnershipEntry `json:"entries"`
+	RelinquishableCount  int                     `json:"relinquishable_count"`
+	OwnershipRetained    bool                    `json:"ownership_retained"`
+	RestoreReady         bool                    `json:"restore_ready"`
+	RestoreBlockedReason string                  `json:"restore_blocked_reason,omitempty"`
+	RestrictionsChanged  bool                    `json:"restrictions_changed"`
 }
 type QualityOwnershipRequest struct {
 	Fence   string `json:"fence"`
 	Confirm bool   `json:"confirm"`
+	Restore bool   `json:"-"`
+	Delete  bool   `json:"-"`
 }
 type QualityOwnershipRepository interface {
 	QualityOwnership(context.Context, int64, *QualityOwnershipRequest) (*QualityOwnershipPreview, error)
 }
 
 func (s *ScheduledTestService) QualityOwnership(ctx context.Context, id int64, request *QualityOwnershipRequest) (*QualityOwnershipPreview, error) {
+	if request != nil && (request.Restore || request.Delete) {
+		if _, observer := ObserverGroupIDs(ctx); observer {
+			return nil, ErrObserverScope
+		}
+	}
 	repo, ok := s.planRepo.(QualityOwnershipRepository)
 	if !ok {
 		return nil, infraerrors.ServiceUnavailable("QUALITY_OWNERSHIP_UNAVAILABLE", "quality ownership inspection is unavailable")

@@ -54,8 +54,9 @@ export async function update(id: number, req: UpdateScheduledTestPlanRequest): P
  * Delete a scheduled test plan
  * @param id - Plan ID
  */
-export async function deletePlan(id: number): Promise<void> {
-  await apiClient.delete(`/admin/scheduled-test-plans/${id}`)
+export async function deletePlan(id: number, ownership?: { fence: string; confirm: true }): Promise<void> {
+  if (ownership) await apiClient.delete(`/admin/scheduled-test-plans/${id}`, { data: ownership })
+  else await apiClient.delete(`/admin/scheduled-test-plans/${id}`)
 }
 
 /**

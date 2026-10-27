@@ -3,7 +3,40 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {createProtocolDiagnostics, validateCodexCallback} from './openai_codex_diagnostics.mjs';
+import {createProtocolDiagnostics, validateCodexCallback, credentialOperationReason, parseOperationJSON, observeProtocolResponse} from './openai_codex_diagnostics.mjs';
+
+test('actual error envelopes classify only codes and full allowlisted messages', () => {
+  const fixtures = JSON.parse(fs.readFileSync(new URL('./fixtures/credential-operation-errors.json', import.meta.url)));
+  for (const {name, payload, code} of fixtures) {
+    assert.equal(credentialOperationReason(payload), code, name);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operation-test-'));
+    try {
+      const file = path.join(root, 'diagnostic.json');
+      const channel = createProtocolDiagnostics(file, 7);
+      channel.mark('web_login');
+      try { observeProtocolResponse({res: {status: 400}, text: JSON.stringify(payload)}); }
+      catch (error) { channel.fail(error); }
+      const diagnostic = JSON.parse(fs.readFileSync(file));
+      assert.equal(diagnostic.reason, code === 'unknown' ? 'protocol_error' : code, name);
+      assert.ok(!JSON.stringify(diagnostic).includes('synthetic-private'));
+    } finally { fs.rmSync(root, {recursive: true, force: true}); }
+  }
+  for (const raw of ['{"error":{"code":"account_deleted","code":"account_deactivated"}}',
+    '{"error":{"co\\u0064e":"account_deleted","code":"account_deactivated"}}',
+    '{"error":{"code":"account_deleted"},"error":{"code":"account_retired"}}', 'x'.repeat(32769)]) {
+    assert.equal(parseOperationJSON(raw), null);
+  }
+  assert.throws(() => observeProtocolResponse({res: {status: 200}, text: '{"page":{"type":"add_phone"}}'}), {message: 'phone_verification_required'});
+  for (const text of ['Your account has not been deleted.', 'User said: "account_deleted"', 'No security check required']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'negative-test-'));
+    try {
+      const file = path.join(root, 'diagnostic.json');
+      const channel = createProtocolDiagnostics(file, 7);
+      channel.fail(new Error(text));
+      assert.equal(JSON.parse(fs.readFileSync(file)).reason, 'protocol_error');
+    } finally { fs.rmSync(root, {recursive: true, force: true}); }
+  }
+});
 
 test('callback requires the bound state, origin, single code and PKCE verifier', () => {
   const redirect = 'http://localhost:1455/auth/callback';

@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import AutoConfigView from '../AutoConfigView.vue'
 import { getAutoConfig, saveAutoConfig, type AutoConfig } from '@/api/admin/autoConfig'
 import { listQualityPlans } from '@/api/admin/accountQuality'
-import { getAll } from '@/api/admin/groups'
+import { getAll, list as listGroups } from '@/api/admin/groups'
 import type { Group } from '@/types'
 import { defaultModelBillingConfig } from '@/utils/modelBilling'
 import { defaultExcelBPSDefaults } from '@/utils/excelBPSDefaults'
@@ -17,12 +17,14 @@ vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<mai
 vi.mock('@/components/admin/operations/AutoConfigHistory.vue', () => ({ default: { props: ['refreshKey'], template: '<section data-testid="history" :data-refresh="refreshKey" />' } }))
 vi.mock('@/components/admin/operations/SmartOpsNav.vue', () => ({ default: { template: '<nav />' } }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin/autoConfig', () => ({ getAutoConfig: vi.fn(), saveAutoConfig: vi.fn() }))
+vi.mock('@/api/client', () => ({ apiClient: { get: vi.fn(), put: vi.fn() } }))
+vi.mock('@/api/admin/autoConfig', async importOriginal => ({ ...await importOriginal<typeof import('@/api/admin/autoConfig')>(), getAutoConfig: vi.fn(), saveAutoConfig: vi.fn() }))
 vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn() }))
-vi.mock('@/api/admin/groups', () => ({ getAll: vi.fn() }))
+vi.mock('@/api/admin/groups', () => ({ getAll: vi.fn(), list: vi.fn() }))
 const config: AutoConfig = { openai_two_fa_admission: defaultOpenAITwoFAAdmissionConfig(), model_billing: defaultModelBillingConfig(), model_mappings: defaultOAuthModelMappings('openai'), excel_bps: defaultExcelBPSDefaults(), enabled: false, platform: 'openai', priority: 50, load_factor: 1, concurrency: 3, cost_multiplier: 0.07, group_ids: [], upgrade_enabled: false, upgrade_group_ids: [], successes_per_step: 20, upgrade_step: 1, max_concurrency: 100, cooldown_seconds: 60, revision: '' }
 beforeEach(() => {
  vi.resetAllMocks(); vi.mocked(listQualityPlans).mockResolvedValue([]); state.auth = reactive({ user: { id: 1, role: 'admin' } })
+ vi.mocked(listGroups).mockImplementation(async () => ({ items: await getAll(), page: 1, page_size: 100, pages: 1, total: 2 }) as any)
  vi.mocked(getAutoConfig).mockResolvedValue(structuredClone(config)); vi.mocked(saveAutoConfig).mockImplementation(async c => c)
  vi.mocked(getAll).mockResolvedValue([{ id: 5, name: 'OpenAI test', platform: 'openai', status: 'active' }, { id: 6, name: 'Anthropic test', platform: 'anthropic', status: 'active' }] as Group[])
 })
@@ -38,7 +40,7 @@ describe('AutoConfigView', () => {
   expect(w.get<HTMLInputElement>('[data-testid="model-billing-multiplier-1"]').element.value).toBe('10')
   await w.get('[data-testid="model-billing-model-1"]').setValue(' custom-mini ')
   await w.get('form').trigger('submit'); await flushPromises()
-  expect(saveAutoConfig).toHaveBeenCalledWith({ ...config, model_billing: { enabled: true, rules: [{ model: 'gpt-6-luna*', multiplier: 2.5 }, { model: 'custom-mini', multiplier: 10 }] } })
+  expect(saveAutoConfig).toHaveBeenCalledWith({ ...config, model_billing: { enabled: true, rules: [{ model: 'gpt-6-luna*', multiplier: 2.5, group_ids: [] }, { model: 'custom-mini', multiplier: 10, group_ids: [] }] } })
   w.unmount()
  })
  it.each([0, -1, 1001, ''])('rejects invalid model multipliers (%s)', async multiplier => {
@@ -116,7 +118,7 @@ describe('AutoConfigView', () => {
   expect(saveAutoConfig).toHaveBeenLastCalledWith({
     ...config,
     model_mappings: [{ from: 'gpt-5.4', to: 'gpt-6-luna' }],
-    model_billing: { enabled: true, rules: [{ model: 'gpt-6-luna*', multiplier: 12.5 }] }
+    model_billing: { enabled: true, rules: [{ model: 'gpt-6-luna*', multiplier: 12.5, group_ids: [] }] }
   })
   expect(w.get<HTMLInputElement>('[data-testid="mapping-to-0"]').element.value).toBe('gpt-6-luna')
   expect(w.get<HTMLInputElement>('[data-testid="model-billing-multiplier-0"]').element.value).toBe('12.5')
@@ -242,4 +244,70 @@ describe('new 2FA admission configuration', () => {
   expect(saveAutoConfig).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, upgrade_enabled: false, openai_two_fa_admission: defaultOpenAITwoFAAdmissionConfig() }))
   w.unmount()
  })
+})
+
+describe('per-rule model billing scopes', () => {
+ it('loads, edits independently, saves, reloads and explicitly clears to all groups', async () => {
+  const scoped = { ...structuredClone(config), model_billing: { enabled: true, rules: [
+   { model: 'gpt-6-luna*', multiplier: 10, group_ids: [5] },
+   { model: 'claude-*', multiplier: 3, group_ids: [6] }
+  ] } }
+  vi.mocked(getAutoConfig).mockResolvedValue(scoped)
+  const w = mount(AutoConfigView); await flushPromises()
+  expect(w.get<HTMLInputElement>('[data-testid="model-billing-group-0-5"]').element.checked).toBe(true)
+  expect(w.get<HTMLInputElement>('[data-testid="model-billing-group-1-6"]').element.checked).toBe(true)
+  await w.get('[data-testid="model-billing-group-0-6"]').setValue(true)
+  await w.get('form').trigger('submit'); await flushPromises()
+  const saved: AutoConfig = JSON.parse(JSON.stringify(vi.mocked(saveAutoConfig).mock.calls[0][0]))
+  expect(saved.model_billing?.rules.map(r => r.group_ids)).toEqual([[5,6],[6]])
+  expect(saved.openai_two_fa_admission).toEqual(config.openai_two_fa_admission)
+  expect(saved.excel_bps).toEqual(config.excel_bps)
+  expect(saved.model_mappings).toEqual(config.model_mappings)
+  w.unmount()
+  vi.mocked(getAutoConfig).mockResolvedValue(saved)
+  const reloaded = mount(AutoConfigView); await flushPromises()
+  expect(reloaded.get<HTMLInputElement>('[data-testid="model-billing-group-0-6"]').element.checked).toBe(true)
+  await reloaded.get('[data-testid="model-billing-clear-groups-0"]').trigger('click')
+  expect(reloaded.get('[data-testid="model-billing-scope-0"]').text()).toContain('modelBilling.allGroups')
+  await reloaded.get('form').trigger('submit'); await flushPromises()
+  expect(vi.mocked(saveAutoConfig).mock.lastCall?.[0].model_billing?.rules.map(r => r.group_ids)).toEqual([[],[6]])
+  reloaded.unmount()
+ })
+ it('discards unsaved scope changes when leaving the page', async () => {
+  const w = mount(AutoConfigView); await flushPromises()
+  await w.get('[data-testid="model-billing-group-0-5"]').setValue(true)
+  w.unmount()
+  expect(saveAutoConfig).not.toHaveBeenCalled()
+  const reloaded = mount(AutoConfigView); await flushPromises()
+  expect(reloaded.get<HTMLInputElement>('[data-testid="model-billing-group-0-5"]').element.checked).toBe(false)
+  reloaded.unmount()
+ })
+ it('retains missing selected IDs with a warning when saving unrelated settings', async () => {
+  vi.mocked(getAutoConfig).mockResolvedValue({ ...structuredClone(config), model_billing: { enabled:true,rules:[{model:'luna',multiplier:10,group_ids:[999]}] } })
+  const w = mount(AutoConfigView); await flushPromises()
+  expect(w.get('[data-testid="model-billing-unavailable-0-999"]').text()).toContain('#999')
+  await w.get('[data-testid="concurrency"]').setValue(9)
+  await w.get('form').trigger('submit'); await flushPromises()
+  expect(vi.mocked(saveAutoConfig).mock.lastCall?.[0].model_billing?.rules[0].group_ids).toEqual([999])
+  w.unmount()
+ })
+})
+
+it('keeps scopes during a group page failure, retries all pages and preserves IDs absent from the list', async () => {
+ vi.mocked(getAutoConfig).mockResolvedValue({ ...structuredClone(config), model_billing: { enabled: true, rules: [{model:'luna',multiplier:10,group_ids:[5,999]}] } })
+ vi.mocked(listGroups).mockResolvedValueOnce({items:[{id:5,name:'page one',platform:'openai',status:'active'}],page:1,page_size:100,pages:2,total:2} as any)
+ vi.mocked(listGroups).mockRejectedValueOnce(new Error('page two offline'))
+ const w = mount(AutoConfigView); await flushPromises()
+ expect(w.get('[data-testid="model-billing-groups-error"]').exists()).toBe(true)
+ expect(w.get<HTMLButtonElement>('[data-testid="model-billing-clear-groups-0"]').element.closest('fieldset')?.disabled).toBe(true)
+ await w.get('form').trigger('submit'); await flushPromises()
+ expect(vi.mocked(saveAutoConfig).mock.lastCall?.[0].model_billing?.rules[0].group_ids).toEqual([5,999])
+ vi.mocked(listGroups).mockResolvedValueOnce({items:[{id:5,name:'page one',platform:'openai',status:'active'}],page:1,page_size:100,pages:2,total:2} as any)
+ vi.mocked(listGroups).mockResolvedValueOnce({items:[{id:6,name:'page two',platform:'anthropic',status:'active'}],page:2,page_size:100,pages:2,total:2} as any)
+ await w.get('[data-testid="model-billing-groups-retry"]').trigger('click'); await flushPromises()
+ expect(w.find('[data-testid="model-billing-groups-error"]').exists()).toBe(false)
+ expect(w.get('[data-testid="model-billing-group-0-6"]').exists()).toBe(true)
+ expect(w.get('[data-testid="model-billing-unavailable-0-999"]').text()).toContain('#999')
+ expect(listGroups).toHaveBeenLastCalledWith(2,100,expect.objectContaining({status:'active'}))
+ w.unmount()
 })

@@ -913,6 +913,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 		return errors.New("openai ws passthrough dialer is nil")
 	}
 
+	if _, denied := s.beginPriorityLatencyTurn(ctx, c, account, gjson.GetBytes(firstClientMessage, "model").String()); denied != nil {
+		return denied
+	}
 	agentTaskRecoveryTried := false
 	var upstreamConn openAIWSClientConn
 	statusCode := 0
@@ -1230,6 +1233,11 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					return payload, nil, err
 				}
 			}
+			if isResponseCreate {
+				if _, denied := s.beginPriorityLatencyTurn(ctx, c, account, model); denied != nil {
+					return payload, nil, denied
+				}
+			}
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, model, payload)
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）
 			// 的 response.create 帧上更新 usageMeta，使用
@@ -1283,6 +1291,10 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			_ = WriteCapturedWSClient(writeCtx, clientConn, coderws.MessageText, eventBytes)
 			cancel()
 		},
+	}
+	// Recheck after handshake/slot waits, before the first generation write.
+	if _, denied := s.beginPriorityLatencyTurn(ctx, c, account, gjson.GetBytes(firstClientMessage, "model").String()); denied != nil {
+		return denied
 	}
 	upstreamFirstMessageSent := false
 	latest, admissionErr := s.admitOpenAITurn(ctx, c, account, gjson.GetBytes(firstClientMessage, "model").String(), firstClientMessage)

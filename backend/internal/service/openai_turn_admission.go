@@ -76,7 +76,7 @@ func (s *OpenAIGatewayService) invalidateOpenAIWSTurnStateAfterAdmissionFailure(
 	err error,
 ) {
 	var denied *OpenAITurnAdmissionError
-	if !errors.As(err, &denied) || denied == nil || denied.Reason == "latest_state_unavailable" {
+	if !errors.As(err, &denied) || denied == nil || denied.Reason == "latest_state_unavailable" || errors.Is(err, ErrPriorityLatencyUnavailable) {
 		return
 	}
 

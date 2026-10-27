@@ -37,6 +37,71 @@ def parallel_probe(config, stop=None):
 
 
 class ReauthEngineTests(unittest.TestCase):
+    def test_operation_fixtures_pass_existing_worker_failure_boundary(self):
+        cases = json.loads((Path(__file__).parent / 'fixtures' / 'credential-operation-errors.json').read_text())
+        for case in cases:
+            with self.subTest(name=case['name']):
+                self.assertEqual(worker.credential_operation_reason(case['payload']), case['code'])
+                api = self.api()
+                api.claim = Mock(return_value=self.claim())
+                api.fail = Mock()
+                payload = {**case['payload'], 'status': 'failed'}
+                raw = json.dumps({'type': 'result', 'payload': payload}).encode()
+                with patch.object(worker.NO_REDIRECT_OPENER, 'open', return_value=ChunkResponse([raw])), self.assertLogs(worker.LOGGER, level='ERROR') as logs:
+                    worker.run_once(api, None)
+                expected = case['code'] if case['code'] != 'unknown' else 'provider_failed'
+                self.assertIn('reason=' + expected + ' ', api.fail.call_args.args[1])
+                self.assertNotIn('synthetic-private', str(logs.output) + api.fail.call_args.args[1])
+                api.credentials.assert_not_called()
+
+    def test_failure_boundary_drops_unlabelled_sensitive_data(self):
+        for raw in ('password synthetic-private', 'token synthetic-private', 'totp synthetic-private',
+                    'cookie synthetic-private', 'phone synthetic-private', 'https://example.test/?code=synthetic-private',
+                    'Your account has not been deactivated.', 'User said: "account_deleted"', 'x' * 10000):
+            self.assertEqual(worker.safe_worker_failure(worker.WorkerError(raw)), 'worker_failed')
+
+    def test_real_api_failure_report_preserves_bounded_elapsed_and_drops_secrets(self):
+        api = worker.WorkerAPI(SimpleNamespace(worker_id='fixture-worker'))
+        api._post = Mock()
+        for diagnostic in (
+            'local_protocol_failed stage=web_login reason=phone_verification_required elapsed_ms=123456 exit=1',
+            'session_studio_failed stage=terminal_result reason=account_retired elapsed_ms=123456 http_status=0',
+        ):
+            api.fail(7, diagnostic)
+            self.assertEqual(api._post.call_args.args[1]['reason'], diagnostic)
+        api.fail(7, 'token password cookie totp phone synthetic-private')
+        self.assertEqual(api._post.call_args.args[1]['reason'], 'worker_failed')
+
+    def test_email_adapter_ignores_external_guessed_codes_and_parses_actual_envelopes(self):
+        cases = json.loads((Path(__file__).parent / 'fixtures' / 'credential-operation-errors.json').read_text())
+        for case in cases:
+            with self.subTest(name=case['name']):
+                response = SimpleNamespace(text=json.dumps(case['payload']))
+                self.assertEqual(worker.operation_response_reason(response), case['code'])
+        for raw in ('{"error":{"code":"account_deleted","code":"account_retired"}}',
+                    '{"error":{"co\\u0064e":"account_deleted","code":"account_retired"}}', 'x' * 32769):
+            self.assertEqual(worker.operation_response_reason(SimpleNamespace(text=raw)), 'unknown')
+        class ExternalGuessedError(Exception):
+            error_code = 'account_deleted'
+        self.assertEqual(worker.safe_worker_failure(ExternalGuessedError('User said: "account_deleted"')), 'worker_failed')
+        self.assertEqual(worker.safe_worker_failure(worker.OperationWorkerError('account_retired')), 'account_retired')
+
+    def test_email_transient_retry_budget_and_manual_verification_stop_are_preserved(self):
+        for code, attempts in (('rate_limited', 3), ('transport_error', 3), ('phone_verification_required', 1),
+                               ('security_check', 1), ('authorization_denied', 1), ('account_retired', 1)):
+            with self.subTest(code=code):
+                protocol = SimpleNamespace(ProtocolSession=Mock(), network_preflight=Mock(), bootstrap_authorize=Mock(),
+                    submit_email=Mock(return_value={}), submit_email_otp=Mock(side_effect=worker.OperationWorkerError(code)),
+                    resend_email_otp=Mock(), AccountUnusableError=type('ExternalAccountError', (Exception,), {}))
+                api = SimpleNamespace(progress=Mock(), callback=Mock())
+                claim = dict(task_id=7, account_id=42, credential_mode='email_otp_url', login_email='fixture',
+                    otp_url='https://fixture.invalid/code', auth_url='https://auth.openai.com/oauth/authorize?state=synthetic')
+                with patch.object(worker, 'OTPURLProvider'), patch.object(worker, '_wait_for_otp', return_value='000001'), self.assertRaises(worker.OperationWorkerError):
+                    worker.process_claim(api, protocol, claim)
+                self.assertEqual(protocol.submit_email_otp.call_count, attempts)
+                self.assertEqual(protocol.resend_email_otp.call_count, attempts-1)
+                api.callback.assert_not_called()
+
     def fixture(self, name):
         return (Path(__file__).parent / 'fixtures' / 'session-studio' / name).read_bytes()
 

@@ -11,7 +11,7 @@ function ownParams<T extends { user_id?: number | null }>(params: T): Omit<T, 'u
   return own
 }
 
-export interface UsageFilterOption { id: number; name: string }
+export interface UsageFilterOption { id: number; name: string; deleted?: boolean }
 
 export const observerUsageAPI = {
   async list(params: AdminUsageQueryParams, options?: { signal?: AbortSignal }) {

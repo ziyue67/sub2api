@@ -19,6 +19,7 @@ WORKDIR /app
 COPY tools/openai_oauth_reauth_worker.py /app/openai_oauth_reauth_worker.py
 COPY tools/openai_totp_rotation.py tools/openai_totp_journal.mjs /app/
 COPY tools/openai_excel_oauth_adapter.py tools/openai_excel_2fa_login.py /app/
+COPY tools/openai_codex_oauth_adapter.py tools/openai_codex_diagnostics.mjs /app/
 COPY tools/openai_excel_password_flow.mjs /app/
 
 # Build with: docker build --build-context turb=/path/to/turb --build-context tosub2=/path/to/toSub2 ...

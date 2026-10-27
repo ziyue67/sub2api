@@ -234,3 +234,53 @@ func TestPriorityErrorConfigLegacyAndSaveCompatibility(t *testing.T) {
 		}
 	}
 }
+
+func TestPrioritySaveLatencyPenaltyModes(t *testing.T) {
+	for _, stored := range []string{"", service.PriorityLatencyDeprioritize, service.PriorityLatencyStop} {
+		for _, sent := range []string{"omitted", service.PriorityLatencyDeprioritize, service.PriorityLatencyStop, "invalid", ""} {
+			t.Run(stored+"/"+sent, func(t *testing.T) {
+				cfg := service.DefaultPrioritySchedulingConfig()
+				cfg.LatencyPenaltyMinutes = 10
+				body, _ := json.Marshal(cfg)
+				var initial map[string]any
+				require.NoError(t, json.Unmarshal(body, &initial))
+				if stored == "" {
+					delete(initial, "latency_penalty_mode")
+				} else {
+					initial["latency_penalty_mode"] = stored
+				}
+				body, _ = json.Marshal(initial)
+				repo := &priorityCompatSettings{value: string(body)}
+				h := &SettingHandler{settingService: service.NewSettingService(repo, nil)}
+				if sent == "omitted" {
+					delete(initial, "latency_penalty_mode")
+				} else {
+					initial["latency_penalty_mode"] = sent
+				}
+				body, _ = json.Marshal(initial)
+				router := gin.New()
+				router.PUT("/config", h.SavePriorityScheduling)
+				recorder := httptest.NewRecorder()
+				request := httptest.NewRequest(http.MethodPut, "/config", bytes.NewReader(body))
+				request.Header.Set("Content-Type", "application/json")
+				router.ServeHTTP(recorder, request)
+				if sent == "invalid" || sent == "" {
+					require.Equal(t, http.StatusBadRequest, recorder.Code)
+					return
+				}
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				var saved service.PrioritySchedulingConfig
+				require.NoError(t, json.Unmarshal([]byte(repo.value), &saved))
+				expected := sent
+				if sent == "omitted" {
+					expected = stored
+					if expected == "" {
+						expected = service.PriorityLatencyDeprioritize
+					}
+				}
+				require.Equal(t, expected, saved.LatencyPenaltyMode)
+				require.Equal(t, 10, saved.LatencyPenaltyMinutes)
+			})
+		}
+	}
+}

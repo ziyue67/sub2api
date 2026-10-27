@@ -1,0 +1,82 @@
+name: Quality rule152 account saves
+on:
+  push:
+    branches: [fix/quality-operations-live-regressions]
+  pull_request:
+    paths:
+      - 'backend/internal/repository/account_repo.go'
+      - 'backend/internal/service/admin_account.go'
+      - 'backend/internal/repository/quality_rule152_integration_test.go'
+      - '.github/workflows/quality-rule152.yml'
+permissions:
+  contents: read
+jobs:
+  account-save:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Record exact head and unchanged regression inputs
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/head.txt
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          sha256sum backend/internal/repository/quality_rule152{,_http}_integration_test.go > evidence/test-input.sha256
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Fixed 9227 account-save implementation must fail real PostgreSQL assertions
+        shell: bash
+        env:
+          CI: 'true'
+        run: |
+          set -euo pipefail
+          baseline=9227fee3866d7ad7628817771cdd208b406a166d
+          sources=(backend/internal/repository/account_repo.go backend/internal/service/admin_account.go)
+          for source in "${sources[@]}"; do cp "$source" "$RUNNER_TEMP/$(basename "$source")"; done
+          trap 'for source in "${sources[@]}"; do cp "$RUNNER_TEMP/$(basename "$source")" "$source"; done' EXIT
+          git fetch --no-tags --depth=1 origin "$baseline"
+          git rev-parse "$baseline" | tee evidence/red-source-head.txt
+          for source in "${sources[@]}"; do git show "$baseline:$source" > "$source"; done
+          set +e
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestQuality152' -count=1 -v) > evidence/red.log 2>&1
+          result=$?
+          set -e
+          cat evidence/red.log
+          test "$result" -ne 0
+          if grep -Eq '\[build failed\]|\[setup failed\]|undefined:|syntax error:|no tests to run|panic:|--- SKIP:' evidence/red.log; then exit 1; fi
+          grep -F -- '--- FAIL: TestQuality152AdminUpdatePreservesLockedIsolation' evidence/red.log
+          grep -F -- '--- FAIL: TestQuality152AdminUpdateServiceReadBeforeLock' evidence/red.log
+          grep -F -- '--- FAIL: TestQuality152OrdinaryBulkAndExtraSavesPreserveIsolation' evidence/red.log
+      - name: Exact head real Update to repository to PostgreSQL and retained ownership gates
+        working-directory: backend
+        shell: bash
+        env:
+          CI: 'true'
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- internal/repository/account_repo.go internal/service/admin_account.go
+          (cd .. && sha256sum -c evidence/test-input.sha256)
+          go test -tags=integration ./internal/repository -run 'Test(Quality152|QualityOwnership|QualityLiveDeleteHTTP)' -count=1 -v 2>&1 | tee ../evidence/green.log
+          if grep -Eq -- '--- SKIP:|no tests to run' ../evidence/green.log; then exit 1; fi
+          for name in TestQuality152AdminUpdatePreservesLockedIsolation TestQuality152AdminUpdateServiceReadBeforeLock TestQuality152OrdinaryBulkAndExtraSavesPreserveIsolation TestQuality152OwnershipAndExplicitRestoreRemainIntact TestQuality152HTTPUpdatePreservesServerIsolation; do
+            grep -F -- "--- PASS: $name" ../evidence/green.log
+          done
+      - name: Existing locked account Extra preservation assertions
+        working-directory: backend
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -tags=unit ./internal/repository -run 'Test(LockAndMergeAccount|CodexTicketExtra|ExcelBPS403Marker)' -count=1 -v 2>&1 | tee ../evidence/retained-unit.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-rule152-${{ github.event_name }}-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

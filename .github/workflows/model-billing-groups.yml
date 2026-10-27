@@ -1,0 +1,80 @@
+name: Model billing group scope
+on:
+  push:
+    branches: [feat/model-multiplier-group-scope]
+  pull_request:
+    paths:
+      - 'backend/internal/service/model_billing*'
+      - 'backend/internal/service/oauth_auto_config.go'
+      - 'backend/internal/service/gateway_usage_billing.go'
+      - 'backend/internal/service/openai_gateway_usage.go'
+      - 'frontend/src/**/modelBilling*'
+      - 'frontend/src/views/admin/AutoConfigView.vue'
+      - '.github/workflows/model-billing-groups.yml'
+      - '.github/scripts/model-billing-groups-browser.mjs'
+permissions:
+  contents: read
+jobs:
+  billing-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+      - name: Test actual billing services and admin configuration handlers
+        working-directory: backend
+        run: go test -tags=unit ./internal/service ./internal/handler/admin -run '^(TestModelBilling|TestAutoConfigModelBilling)' -count=1 -v -timeout=15m
+  scope-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Exercise real configuration page, API pagination and locale keys
+        env:
+          NODE_OPTIONS: --max-old-space-size=1024
+        run: >-
+          pnpm --dir frontend exec vitest run
+          src/views/admin/__tests__/AutoConfigView.spec.ts
+          src/utils/__tests__/modelBilling.spec.ts
+          src/i18n/__tests__/localeKeyCompleteness.spec.ts
+          src/components/admin/operations/__tests__/AutoConfigHistory.spec.ts
+          --maxWorkers=1 --minWorkers=1
+
+      - name: Install isolated browser for offline real-page checks
+        run: |
+          npm install --prefix "$RUNNER_TEMP/model-billing-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/model-billing-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Fetch immutable baseline for before screenshot
+        run: git fetch --no-tags --depth=1 origin 973d4bbd0064121a5533e0d3232ece6043f0d5fc
+      - name: Exercise real page with synthetic local HTTP and capture desktop/mobile
+        env:
+          NODE_OPTIONS: --max-old-space-size=1024
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/model-billing-browser/node_modules/playwright
+          MODEL_BILLING_SCREENSHOT_DIR: ${{ runner.temp }}/model-billing-screenshots
+        run: node .github/scripts/model-billing-groups-browser.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: model-billing-groups-ui-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/model-billing-screenshots
+          if-no-files-found: error

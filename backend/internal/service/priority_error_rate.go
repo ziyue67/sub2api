@@ -25,6 +25,8 @@ type priorityAttemptKey struct {
 	accountID int64
 	model     string
 	endpoint  string
+	groupID   int64
+	hasGroup  bool
 }
 
 type priorityAttemptBucket struct {
@@ -117,6 +119,8 @@ type priorityAttemptObservation struct {
 type priorityAttemptScope struct {
 	ctx             context.Context
 	model, endpoint string
+	groupID         int64
+	hasGroup        bool
 	mu              sync.Mutex
 	current         *priorityAttemptObservation
 	disconnected    bool
@@ -126,7 +130,11 @@ func withPriorityAttemptScope(ctx context.Context, model, endpoint string) (cont
 	if current, ok := ctx.Value(priorityAttemptScopeContextKey{}).(*priorityAttemptScope); ok {
 		return ctx, current
 	}
-	scope := &priorityAttemptScope{ctx: ctx, model: model, endpoint: endpoint}
+	identity := priorityObservationFromContext(ctx, model)
+	if identity.endpoint != "" {
+		endpoint = identity.endpoint
+	}
+	scope := &priorityAttemptScope{ctx: ctx, model: identity.model, endpoint: endpoint, groupID: identity.groupID, hasGroup: identity.hasGroup}
 	return context.WithValue(ctx, priorityAttemptScopeContextKey{}, scope), scope
 }
 func (s *priorityAttemptScope) reportLocked(o *priorityAttemptObservation) {
@@ -187,7 +195,7 @@ func (s *OpenAIGatewayService) observePriorityAttempt(req *http.Request, account
 	observation := scope.begin()
 	s.initOpenAIAccountScheduler()
 	stats := s.openaiAccountStats
-	key := priorityAttemptKey{account.ID, scope.model, scope.endpoint}
+	key := priorityAttemptKey{accountID: account.ID, model: scope.model, endpoint: scope.endpoint, groupID: scope.groupID, hasGroup: scope.hasGroup}
 	return func(resp *http.Response, err error) {
 		if err != nil {
 			var netErr net.Error
@@ -427,6 +435,9 @@ func (b *priorityAttemptBody) outcome() (bool, bool) {
 }
 
 func priorityErrorEndpoint(req OpenAIAccountScheduleRequest) string {
+	if req.InboundEndpoint != "" {
+		return req.InboundEndpoint
+	}
 	if req.RequireCompact {
 		return "/v1/responses/compact"
 	}
@@ -436,7 +447,7 @@ func priorityErrorEndpoint(req OpenAIAccountScheduleRequest) string {
 	return "/v1/responses"
 }
 func (s *defaultOpenAIAccountScheduler) priorityErrorEvidence(req OpenAIAccountScheduleRequest, c PrioritySchedulingConfig, id int64, now time.Time) PriorityErrorEvidence {
-	key := priorityAttemptKey{id, req.RequestedModel, priorityErrorEndpoint(req)}
+	key := priorityRequestAttemptKey(req, id)
 	if s.stats == nil {
 		return PriorityErrorEvidence{WindowMinutes: c.ErrorRateWindowMinutes, PriorSamples: max(1, c.ErrorRatePriorSamples), ObservedAt: now, Endpoint: key.endpoint}
 	}

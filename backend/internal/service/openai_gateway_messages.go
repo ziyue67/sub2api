@@ -33,6 +33,25 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	promptCacheKey string,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	admittedCtx, admissionErr := s.beginPriorityLatencyTurn(ctx, c, account, gjson.GetBytes(body, "model").String())
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	ctx = admittedCtx
+	ctx, scope := withPriorityAttemptScope(ctx, gjson.GetBytes(body, "model").String(), "/v1/messages")
+	result, err := s.forwardAsAnthropic(ctx, c, account, body, promptCacheKey, defaultMappedModel)
+	scope.finish(result)
+	return result, err
+}
+
+func (s *OpenAIGatewayService) forwardAsAnthropic(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	body []byte,
+	promptCacheKey string,
+	defaultMappedModel string,
+) (*OpenAIForwardResult, error) {
 	latest, admissionErr := s.admitOpenAITurn(
 		context.WithoutCancel(ctx),
 		c,

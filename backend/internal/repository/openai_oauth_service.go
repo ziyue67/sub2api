@@ -134,10 +134,7 @@ func (s *openaiOAuthService) refreshTokenWithClientID(ctx context.Context, refre
 	}
 
 	if !resp.IsSuccessState() {
-		if clientID == openai.ExcelClientID {
-			return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_TOKEN_REFRESH_FAILED", "Excel OAuth token refresh failed: status %d", resp.StatusCode)
-		}
-		return nil, infraerrors.Newf(http.StatusBadGateway, "OPENAI_OAUTH_TOKEN_REFRESH_FAILED", "token refresh failed: status %d, body: %s", resp.StatusCode, resp.String())
+		return nil, service.NewCredentialOperationRefreshError(resp.StatusCode, []byte(resp.String()))
 	}
 
 	return &tokenResp, nil

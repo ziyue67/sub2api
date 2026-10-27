@@ -24,6 +24,7 @@ COPY tools/openai_siwc_oauth_adapter.py tools/openai_siwc_password_flow.mjs tool
 COPY tools/fixtures/siwc-http-transport.mjs /build/tools/fixtures/
 COPY tools/fixtures/codex-http-transport.mjs /build/tools/fixtures/
 COPY tools/fixtures/session-studio/ /build/tools/fixtures/session-studio/
+COPY tools/fixtures/credential-operation-errors.json /build/tools/fixtures/credential-operation-errors.json
 RUN cp /build/worker.py /build/tools/openai_oauth_reauth_worker.py \
     && cd /build && EXCEL_TEST_TOSUB2_ROOT=/build/tosub2 python -m unittest tools.test_openai_totp_rotation tools.test_openai_oauth_reauth_worker tools.test_openai_oauth_reauth_engines tools.test_openai_oauth_reauth_runtime_controls tools.test_openai_excel_oauth_adapter tools.test_openai_siwc_oauth_adapter tools.test_openai_codex_oauth_adapter -q \
     && node --test /build/tools/test_openai_codex_diagnostics.mjs \

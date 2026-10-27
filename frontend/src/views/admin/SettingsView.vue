@@ -6997,20 +6997,52 @@
                 </div>
 
                 <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <!-- Label -->
+                  <!-- Localized labels -->
                   <div>
                     <label
                       class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
                     >
-                      {{ t("admin.settings.customMenu.name") }}
+                      {{ t("admin.settings.customMenu.nameZh") }}
+                    </label>
+                    <input
+                      v-model="item.label_zh"
+                      type="text"
+                      class="input text-sm"
+                      maxlength="50"
+                      :placeholder="t('admin.settings.customMenu.nameZhPlaceholder')"
+                      data-testid="custom-menu-label-zh"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                    >
+                      {{ t("admin.settings.customMenu.nameEn") }}
+                    </label>
+                    <input
+                      v-model="item.label_en"
+                      type="text"
+                      class="input text-sm"
+                      maxlength="50"
+                      :placeholder="t('admin.settings.customMenu.nameEnPlaceholder')"
+                      data-testid="custom-menu-label-en"
+                    />
+                  </div>
+
+                  <!-- Legacy label fallback -->
+                  <div>
+                    <label
+                      class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                    >
+                      {{ t("admin.settings.customMenu.fallbackName") }}
                     </label>
                     <input
                       v-model="item.label"
                       type="text"
                       class="input text-sm"
-                      :placeholder="
-                        t('admin.settings.customMenu.namePlaceholder')
-                      "
+                      maxlength="50"
+                      :placeholder="t('admin.settings.customMenu.fallbackNamePlaceholder')"
+                      data-testid="custom-menu-label-fallback"
                     />
                   </div>
 
@@ -7082,6 +7114,7 @@
               <button
                 type="button"
                 class="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 py-3 text-sm text-gray-500 transition-colors hover:border-primary-400 hover:text-primary-600 dark:border-dark-600 dark:text-gray-400 dark:hover:border-primary-500 dark:hover:text-primary-400"
+                data-testid="custom-menu-add"
                 @click="addMenuItem"
               >
                 <svg
@@ -10334,6 +10367,8 @@ const form = reactive<SettingsForm>({
   custom_menu_items: [] as Array<{
     id: string;
     label: string;
+    label_zh?: string;
+    label_en?: string;
     icon_svg: string;
     url: string;
     visibility: "user" | "admin";
@@ -11367,6 +11402,8 @@ function addMenuItem() {
   form.custom_menu_items.push({
     id: "",
     label: "",
+    label_zh: "",
+    label_en: "",
     icon_svg: "",
     url: "",
     visibility: "user",
@@ -12105,7 +12142,10 @@ async function saveSettings() {
       hide_ccs_import_button: form.hide_ccs_import_button,
       table_default_page_size: form.table_default_page_size,
       table_page_size_options: form.table_page_size_options,
-      custom_menu_items: form.custom_menu_items,
+      custom_menu_items: form.custom_menu_items.map((item) => ({
+        ...item,
+        label: item.label.trim() || item.label_zh?.trim() || item.label_en?.trim() || "",
+      })),
       custom_endpoints: form.custom_endpoints,
       frontend_url: form.frontend_url,
       smtp_host: form.smtp_host,

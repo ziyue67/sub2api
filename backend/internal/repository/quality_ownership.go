@@ -124,8 +124,13 @@ func (r *scheduledTestPlanRepository) QualityOwnership(ctx context.Context, id i
 	var ruleVersion, accountVersion time.Time
 	var running sql.NullTime
 	var config, rawState, liveRaw []byte
+	var accountStatus string
+	var accountExpires sql.NullTime
 	err = tx.QueryRowContext(ctx, `SELECT account_id,updated_at,running_until,pelican_config FROM scheduled_test_plans WHERE id=$1 FOR UPDATE`, id).Scan(&accountID, &ruleVersion, &running, &config)
 	if err == sql.ErrNoRows {
+		if request != nil && request.Delete {
+			return &service.QualityOwnershipPreview{PlanID: id}, tx.Commit()
+		}
 		return nil, infraerrors.NotFound("QUALITY_PLAN_NOT_FOUND", "quality rule not found")
 	}
 	if err != nil {
@@ -135,7 +140,7 @@ func (r *scheduledTestPlanRepository) QualityOwnership(ctx context.Context, id i
 	if json.Unmarshal(config, &cfg) != nil || cfg.Quality == nil || cfg.Quality.Action == service.QualityActionOpenAITwoFAAdmission {
 		return nil, infraerrors.BadRequest("QUALITY_OWNERSHIP_UNSUPPORTED", "ownership inspection requires an editable quality rule")
 	}
-	err = tx.QueryRowContext(ctx, `SELECT updated_at,COALESCE(extra->'quality_model_isolation','{}'::jsonb) FROM accounts WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, accountID).Scan(&accountVersion, &liveRaw)
+	err = tx.QueryRowContext(ctx, `SELECT updated_at,COALESCE(extra->'quality_model_isolation','{}'::jsonb),status,expires_at FROM accounts WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, accountID).Scan(&accountVersion, &liveRaw, &accountStatus, &accountExpires)
 	if err == sql.ErrNoRows {
 		return nil, infraerrors.NotFound("QUALITY_ACCOUNT_NOT_FOUND", "account not found")
 	}
@@ -156,7 +161,7 @@ func (r *scheduledTestPlanRepository) QualityOwnership(ctx context.Context, id i
 	}
 	// Never drop a legacy restriction simply because it is in a recognizable
 	// JSON field outside the supported composite Models/Groups ownership layout.
-	if state.PersistentModels || len(state.ModelApplied) > 0 || len(state.ModelRateLimits) > 0 || len(state.Removed) > 0 || state.PreviousConcurrency != nil || state.AppliedConcurrency != nil ||
+	if state.PersistentModels || len(state.ModelApplied) > 0 || len(state.ModelRateLimits) > 0 || len(state.Removed) > 0 || state.PreviousConcurrency != nil || state.AppliedConcurrency != nil || state.RecoveryTarget != nil || len(state.BPSApplied) > 0 || len(state.BPSPrevious) > 0 ||
 		(state.Groups != nil && (state.Groups.Action != "remove_groups" || len(state.Groups.ModelApplied) > 0 || len(state.Groups.ModelRateLimits) > 0 || state.Groups.Models != nil || state.Groups.Groups != nil)) ||
 		(state.Models != nil && (state.Models.Models != nil || state.Models.Groups != nil || len(state.Models.Removed) > 0)) {
 		return nil, infraerrors.Conflict("QUALITY_OWNERSHIP_UNSUPPORTED_STATE", "retain unsupported ownership layout for review")
@@ -197,7 +202,7 @@ func (r *scheduledTestPlanRepository) QualityOwnership(ctx context.Context, id i
 	view := &service.QualityOwnershipPreview{PlanID: id, AccountID: accountID, RuleVersion: ruleVersion.UTC().Format(time.RFC3339Nano), AccountVersion: accountVersion.UTC().Format(time.RFC3339Nano), Action: state.Action, Models: append([]string{}, state.IsolationModels...), GroupIDs: append([]int64{}, state.IsolationGroupIDs...), Entries: []service.QualityOwnershipEntry{}}
 	if state.Models != nil {
 		// Legacy concurrency/cooldown ownership is not silently folded into this API.
-		if !state.Models.PersistentModels || state.Models.PreviousConcurrency != nil || state.Models.AppliedConcurrency != nil {
+		if !state.Models.PersistentModels || state.Models.PreviousConcurrency != nil || state.Models.AppliedConcurrency != nil || state.Models.RecoveryTarget != nil || len(state.Models.BPSApplied) > 0 || len(state.Models.BPSPrevious) > 0 {
 			return nil, infraerrors.Conflict("QUALITY_OWNERSHIP_UNSUPPORTED_STATE", "retain legacy concurrency ownership for review")
 		}
 		keys := map[string]bool{}
@@ -214,7 +219,7 @@ func (r *scheduledTestPlanRepository) QualityOwnership(ctx context.Context, id i
 		sort.Strings(names)
 		for _, model := range names {
 			entry := modelOwnershipEntry(model, state.Models.ModelApplied[model], live[model], id)
-			if len(state.Models.ModelApplied[model]) == 0 {
+			if len(state.Models.ModelApplied[model]) == 0 || !json.Valid(state.Models.ModelRateLimits[model]) || canonicalQualityEntry(state.Models.ModelRateLimits[model]) != nil {
 				entry.Status = "unrecognized"
 				entry.CanRelinquish = false
 			}
@@ -253,9 +258,65 @@ func (r *scheduledTestPlanRepository) QualityOwnership(ctx context.Context, id i
 				currentJSON, _ := json.Marshal(current)
 				entry.ChangedFields = append([]string{"membership_present"}, qualityChangedFields(expectedJSON, currentJSON)...)
 			}
+			// Another rule's saved removal is an ownership conflict even when the
+			// membership remains absent. Never restore over its independent restriction.
+			var otherOwner int64
+			ownerErr := tx.QueryRowContext(ctx, `SELECT p.id FROM scheduled_test_plans p JOIN account_quality_states s ON s.plan_id=p.id
+    WHERE p.account_id=$1 AND p.id<>$2 AND (
+     EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(NULLIF(s.state->'removed','null'::jsonb),'[]'::jsonb)) e WHERE (e->>'group_id')::bigint=$3) OR
+     EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(NULLIF(s.state->'groups'->'removed','null'::jsonb),'[]'::jsonb)) e WHERE (e->>'group_id')::bigint=$3)) ORDER BY p.id LIMIT 1`, accountID, id, expected.GroupID).Scan(&otherOwner)
+			if ownerErr != nil && ownerErr != sql.ErrNoRows {
+				return nil, ownerErr
+			}
+			if ownerErr == nil {
+				entry.Status = "external_owner"
+				entry.CurrentOwner = "other_rule"
+				entry.CurrentOwnerRuleID = otherOwner
+				entry.CanRelinquish = false
+				entry.ChangedFields = append(entry.ChangedFields, "ownership")
+			}
+
 			view.Entries = append(view.Entries, entry)
 		}
 	}
+	// A live marker still naming this rule but absent from its snapshots must
+	// never become orphaned by clearing state or deleting the rule.
+	for model, raw := range live {
+		owner, _ := qualityEntryOwner(raw, id)
+		if owner == "this_rule" && (state.Models == nil || len(state.Models.ModelApplied[model]) == 0) {
+			entry := modelOwnershipEntry(model, nil, raw, id)
+			entry.Status = "unrecognized"
+			entry.CanRelinquish = false
+			view.Entries = append(view.Entries, entry)
+		}
+	}
+	sort.Slice(view.Entries, func(i, j int) bool {
+		a, b := view.Entries[i], view.Entries[j]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Model != b.Model {
+			return a.Model < b.Model
+		}
+		return a.GroupID < b.GroupID
+	})
+
+	view.RestoreReady = state.Action == service.QualityActionIsolateModels
+	for _, entry := range view.Entries {
+		if entry.Status != "managed" && (entry.Kind != "model" || entry.Status != "missing") {
+			view.RestoreReady = false
+			view.RestoreBlockedReason = "ownership_conflict"
+		}
+	}
+	if accountStatus != "active" || accountExpires.Valid && !accountExpires.Time.After(time.Now()) {
+		view.RestoreReady = false
+		view.RestoreBlockedReason = "account_unavailable"
+	}
+	if running.Valid && running.Time.After(time.Now()) {
+		view.RestoreReady = false
+		view.RestoreBlockedReason = "rule_running"
+	}
+
 	for _, entry := range view.Entries {
 		if entry.CanRelinquish {
 			view.RelinquishableCount++
@@ -265,12 +326,86 @@ func (r *scheduledTestPlanRepository) QualityOwnership(ctx context.Context, id i
 	}
 	// Fence includes full internal expected/current snapshots, not their redacted
 	// projection. Hidden/unrecognized fields and lease changes invalidate consent.
-	view.Fence = qualityDigest([]any{id, accountID, ruleVersion, accountVersion, running, canonicalQualityEntry(config), canonicalQualityEntry(rawState), canonicalQualityEntry(liveRaw), canonicalQualityEntry(groups), view.Entries})
+	view.Fence = qualityDigest([]any{id, accountID, ruleVersion, accountVersion, running, canonicalQualityEntry(config), canonicalQualityEntry(rawState), canonicalQualityEntry(liveRaw), canonicalQualityEntry(groups), accountStatus, accountExpires, view.Entries})
 	if request == nil {
 		return view, tx.Commit()
 	}
 	if !request.Confirm || subtle.ConstantTimeCompare([]byte(request.Fence), []byte(view.Fence)) != 1 {
 		return nil, infraerrors.Conflict("QUALITY_OWNERSHIP_PREVIEW_CHANGED", "ownership changed; preview again before confirming")
+	}
+	if request.Delete {
+		// The separate deletion confirmation is fenced too: an edit or new
+		// ownership between restoration and deletion cannot consume old consent.
+		if state.Action != "" || state.Models != nil || state.Groups != nil || len(view.Entries) > 0 {
+			return nil, service.QualityScopeConflict("review remaining ownership before deleting this rule")
+		}
+		if running.Valid && running.Time.After(time.Now()) {
+			return nil, infraerrors.Conflict("QUALITY_OWNERSHIP_PREVIEW_CHANGED", "rule is running; preview again before deleting")
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM scheduled_test_plans WHERE id=$1`, id); err != nil {
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+		view.Fence = ""
+		return view, nil
+	}
+
+	if request.Restore {
+		if !view.RestoreReady {
+			return nil, infraerrors.Conflict("QUALITY_OWNERSHIP_RESTORE_BLOCKED", "restore is blocked; review ownership, account availability and running tasks before confirming")
+		}
+		beforeGroups := groups
+		var removed []qualityGroup
+		if state.Groups != nil {
+			removed = state.Groups.Removed
+			conflict, restoreErr := restoreQualityGroups(ctx, tx, accountID, state.Groups)
+			if restoreErr != nil {
+				return nil, restoreErr
+			}
+			if conflict {
+				return nil, infraerrors.Conflict("QUALITY_OWNERSHIP_RESTORE_BLOCKED", "group ownership changed; preview again")
+			}
+		}
+		for _, entry := range view.Entries {
+			if entry.Kind != "model" || entry.Status != "managed" {
+				continue
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE accounts SET extra=extra #- ARRAY['quality_model_isolation',$2],updated_at=clock_timestamp() WHERE id=$1`, accountID, entry.Model); err != nil {
+				return nil, err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE accounts SET extra=extra-'quality_model_isolation' WHERE id=$1 AND extra->'quality_model_isolation'='{}'::jsonb`, accountID); err != nil {
+			return nil, err
+		}
+		if len(removed) > 0 {
+			if err = qualityGroupsChanged(ctx, tx, accountID, beforeGroups, removed); err != nil {
+				return nil, err
+			}
+		} else if _, err = tx.ExecContext(ctx, `INSERT INTO scheduler_outbox(event_type,account_id,payload) VALUES('account_changed',$1,'{}')`, accountID); err != nil {
+			return nil, err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, id); err != nil {
+			return nil, err
+		}
+		// Pausing prevents a subsequent round from reapplying restrictions between
+		// this explicit restore and the separately retryable guarded deletion.
+		if _, err = tx.ExecContext(ctx, `UPDATE scheduled_test_plans SET enabled=false,updated_at=GREATEST(clock_timestamp(),updated_at+interval '1 microsecond') WHERE id=$1`, id); err != nil {
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+		view.Fence = ""
+		view.RestrictionsChanged = true
+		return view, nil
+	}
+
+	for _, entry := range view.Entries {
+		if entry.Status == "unrecognized" {
+			return nil, infraerrors.Conflict("QUALITY_OWNERSHIP_UNSUPPORTED_STATE", "retain unrecognized ownership for review")
+		}
 	}
 	if view.RelinquishableCount == 0 {
 		return view, tx.Commit()

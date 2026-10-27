@@ -49,6 +49,9 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 	if err == nil {
 		return fallback
 	}
+	if errors.Is(err, service.ErrPriorityLatencyUnavailable) {
+		return noAccountErrorClassification{Status: http.StatusServiceUnavailable, ErrType: "temporarily_unavailable", Code: "latency_penalty", Message: "Latency scheduling is temporarily unavailable; retry after 5 seconds"}
+	}
 	if errors.Is(err, service.ErrOpenAIRPMExhausted) {
 		return noAccountErrorClassification{
 			Status:  http.StatusTooManyRequests,
@@ -105,9 +108,9 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 // Its dedicated database query considers only persistent eligibility
 // (active status + schedulable setting) and model_mapping, bypassing scheduler
 // snapshots and transient filters. That guarantees a 404 is only returned
-// when no configured candidate supports the model, including candidates with
-// a still-valid explicit upstream model capability rejection. Ordinary capacity
-// cooldowns never remove model support.
+// when no configured candidate supports the model. Expiring upstream model
+// rejection observations still block scheduling but never remove configured
+// support: returning 404 for them would renew negative caches on another relay.
 //
 // routingModel is the model name that account selection actually compared
 // against (i.e. after group-level dispatch mapping). displayModel is the

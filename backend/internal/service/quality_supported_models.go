@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/typesafe"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
@@ -139,6 +140,9 @@ func qualityCatalogSupportsModel(catalog []string, model string) bool {
 	return false
 }
 
+// supportedQualityModels projects advisory catalog/configured candidates. A
+// missing candidate alone is not proof of upstream capability; production
+// create/update, template and execution decisions use eligibleQualityModels.
 func (s *ScheduledTestService) supportedQualityModels(ctx context.Context, plan *ScheduledTestPlan) ([]string, []string, error) {
 	requested := qualityPlanModels(plan)
 	if plan.PelicanConfig == nil || plan.PelicanConfig.Quality == nil || s.qualityModels == nil {
@@ -190,8 +194,84 @@ func (s *ScheduledTestService) supportedQualityModels(ctx context.Context, plan 
 	return supported, unsupported, nil
 }
 
+func qualityAccountAllowsModel(account *Account, model string) bool {
+	return (!account.IsTypeSafe() || model == typesafe.JevLatestModel) && account.IsModelSupported(model)
+}
+
+// eligibleQualityModels separates routing restrictions and observed rejections
+// from incomplete discovery at the actual business boundary.
+func (s *ScheduledTestService) eligibleQualityModels(ctx context.Context, plan *ScheduledTestPlan) ([]string, []string, error) {
+	if plan.PelicanConfig == nil || plan.PelicanConfig.Quality == nil || s.accountTests == nil {
+		return s.supportedQualityModels(ctx, plan)
+	}
+	account, err := s.accountTests.accountRepo.GetByID(ctx, plan.AccountID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if account == nil {
+		return nil, nil, ErrAccountNotFound
+	}
+	var allowed, blocked []string
+	for _, model := range qualityPlanModels(plan) {
+		if !qualityAccountAllowsModel(account, model) || account.Extra[qualityUnsupportedModelKey(model)] != nil || account.Extra[qualityUnsupportedModelKey(account.GetMappedModel(model))] != nil {
+			blocked = append(blocked, model)
+		} else {
+			allowed = append(allowed, model)
+		}
+	}
+	if len(allowed) == 0 {
+		return nil, blocked, nil
+	}
+	manual := isQualityAnswerQuestion(plan.PelicanConfig.QuestionKind) && plan.PelicanConfig.TestChannel != "bps" && !account.IsExcelBPSEnabled() && !account.IsOpenAIPassthroughEnabled()
+	if manual {
+		configured := true
+		for _, model := range allowed {
+			if !mappingSupportsRequestedModel(account.GetModelMapping(), model) {
+				configured = false
+				break
+			}
+		}
+		if configured {
+			return allowed, blocked, nil
+		}
+	}
+	if s.qualityModels == nil {
+		return nil, nil, infraerrors.ServiceUnavailable("QUALITY_MODEL_CATALOG_UNKNOWN", "模型目录尚未就绪，请稍后刷新")
+	}
+	candidate := *plan
+	candidate.PelicanConfig = cloneQualityPelicanConfig(plan.PelicanConfig)
+	candidate.PelicanConfig.ModelIDs = allowed
+	candidate.ModelID = allowed[0]
+	found, missing, err := s.supportedQualityModels(ctx, &candidate)
+	if err != nil {
+		return nil, nil, err
+	}
+	if manual {
+		return allowed, blocked, nil
+	}
+	if len(missing) > 0 {
+		return nil, nil, infraerrors.ServiceUnavailable("QUALITY_MODEL_CATALOG_UNKNOWN", "模型目录尚未确认该检测模型，请刷新模型列表或使用允许手动选择的原生回答检测")
+	}
+	return found, blocked, nil
+}
+
 func (s *ScheduledTestService) validateQualityAccountModels(ctx context.Context, plan *ScheduledTestPlan) error {
-	_, unsupported, err := s.supportedQualityModels(ctx, plan)
+	if plan.PelicanConfig != nil && plan.PelicanConfig.Quality != nil && s.accountTests != nil {
+		account, err := s.accountTests.accountRepo.GetByID(ctx, plan.AccountID)
+		if err != nil {
+			return err
+		}
+		if account == nil {
+			return ErrAccountNotFound
+		}
+		for _, model := range qualityPlanModels(plan) {
+			if !qualityAccountAllowsModel(account, model) {
+				return infraerrors.BadRequest("QUALITY_MODEL_NOT_ALLOWED", "账号检测策略不允许所选模型，请核对模型映射、账号权限和检测通道")
+			}
+		}
+	}
+
+	_, unsupported, err := s.eligibleQualityModels(ctx, plan)
 	if err != nil {
 		return err
 	}
@@ -203,7 +283,7 @@ func (s *ScheduledTestService) validateQualityAccountModels(ctx context.Context,
 
 // Work on a private snapshot: the group template retains the complete selection.
 func (s *ScheduledTestService) filterQualityTemplatePlan(ctx context.Context, plan *ScheduledTestPlan) (bool, error) {
-	supported, _, err := s.supportedQualityModels(ctx, plan)
+	supported, _, err := s.eligibleQualityModels(ctx, plan)
 	if err != nil {
 		return false, err
 	}
@@ -218,10 +298,17 @@ func (s *ScheduledTestService) filterQualityTemplatePlan(ctx context.Context, pl
 
 // Match explicit model errors only; invalid tools, transient failures and
 // authorization errors must never permanently suppress a model.
+var qualityAuthFailureMessage = regexp.MustCompile(`(?i)(?:\b(?:API returned|HTTP(?: status)?|status(?: code)?)\s*[:=]?\s*(?:401|403)\b|\((?:401|403)\)|\b(?:token_revoked|token_invalidated|unauthorized|invalid_token)\b)`)
+
 var qualityUnsupportedModelMessage = regexp.MustCompile(`(?i)\bmodel\b.{0,160}\b(?:not supported|not found|does not exist)\b`)
 
 func qualityModelUnsupported(message string) bool {
 	lower := strings.ToLower(message)
+	// Authentication/permission failure is never evidence of model capability,
+	// even if an upstream error happens to mention a model rejection code.
+	if strings.Contains(lower, "not supported by any configured account") || strings.Contains(lower, "permission denied") || strings.Contains(lower, "openai_codex_models_credentials_invalid") || qualityAuthFailureMessage.MatchString(lower) {
+		return false
+	}
 	for _, code := range []string{"model_not_found", "model_not_supported", "unsupported_model", "model_unsupported"} {
 		if strings.Contains(lower, code) {
 			return true

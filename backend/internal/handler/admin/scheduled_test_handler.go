@@ -65,6 +65,9 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if !qualityJudgeAccess(c, req.PelicanConfig) {
+		return
+	}
 
 	plan := &service.ScheduledTestPlan{
 		AccountID:      req.AccountID,
@@ -83,6 +86,10 @@ func (h *ScheduledTestHandler) Create(c *gin.Context) {
 
 	created, err := h.scheduledTestSvc.CreatePlan(c.Request.Context(), plan)
 	if err != nil {
+		if infraerrors.Reason(err) == "QUALITY_MODEL_NOT_ALLOWED" || infraerrors.Reason(err) == "QUALITY_MODEL_CATALOG_UNKNOWN" || infraerrors.Reason(err) == "OPENAI_CODEX_MODELS_CREDENTIALS_INVALID" {
+			response.ErrorFrom(c, err)
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -102,10 +109,12 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 		response.NotFound(c, "plan not found")
 		return
 	}
-
 	var req updateScheduledTestPlanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
+		return
+	}
+	if !qualityJudgeAccess(c, existing.PelicanConfig, req.PelicanConfig) {
 		return
 	}
 	existing.PreserveQualityState = req.PreserveQualityState
@@ -146,7 +155,7 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 
 	updated, err := h.scheduledTestSvc.UpdatePlan(c.Request.Context(), existing)
 	if err != nil {
-		if infraerrors.Reason(err) == service.QualityScopeConflictReason {
+		if infraerrors.Reason(err) == service.QualityScopeConflictReason || infraerrors.Reason(err) == "QUALITY_MODEL_NOT_ALLOWED" || infraerrors.Reason(err) == "QUALITY_MODEL_CATALOG_UNKNOWN" || infraerrors.Reason(err) == "OPENAI_CODEX_MODELS_CREDENTIALS_INVALID" {
 			response.ErrorFrom(c, err)
 			return
 		}
@@ -156,12 +165,45 @@ func (h *ScheduledTestHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
+// Observers may manage scoped connectivity tests, but cannot opt accounts into
+// shared audit credentials or enable a saved Jev rule through that older API.
+func qualityJudgeAccess(c *gin.Context, configs ...*service.PelicanTestConfig) bool {
+	if _, observer := service.ObserverGroupIDs(c.Request.Context()); observer {
+		for _, cfg := range configs {
+			if cfg != nil && cfg.Quality != nil && cfg.Quality.Judge != nil && cfg.Quality.Judge.Kind == "jev" {
+				response.ErrorFrom(c, service.ErrObserverScope)
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Delete DELETE /admin/scheduled-test-plans/:id
 func (h *ScheduledTestHandler) Delete(c *gin.Context) {
 	planID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		response.BadRequest(c, "invalid plan id")
 		return
+	}
+
+	if c.Request.ContentLength != 0 {
+		var req service.QualityOwnershipRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "invalid ownership deletion confirmation")
+			return
+		}
+		// Older clients send an empty JSON object on DELETE. Preserve their
+		// guarded path; only an explicit ownership confirmation selects fencing.
+		if req.Fence != "" || req.Confirm {
+			req.Delete = true
+			if _, err := h.scheduledTestSvc.QualityOwnership(c.Request.Context(), planID, &req); err != nil {
+				response.ErrorFrom(c, err)
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+			return
+		}
 	}
 
 	if err := h.scheduledTestSvc.DeletePlan(c.Request.Context(), planID); err != nil {

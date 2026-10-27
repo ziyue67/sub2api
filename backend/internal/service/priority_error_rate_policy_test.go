@@ -20,8 +20,8 @@ func TestPriorityErrorRateWeightedRecoveryAndIsolation(t *testing.T) {
 	req := OpenAIAccountScheduleRequest{RequestedModel: "m", RequiredCapability: OpenAIEndpointCapabilityResponses}
 	scheduler := &defaultOpenAIAccountScheduler{stats: stats}
 	for i := 0; i < 100; i++ {
-		stats.attempts.report(priorityAttemptKey{1, "m", "/v1/responses"}, true, now)
-		stats.attempts.report(priorityAttemptKey{2, "m", "/v1/responses"}, false, now)
+		stats.attempts.report(priorityAttemptKey{accountID: 1, model: "m", endpoint: "/v1/responses"}, true, now)
+		stats.attempts.report(priorityAttemptKey{accountID: 2, model: "m", endpoint: "/v1/responses"}, false, now)
 	}
 	signal := PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10}
 	good, bad := priorityCandidate(1, .1, 0), priorityCandidate(2, .1, 0)

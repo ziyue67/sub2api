@@ -1,0 +1,94 @@
+name: Channel operations exact-head acceptance
+on:
+  pull_request:
+    paths:
+      - 'backend/internal/**/channel_operations*'
+      - 'backend/migrations/309_channel_operations.sql'
+      - 'frontend/src/**/ChannelOperations*'
+      - 'frontend/src/components/admin/operations/SmartOpsNav.vue'
+      - 'frontend/src/components/admin/operations/__tests__/SmartOpsNav.spec.ts'
+      - 'docs/channel-operations.md'
+      - 'frontend/src/api/admin/channelOperations.ts'
+      - 'frontend/src/i18n/locales/*/channelOps.ts'
+      - '.github/workflows/channel-operations.yml'
+      - '.github/scripts/channel-operations-screenshot.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: channel-operations-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  postgres-boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Record exact source and run HTTP/auth/validation boundaries
+        working-directory: backend
+        run: |
+          git rev-parse HEAD
+          go test -tags=unit ./internal/service ./internal/handler/admin ./internal/server/routes -run '^TestChannelOperations' -count=1
+      - name: Missing peer model must fail against the reviewed source
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=internal/repository/channel_operations_stats.go
+          cp "$target" "$RUNNER_TEMP/channel-operations-current-stats.go"
+          trap 'cp "$RUNNER_TEMP/channel-operations-current-stats.go" "$target"' EXIT
+          git fetch --no-tags --depth=1 origin 0e1f50475a552bffd68c1822e17aa87c0a1561ac
+          git show 0e1f50475a552bffd68c1822e17aa87c0a1561ac:backend/internal/repository/channel_operations_stats.go > "$target"
+          set +e
+          go test -tags=integration ./internal/repository -run '^TestChannelOperationsQualityWaitsForAllFrozenModels$' -count=1 -v > "$RUNNER_TEMP/channel-operations-quality-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/channel-operations-quality-red.log"
+          test "$result" -ne 0
+          grep -q 'FAIL: TestChannelOperationsQualityWaitsForAllFrozenModels' "$RUNNER_TEMP/channel-operations-quality-red.log"
+          grep -q 'missing peer model cannot pass' "$RUNNER_TEMP/channel-operations-quality-red.log"
+      - name: Actual PostgreSQL persistence, HTTP, migration and statistics regressions
+        working-directory: backend
+        run: go test -tags=integration ./internal/repository -run '^TestChannelOperations' -count=1 -v
+  frontend-workflow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Actual page interactions and existing editor compatibility
+        working-directory: frontend
+        run: pnpm exec vitest run src/views/admin/__tests__/ChannelOperationsView.spec.ts src/components/admin/operations/__tests__/SmartOpsNav.spec.ts src/views/admin/__tests__/AccountQualityView.spec.ts src/views/admin/__tests__/ChannelsView.modelSync.spec.ts --maxWorkers=1 --minWorkers=1 --no-file-parallelism
+      - name: Full frontend build (remote only)
+        run: pnpm --dir frontend run build
+      - name: Isolated browser for synthetic UI acceptance
+        run: |
+          npm install --prefix "$RUNNER_TEMP/channel-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/channel-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Actual page screenshots and mutation confirmation
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/channel-browser/node_modules/playwright
+          CHANNEL_SCREENSHOT_DIR: ${{ runner.temp }}/channel-screenshots
+        run: node .github/scripts/channel-operations-screenshot.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: channel-operations-ui-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/channel-screenshots
+          if-no-files-found: error

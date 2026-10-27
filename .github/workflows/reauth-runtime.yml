@@ -7,6 +7,7 @@ on:
       - 'tools/test_openai_codex_*'
       - 'tools/fixtures/codex-http-transport.mjs'
       - 'tools/fixtures/session-studio/**'
+      - 'tools/fixtures/credential-operation-errors.json'
       - 'tools/openai_totp_*'
       - 'tools/test_openai_totp_*'
       - 'tools/openai_siwc_*'

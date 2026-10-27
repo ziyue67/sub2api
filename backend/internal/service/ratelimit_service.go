@@ -2704,6 +2704,13 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 	if s == nil || account == nil || s.accountRepo == nil {
 		return false
 	}
+	// A pool relay owns its member/model availability. Its observation must not
+	// become a local 30-minute negative cache by bypassing the generic pool
+	// policy through the OpenAI fastpath. Explicit error-code policy remains
+	// authoritative; administrator temporary rules run at the caller below.
+	if account.IsPoolMode() && !account.IsCustomErrorCodesEnabled() {
+		return false
+	}
 	if !account.ShouldHandleErrorCode(statusCode) {
 		return false
 	}

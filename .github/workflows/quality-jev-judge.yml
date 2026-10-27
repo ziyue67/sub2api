@@ -1,0 +1,111 @@
+name: Quality Jev exact-head regression
+on:
+  push:
+    branches: [feat/quality-jev-judge]
+  pull_request:
+    paths:
+      - 'backend/internal/service/quality_judge*'
+      - 'backend/internal/pkg/typesafe/**'
+      - 'backend/internal/repository/quality_jev_integration_test.go'
+      - 'frontend/src/views/admin/AccountQualityView.vue'
+      - '.github/scripts/quality-jev-screenshot.mjs'
+      - '.github/workflows/quality-jev-judge.yml'
+permissions:
+  contents: read
+jobs:
+  protocol-and-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Record exact tested commit
+        run: git rev-parse HEAD | tee "$RUNNER_TEMP/quality-jev-sha.txt"
+      - name: Prove metadata regression against the complete previous head
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=bb6c383079a2dad45449fb9880dc461a024e9ae9
+          git fetch --no-tags --depth=1 origin "$baseline"
+          old_tree="$RUNNER_TEMP/quality-jev-before-metadata"
+          git worktree add --detach "$old_tree" "$baseline"
+          git -C "$old_tree" rev-parse HEAD | tee "$RUNNER_TEMP/quality-jev-red-sha.txt"
+          cp backend/internal/pkg/typesafe/choice_metadata_test.go "$old_tree/backend/internal/pkg/typesafe/"
+          mkdir -p "$old_tree/backend/internal/pkg/typesafe/testdata"
+          cp backend/internal/pkg/typesafe/testdata/quality-choice-metadata.json "$old_tree/backend/internal/pkg/typesafe/testdata/"
+          set +e
+          (cd "$old_tree/backend" && GOWORK=off go test -tags=unit -json ./internal/pkg/typesafe -run '^TestTypeSafeQualityChoiceMetadataCompatibility$' -count=1) > "$RUNNER_TEMP/quality-jev-metadata-red.jsonl" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/quality-jev-metadata-red.jsonl"
+          test "$result" -ne 0
+          python3 - <<'PY'
+          import json, os, pathlib
+          p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'quality-jev-metadata-red.jsonl'
+          events = [json.loads(line) for line in p.read_text().splitlines() if line.startswith('{')]
+          assert any(e.get('Action') == 'fail' and e.get('Test') == 'TestTypeSafeQualityChoiceMetadataCompatibility' for e in events), 'must fail a real test, never compilation'
+          assert any('confirmed bounded id/provider metadata' in e.get('Output', '') for e in events), 'missing expected metadata failure'
+          PY
+      - name: Native protocol and quality safety regressions (offline transports)
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -tags=unit -json ./internal/pkg/typesafe ./internal/service ./internal/handler/admin -run 'Test(TypeSafeQuality|QualityJev|QualityJudge|QualityValidation|QualityOutcome|QualityRunner|RandomQualityRound|QualityRestoreDiagnostic)' -count=1 | tee "$RUNNER_TEMP/quality-jev-unit.jsonl"
+      - name: Isolated PostgreSQL and Redis seams
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -tags=integration -json ./internal/repository -run 'TestQuality(JevPersistence|Isolation|ActionsRestoreOwnershipAndStaleRuns)' -count=1 | tee "$RUNNER_TEMP/quality-jev-db.jsonl"
+      - name: Require real execution of new gates (no skip or compile-only success)
+        shell: python
+        run: |
+          import json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          events = [json.loads(line) for name in ('quality-jev-unit.jsonl', 'quality-jev-db.jsonl') for line in (root/name).read_text().splitlines() if line.startswith('{')]
+          required = ['TestTypeSafeQualityChoiceStrictProtocol', 'TestTypeSafeQualityChoiceOneAttemptBoundAndRedaction', 'TestQualityJevNativeIsolationAndUnknownSafety', 'TestQualityJevDisabledAndMissingConfigNeverCalls', 'TestQualityJevErrorsRetryRotationAndRedaction', 'TestQualityJevCancellationTimeoutAndConcurrency', 'TestQualityJevConfigValidationAndInputBounds', 'TestQualityJevURLPolicyAndNoAuditMutation', 'TestQualityJevRotationReloadsSavedCredentials', 'TestQualityJevGenerationLatencyAndDeterministicPriority', 'TestQualityJevAPICompatibilityAndPermission', 'TestQualityJevObserverCannotEnableSavedRule', 'TestQualityJevPersistenceAndIsolationSafety']
+          required += ['TestTypeSafeQualityChoiceMetadataCompatibility', 'TestTypeSafeQualityChoiceMetadataKeepsStrictBoundaries']
+          passed = {e.get('Test') for e in events if e.get('Action') == 'pass'}
+          assert set(required) <= passed, f'Missing executed gates: {set(required)-passed}'
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-jev-logs-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name }}
+          path: ${{ runner.temp }}/quality-jev-*
+  offline-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Install isolated screenshot tool
+        run: |
+          npm install --prefix "$RUNNER_TEMP/quality-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/quality-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Render real grading editor with offline fixtures
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/quality-browser/node_modules/playwright
+          QUALITY_SCREENSHOT_DIR: ${{ runner.temp }}/quality-jev-ui
+          QUALITY_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/quality-jev-screenshot.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-jev-ui-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name }}
+          path: ${{ runner.temp }}/quality-jev-ui

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,10 +24,84 @@ type ModelBillingConfig struct {
 type ModelBillingRule struct {
 	Model      string  `json:"model"`
 	Multiplier float64 `json:"multiplier"`
+	GroupIDs   []int64 `json:"group_ids"`
+}
+
+// UnmarshalJSON preserves omitted scopes by model identity when an older admin
+// client saves rules. Decode fresh rules: encoding/json otherwise reuses slice
+// elements by index, which could move a scope to a different model on reorder.
+// Explicit [] or null clears the scope; a new/legacy rule without it is global.
+func (c *ModelBillingConfig) UnmarshalJSON(data []byte) error {
+	var patch struct {
+		Enabled *bool           `json:"enabled"`
+		Rules   json.RawMessage `json:"rules"`
+	}
+	if err := json.Unmarshal(data, &patch); err != nil {
+		return err
+	}
+	next := *c
+	if patch.Enabled != nil {
+		next.Enabled = *patch.Enabled
+	}
+	if patch.Rules != nil {
+		var rules []struct {
+			Model      string          `json:"model"`
+			Multiplier float64         `json:"multiplier"`
+			GroupIDs   json.RawMessage `json:"group_ids"`
+		}
+		if err := json.Unmarshal(patch.Rules, &rules); err != nil {
+			return err
+		}
+		next.Rules = make([]ModelBillingRule, len(rules))
+		previous := make(map[string][]int64, len(c.Rules))
+		hasScopedRules := false
+		for _, rule := range c.Rules {
+			previous[modelBillingRuleKey(rule.Model)] = rule.GroupIDs
+			hasScopedRules = hasScopedRules || len(rule.GroupIDs) > 0
+		}
+		for i, rule := range rules {
+			ids, exists := previous[modelBillingRuleKey(rule.Model)]
+			if rule.GroupIDs == nil && !exists && hasScopedRules {
+				return errors.New("explicit group_ids required for new models when scoped rules exist")
+			}
+			if rule.GroupIDs != nil {
+				ids = nil
+				if err := json.Unmarshal(rule.GroupIDs, &ids); err != nil {
+					return err
+				}
+			}
+			next.Rules[i] = ModelBillingRule{Model: rule.Model, Multiplier: rule.Multiplier, GroupIDs: ids}
+		}
+	}
+	*c = normalizeModelBillingConfig(next)
+	return nil
+}
+
+func modelBillingRuleKey(model string) string { return strings.ToLower(strings.TrimSpace(model)) }
+
+// Copy before normalization so cached/request snapshots never share mutable IDs
+// with an admin save. Duplicates do not change scope; retain first-seen order.
+func normalizeModelBillingConfig(c ModelBillingConfig) ModelBillingConfig {
+	c.Rules = slices.Clone(c.Rules)
+	for i := range c.Rules {
+		if c.Rules[i].GroupIDs == nil {
+			continue
+		}
+		ids := make([]int64, 0, len(c.Rules[i].GroupIDs))
+		seen := make(map[int64]bool, len(c.Rules[i].GroupIDs))
+		for _, id := range c.Rules[i].GroupIDs {
+			if !seen[id] {
+				ids = append(ids, id)
+				seen[id] = true
+			}
+		}
+		c.Rules[i].GroupIDs = ids
+	}
+	return c
 }
 
 func DefaultModelBillingConfig() ModelBillingConfig {
-	return ModelBillingConfig{Rules: []ModelBillingRule{{Model: "gpt-6-luna*", Multiplier: 10}}}
+	return ModelBillingConfig{Rules: []ModelBillingRule{{Model: "gpt-6-luna*", Multiplier: 10, GroupIDs: []int64{}}}}
 }
 
 var modelBillingPattern = regexp.MustCompile(`^[a-zA-Z0-9_./:-]+\*?$`)
@@ -45,19 +120,27 @@ func validateModelBillingConfig(c ModelBillingConfig) error {
 		if math.IsNaN(rule.Multiplier) || math.IsInf(rule.Multiplier, 0) || rule.Multiplier < 1 || rule.Multiplier > 1000 {
 			return bad("model billing multipliers must be between 1 and 1000")
 		}
+		for _, id := range rule.GroupIDs {
+			if id <= 0 || id > 9007199254740991 {
+				return bad("model billing group IDs must be positive safe integers")
+			}
+		}
 		seen[model] = true
 	}
 	return nil
 }
 
 // Exact names win; otherwise the longest prefix wins. Rules never compound.
-func (c ModelBillingConfig) multiplier(model string) float64 {
+func (c ModelBillingConfig) multiplier(model string, groupID *int64) float64 {
 	if !c.Enabled {
 		return 1
 	}
 	model = strings.ToLower(strings.TrimSpace(model))
 	multiplier, longest := 1.0, 0
 	for _, rule := range c.Rules {
+		if len(rule.GroupIDs) > 0 && (groupID == nil || *groupID <= 0 || !slices.Contains(rule.GroupIDs, *groupID)) {
+			continue
+		}
 		pattern := strings.ToLower(strings.TrimSpace(rule.Model))
 		if pattern == model {
 			return rule.Multiplier
@@ -72,11 +155,11 @@ func (c ModelBillingConfig) multiplier(model string) float64 {
 	return multiplier
 }
 
-func applyModelBillingMultiplier(cost *CostBreakdown, cfg ModelBillingConfig, model string) {
+func applyModelBillingMultiplier(cost *CostBreakdown, cfg ModelBillingConfig, model string, groupID *int64) {
 	if cost == nil || cost.BillingMode != "" && cost.BillingMode != string(BillingModeToken) {
 		return
 	}
-	multiplier := cfg.multiplier(model)
+	multiplier := cfg.multiplier(model, groupID)
 	if multiplier == 1 {
 		return
 	}

@@ -54,8 +54,20 @@ func validateQualityPolicy(plan *ScheduledTestPlan) error {
 	}
 	q.Admission = nil
 	if j := q.Judge; j != nil {
-		if j.GroupID <= 0 || strings.TrimSpace(j.ModelID) == "" || len(j.ModelID) > 100 || strings.TrimSpace(j.Prompt) == "" || len(j.Prompt) > 16000 {
-			return fmt.Errorf("judge group, model and grading prompt are required (100/16000 byte limits)")
+		if strings.TrimSpace(j.Prompt) == "" || len(j.Prompt) > 16000 {
+			return fmt.Errorf("grading prompt must be 1-16000 bytes")
+		}
+		switch j.Kind {
+		case "", "llm":
+			if j.GroupID <= 0 || strings.TrimSpace(j.ModelID) == "" || len(j.ModelID) > 100 {
+				return fmt.Errorf("judge group, model and grading prompt are required (100/16000 byte limits)")
+			}
+		case "jev":
+			if j.GroupID != 0 || j.ModelID != "" {
+				return fmt.Errorf("jev grading reuses the audit profile; group and model must be empty")
+			}
+		default:
+			return fmt.Errorf("unsupported quality judge kind")
 		}
 	}
 	if plan.AutoRecover {

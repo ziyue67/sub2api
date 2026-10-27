@@ -36,6 +36,13 @@ describe('channel-monitor-v2 design system structure', () => {
     // Ops elevation: rounded-3xl + ring surfaces
     expect(src).toContain('rounded-3xl')
     expect(src).toContain('ring-1 ring-gray-900/5')
+    // Header shell: never sticky at top-0 — the app header (h-16, z-30) is
+    // sticky there, so a top-0 shell slides under it and only its lower
+    // half shows. On mobile it must scroll away entirely; it may only
+    // stick on lg screens, offset below the app header.
+    expect(src).not.toContain('card sticky top-0')
+    expect(src).toContain('lg:sticky')
+    expect(src).toContain('lg:top-[4.75rem]')
     // Overview-first KPI strip before primary viz
     expect(src.indexOf('summaryAria')).toBeLessThan(src.indexOf('MonitorTrendChart'))
     // No page-level fixed min-width that forces viewport horizontal scroll

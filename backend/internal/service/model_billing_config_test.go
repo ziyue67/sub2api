@@ -47,26 +47,26 @@ func TestModelBillingDefaultsPersistenceAndLegacy(t *testing.T) {
 
 func TestModelBillingValidation(t *testing.T) {
 	for _, rule := range []ModelBillingRule{
-		{"", 10}, {"*", 10}, {"lu*na", 10}, {"luna?", 10}, {"luna x", 10},
-		{strings.Repeat("a", 201), 10}, {"luna", 0}, {"luna", -1}, {"luna", 0.9},
-		{"luna", 1001}, {"luna", math.Inf(1)}, {"luna", math.NaN()},
+		{"", 10, nil}, {"*", 10, nil}, {"lu*na", 10, nil}, {"luna?", 10, nil}, {"luna x", 10, nil},
+		{strings.Repeat("a", 201), 10, nil}, {"luna", 0, nil}, {"luna", -1, nil}, {"luna", 0.9, nil},
+		{"luna", 1001, nil}, {"luna", math.Inf(1), nil}, {"luna", math.NaN(), nil},
 	} {
 		require.Error(t, validateModelBillingConfig(ModelBillingConfig{Enabled: true, Rules: []ModelBillingRule{rule}}))
 	}
 	require.Error(t, validateModelBillingConfig(ModelBillingConfig{Enabled: true}))
 	require.Error(t, validateModelBillingConfig(ModelBillingConfig{Rules: make([]ModelBillingRule, 101)}))
-	require.Error(t, validateModelBillingConfig(ModelBillingConfig{Rules: []ModelBillingRule{{"Luna", 10}, {" luna ", 2}}}))
+	require.Error(t, validateModelBillingConfig(ModelBillingConfig{Rules: []ModelBillingRule{{"Luna", 10, nil}, {" luna ", 2, nil}}}))
 	require.NoError(t, validateModelBillingConfig(ModelBillingConfig{}))
-	require.NoError(t, validateModelBillingConfig(ModelBillingConfig{Enabled: true, Rules: []ModelBillingRule{{"vendor/luna*", 1.5}, {"luna", 1000}}}))
+	require.NoError(t, validateModelBillingConfig(ModelBillingConfig{Enabled: true, Rules: []ModelBillingRule{{"vendor/luna*", 1.5, nil}, {"luna", 1000, nil}}}))
 }
 
 func TestModelBillingMatching(t *testing.T) {
-	c := ModelBillingConfig{Enabled: true, Rules: []ModelBillingRule{{"gpt-*", 2}, {"gpt-6-luna*", 10}, {"gpt-6-luna-low", 3}}}
+	c := ModelBillingConfig{Enabled: true, Rules: []ModelBillingRule{{"gpt-*", 2, nil}, {"gpt-6-luna*", 10, nil}, {"gpt-6-luna-low", 3, nil}}}
 	for model, want := range map[string]float64{"gpt-6-luna": 10, " GPT-6-LUNA-HIGH ": 10, "gpt-6-luna-low": 3, "gpt-6-astra": 2, "claude-sonnet": 1, "alias-luna": 1} {
-		require.Equal(t, want, c.multiplier(model), model)
+		require.Equal(t, want, c.multiplier(model, nil), model)
 	}
 	c.Enabled = false
-	require.Equal(t, 1.0, c.multiplier("gpt-6-luna"))
+	require.Equal(t, 1.0, c.multiplier("gpt-6-luna", nil))
 }
 
 type modelBillingRepoStub struct {
@@ -85,7 +85,7 @@ func TestModelBillingCacheRefreshFailuresAndRequestSnapshot(t *testing.T) {
 	repo := &modelBillingRepoStub{raw: "{\"model_billing\":{\"enabled\":true,\"rules\":[{\"model\":\"gpt-6-luna*\",\"multiplier\":10}]}}"}
 	svc := NewSettingService(repo, nil)
 	ctx := withModelBillingConfig(t.Context(), svc)
-	require.Equal(t, 10.0, svc.modelBillingConfigForUsage(ctx).multiplier("gpt-6-luna"))
+	require.Equal(t, 10.0, svc.modelBillingConfigForUsage(ctx).multiplier("gpt-6-luna", nil))
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Go(func() { _ = svc.modelBillingConfigForUsage(t.Context()) })
@@ -94,15 +94,15 @@ func TestModelBillingCacheRefreshFailuresAndRequestSnapshot(t *testing.T) {
 	require.Equal(t, 1, repo.calls)
 	repo.err = errors.New("unavailable")
 	svc.modelBillingCache.expires = time.Time{}
-	require.Equal(t, 10.0, svc.modelBillingConfigForUsage(t.Context()).multiplier("gpt-6-luna"))
+	require.Equal(t, 10.0, svc.modelBillingConfigForUsage(t.Context()).multiplier("gpt-6-luna", nil))
 	require.Equal(t, 2, repo.calls)
 	repo.err, repo.raw = nil, "{}"
 	svc.modelBillingCache.expires = time.Time{}
-	require.Equal(t, 1.0, svc.modelBillingConfigForUsage(t.Context()).multiplier("gpt-6-luna"))
-	require.Equal(t, 10.0, svc.modelBillingConfigForUsage(ctx).multiplier("gpt-6-luna"))
+	require.Equal(t, 1.0, svc.modelBillingConfigForUsage(t.Context()).multiplier("gpt-6-luna", nil))
+	require.Equal(t, 10.0, svc.modelBillingConfigForUsage(ctx).multiplier("gpt-6-luna", nil))
 	repo.err = errors.New("unavailable")
 	cold := NewSettingService(repo, nil)
-	require.Equal(t, 1.0, cold.modelBillingConfigForUsage(t.Context()).multiplier("gpt-6-luna"))
+	require.Equal(t, 1.0, cold.modelBillingConfigForUsage(t.Context()).multiplier("gpt-6-luna", nil))
 }
 
 func TestModelBillingCustomerCostOnly(t *testing.T) {
@@ -110,7 +110,7 @@ func TestModelBillingCustomerCostOnly(t *testing.T) {
 	cfg.Enabled = true
 	for _, amount := range []float64{0, .2} {
 		cost := &CostBreakdown{InputCost: .4, OutputCost: .5, CacheReadCost: .1, TotalCost: 1, ActualCost: amount, BillingMode: string(BillingModeToken)}
-		applyModelBillingMultiplier(cost, cfg, "gpt-6-luna")
+		applyModelBillingMultiplier(cost, cfg, "gpt-6-luna", nil)
 		require.Equal(t, amount*10, cost.ActualCost)
 		require.Equal(t, 1.0, cost.TotalCost)
 		require.Equal(t, .1, cost.CacheReadCost)
@@ -119,7 +119,7 @@ func TestModelBillingCustomerCostOnly(t *testing.T) {
 	}
 	for _, mode := range []BillingMode{BillingModeImage, BillingModePerRequest, BillingModeVideo} {
 		cost := &CostBreakdown{ActualCost: 1, BillingMode: string(mode)}
-		applyModelBillingMultiplier(cost, cfg, "gpt-6-luna")
+		applyModelBillingMultiplier(cost, cfg, "gpt-6-luna", nil)
 		require.Equal(t, 1.0, cost.ActualCost)
 		require.Equal(t, 1.0, costModelBillingMultiplier(cost))
 	}
@@ -175,7 +175,7 @@ func TestModelBillingOpenAIRecordUsageBalanceAndSubscription(t *testing.T) {
 }
 
 func TestModelBillingGenericTokenAndSearchCharges(t *testing.T) {
-	cfg := ModelBillingConfig{Enabled: true, Rules: []ModelBillingRule{{"claude-sonnet-4-5*", 10}}}
+	cfg := ModelBillingConfig{Enabled: true, Rules: []ModelBillingRule{{"claude-sonnet-4-5*", 10, nil}}}
 	svc := &GatewayService{billingService: NewBillingService(&config.Config{}, nil)}
 	result := &ForwardResult{Model: "claude-sonnet-4-5", Usage: ClaudeUsage{InputTokens: 1000, OutputTokens: 100}, SearchCount: 2}
 	key := &APIKey{ID: 1}

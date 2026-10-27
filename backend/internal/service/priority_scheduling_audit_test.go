@@ -61,7 +61,7 @@ func TestPrioritySnapshotRecomputesAttemptEvidenceWithoutMovingSelectionTime(t *
 	scheduler, ok := newDefaultOpenAIAccountScheduler(g, stats).(*defaultOpenAIAccountScheduler)
 	require.True(t, ok)
 	req := OpenAIAccountScheduleRequest{Platform: PlatformOpenAI, RequestedModel: "test", UseUpstreamTokenCost: true}
-	key := priorityAttemptKey{1, "test", priorityErrorEndpoint(req)}
+	key := priorityAttemptKey{accountID: 1, model: "test", endpoint: priorityErrorEndpoint(req)}
 	for _, success := range []bool{true, true, true, false} {
 		stats.attempts.report(key, success, time.Now())
 	}

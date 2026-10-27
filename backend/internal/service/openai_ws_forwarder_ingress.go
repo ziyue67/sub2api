@@ -1692,6 +1692,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 
 	var rejectedFieldRetryState *openAIResponsesRejectedFieldRetryState
+	// A successfully admitted generation may have already reached the provider,
+	// including a write with an uncertain result. Later internal retries keep
+	// that admission; a new turn must recheck after all lease/handshake waits.
+	latencyGenerationStartedTurn := 0
 	sendAndRelay := func(turn int, lease *openAIWSConnLease, payload []byte, payloadBytes int, originalModel string, imageBillingModel string, imageSizeTier string, imageInputSize string, requestedReasoningEffort *string) (*OpenAIForwardResult, error) {
 		responseModelObserver := &upstreamResponseModelObserver{}
 		if lease == nil {
@@ -1726,6 +1730,12 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		if err := regionalMeterBeforeSend(ctx); err != nil {
 			return nil, err
+		}
+		if latencyGenerationStartedTurn != turn {
+			if _, denied := s.beginPriorityLatencyTurn(ctx, c, account, extractOpenAICodexTicketModel(payload)); denied != nil {
+				return nil, denied
+			}
+			latencyGenerationStartedTurn = turn
 		}
 		if err := lease.WriteJSONWithContextTimeout(ctx, json.RawMessage(payload), s.openAIWSWriteTimeout()); err != nil {
 			return nil, wrapOpenAIWSIngressTurnError(
@@ -2293,6 +2303,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				return err
 			}
 		}
+		if !skipBeforeTurn {
+			if _, denied := s.beginPriorityLatencyTurn(ctx, c, account, extractOpenAICodexTicketModel(currentPayload)); denied != nil {
+				return denied
+			}
+		}
 		skipBeforeTurn = false
 		// 剥离本会话已知失效的加密项，阻断同一失效密文随历史反复触发上游拒绝。
 		// 历史序列须同步剥离，否则与已剥离的当前 input 项错位，prefix 复用失配。
@@ -2684,6 +2699,15 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 				return relayErr
 			default:
+			}
+			if errors.Is(relayErr, ErrPriorityLatencyUnavailable) {
+				sessionLease.MarkBroken()
+				if hooks != nil && hooks.AfterTurn != nil {
+					hooks.AfterTurn(turn, nil, relayErr)
+				}
+				// A temporary policy rejection does not revoke provider ownership and
+				// must never enter previous-ID recovery or output replay.
+				return relayErr
 			}
 			if ownerProtected {
 				sessionLease.MarkBroken()

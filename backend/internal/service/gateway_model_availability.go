@@ -11,8 +11,8 @@ import (
 // ModelAvailabilityDiagnosis describes whether the requested model can be
 // served by any persistently eligible account in the group (active with its
 // schedulable setting enabled), ignoring transient state such as rate limits,
-// overload, temporary unschedulability, and runtime blocks. An unexpired
-// cooldown recording an explicit model capability rejection is an exception.
+// overload, temporary unschedulability, runtime blocks, and expiring upstream
+// model rejection observations. Those observations still block scheduling.
 // Handlers use this
 // on the "no available accounts" error path to distinguish 404
 // model_not_found from 503 service_unavailable.
@@ -22,7 +22,7 @@ type ModelAvailabilityDiagnosis struct {
 	// the platform plus mixed-scheduled Antigravity accounts).
 	HasAccountsInPool bool
 	// HasModelSupport is true if at least one account's model mapping admits
-	// the requested model without an active upstream capability rejection.
+	// the requested model, regardless of expiring upstream rejection observations.
 	HasModelSupport bool
 	// HasRetiredSubscriptionModel records a ChatGPT upstream blocked by model
 	// retirement, so an unsupported request can include migration guidance.
@@ -141,8 +141,7 @@ func (s *GatewayService) DiagnoseModelAvailabilityForPlatform(
 		if useMixed && accounts[i].Platform == PlatformAntigravity && !accounts[i].IsMixedSchedulingEnabled() {
 			continue
 		}
-		diag.recordAccount(&accounts[i], s.isModelSupportedByAccountInGroup(ctx, &accounts[i], groupID, requestedModel) &&
-			!accounts[i].modelCapabilityRejectedForRequest(ctx, requestedModel), now)
+		diag.recordAccount(&accounts[i], s.isModelSupportedByAccountInGroup(ctx, &accounts[i], groupID, requestedModel), now)
 	}
 	return diag
 }

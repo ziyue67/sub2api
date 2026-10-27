@@ -23,7 +23,9 @@ REASONS = frozenset(('none', 'protocol_error', 'password_rejected', 'totp_reject
                     'interaction_required', 'security_check', 'session_unavailable', 'workspace_mismatch',
                     'callback_missing', 'callback_invalid', 'callback_state_mismatch', 'pkce_invalid',
                     'token_exchange_failed', 'credentials_incomplete', 'transport_error', 'runtime_error',
-                    'process_failed', 'timeout', 'diagnostic_invalid', 'output_invalid'))
+                    'process_failed', 'timeout', 'diagnostic_invalid', 'output_invalid',
+                    'phone_verification_required', 'account_deactivated', 'account_deleted', 'account_retired',
+                    'requires_relogin', 'mfa_required', 'authorization_denied', 'rate_limited', 'service_error'))
 MAX_DIAGNOSTIC_BYTES = 1024
 
 
@@ -32,11 +34,12 @@ def codex_source(source):
     if hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() != PINNED_PROTOCOL_BLOB:
         raise ValueError('unsupported_codex_runtime_layout')
     source = replace_exact(source, 'import crypto from "node:crypto";', '''import crypto from "node:crypto";
-import {createProtocolDiagnostics, validateCodexCallback} from "./openai_codex_diagnostics.mjs";
+import {createProtocolDiagnostics, validateCodexCallback, observeProtocolResponse} from "./openai_codex_diagnostics.mjs";
 const protocolDiagnostic = createProtocolDiagnostics(process.env.SUB2API_PROTOCOL_DIAGNOSTIC_PATH,
   Number(process.env.SUB2API_PROTOCOL_TASK_ID));
 console.log = console.warn = console.error = () => {};''')
     for old, new in (
+        ('    assertOk(result, `${method} ${url}`);', '    observeProtocolResponse(result);\n    assertOk(result, `${method} ${url}`);'),
         ('async function loginChatgptWeb(client, { chatgptBase, authBase, email, rl, password, totpSecret }) {',
          'async function loginChatgptWeb(client, { chatgptBase, authBase, email, rl, password, totpSecret }) {\n  protocolDiagnostic.mark("web_login");'),
         ('      console.log("[ok] Password accepted");', '      protocolDiagnostic.mark("password_accepted");'),
@@ -54,6 +57,7 @@ console.log = console.warn = console.error = () => {};''')
          'async function exchangeOAuthCode({ authBase, clientId, code, codeVerifier, redirectUri, transport, cookie }) {\n  protocolDiagnostic.mark("token_exchange");'),
         ('      await writeJsonAtomic(sub2apiOutPath, sub2apiExport.data);',
          '      protocolDiagnostic.mark("oauth_output");\n      await writeJsonAtomic(sub2apiOutPath, sub2apiExport.data);\n      protocolDiagnostic.mark("completed");'),
+        ('    const message = data?.error_description || data?.error || JSON.stringify(data).slice(0, 180);', '    observeProtocolResponse({res, text}, "token_exchange_failed");\n    const message = data?.error_description || data?.error || JSON.stringify(data).slice(0, 180);'),
         ('async function ask(rl, prompt) {', 'async function ask(rl, prompt) {\n  throw new Error("interaction_required");'),
         ('      if (!isRejectedPasswordError(error)) throw error;',
          '      if (!isRejectedPasswordError(error)) throw error;\n      throw new Error("password_rejected");'),

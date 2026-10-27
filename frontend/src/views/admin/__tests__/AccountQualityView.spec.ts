@@ -4,7 +4,7 @@ import { createPinia } from 'pinia'
 import AccountQualityView from '../AccountQualityView.vue'
 import * as accountsAPI from '@/api/admin/accounts'
 import scheduledTests from '@/api/admin/scheduledTests'
-import { createQualityPreset, listQualityPresets, type QualityRulePreset, createQualityTemplate, deleteQualityTemplate, listQualityPlans, listQualityOperations, listQualityTemplates, runQualityPlan, updateQualityTemplate, type QualityRuleTemplate } from '@/api/admin/accountQuality'
+import { previewQualityOwnership, restoreQualityOwnership, createQualityPreset, listQualityPresets, type QualityRulePreset, createQualityTemplate, deleteQualityTemplate, listQualityPlans, listQualityOperations, listQualityTemplates, runQualityPlan, updateQualityTemplate, type QualityRuleTemplate } from '@/api/admin/accountQuality'
 import { useAccountQualityStore } from '@/stores/accountQuality'
 import { useAuthStore } from '@/stores/auth'
 import type { ScheduledTestPlan } from '@/types'
@@ -18,7 +18,7 @@ vi.mock('@/stores/auth', async () => {
 vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<main><slot /></main>' } }))
 vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'), useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
 vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), runQualityPlan: vi.fn(), listQualityOperations: vi.fn().mockResolvedValue({items:[],next_cursor:0}),
-  previewQualityOwnership: vi.fn().mockResolvedValue({ plan_id: 1, models: [], group_ids: [], entries: [], action: '', ownership_retained: false, relinquishable_count: 0 }), reconcileQualityOwnership: vi.fn(), listQualityPresets: vi.fn(), createQualityPreset: vi.fn(), listQualityTemplates: vi.fn().mockResolvedValue([]), createQualityTemplate: vi.fn(), updateQualityTemplate: vi.fn(), deleteQualityTemplate: vi.fn() }))
+  previewQualityOwnership: vi.fn().mockResolvedValue({ plan_id: 1, models: [], group_ids: [], entries: [], action: '', ownership_retained: false, relinquishable_count: 0 }), reconcileQualityOwnership: vi.fn(), restoreQualityOwnership: vi.fn(), listQualityPresets: vi.fn(), createQualityPreset: vi.fn(), listQualityTemplates: vi.fn().mockResolvedValue([]), createQualityTemplate: vi.fn(), updateQualityTemplate: vi.fn(), deleteQualityTemplate: vi.fn() }))
 vi.mock('@/api/admin/scheduledTests', () => ({ default: { create: vi.fn(), update: vi.fn(), delete: vi.fn(), listResults: vi.fn(), getResult: vi.fn() } }))
 vi.mock('@/api/admin/accounts', () => ({ list: vi.fn().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 }) }))
 vi.mock('@/api/admin/groups', () => ({ getModelAllowlistCandidates: vi.fn().mockResolvedValue(["test-judge"]), getAllIncludingInactive: vi.fn().mockResolvedValue([{ id: 21, name: 'Quality pool', status:'active', platform: 'openai' }]) }))
@@ -956,6 +956,30 @@ describe('quality operations', () => {
     wrapper.unmount()
   })
 
+  it('restores isolated ownership before deletion and retries deletion without restoring twice', async () => {
+    const plan = rules()[0]; plan.pelican_config!.quality!.action = 'isolate_models'
+    const owned = { plan_id: 1, account_id: 1, rule_version: 'v1', account_version: 'v1', fence: 'a'.repeat(64), action: 'isolate_models', models: ['model-1'], group_ids: [1], entries: [], relinquishable_count: 0, ownership_retained: true, restrictions_changed: false, restore_ready: true }
+    vi.mocked(previewQualityOwnership).mockResolvedValueOnce(owned).mockResolvedValue({ ...owned, action: '', entries: [] })
+    vi.mocked(restoreQualityOwnership).mockResolvedValueOnce({ ...owned, restrictions_changed: true })
+    vi.mocked(listQualityPlans).mockResolvedValue([plan])
+    vi.mocked(scheduledTests.delete).mockRejectedValueOnce({ status: 503, message: 'temporary delete failure' }).mockResolvedValueOnce(undefined)
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-testid="quality-select-rules"]').setValue(true)
+    await wrapper.get('[data-testid="quality-bulk-delete"]').trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-confirm-delete"]').attributes('disabled')).toBeDefined()
+    expect(scheduledTests.delete).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="quality-restore-confirm"]').setValue(true)
+    await wrapper.get('[data-testid="quality-restore-owned"]').trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-confirm-delete"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(wrapper.get('[data-testid="quality-delete-error"]').text()).toContain('temporary delete failure')
+    expect(wrapper.get('[data-testid="quality-delete-targets"]').text()).toContain('#1')
+    vi.mocked(listQualityPlans).mockResolvedValue([])
+    await wrapper.get('[data-testid="quality-confirm-delete"]').trigger('click'); await flushPromises()
+    expect(restoreQualityOwnership).toHaveBeenCalledTimes(1); expect(vi.mocked(scheduledTests.delete).mock.calls).toEqual([[1, { fence: 'a'.repeat(64), confirm: true }], [1, { fence: 'a'.repeat(64), confirm: true }]])
+    expect(wrapper.find('[data-testid="quality-delete-targets"]').exists()).toBe(false); wrapper.unmount()
+  })
+
   it('can cancel deletion and still delete a single rule from its editor', async () => {
     vi.mocked(listQualityPlans).mockResolvedValue(rules())
     const wrapper = mountView(); await flushPromises()
@@ -1377,6 +1401,30 @@ describe('quality operations', () => {
     vm.newPlan(); vm.accountScope = 'manual'; vm.selectedAccounts = [1]; vm.form.model_id = 'test-model'
     await vm.save(); expect(scheduledTests.create).not.toHaveBeenCalled()
     expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.configureJudge')
+    wrapper.unmount()
+  })
+  it('explicitly selects Jev, clears ordinary routing and saves without loading audit secrets', async () => {
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); vm.accountScope = 'manual'; vm.selectedAccounts = [1]; vm.form.model_id = 'test-model'
+    vm.form.pelican_config.quality.action = 'disable_scheduling'
+    vm.form.pelican_config.quality.judge = { group_id: 21, model_id: 'test-judge', prompt: 'Compare values' }
+    await flushPromises()
+    expect(wrapper.get('[data-testid="quality-judge-kind"]').element).toHaveProperty('value', 'llm')
+    await wrapper.get('[data-testid="quality-judge-kind"]').setValue('jev')
+    expect(wrapper.get('[data-testid="quality-jev-hint"]').text()).toContain('qualityOps.judgeJevHint')
+    expect(wrapper.find('#quality-judge-models').exists()).toBe(false)
+    expect(vm.form.pelican_config.quality.judge).toEqual({ kind: 'jev', group_id: 0, model_id: '', prompt: 'Compare values' })
+    vi.mocked(scheduledTests.create).mockResolvedValue({ id: 8 } as any)
+    await vm.save()
+    expect(scheduledTests.create).toHaveBeenCalledWith(expect.objectContaining({ pelican_config: expect.objectContaining({ quality: expect.objectContaining({ judge: { kind: 'jev', group_id: 0, model_id: '', prompt: 'Compare values' } }) }) }))
+    wrapper.unmount()
+  })
+  it('renders Jev safe reason codes and separate latency without showing an upstream reason', async () => {
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    const result = { quality_judgment: { kind: 'jev', verdict: 'unknown', reason: 'judge_jev_credentials_rejected' } }
+    expect(vm.judgmentReason(result)).toBe('qualityOps.jevReasons.credentials_rejected')
+    result.quality_judgment.reason = 'SYNTHETIC_PROVIDER_SECRET'
+    expect(vm.judgmentReason(result)).toBe('qualityOps.jevReasons.uncertain')
     wrapper.unmount()
   })
   it('saves a state probe rule without a question, reference answer, judge or parallel runs', async () => {

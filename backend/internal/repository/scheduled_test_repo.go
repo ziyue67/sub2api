@@ -134,9 +134,29 @@ func (r *scheduledTestPlanRepository) Delete(ctx context.Context, id int64) erro
 	if err != nil {
 		return err
 	}
-	if state.Action == service.QualityActionIsolateModels {
+	if state.Action == service.QualityActionIsolateModels || state.Models != nil || state.Groups != nil {
 		return service.QualityScopeConflict("restore this rule's isolated models and groups before deleting it")
 	}
+	// Revalidate live ownership as well as durable snapshots. A stale/cleared
+	// snapshot must not let deletion leave a marker pointing at a missing rule.
+	var live []byte
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(extra->'quality_model_isolation','{}'::jsonb) FROM accounts WHERE id=(SELECT account_id FROM scheduled_test_plans WHERE id=$1) FOR UPDATE`, id).Scan(&live)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if len(live) > 0 {
+		var entries map[string]json.RawMessage
+		if json.Unmarshal(live, &entries) != nil {
+			return service.QualityScopeConflict("review unreadable model ownership before deleting this rule")
+		}
+		for _, raw := range entries {
+			owner, _ := qualityEntryOwner(raw, id)
+			if owner == "this_rule" {
+				return service.QualityScopeConflict("review remaining model ownership before deleting this rule")
+			}
+		}
+	}
+
 	if _, err = tx.ExecContext(ctx, `DELETE FROM scheduled_test_plans WHERE id=$1`, id); err != nil {
 		return err
 	}

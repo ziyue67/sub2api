@@ -71,7 +71,7 @@ func sessionStudioError(raw string) (string, *ReauthDiagnostic, bool) {
 			validPhase = true
 		}
 	case "terminal_result":
-		validPhase = reason == "invalid_result" || reason == "provider_failed"
+		validPhase = reason == "invalid_result" || reason == "provider_failed" || credentialOperationCode(reason) == reason && reason != "unknown"
 	case "credentials_validation":
 		validPhase = reason == "credentials_incomplete"
 	case "credentials_submit":
@@ -99,6 +99,9 @@ func validLocalProtocolStage(stage string) bool {
 }
 
 func validLocalProtocolReason(reason string) bool {
+	if reason != "unknown" && credentialOperationCode(reason) == reason {
+		return true
+	}
 	switch reason {
 	case "protocol_error", "password_rejected", "totp_rejected", "interaction_required", "security_check",
 		"session_unavailable", "workspace_mismatch", "callback_missing", "callback_invalid", "callback_state_mismatch",

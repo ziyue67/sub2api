@@ -3,12 +3,65 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Wei-Shaw/sub2api/migrations"
 )
+
+func TestEmbeddedMigrationsExecutionMode(t *testing.T) {
+	names, err := fs.Glob(migrations.FS, "*.sql")
+	require.NoError(t, err)
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			content, err := migrations.FS.ReadFile(name)
+			require.NoError(t, err)
+			nonTx, err := validateMigrationExecutionMode(name, string(content))
+			require.NoError(t, err)
+			require.Equal(t, strings.HasSuffix(name, nonTransactionalMigrationSuffix), nonTx)
+		})
+	}
+}
+
+func TestApplyMigrationsFS_TrafficCursorIndexes(t *testing.T) {
+	const name = "308_user_traffic_cursor_indexes_notx.sql"
+	content, err := migrations.FS.ReadFile(name)
+	require.NoError(t, err)
+	// Match executable SQL exactly, so prose split out of a comment cannot
+	// accidentally match a CREATE INDEX later in the same statement.
+	matcher := sqlmock.QueryMatcherFunc(func(expected, actual string) error {
+		return sqlmock.QueryMatcherRegexp.Match(expected, stripSQLLineComment(actual))
+	})
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	prepareMigrationsBootstrapExpectations(mock)
+	mock.ExpectQuery("SELECT checksum FROM schema_migrations WHERE filename = \\$1").
+		WithArgs(name).WillReturnError(sql.ErrNoRows)
+	for _, index := range []struct{ name, columns string }{
+		{"user_traffic_events_user_cursor_idx", "user_id, started_at DESC, event_id DESC"},
+		{"user_traffic_events_key_cursor_idx", "api_key_id, started_at DESC, event_id DESC"},
+		{"user_traffic_events_cursor_idx", "started_at DESC, event_id DESC"},
+	} {
+		mock.ExpectExec("^CREATE INDEX CONCURRENTLY IF NOT EXISTS " + index.name +
+			" ON user_traffic_events \\(" + index.columns + "\\)$").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+	mock.ExpectExec("INSERT INTO schema_migrations").
+		WithArgs(name, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("SELECT pg_advisory_unlock\\(\\$1\\)").
+		WithArgs(migrationsAdvisoryLockID).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = applyMigrationsFS(context.Background(), db, fstest.MapFS{name: &fstest.MapFile{Data: content}})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
 func TestValidateMigrationExecutionMode(t *testing.T) {
 	t.Run("事务迁移包含CONCURRENTLY会被拒绝", func(t *testing.T) {

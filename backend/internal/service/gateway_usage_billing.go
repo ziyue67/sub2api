@@ -1369,7 +1369,7 @@ func (s *GatewayService) calculateTokenCost(
 		logger.LegacyPrintf("service.gateway", "Calculate cost failed: %v", err)
 		return &CostBreakdown{ActualCost: 0}
 	}
-	applyModelBillingMultiplier(cost, s.settingService.modelBillingConfigForUsage(ctx), billingModel)
+	applyModelBillingMultiplier(cost, s.settingService.modelBillingConfigForUsage(ctx), billingModel, apiKey.GroupID)
 	return cost
 }
 

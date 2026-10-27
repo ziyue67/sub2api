@@ -8,7 +8,7 @@ vi.mock('@/i18n', () => {
     'nav.subscribe': '订阅',
     'nav.buySubscription': '充值/订阅',
   }
-  return { i18n: { global: { t: (key: string) => messages[key] ?? key } } }
+  return { i18n: { global: { locale: { value: 'en' }, t: (key: string) => messages[key] ?? key } } }
 })
 
 describe('resolveDocumentTitle', () => {
@@ -55,6 +55,27 @@ describe('resolveRouteDocumentTitle', () => {
         sort_order: 0
       }
     ])).toBe('账号调度器 - EzouAPI')
+  })
+
+  it('自定义页面标题跟随界面语言并兼容旧名称字段', async () => {
+    const route = { name: 'CustomPage', params: { id: 'recharge' }, meta: { title: 'Custom Page' } }
+    const menu = [{
+      id: 'recharge',
+      label: '旧版本名称',
+      label_zh: '充值中心',
+      label_en: 'Recharge',
+      icon_svg: '',
+      url: 'https://example.com',
+      visibility: 'user' as const,
+      sort_order: 0,
+    }]
+
+    expect(resolveRouteDocumentTitle(route, 'EzouAPI', menu)).toBe('Recharge - EzouAPI')
+    const { i18n } = await import('@/i18n')
+    i18n.global.locale.value = 'zh'
+    expect(resolveRouteDocumentTitle(route, 'EzouAPI', menu)).toBe('充值中心 - EzouAPI')
+    expect(resolveRouteDocumentTitle(route, 'EzouAPI', [{ ...menu[0], label_zh: '', label_en: '', label: 'Legacy' }]))
+      .toBe('Legacy - EzouAPI')
   })
 })
 

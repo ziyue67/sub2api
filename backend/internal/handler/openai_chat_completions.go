@@ -104,6 +104,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
 	setOpsRequestContext(c, reqModel, reqStream)
+	bindOpenAIPriorityObservation(c, apiKey.GroupID, reqModel)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
 
 	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body); decision != nil && !decision.AllowNextStage {
@@ -185,6 +186,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		attemptChannelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 		forwardModel := openAIChannelForwardModel(attemptChannelMapping, reqModel)
+		// 记录本轮实际转发的模型（映射后），供上游渠道限制检查与优先调度准入使用。
+		// 每轮重新写入，避免失败切换后残留上一轮的映射结果。
+		c.Request = c.Request.WithContext(service.WithOpenAIForwardModel(c.Request.Context(), forwardModel, false))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
 			c.Request.Context(),
 			apiKey.GroupID,
@@ -200,6 +204,11 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			requestPlatform,
 		)
 		if err != nil {
+			if errors.Is(err, service.ErrPriorityLatencyUnavailable) {
+				h.handleTurnAdmissionError(c, err, streamStarted)
+				return
+			}
+
 			err = rpmAdmission.selectionError(err)
 			if isOpenAIRPMError(err) {
 				rpmAdmission.retryAfter(c, err)
@@ -316,10 +325,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
 
-		forwardBody := body
-		if attemptChannelMapping.Mapped {
-			forwardBody = h.gatewayService.ReplaceModelInBody(body, attemptChannelMapping.MappedModel)
-		}
+		forwardBody := openAIModelMappedBody(body, attemptChannelMapping.Mapped, attemptChannelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
