@@ -40,8 +40,8 @@ describe('DateRangePicker', () => {
 
     const wrapper = mount(DateRangePicker, {
       props: {
-        startDate: formatLocalDate(yesterday),
-        endDate: formatLocalDate(now)
+        startDate: yesterday.toISOString(),
+        endDate: now.toISOString()
       },
       global: {
         stubs: {
