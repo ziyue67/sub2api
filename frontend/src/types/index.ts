@@ -621,6 +621,7 @@ export interface Group {
   // 图片生成计费配置
   allow_image_generation: boolean
   allow_batch_image_generation: boolean
+  image_count_billing: boolean
   image_rate_independent: boolean
   image_rate_multiplier: number
   batch_image_discount_multiplier: number
@@ -889,6 +890,7 @@ export interface CreateGroupRequest {
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
+  image_count_billing?: boolean
   image_rate_independent?: boolean
   image_rate_multiplier?: number
   batch_image_discount_multiplier?: number
@@ -961,6 +963,7 @@ export interface UpdateGroupRequest {
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
+  image_count_billing?: boolean
   image_rate_independent?: boolean
   image_rate_multiplier?: number
   batch_image_discount_multiplier?: number
@@ -1439,6 +1442,37 @@ export interface ExcelBPSCredentialState {
  requires_manual_resume?: boolean
 }
 
+export interface GrokCatalogScope {
+  account_id: number
+  account_type: string
+  endpoint: string
+  fingerprint: string
+}
+
+export interface GrokCatalogAttempt {
+  started_at: string
+  finished_at: string
+  status: string
+  error_code?: string
+  scope?: GrokCatalogScope
+}
+
+export interface GrokModelDiagnosticItem {
+  requested: string
+  upstream?: string
+  status: string
+}
+
+export interface GrokModelDiagnostics {
+  state: string
+  endpoint?: string
+  fetched_at?: string
+  expires_at?: string
+  models: string[]
+  last_attempt?: GrokCatalogAttempt
+  mappings: GrokModelDiagnosticItem[]
+}
+
 export interface Account {
  excel_bps_credential_state?: ExcelBPSCredentialState
   id: number
@@ -1599,6 +1633,8 @@ export interface Account {
   parent_privacy_mode?: string
   parent_subscription_expires_at?: string
   parent_chatgpt_account_id?: string
+
+  grok_model_diagnostics?: GrokModelDiagnostics
 }
 
 // The admin account list may return this compact shape when lite=1. Detail

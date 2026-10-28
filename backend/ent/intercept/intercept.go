@@ -10,6 +10,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/accountgroup"
+	"github.com/Wei-Shaw/sub2api/ent/accountproxylane"
 	"github.com/Wei-Shaw/sub2api/ent/announcement"
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
@@ -186,6 +187,33 @@ func (f TraverseAccountGroup) Traverse(ctx context.Context, q ent.Query) error {
 		return f(ctx, q)
 	}
 	return fmt.Errorf("unexpected query type %T. expect *ent.AccountGroupQuery", q)
+}
+
+// The AccountProxyLaneFunc type is an adapter to allow the use of ordinary function as a Querier.
+type AccountProxyLaneFunc func(context.Context, *ent.AccountProxyLaneQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f AccountProxyLaneFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.AccountProxyLaneQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.AccountProxyLaneQuery", q)
+}
+
+// The TraverseAccountProxyLane type is an adapter to allow the use of ordinary function as Traverser.
+type TraverseAccountProxyLane func(context.Context, *ent.AccountProxyLaneQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraverseAccountProxyLane) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraverseAccountProxyLane) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.AccountProxyLaneQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.AccountProxyLaneQuery", q)
 }
 
 // The AnnouncementFunc type is an adapter to allow the use of ordinary function as a Querier.
@@ -1196,6 +1224,8 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.AccountQuery, predicate.Account, account.OrderOption]{typ: ent.TypeAccount, tq: q}, nil
 	case *ent.AccountGroupQuery:
 		return &query[*ent.AccountGroupQuery, predicate.AccountGroup, accountgroup.OrderOption]{typ: ent.TypeAccountGroup, tq: q}, nil
+	case *ent.AccountProxyLaneQuery:
+		return &query[*ent.AccountProxyLaneQuery, predicate.AccountProxyLane, accountproxylane.OrderOption]{typ: ent.TypeAccountProxyLane, tq: q}, nil
 	case *ent.AnnouncementQuery:
 		return &query[*ent.AnnouncementQuery, predicate.Announcement, announcement.OrderOption]{typ: ent.TypeAnnouncement, tq: q}, nil
 	case *ent.AnnouncementReadQuery:
