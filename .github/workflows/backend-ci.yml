@@ -39,6 +39,17 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.27.3'
+      - name: Warm Go module cache (retry transient proxy errors)
+        working-directory: backend
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "::warning::go mod download failed (attempt $attempt), retrying in 10s"
+            sleep 10
+          done
+          echo "::error::go mod download failed after 3 attempts"
+          exit 1
       - name: Install Redis for isolated snapshot adapter checks
         run: |
           if ! command -v redis-server >/dev/null; then
@@ -129,6 +140,17 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.27.3'
+      - name: Warm Go module cache (retry transient proxy errors)
+        working-directory: backend
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "::warning::go mod download failed (attempt $attempt), retrying in 10s"
+            sleep 10
+          done
+          echo "::error::go mod download failed after 3 attempts"
+          exit 1
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
