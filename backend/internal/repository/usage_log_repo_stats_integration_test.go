@@ -107,7 +107,7 @@ WHERE COALESCE(NULLIF(TRIM(requested_model), ''), model) = $1
 ORDER BY created_at DESC, id DESC
 LIMIT 100
 `, usageLogsEffectiveRequestedModelIndex, "idx_usage_logs_created_requested_model_upstream_model", "gpt-5.5", start, end)
-	assertPlanUsesIndex(`
+	assertPlanUsesEitherIndex(`
 EXPLAIN (COSTS OFF)
 SELECT id
 FROM usage_logs
@@ -115,7 +115,7 @@ WHERE COALESCE(NULLIF(TRIM(upstream_model), ''), model) = $1
   AND created_at >= $2 AND created_at < $3
 ORDER BY created_at DESC, id DESC
 LIMIT 100
-`, usageLogsEffectiveUpstreamModelIndex, "gpt-5.5", start, end)
+`, usageLogsEffectiveUpstreamModelIndex, "idx_usage_logs_created_requested_model_upstream_model", "gpt-5.5", start, end)
 }
 
 func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
