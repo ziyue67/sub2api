@@ -1,9 +1,9 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import QualityOwnershipReview from '../QualityOwnershipReview.vue'
-import { previewQualityOwnership, reconcileQualityOwnership, restoreQualityOwnership, type QualityOwnershipPreview } from '@/api/admin/accountQuality'
+import { previewQualityOwnership, reconcileQualityOwnership, restoreQualityOwnership, removeQualityOwnedModel, type QualityOwnershipPreview } from '@/api/admin/accountQuality'
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin/accountQuality', () => ({ previewQualityOwnership: vi.fn(), reconcileQualityOwnership: vi.fn(), restoreQualityOwnership: vi.fn() }))
+vi.mock('@/api/admin/accountQuality', () => ({ previewQualityOwnership: vi.fn(), reconcileQualityOwnership: vi.fn(), restoreQualityOwnership: vi.fn(), removeQualityOwnedModel: vi.fn() }))
 const preview = (): QualityOwnershipPreview => ({ plan_id: 7, account_id: 42, rule_version: 'v1', account_version: 'v2', fence: 'a'.repeat(64), action: 'isolate_models', models: ['astra'], group_ids: [21], relinquishable_count: 1, ownership_retained: true, restrictions_changed: false,
   entries: [{ kind: 'model', model: 'astra', status: 'managed', expected_present: true, current_present: true, expected_owner: 'this_rule', current_owner: 'this_rule', expected_digest: 'a', current_digest: 'a', changed_fields: [], can_relinquish: false },
     { kind: 'model', model: 'sol', status: 'missing', expected_present: true, current_present: false, expected_owner: 'this_rule', current_owner: 'absent', expected_digest: 'a', current_digest: 'b', changed_fields: ['reason'], can_relinquish: true }] })
@@ -68,4 +68,83 @@ describe('quality deletion restoration', () => {
   expect(wrapper.find('[data-testid="quality-restore-owned"]').exists()).toBe(false)
   expect(wrapper.emitted('deletable')?.at(-1)).toEqual([false]); expect(restoreQualityOwnership).toHaveBeenCalledTimes(1); wrapper.unmount()
  })
+})
+
+const orphanPreview = (): QualityOwnershipPreview => ({ ...preview(), models: ['sol', 'astra', 'missing'], model_removals: [
+  { model: 'sol', isolation_model: 'sol', ready: true, effect: 'remove_orphan_marker_only' },
+  { model: 'astra', isolation_model: 'astra', ready: false, effect: 'remove_target_only', blocked_reason: 'changed_same_owner' },
+  { model: 'missing', isolation_model: 'missing', ready: true, effect: 'remove_missing_target' }
+], entries: [{ ...preview().entries[0], status: 'changed_same_owner' }, { ...preview().entries[1], model: 'sol', status: 'unrecognized', current_present: true, current_owner: 'this_rule', can_relinquish: false }] })
+describe('targeted orphan model removal', () => {
+  it('releases an orphan and contracts scope only after explicit consent and readback', async () => {
+    const p = orphanPreview()
+    vi.mocked(previewQualityOwnership).mockResolvedValueOnce(p).mockResolvedValueOnce({ ...p, models: ['astra', 'missing'], entries: [p.entries[0]], model_removals: p.model_removals!.slice(1) })
+    vi.mocked(removeQualityOwnedModel).mockResolvedValue({ ...p, fence: '', restrictions_changed: true })
+    const wrapper = mount(QualityOwnershipReview, { props: { planId: 7, draftAction: 'isolate_models', draftModels: ['sol', 'astra', 'missing'], draftGroupIds: [21] } }); await flushPromises()
+    await wrapper.get('[data-testid="quality-removal-model"]').setValue('sol')
+    expect(wrapper.get('[data-testid="quality-removal-effect"]').text()).toContain('remove_orphan_marker_only')
+    expect(wrapper.get('[data-testid="quality-remove-model"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-removal-reason"]').setValue('orphan_marker_recovery')
+    expect(removeQualityOwnedModel).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="quality-removal-confirm"]').setValue(true)
+    await wrapper.get('[data-testid="quality-remove-model"]').trigger('click'); await flushPromises()
+    expect(removeQualityOwnedModel).toHaveBeenCalledTimes(1)
+    expect(removeQualityOwnedModel).toHaveBeenCalledWith(7, 'a'.repeat(64), 'sol', 'orphan_marker_recovery')
+    expect(previewQualityOwnership).toHaveBeenCalledTimes(2)
+    expect(wrapper.emitted('modelRemoved')).toEqual([['sol']])
+    expect(wrapper.get('[data-testid="quality-removal-readback"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('changed_same_owner')
+    wrapper.unmount()
+  })
+  it('retains changed or external entries and resets consent when target or reason changes', async () => {
+    vi.mocked(previewQualityOwnership).mockResolvedValue(orphanPreview())
+    const wrapper = mount(QualityOwnershipReview, { props: { planId: 7 } }); await flushPromises()
+    await wrapper.get('[data-testid="quality-removal-model"]').setValue('sol')
+    await wrapper.get('[data-testid="quality-removal-reason"]').setValue('retire_model')
+    await wrapper.get('[data-testid="quality-removal-confirm"]').setValue(true)
+    await wrapper.get('[data-testid="quality-removal-reason"]').setValue('orphan_marker_recovery')
+    expect(wrapper.get('[data-testid="quality-remove-model"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-removal-model"]').setValue('astra')
+    expect(wrapper.get('[data-testid="quality-removal-blocked"]').text()).toContain('changed_same_owner')
+    expect(wrapper.find('[data-testid="quality-remove-model"]').exists()).toBe(false)
+    expect(removeQualityOwnedModel).not.toHaveBeenCalled(); wrapper.unmount()
+  })
+  it('requires fresh preview after conflict and never automatically retries', async () => {
+    vi.mocked(previewQualityOwnership).mockResolvedValue(orphanPreview())
+    vi.mocked(removeQualityOwnedModel).mockRejectedValueOnce({ status: 409 })
+    const wrapper = mount(QualityOwnershipReview, { props: { planId: 7 } }); await flushPromises()
+    await wrapper.get('[data-testid="quality-removal-model"]').setValue('sol')
+    await wrapper.get('[data-testid="quality-removal-reason"]').setValue('retire_model')
+    await wrapper.get('[data-testid="quality-removal-confirm"]').setValue(true)
+    await wrapper.get('[data-testid="quality-remove-model"]').trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('qualityOps.ownershipPreviewChanged')
+    expect(wrapper.find('[data-testid="quality-model-removal"]').exists()).toBe(false)
+    expect(wrapper.emitted('modelRemoved')).toBeUndefined(); expect(removeQualityOwnedModel).toHaveBeenCalledTimes(1); wrapper.unmount()
+  })
+  it('clears parent busy state on unmount and ignores a late confirmation result', async () => {
+    vi.mocked(previewQualityOwnership).mockResolvedValue(orphanPreview())
+    let resolve!: (value: QualityOwnershipPreview) => void
+    vi.mocked(removeQualityOwnedModel).mockReturnValueOnce(new Promise(done => { resolve = done }))
+    const wrapper = mount(QualityOwnershipReview, { props: { planId: 7 } }); await flushPromises()
+    await wrapper.get('[data-testid="quality-removal-model"]').setValue('sol')
+    await wrapper.get('[data-testid="quality-removal-reason"]').setValue('retire_model')
+    await wrapper.get('[data-testid="quality-removal-confirm"]').setValue(true)
+    await wrapper.get('[data-testid="quality-remove-model"]').trigger('click'); await flushPromises()
+    expect(wrapper.emitted('working')?.at(-1)).toEqual([true])
+    wrapper.unmount()
+    expect(wrapper.emitted('working')?.at(-1)).toEqual([false])
+    resolve({ ...orphanPreview(), fence: '' }); await flushPromises()
+    expect(wrapper.emitted('modelRemoved')).toBeUndefined(); expect(previewQualityOwnership).toHaveBeenCalledTimes(1)
+  })
+  it('keeps draft unchanged if post-confirm readback fails', async () => {
+    vi.mocked(previewQualityOwnership).mockResolvedValueOnce(orphanPreview()).mockRejectedValueOnce(new Error('readback unavailable'))
+    vi.mocked(removeQualityOwnedModel).mockResolvedValueOnce({ ...orphanPreview(), fence: '' })
+    const wrapper = mount(QualityOwnershipReview, { props: { planId: 7 } }); await flushPromises()
+    await wrapper.get('[data-testid="quality-removal-model"]').setValue('sol')
+    await wrapper.get('[data-testid="quality-removal-reason"]').setValue('retire_model')
+    await wrapper.get('[data-testid="quality-removal-confirm"]').setValue(true)
+    await wrapper.get('[data-testid="quality-remove-model"]').trigger('click'); await flushPromises()
+    expect(wrapper.emitted('modelRemoved')).toBeUndefined()
+    expect(wrapper.text()).toContain('qualityOps.modelRemovalReadbackFailed'); expect(wrapper.text()).not.toContain('qualityOps.ownershipLoadFailed'); wrapper.unmount()
+  })
 })

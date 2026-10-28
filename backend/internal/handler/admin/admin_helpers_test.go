@@ -23,17 +23,20 @@ func TestParseTimeRange(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/?start_date=2024-01-01&end_date=2024-01-02&timezone=UTC", nil)
 	c.Request = req
 
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	require.NoError(t, err)
 	require.Equal(t, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), timeRange.Start)
 	require.Equal(t, time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC), timeRange.End)
 	require.Equal(t, "2024-01-01", timeRange.StartLabel())
 	require.Equal(t, "2024-01-02", timeRange.EndLabel())
 
 	req = httptest.NewRequest(http.MethodGet, "/?start_date=bad&timezone=UTC", nil)
+	// Gin caches query parameters per context; each request needs a new one.
+	c, _ = gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = req
-	timeRange = parseTimeRange(c)
-	require.False(t, timeRange.Start.IsZero())
-	require.False(t, timeRange.End.IsZero())
+	// 显式非法边界必须报错，不能被静默放宽成默认窗口。
+	_, err = parseTimeRange(c)
+	require.Error(t, err, "explicit invalid bounds must not silently widen to the default window")
 }
 
 func TestParseTimeRange_RFC3339EchoesRealBoundaries(t *testing.T) {
@@ -45,7 +48,8 @@ func TestParseTimeRange_RFC3339EchoesRealBoundaries(t *testing.T) {
 		"/?start_date=2024-01-01T10%3A30%3A45%2B08%3A00&end_date=2024-01-02T10%3A30%3A45%2B08%3A00&timezone=UTC", nil)
 	c.Request = req
 
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	require.NoError(t, err)
 	require.True(t, timeRange.StartHasTime)
 	require.True(t, timeRange.EndHasTime)
 	require.True(t, timeRange.Start.Equal(time.Date(2024, 1, 1, 2, 30, 0, 0, time.UTC)))

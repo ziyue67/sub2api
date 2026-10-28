@@ -189,6 +189,12 @@ func prepareQualityTemplate(t *QualityRuleTemplate) error {
 	if t.PelicanConfig == nil || t.PelicanConfig.Quality == nil || t.PelicanConfig.Quality.Action == QualityActionOpenAITwoFAAdmission {
 		return fmt.Errorf("group rules must be quality rules")
 	}
+	config, err := reusableQualityConfig(t.PelicanConfig)
+	if err != nil {
+		return err
+	}
+	config.RuleName = t.PelicanConfig.RuleName
+	t.PelicanConfig = config
 	sample := t.planFor(0)
 	if _, err := nextPlanRun(sample, time.Now()); err != nil {
 		return fmt.Errorf("invalid test schedule: %w", err)

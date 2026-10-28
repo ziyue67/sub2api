@@ -1,0 +1,121 @@
+name: Quality complete template roundtrip
+on:
+  push:
+    branches: [fix/quality-orphan-isolation-release]
+  pull_request:
+    paths:
+      - 'backend/internal/**/quality*'
+      - 'backend/internal/**/scheduled_test*'
+      - 'frontend/src/**/AccountQualityView*'
+      - 'frontend/src/utils/qualityRulePatch.ts'
+      - '.github/workflows/quality-template-complete.yml'
+permissions:
+  contents: read
+jobs:
+  roundtrip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Record exact head and regression inputs
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/head.txt
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          sha256sum backend/internal/repository/quality_template_complete*integration_test.go backend/internal/service/quality_rule_preset_test.go frontend/src/utils/__tests__/qualityRulePatch.spec.ts frontend/src/views/admin/__tests__/AccountQualityView.spec.ts frontend/src/api/admin/__tests__/scheduledTests.spec.ts > evidence/test-input.sha256
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Previous preset repository must fail unchanged group validation regression
+        env:
+          CI: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=94937267b2acb32bbbd44a7aae13218709c466fc
+          source=backend/internal/repository/quality_rule_preset_repo.go
+          cp "$source" "$RUNNER_TEMP/complete-preset-current.go"
+          trap 'cp "$RUNNER_TEMP/complete-preset-current.go" "$source"' EXIT
+          git fetch --no-tags --depth=1 origin "$baseline"
+          git rev-parse "$baseline" > evidence/red-source-head.txt
+          git show "$baseline:$source" > "$source"
+          set +e
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestQualityTemplateCompleteRejectsInvalidGroupsAndPermissions$' -count=1 -v) > evidence/red-storage.log 2>&1
+          result=$?
+          set -e
+          cat evidence/red-storage.log
+          test "$result" -ne 0
+          if grep -Eq '\[build failed\]|\[setup failed\]|undefined:|syntax error:|no tests to run|panic:|--- SKIP:' evidence/red-storage.log; then exit 1; fi
+          grep -F -- '--- FAIL: TestQualityTemplateCompleteRejectsInvalidGroupsAndPermissions' evidence/red-storage.log
+      - name: Exact head real HTTP PostgreSQL complete templates and retained safety guards
+        env:
+          CI: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          sha256sum -c evidence/test-input.sha256
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestQuality(Template|Preset|Orphan|Ownership|Isolation|152|LiveDeleteHTTP|RuleTemplate|Reuse)' -count=1 -v) 2>&1 | tee evidence/green-storage.log
+          if grep -Eq -- '--- SKIP:|no tests to run' evidence/green-storage.log; then exit 1; fi
+          for name in TestQualityTemplateCompleteHTTPRoundtripAllActions TestQualityTemplateCompleteRejectsInvalidGroupsAndPermissions TestQualityTemplateCompleteExistingIsolationGuard TestQualityTemplateCompleteLegacyReadAndRevalidation TestQualityTemplateCompleteDetectionModesAndProviders TestQualityTemplateCompleteDistributionKeepsItsOwnSemantics TestQualityTemplateCompleteDistributionCannotOverrideIsolatedScope TestQualityPresetPersistsWithoutDistributingPlans; do
+            grep -F -- "--- PASS: $name" evidence/green-storage.log
+          done
+      - name: Template service and HTTP validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd backend && go test -tags=unit ./internal/service -run '^Test(QualityPreset|QualityTemplate)' -count=1 -v) 2>&1 | tee evidence/green-service.log
+          (cd backend && go test ./internal/handler/admin -run '^TestQuality(Preset|Orphan|Ownership|Live|Scope|Jev)' -count=1 -v) 2>&1 | tee evidence/green-handler.log
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Old reusable config must fail unchanged legacy and bulk regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=frontend/src/utils/qualityRulePatch.ts
+          cp "$source" "$RUNNER_TEMP/complete-current.ts"
+          trap 'cp "$RUNNER_TEMP/complete-current.ts" "$source"' EXIT
+          git show "94937267b2acb32bbbd44a7aae13218709c466fc:$source" > "$source"
+          set +e
+          pnpm --dir frontend exec vitest run src/utils/__tests__/qualityRulePatch.spec.ts -t 'complete template selected fields' > evidence/red-ui.log 2>&1
+          result=$?
+          set -e
+          cat evidence/red-ui.log
+          test "$result" -ne 0
+          grep -F 'AssertionError' evidence/red-ui.log
+      - name: Current full editor matrix, policy copying and ownership interactions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          sha256sum -c evidence/test-input.sha256
+          pnpm --dir frontend exec vitest run src/api/admin/__tests__/scheduledTests.spec.ts src/utils/__tests__/qualityRulePatch.spec.ts src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts src/views/admin/__tests__/AccountQualityView.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts 2>&1 | tee evidence/green-ui.log
+      - name: Install isolated browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/quality-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/quality-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Complete template actual view offline browser interaction
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/quality-browser/node_modules/playwright
+          QUALITY_SCREENSHOT_DIR: ${{ github.workspace }}/evidence/screenshots
+          QUALITY_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/scripts/quality-template-screenshot.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-template-complete-${{ github.event_name }}-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

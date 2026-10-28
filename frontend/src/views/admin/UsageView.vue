@@ -11,6 +11,7 @@
               <DateRangePicker
                 v-model:start-date="startDate"
                 v-model:end-date="endDate"
+                :rolling24-hours="!props.observerMode"
                 @change="onDateRangeChange"
               />
             </div>
@@ -180,7 +181,7 @@
   </AppLayout>
   <UsageExportProgress :show="exportProgress.show" :progress="exportProgress.progress" :current="exportProgress.current" :total="exportProgress.total" :estimated-time="exportProgress.estimatedTime" @cancel="cancelExport" />
   <UsageCleanupDialog
-    v-if="!props.observerMode"
+    v-if="!props.observerMode && cleanupUsesCalendarDates"
     :show="cleanupDialogVisible"
     :filters="filters"
     :start-date="startDate"
@@ -209,7 +210,7 @@ import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { formatUsageCacheRate, showUsageCacheRate } from '@/utils/usageCacheRate'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
-import { getGranularityForRange, getLast24HourRange, hasTimeComponent, toDateInputValue } from '@/utils/dateRange'
+import { getGranularityForRange, toDateInputValue } from '@/utils/dateRange'
 import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
@@ -290,9 +291,29 @@ const handleUserClick = async (userId: number) => {
 }
 
 const granularityOptions = computed(() => [{ value: 'day', label: t('admin.dashboard.day') }, { value: 'hour', label: t('admin.dashboard.hour') }])
-const defaultRange = getLast24HourRange()
+// Use local timezone to avoid UTC timezone issues
+const formatLD = (d: Date) => {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+const calendarDate = (value: string) => value.includes('T') ? formatLD(new Date(value)) : value
+const getLast24HoursRangeDates = (): { start: string; end: string } => {
+  const end = new Date()
+  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
+  return {
+    start: props.observerMode ? formatLD(start) : start.toISOString(),
+    end: props.observerMode ? formatLD(end) : end.toISOString()
+  }
+}
+const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start); const endDate = ref(defaultRange.end)
 const activeRangePreset = ref<string | null>('last24Hours')
+const cleanupUsesCalendarDates = computed(() =>
+  /^\d{4}-\d{2}-\d{2}$/.test(startDate.value) && /^\d{4}-\d{2}-\d{2}$/.test(endDate.value)
+)
+const datePreset = ref<string | null>('last24Hours')
 const filters = ref<AdminUsageQueryParams>({ user_id: undefined, model: undefined, group_id: undefined, request_type: undefined, native_compaction_v2: null, billing_type: null, start_date: startDate.value, end_date: endDate.value })
 const pagination = reactive({ page: 1, page_size: getPersistedPageSize(), total: 0 })
 const sortState = reactive({
@@ -316,6 +337,13 @@ const applyRouteQueryFilters = () => {
   const queryStartDate = getSingleQueryValue(route.query.start_date)
   const queryEndDate = getSingleQueryValue(route.query.end_date)
   const queryUserId = props.observerMode ? undefined : getNumericQueryValue(route.query.user_id)
+
+  if (queryStartDate || queryEndDate) {
+    datePreset.value = null
+    // A partial calendar-date link keeps the old default for its missing day.
+    startDate.value = calendarDate(startDate.value)
+    endDate.value = calendarDate(endDate.value)
+  }
 
   if (queryStartDate) {
     startDate.value = queryStartDate
@@ -356,6 +384,7 @@ const loadRouteUserFilterLabel = async () => {
 }
 
 const onDateRangeChange = (range: { startDate: string; endDate: string; preset: string | null }) => {
+  datePreset.value = range.preset
   startDate.value = range.startDate
   endDate.value = range.endDate
   filters.value = {
@@ -366,6 +395,16 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
   activeRangePreset.value = range.preset
   granularity.value = getGranularityForRange(range.startDate, range.endDate)
   applyFilters()
+}
+
+// Refresh a rolling range once per action so every read shares exactly [now-24h, now).
+// Pagination, sorting and export keep the applied snapshot stable.
+const refreshRollingRange = () => {
+  if (props.observerMode || datePreset.value !== 'last24Hours') return
+  const range = getLast24HoursRangeDates()
+  startDate.value = range.start
+  endDate.value = range.end
+  filters.value = { ...filters.value, start_date: range.start, end_date: range.end }
 }
 
 const buildUsageListParams = (
@@ -516,6 +555,7 @@ const loadChartData = async () => {
   } catch (error) { console.error('Failed to load chart data:', error) } finally { if (seq === chartReqSeq) chartsLoading.value = false }
 }
 const applyFilters = () => {
+  refreshRollingRange()
   pagination.page = 1
   invalidateModelStatsCache()
   loadLogs()
@@ -537,17 +577,6 @@ const handleRankingSelectUser = (userId: number, email: string) => {
   activeTab.value = 'usage'
   applyFilters()
 }
-const refreshRollingRange = () => {
-  if (activeRangePreset.value !== 'last24Hours') return
-  const range = getLast24HourRange()
-  startDate.value = range.start
-  endDate.value = range.end
-  filters.value = {
-    ...filters.value,
-    start_date: range.start,
-    end_date: range.end
-  }
-}
 const refreshData = () => {
   refreshRollingRange()
   pagination.page = 1
@@ -562,7 +591,8 @@ const refreshData = () => {
   if (rankingMounted.value) rankingRef.value?.reload()
 }
 const resetFilters = () => {
-  const range = getLast24HourRange()
+  datePreset.value = 'last24Hours'
+  const range = getLast24HoursRangeDates()
   startDate.value = range.start
   endDate.value = range.end
   filters.value = { start_date: startDate.value, end_date: endDate.value, request_type: undefined, native_compaction_v2: null, billing_type: null, billing_mode: undefined }
@@ -583,7 +613,14 @@ const handleIpGeoBatchFailed = () => {
   appStore.showError(t('usage.ipGeo.batchFailed'))
 }
 const cancelExport = () => exportAbortController?.abort()
-const openCleanupDialog = () => { if (!props.observerMode) cleanupDialogVisible.value = true }
+const openCleanupDialog = () => {
+  if (props.observerMode) return
+  if (!cleanupUsesCalendarDates.value) {
+    appStore.showWarning(t('admin.usage.cleanup.calendarRangeRequired'))
+    return
+  }
+  cleanupDialogVisible.value = true
+}
 const getRequestTypeLabel = (log: AdminUsageLog): string => {
   const requestType = resolveUsageRequestType(log)
   if (requestType === 'cyber') return t('usage.cyber')
@@ -853,11 +890,13 @@ const errSortOrder = ref<'asc' | 'desc'>('desc')
 const showErrorModal = ref(false)
 const selectedErrorId = ref<number | null>(null)
 
-// 注意：'YYYY-MM-DDT00:00:00' 无时区后缀，按本地时区解析后再转 UTC——与页面其它日期处理语义一致，刻意如此，勿改成 'T00:00:00Z'
-const toRFC3339 = (d: string | undefined, endOfDay = false): string | undefined =>
-  d
-    ? new Date(hasTimeComponent(d) ? d : d + (endOfDay ? 'T23:59:59.999' : 'T00:00:00')).toISOString()
-    : undefined
+const toRFC3339 = (value: string | undefined, endExclusive = false): string | undefined => {
+  if (!value) return undefined
+  if (value.includes('T')) return value // Preserve the exact instant and exclusive upper bound.
+  const date = new Date(`${value}T00:00:00`) // Calendar dates use the browser's local timezone.
+  if (endExclusive) date.setDate(date.getDate() + 1)
+  return date.toISOString()
+}
 
 const loadAdminErrors = async () => {
   if (!canViewErrors.value) return

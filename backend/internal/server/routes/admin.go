@@ -954,9 +954,11 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/account-quality-plans/:id/ownership", h.Admin.ScheduledTest.QualityOwnershipPreview)
 	admin.POST("/account-quality-plans/:id/ownership/reconcile", h.Admin.ScheduledTest.QualityOwnershipReconcile)
 	admin.POST("/account-quality-plans/:id/ownership/restore", h.Admin.ScheduledTest.QualityOwnershipRestore)
+	admin.POST("/account-quality-plans/:id/ownership/remove-model", h.Admin.ScheduledTest.QualityOwnershipRemoveModel)
 	admin.GET("/account-quality-templates", h.Admin.ScheduledTest.ListQualityTemplates)
 	admin.GET("/account-quality-presets", h.Admin.ScheduledTest.ListQualityPresets)
 	admin.POST("/account-quality-presets", h.Admin.ScheduledTest.CreateQualityPreset)
+	admin.PUT("/account-quality-presets/:id", h.Admin.ScheduledTest.UpdateQualityPreset)
 	admin.POST("/account-quality-templates", h.Admin.ScheduledTest.CreateQualityTemplate)
 	admin.PUT("/account-quality-templates/:id", h.Admin.ScheduledTest.UpdateQualityTemplate)
 	admin.DELETE("/account-quality-templates/:id", h.Admin.ScheduledTest.DeleteQualityTemplate)
@@ -1054,6 +1056,8 @@ func registerPluginRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 }
 
 func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	admin.GET("/profit-operations/snapshot", h.Admin.Channel.ProfitOperations)
+	admin.GET("/upstream-operations/snapshot", h.Admin.Channel.UpstreamOperations)
 	channels := admin.Group("/channels")
 	{
 		channels.GET("", h.Admin.Channel.List)

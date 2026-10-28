@@ -1,0 +1,24 @@
+
+> sub2api-frontend@1.0.0 typecheck /data/development/projects/sub2api-usage-rolling-24h/frontend
+> vue-tsc --noEmit
+
+
+<--- Last few GCs --->
+
+[2439748:0x2c8df000]    64520 ms: Scavenge 2040.1 (2049.9) -> 2036.6 (2051.1) MB, pooled: 4 MB, 5.71 / 0.00 ms  (average mu = 0.180, current mu = 0.027) allocation failure;
+[2439748:0x2c8df000]    65249 ms: Mark-Compact (reduce) 2041.6 (2052.6) -> 2039.8 (2046.9) MB, pooled: 0 MB, 263.09 / 0.00 ms  (+ 401.1 ms in 80 steps since start of marking, biggest step 5.1 ms, walltime since start of marking 729 ms) (average mu = 0.198
+FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory
+----- Native stack trace -----
+
+ 1: 0x931db0  [node]
+ 2: 0x75968e node::OOMErrorHandler(char const*, v8::OOMDetails const&) [node]
+ 3: 0xc70d60  [node]
+ 4: 0xc70e4f  [node]
+ 5: 0xf14725  [node]
+ 6: 0xf14752  [node]
+ 7: 0xf14a4a  [node]
+ 8: 0xf2574a  [node]
+ 9: 0xf29af0  [node]
+10: 0x19c77d1  [node]
+Aborted (core dumped)
+ ELIFECYCLE  Command failed with exit code 134.

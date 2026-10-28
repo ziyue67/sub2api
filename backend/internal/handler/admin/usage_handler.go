@@ -166,21 +166,26 @@ func (h *UsageHandler) List(c *gin.Context) {
 	var startTime, endTime *time.Time
 	userTZ := c.Query("timezone") // Get user's timezone from request
 	if startDateStr := c.Query("start_date"); startDateStr != "" {
-		t, _, err := timezone.ParseDateOrDateTimeInUserLocation(startDateStr, userTZ)
+		t, err := parseUsageDateBoundary(startDateStr, userTZ, false)
 		if err != nil {
-			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD or RFC3339")
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD or RFC3339 with timezone")
 			return
 		}
 		startTime = &t
 	}
 
 	if endDateStr := c.Query("end_date"); endDateStr != "" {
-		t, _, err := timezone.ParseRangeEndInUserLocation(endDateStr, userTZ)
+		t, err := parseUsageDateBoundary(endDateStr, userTZ, true)
 		if err != nil {
-			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or RFC3339")
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or RFC3339 with timezone")
 			return
 		}
 		endTime = &t
+	}
+
+	if startTime != nil && endTime != nil && !startTime.Before(*endTime) {
+		response.BadRequest(c, "start_date must be before end_date")
+		return
 	}
 
 	params := pagination.PaginationParams{
@@ -317,14 +322,14 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 
 	if startDateStr != "" && endDateStr != "" {
 		var err error
-		startTime, _, err = timezone.ParseDateOrDateTimeInUserLocation(startDateStr, userTZ)
+		startTime, err = parseUsageDateBoundary(startDateStr, userTZ, false)
 		if err != nil {
-			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD or RFC3339")
+			response.BadRequest(c, "Invalid start_date format, use YYYY-MM-DD or RFC3339 with timezone")
 			return
 		}
-		endTime, _, err = timezone.ParseRangeEndInUserLocation(endDateStr, userTZ)
+		endTime, err = parseUsageDateBoundary(endDateStr, userTZ, true)
 		if err != nil {
-			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or RFC3339")
+			response.BadRequest(c, "Invalid end_date format, use YYYY-MM-DD or RFC3339 with timezone")
 			return
 		}
 	} else {
@@ -340,6 +345,11 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 			startTime = timezone.StartOfDayInUserLocation(now, userTZ)
 		}
 		endTime = now
+	}
+
+	if !startTime.Before(endTime) {
+		response.BadRequest(c, "start_date must be before end_date")
+		return
 	}
 
 	// Build filters and call GetStatsWithFilters

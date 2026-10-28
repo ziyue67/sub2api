@@ -28,3 +28,8 @@ func NewQualityLiveFixture(t *testing.T) (*QualityLiveFixture, int64, int64) {
 	return &QualityLiveFixture{Plans: f.plans, Plan: f.plan, Account: f.account, Until: f.until, Round: func(sol, astra string) string { return isolationRound(f, sol, astra) }, Exec: f.exec, Count: f.count, Extra: f.extra}, group, other
 }
 func QualityLiveDB() *sql.DB { return integrationDB }
+
+func NewQualityOrphanFixture(t *testing.T) *QualityLiveFixture {
+	f := orphanRemovalFixture(t)
+	return &QualityLiveFixture{Plans: f.plans, Plan: f.plan, Account: f.account, Until: f.until, Round: func(sol, astra string) string { return isolationRound(f, sol, astra) }, Exec: f.exec, Count: f.count, Extra: f.extra}
+}

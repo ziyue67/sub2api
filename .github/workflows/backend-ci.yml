@@ -64,6 +64,31 @@ jobs:
           test "$result" -ne 0
           grep -q 'FAIL: TestQualityScopeConflictsUse409ForUpdateAndDelete' "$RUNNER_TEMP/quality-red.log"
           grep -Eq 'actual.*(400|500)' "$RUNNER_TEMP/quality-red.log"
+      - name: Verify user enable reason regression against original handler
+        if: github.head_ref == 'fix/moderation-user-quick-enable' || github.ref_name == 'fix/moderation-user-quick-enable'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=backend/internal/handler/admin/user_handler.go
+          cp "$target" "$RUNNER_TEMP/user-enable-current-handler.go"
+          trap 'cp "$RUNNER_TEMP/user-enable-current-handler.go" "$target"' EXIT
+          git fetch --no-tags --depth=1 origin bccac61c757f2c04a2360063c4057db2b270c856
+          git show bccac61c757f2c04a2360063c4057db2b270c856:"$target" > "$target"
+          set +e
+          (cd backend && go test -tags=unit ./internal/handler/admin -run '^TestUserQuickEnableReasonLimit$' -count=1) > "$RUNNER_TEMP/user-enable-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/user-enable-red.log"
+          test "$result" -ne 0
+          grep -q 'FAIL: TestUserQuickEnableReasonLimit' "$RUNNER_TEMP/user-enable-red.log"
+          grep -q 'actual.*200' "$RUNNER_TEMP/user-enable-red.log"
+      - name: Verify user enable regressions
+        if: github.head_ref == 'fix/moderation-user-quick-enable' || github.ref_name == 'fix/moderation-user-quick-enable'
+        working-directory: backend
+        run: go test -tags=unit ./internal/handler/admin ./internal/server/middleware ./internal/service ./internal/repository -run 'TestUserQuickEnable|TestAdminService_UserQuickEnable|TestModerationRecoveryUnbanDoesNotClaimOtherDisable' -count=1 -v
+      - name: Usage trend local bucket regressions
+        working-directory: backend
+        run: go test -tags=integration ./internal/repository -run '^TestUsageTrendAggregateTimezone' -count=1 -v
       - name: Unit tests
         working-directory: backend
         run: make test-unit

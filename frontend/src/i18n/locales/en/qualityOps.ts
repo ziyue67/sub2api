@@ -417,6 +417,8 @@ export default {
   "bulkEditTitle": "Edit {count} rules",
   "bulkEditHint": "Check the fields to apply to every selected rule. Unchecked fields keep their own values. Initial values come from the first selected rule; test settings include the method, question, reference answer, reasoning effort, probe count and grading model.",
   "bulkFields": {
+    "retention": "Result retention",
+    "trigger": "Upstream 5xx trigger",
     "model": "Test model",
     "schedule": "Schedule",
     "test": "Test settings",
@@ -508,7 +510,7 @@ export default {
   "ownershipConfirm": "I reviewed the complete differences and confirm relinquishing only missing or externally owned entries. Actual restrictions remain unchanged.",
   "relinquishOldOwnership": "Confirm relinquishing listed ownership",
   "ownershipReconciled": "Ownership reconciled; restrictions unchanged. Preview refreshed; the draft is not saved.",
-  "keepDraftHelp": "Partial reconciliation does not migrate scope. Retained ownership keeps the original scope. Keep your draft; do not rerun a test.",
+  "keepDraftHelp": "Reconciliation alone does not contract rule scope. To remove one model, use the targeted release confirmation above. Save other draft edits separately afterward.",
   "ownershipPreviewChanged": "Ownership or a version changed. Preview again; no automatic retry was made.",
   "ownershipLoadFailed": "Could not inspect or confirm ownership. Preview again; restrictions were not changed.",
   "draftSource": "Draft source",
@@ -516,5 +518,18 @@ export default {
   "savedModels": "Currently saved models",
   "nameIsLabel": "The rule name is a display label, not a linked preset",
   "ownershipOwners": {"this_rule": "this rule", "other_rule": "another rule", "external": "external / administrator", "absent": "no live entry", "unrecognized": "unrecognized"},
-  "ownershipStates": {"managed": "matches expected", "missing": "entry missing", "external_owner": "externally owned", "changed_same_owner": "same rule marker, changed content; manual review required", "unrecognized": "unrecognized; retained", "group_missing": "group missing", "external_membership_present": "membership externally recreated"}
+  "ownershipStates": {"orphan_same_owner": "Still owned by this rule with no original snapshot; review targeted removal separately", "managed": "matches expected", "missing": "entry missing", "external_owner": "externally owned", "changed_same_owner": "same rule marker, changed content; manual review required", "unrecognized": "unrecognized; retained", "group_missing": "group missing", "external_membership_present": "membership externally recreated"},
+  "modelRemovalTitle": "Release isolation and remove one model",
+  "modelRemovalHelp": "Only the selected model and its rule scope change. Other models and groups are retained. Missing snapshots cannot reconstruct old values; only a complete, exclusive marker still owned by this rule can be removed.",
+  "modelRemovalReason": "Reason",
+  "modelRemovalReasons": {"orphan_marker_recovery": "Recover an orphan marker with no original snapshot", "retire_model": "Stop managing this model"},
+  "modelRemovalConfirm": "I confirm releasing the displayed marker for {model} and immediately removing this model from the rule. Other draft edits still require saving.",
+  "modelRemovalSubmit": "Confirm release and model removal",
+  "modelRemovalReadback": "Readback confirms {model} was removed. Save other draft edits separately.",
+  "modelRemovalEffects": {"remove_target_only": "Remove rule target only; retain restrictions", "remove_missing_target": "Marker missing: remove only the target and its old ownership", "remove_orphan_marker_only": "No original snapshot: remove only this rule’s exclusive isolation marker; no old values restored", "remove_matching_marker": "Remove this rule’s marker matching the original snapshot"},
+  "modelRemovalBlocked": {"not_owned": "The current entry is not owned by this rule.", "additional_or_unrecognized_restriction": "Additional restrictions or unrecognized format; retained for review.", "unrecognized_snapshot": "Unrecognized original snapshot; retained for review.", "changed_same_owner": "The same owner changed the entry; retained for manual review.", "previous_restriction": "The previous entry contains another restriction; retained.", "ambiguous_mapping": "Ambiguous model mapping; retained for review.", "shared_mapping": "Another tested model shares this isolation entry.", "last_model": "Keep at least one model; use the separate restoration flow to remove the whole rule.", "scope_conflict": "The configured and recorded isolation scopes differ.", "account_unavailable": "The account is unavailable.", "rule_running": "The rule is running; wait for completion and preview again."},
+  "modelRemovalReadbackFailed": "Confirmation may have committed. Preview again and check the saved model scope before editing; do not repeat the release.",
+  "editPreset": "Edit saved template",
+  "invalidMaxResults": "Retain 1–200 results.",
+  "retentionTooSmall": "Retention must hold all model samples in a round."
 }

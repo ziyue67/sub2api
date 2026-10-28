@@ -1,0 +1,144 @@
+import { computed, onMounted, ref } from 'vue';
+import modelSquareAPI from '@/api/modelSquare';
+import userGroupsAPI from '@/api/groups';
+import { useAppStore } from '@/stores/app';
+import { extractApiErrorMessage } from '@/utils/apiError';
+import { resolveCapabilities, resolveContextWindow, resolveEffectivePricing, hasCustomPricing } from '../utils/modelCatalog';
+import { isRequestBilling } from '../utils/pricing';
+function groupChannels(entries) {
+    const channelsByKey = new Map();
+    for (const entry of entries) {
+        const key = entry.channel_id > 0 ? 'channel:' + entry.channel_id : 'account-only';
+        const existing = channelsByKey.get(key);
+        if (existing) {
+            existing.entries.push(entry);
+        }
+        else {
+            const { pricing: effectivePricing, isOfficialFallback } = resolveEffectivePricing(entry.name, entry.pricing);
+            channelsByKey.set(key, {
+                key,
+                name: entry.channel_name || '未关联渠道',
+                entries: [entry],
+                pricing: effectivePricing,
+                isOfficialFallback,
+            });
+        }
+    }
+    return Array.from(channelsByKey.values());
+}
+export function useModelSquare() {
+    const appStore = useAppStore();
+    const loading = ref(false);
+    const error = ref(null);
+    const models = ref([]);
+    const userGroupRates = ref({});
+    const platforms = computed(() => [
+        'all',
+        ...Array.from(new Set(models.value.map((item) => item.platform))).sort(),
+    ]);
+    const modelGroups = computed(() => {
+        const modelsByKey = new Map();
+        for (const entry of models.value) {
+            const key = entry.platform + ':' + entry.name.toLowerCase();
+            const existing = modelsByKey.get(key);
+            if (existing) {
+                existing.entries.push(entry);
+            }
+            else {
+                modelsByKey.set(key, {
+                    key,
+                    name: entry.name,
+                    platform: entry.platform,
+                    entries: [entry],
+                    channels: [],
+                });
+            }
+        }
+        return Array.from(modelsByKey.values())
+            .map((model) => ({ ...model, channels: groupChannels(model.entries) }))
+            .map((model) => {
+            // Calculate pricing stats across channels and groups
+            const allInputPrices = [];
+            const allOutputPrices = [];
+            const allCacheWritePrices = [];
+            const allCacheReadPrices = [];
+            const multipliers = [];
+            let isReq = false;
+            let hasIntervals = false;
+            let accounts = 0;
+            let hasAnyCustomPrice = false;
+            for (const entry of model.entries) {
+                accounts += entry.account_count || 0;
+                const effectiveMultiplier = userGroupRates.value[entry.group.id] ?? entry.group.rate_multiplier;
+                if (effectiveMultiplier != null) {
+                    multipliers.push(effectiveMultiplier);
+                }
+                if (hasCustomPricing(entry.pricing)) {
+                    hasAnyCustomPrice = true;
+                }
+                const { pricing: effectivePricing } = resolveEffectivePricing(model.name, entry.pricing);
+                if (effectivePricing) {
+                    if (isRequestBilling(effectivePricing))
+                        isReq = true;
+                    if (effectivePricing.intervals && effectivePricing.intervals.length > 0)
+                        hasIntervals = true;
+                    if (effectivePricing.input_price != null)
+                        allInputPrices.push(effectivePricing.input_price * (effectiveMultiplier ?? 1));
+                    if (effectivePricing.output_price != null)
+                        allOutputPrices.push(effectivePricing.output_price * (effectiveMultiplier ?? 1));
+                    if (effectivePricing.cache_write_price != null)
+                        allCacheWritePrices.push(effectivePricing.cache_write_price * (effectiveMultiplier ?? 1));
+                    if (effectivePricing.cache_read_price != null)
+                        allCacheReadPrices.push(effectivePricing.cache_read_price * (effectiveMultiplier ?? 1));
+                }
+            }
+            const firstPricing = model.channels.find((c) => c.pricing != null)?.pricing;
+            const { tokens: contextTokens, label: contextWindow } = resolveContextWindow(model.name);
+            const capabilities = resolveCapabilities(model.name, firstPricing);
+            return {
+                ...model,
+                contextTokens,
+                contextWindow,
+                capabilities,
+                minInputPrice: allInputPrices.length > 0 ? Math.min(...allInputPrices) : null,
+                maxInputPrice: allInputPrices.length > 0 ? Math.max(...allInputPrices) : null,
+                minOutputPrice: allOutputPrices.length > 0 ? Math.min(...allOutputPrices) : null,
+                maxOutputPrice: allOutputPrices.length > 0 ? Math.max(...allOutputPrices) : null,
+                minCacheWritePrice: allCacheWritePrices.length > 0 ? Math.min(...allCacheWritePrices) : null,
+                minCacheReadPrice: allCacheReadPrices.length > 0 ? Math.min(...allCacheReadPrices) : null,
+                isRequestBilling: isReq,
+                hasIntervals,
+                bestMultiplier: multipliers.length > 0 ? Math.min(...multipliers) : null,
+                totalAccounts: accounts,
+                isOfficialPriceFallback: !hasAnyCustomPrice && (allInputPrices.length > 0 || allOutputPrices.length > 0),
+            };
+        })
+            .sort((a, b) => a.platform.localeCompare(b.platform) || a.name.localeCompare(b.name));
+    });
+    async function loadModels() {
+        loading.value = true;
+        error.value = null;
+        try {
+            models.value = await modelSquareAPI.list();
+            userGroupRates.value = await userGroupsAPI.getUserGroupRates().catch(() => ({}));
+        }
+        catch (err) {
+            const message = extractApiErrorMessage(err, '加载模型广场失败');
+            error.value = message;
+            appStore.showError(message);
+        }
+        finally {
+            loading.value = false;
+        }
+    }
+    onMounted(loadModels);
+    return {
+        loading,
+        error,
+        models,
+        userGroupRates,
+        platforms,
+        modelGroups,
+        loadModels,
+    };
+}

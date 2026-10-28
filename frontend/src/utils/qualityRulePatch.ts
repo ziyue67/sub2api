@@ -30,9 +30,10 @@ export function qualityBPSForm(saved?: Partial<QualityBPSPolicy> | null): Qualit
 // Copy reusable inputs only. Result snapshots and future server-only fields must
 // never enter a create request through a spread of the source configuration.
 export function copyQualityRuleConfig(source: PelicanTestConfig): PelicanTestConfig & { quality: QualityPolicy } {
-  const policy = source.quality
-  if (!policy || policy.action === 'openai_two_fa_admission') throw new Error('qualityOps.copyUnsupported')
-  const bps = policy.bps
+  const policy: QualityPolicy = source.quality || { action: 'observe_only', expected_answer: '', remove_group_ids: [], auto_restore: false }
+  if (policy.action === 'openai_two_fa_admission') throw new Error('qualityOps.copyUnsupported')
+  const action = policy.action || 'observe_only'
+  const bps = action === 'enable_bps' ? policy.bps : undefined
   return {
     rule_name: source.rule_name,
     question_kind: source.question_kind,
@@ -44,11 +45,11 @@ export function copyQualityRuleConfig(source: PelicanTestConfig): PelicanTestCon
     quality: {
       trigger_on_upstream_5xx: policy.trigger_on_upstream_5xx ?? false,
       expected_answer: source.question_kind === 'random_reasoning' ? '' : policy.expected_answer,
-      action: policy.action,
-      remove_group_ids: [...(policy.remove_group_ids || [])],
-      remove_models: policy.remove_models ? [...policy.remove_models] : undefined,
-      recovery_concurrency: policy.recovery_concurrency,
-      auto_restore: policy.auto_restore,
+      action,
+      remove_group_ids: qualityUsesGroups(action) ? [...(policy.remove_group_ids || [])] : [],
+      remove_models: action === 'remove_models' ? [...(policy.remove_models || [])] : undefined,
+      recovery_concurrency: action === 'remove_models' ? policy.recovery_concurrency : undefined,
+      auto_restore: action === 'observe_only' ? false : policy.auto_restore ?? false,
       judge: policy.judge ? { ...(policy.judge.kind ? { kind: policy.judge.kind } : {}), group_id: policy.judge.group_id, model_id: policy.judge.model_id, prompt: policy.judge.prompt } : undefined,
       bps: bps ? {
         failure_threshold: bps.failure_threshold, usage_percent: bps.usage_percent, require_all: bps.require_all,
@@ -119,23 +120,26 @@ export function qualityActionPayload(policy: QualityPolicy): QualityPolicy {
   return next
 }
 
-export const qualityRuleFields = ['model', 'schedule', 'test', 'action', 'restore', 'enabled'] as const
+export const qualityRuleFields = ['model', 'schedule', 'test', 'action', 'restore', 'retention', 'trigger', 'enabled'] as const
 export type QualityRuleField = typeof qualityRuleFields[number]
 export type QualityRuleDraft = {
   model_id: string
   cron_expression: string
+  max_results?: number
   enabled: boolean
   pelican_config: PelicanTestConfig & { quality: QualityPolicy }
 }
 
 // Compare only the business fields owned by each bulk checkbox. Dependencies
 // between fields must be confirmed too when importing a configuration.
-export function qualityRuleFieldValue(rule: Pick<ScheduledTestPlan, 'model_id' | 'cron_expression' | 'enabled' | 'pelican_config'>, field: QualityRuleField): unknown {
+export function qualityRuleFieldValue(rule: Pick<ScheduledTestPlan, 'model_id' | 'cron_expression' | 'enabled' | 'pelican_config'> & { max_results?: number }, field: QualityRuleField): unknown {
   const cfg = rule.pelican_config, q = cfg?.quality, b = q?.bps
   switch (field) {
     case 'model': return [...new Set([rule.model_id, ...(cfg?.model_ids || [])])]
     case 'schedule': return rule.cron_expression
     case 'enabled': return rule.enabled
+    case 'retention': return rule.max_results
+    case 'trigger': return q?.trigger_on_upstream_5xx ?? false
     case 'test': return [cfg?.question_kind, cfg?.test_channel || 'account', cfg?.prompt, cfg?.reasoning_effort, cfg?.parallel_count,
       q?.expected_answer, q?.judge?.kind || 'llm', q?.judge?.group_id, q?.judge?.model_id, q?.judge?.prompt]
     case 'restore': return [q?.auto_restore, b?.pass_threshold, b?.hold_on_usage]
@@ -163,8 +167,13 @@ export function buildQualityRulePatch(
     if (!draft.cron_expression.trim()) throw new Error('qualityOps.scheduleRequired')
     patch.cron_expression = draft.cron_expression.trim()
   }
+  if (fields.includes('retention')) {
+    if (!Number.isInteger(draft.max_results) || draft.max_results! < 1 || draft.max_results! > 200) throw new Error('qualityOps.invalidMaxResults')
+    patch.max_results = draft.max_results
+  }
   if (fields.includes('enabled')) patch.enabled = draft.enabled
-  if (!fields.some(field => ['test', 'action', 'restore'].includes(field)) &&
+  if (fields.includes('retention') && !fields.includes('test') && !fields.includes('model') && (plan.pelican_config?.model_ids?.length || 1) * (plan.pelican_config?.parallel_count || 1) > patch.max_results!) throw new Error('qualityOps.retentionTooSmall')
+  if (!fields.some(field => ['test', 'action', 'restore', 'trigger'].includes(field)) &&
     !(fields.includes('model') && (draft.pelican_config.model_ids?.length || plan.pelican_config?.model_ids?.length))) return patch
 
   if (!plan.pelican_config?.quality) throw new Error('qualityOps.ruleConfigMissing')
@@ -193,6 +202,7 @@ export function buildQualityRulePatch(
       config.quality.judge = { ...judge }
     }
   }
+  if (fields.includes('trigger')) config.quality.trigger_on_upstream_5xx = source.quality.trigger_on_upstream_5xx ?? false
   if (fields.includes('action')) {
     config.quality = qualityActionPayload({ ...config.quality,
       action: source.quality.action, remove_group_ids: source.quality.remove_group_ids,
@@ -223,7 +233,8 @@ export function buildQualityRulePatch(
   if (config.question_kind === STATE_PROBE_QUESTION && (config.model_ids?.length || 0) > 1) throw new Error('qualityOps.probeSingleModel')
   const samples = (config.model_ids?.length || 1) * config.parallel_count
   if (samples > 100 || (config.model_ids?.length || 0) > 50) throw new Error('qualityOps.tooManyModelSamples')
-  if (samples > plan.max_results) patch.max_results = samples
+  if (fields.includes('retention') && samples > patch.max_results!) throw new Error('qualityOps.retentionTooSmall')
+  if (!fields.includes('retention') && samples > plan.max_results) patch.max_results = samples
   patch.pelican_config = config
   return patch
 }

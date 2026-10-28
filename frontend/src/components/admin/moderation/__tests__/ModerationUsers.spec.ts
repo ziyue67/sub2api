@@ -4,6 +4,7 @@ import Panel from '../ModerationUserPanel.vue'
 import Summary from '../ModerationUsersSummary.vue'
 const { get, manage, list } = vi.hoisted(() => ({ get: vi.fn(), manage: vi.fn(), list: vi.fn() }))
 vi.mock('@/api/admin/riskControl', () => ({ getModerationUser: get, manageModerationUser: manage, listModerationUsers: list }))
+vi.mock('@/api/admin/users', () => ({ update: vi.fn() }))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 const initial = { user_id: 306, version: 2, generation: 1, current_count: 10, auto_ban_exempt: false, keyword_exempt: false, api_audit_exempt: false, email_exempt: false, owned_disable: true, status: 'disabled', reason: '', actor_id: null, updated_at: null }
 const options = { global: { stubs: { BaseDialog: { props: ['show'], template: '<div v-if="show"><slot /></div>' } } } }

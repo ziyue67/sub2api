@@ -262,7 +262,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
 	}
 	longContextBillingGate := openAILongContextBillingGate(billingAccount)
-	modelLongContextExempt := openAIGPT61SolLongContextExempt(billingAccount, result)
+	modelLongContextExempt := openAIGPT61SolLongContextExempt(billingAccount, result, tokens)
 	cost, err = s.calculateOpenAIRecordUsageCost(
 		ctx,
 		result,
@@ -625,39 +625,36 @@ func openAILongContextBillingGate(account *Account) *bool {
 	return &enabled
 }
 
-// openAIGPT61SolLongContextExempt 按实际上游凭据和最终发送模型判断是否豁免
-// 官方模型价卡的长上下文附加费。
+// openAIGPT61SolSubscriptionLongContextThreshold 是订阅凭据的长上下文门槛。
+// API 价卡仍是 272,000；订阅账号在该值及以下不套用 272k 附加费，超过才算长上下文。
+const openAIGPT61SolSubscriptionLongContextThreshold = 500_000
+
+// openAIGPT61SolLongContextExempt 按实际上游凭据、最终发送模型和输入 token
+// 判断是否豁免官方模型价卡的长上下文附加费。
 //
-// GPT-6.1 Sol（IsGPT61SolModelSpelling）在 OpenAI OAuth、Setup Token 和 API Key
-// 账号上都不收取该附加费。其它模型保持原价卡阶梯，不因账号类型被一并豁免。
+// 只豁免 OpenAI 订阅凭据（OAuth、Setup Token）上的 GPT-6.1 Sol，且计入长上下文
+// 判断的输入 token 不超过 500,000。超过 500,000 时不再豁免，沿用价卡倍率
+// （输入 ×2、输出 ×1.5，缓存侧与价卡一致）。API Key 不豁免，仍按价卡的
+// 272,000 阶梯。其它模型、其它平台和 upstream 透传不因这次规则被豁免。
+//
 // 该标志只关闭官方模型长上下文阶梯（DisableModelLongContextPricing），
-// 分组自定义区间价格不受影响。
+// 分组自定义区间价格不受影响。token 口径与 shouldApplySessionLongContextPricing
+// 相同：普通输入 + 缓存创建 + 缓存读取。
 //
 // 使用发送模型（UpstreamModel，空则回退 Model），避免客户别名、渠道计费模型
-// 或响应模型计费切换改变规则。
-func openAIGPT61SolLongContextExempt(account *Account, result *OpenAIForwardResult) bool {
-	if result == nil || !openAIAccountSkipsGPT61SolLongContext(account) {
+// 或响应模型计费切换改变规则。账号统计成本与用户扣费共用这次判断。
+func openAIGPT61SolLongContextExempt(account *Account, result *OpenAIForwardResult, tokens UsageTokens) bool {
+	if result == nil || !account.IsOpenAIOAuthLike() {
 		return false
 	}
 	model := strings.TrimSpace(result.UpstreamModel)
 	if model == "" {
 		model = result.Model
 	}
-	return openai.IsGPT61SolModelSpelling(model)
-}
-
-// openAIAccountSkipsGPT61SolLongContext 限定豁免凭据：OpenAI 的 OAuth、
-// Setup Token，以及 API Key。其它平台和其它账号类型（例如 upstream 透传）不豁免。
-func openAIAccountSkipsGPT61SolLongContext(account *Account) bool {
-	if account == nil || !account.IsOpenAI() {
+	if !openai.IsGPT61SolModelSpelling(model) {
 		return false
 	}
-	switch account.Type {
-	case AccountTypeOAuth, AccountTypeSetupToken, AccountTypeAPIKey:
-		return true
-	default:
-		return false
-	}
+	return longContextBillableInputTokens(tokens) <= openAIGPT61SolSubscriptionLongContextThreshold
 }
 
 func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(

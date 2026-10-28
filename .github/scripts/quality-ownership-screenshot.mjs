@@ -13,11 +13,11 @@ const tailwind = requireFrontend('tailwindcss')
 const autoprefixer = requireFrontend('autoprefixer')
 const output = process.env.QUALITY_SCREENSHOT_DIR
 await fs.mkdir(output, { recursive: true })
-const mockModule = `let reconciled=false,restored=false;
-const fixture=()=>({restore_ready:!restored && new URLSearchParams(location.search).get('delete')!=='conflict',restore_blocked_reason:'ownership_conflict',plan_id:7,account_id:42,rule_version:'synthetic-rule-v1',account_version:'synthetic-account-v1',fence:'a'.repeat(64),action:restored?'':'isolate_models',models:['sample-astra'],group_ids:[101],relinquishable_count:reconciled?0:1,ownership_retained:true,restrictions_changed:false,entries:[
-{kind:'model',model:'sample-astra',status:'managed',expected_present:true,current_present:true,expected_owner:'this_rule',current_owner:'this_rule',expected_digest:'a'.repeat(64),current_digest:'a'.repeat(64),changed_fields:[],can_relinquish:false},
-...(reconciled?[]:[{kind:'model',model:'sample-sol',status:'missing',expected_present:true,current_present:false,expected_owner:'this_rule',current_owner:'absent',expected_digest:'b'.repeat(64),current_digest:'c'.repeat(64),changed_fields:['reason','isolated_at'],can_relinquish:true}])
-]});export async function restoreQualityOwnership(){restored=true;return fixture()}export async function previewQualityOwnership(){return fixture()}export async function reconcileQualityOwnership(){reconciled=true;return fixture()}`
+const mockModule = `let reconciled=false,restored=false,removed=false;
+const fixture=()=>({restore_ready:!restored && new URLSearchParams(location.search).get('delete')!=='conflict',restore_blocked_reason:'ownership_conflict',plan_id:7,account_id:42,rule_version:'synthetic-rule-v1',account_version:'synthetic-account-v1',fence:'a'.repeat(64),action:restored?'':'isolate_models',models:removed?['sample-astra']:new URLSearchParams(location.search).has('remove')?['sample-astra','sample-sol']:['sample-astra'],model_removals:new URLSearchParams(location.search).has('remove')?[{model:'sample-astra',isolation_model:'sample-astra',ready:false,effect:'remove_target_only',blocked_reason:'changed_same_owner'},...(removed?[]:[{model:'sample-sol',isolation_model:'sample-sol',ready:true,effect:'remove_orphan_marker_only'}])]:[],group_ids:[101],relinquishable_count:reconciled||new URLSearchParams(location.search).has('remove')?0:1,ownership_retained:true,restrictions_changed:false,entries:[
+{kind:'model',model:'sample-astra',status:new URLSearchParams(location.search).has('remove')?'changed_same_owner':'managed',expected_present:true,current_present:true,expected_owner:'this_rule',current_owner:'this_rule',expected_digest:'a'.repeat(64),current_digest:'a'.repeat(64),changed_fields:[],can_relinquish:false},
+...(reconciled||removed?[]:[{kind:'model',model:'sample-sol',status:new URLSearchParams(location.search).has('remove')?'orphan_same_owner':'missing',expected_present:!new URLSearchParams(location.search).has('remove'),current_present:new URLSearchParams(location.search).has('remove'),expected_owner:new URLSearchParams(location.search).has('remove')?'absent':'this_rule',current_owner:new URLSearchParams(location.search).has('remove')?'this_rule':'absent',expected_digest:'b'.repeat(64),current_digest:'c'.repeat(64),changed_fields:['reason','isolated_at'],can_relinquish:!new URLSearchParams(location.search).has('remove')}])
+]});export async function removeQualityOwnedModel(){removed=true;return fixture()}export async function restoreQualityOwnership(){restored=true;return fixture()}export async function previewQualityOwnership(){return fixture()}export async function reconcileQualityOwnership(){reconciled=true;return fixture()}`
 const html = `<!doctype html><meta charset="utf-8"><div id="app"></div><script type="module">
 import {createApp,h} from 'vue';
 import {createI18n} from 'vue-i18n';
@@ -65,6 +65,15 @@ try {
   await page.goto('http://127.0.0.1:4179/?delete=conflict', { waitUntil: 'networkidle' })
   await page.getByTestId('quality-delete-restore-blocked').waitFor()
   await page.screenshot({ path: path.join(output, 'delete-conflict-preserved.png'), fullPage: true })
+  await page.goto('http://127.0.0.1:4179/?remove=ready', { waitUntil: 'networkidle' })
+  await page.getByTestId('quality-removal-model').selectOption('sample-sol')
+  await page.getByTestId('quality-removal-reason').selectOption('orphan_marker_recovery')
+  if (!await page.getByTestId('quality-remove-model').isDisabled()) throw new Error('removal_requires_consent')
+  await page.screenshot({ path: path.join(output, 'orphan-model-removal-preview.png'), fullPage: true })
+  await page.getByTestId('quality-removal-confirm').check()
+  await page.getByTestId('quality-remove-model').click()
+  await page.getByTestId('quality-removal-readback').waitFor()
+  await page.screenshot({ path: path.join(output, 'orphan-model-removal-readback.png'), fullPage: true })
   if (failures.length) throw new Error('component_render_error')
-  await fs.writeFile(path.join(output, 'verification.json'), JSON.stringify({ commit: process.env.GITHUB_SHA, component: 'QualityOwnershipReview.vue', synthetic: true, liveApiCalls: 0, paidRequests: 0, errors: failures }, null, 2))
+  await fs.writeFile(path.join(output, 'verification.json'), JSON.stringify({ commit: process.env.QUALITY_EXPECTED_HEAD || process.env.GITHUB_SHA, component: 'QualityOwnershipReview.vue', synthetic: true, liveApiCalls: 0, paidRequests: 0, errors: failures }, null, 2))
 } finally { await browser.close(); await server.close() }

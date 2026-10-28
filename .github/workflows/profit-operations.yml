@@ -1,0 +1,89 @@
+name: Upstream profit operations exact head
+on:
+  pull_request:
+    paths:
+      - '**/profit_operations*'
+      - '**/ProfitOperations*'
+      - '**/UpstreamChannelOperations*'
+      - '**/ProfitAnalytics*'
+      - '.github/workflows/profit-operations.yml'
+      - '.github/scripts/upstream-profit-operations-screenshot.mjs'
+      - 'frontend/src/api/admin/profitOperations.ts'
+      - 'frontend/src/i18n/locales/*/profitOps.ts'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: git rev-parse HEAD
+      - run: go test -tags=unit ./internal/service ./internal/handler/admin ./internal/server/routes -run '^TestProfitOperations' -count=1 -v
+        working-directory: backend
+      - name: Standard charge cost formula RED against account-statistics substitution
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=internal/repository/profit_operations.go
+          cp "$target" "$RUNNER_TEMP/current-profit.go"
+          trap 'cp "$RUNNER_TEMP/current-profit.go" "$target"' EXIT
+          python3 - <<'PYRED'
+          from pathlib import Path
+          p=Path('internal/repository/profit_operations.go')
+          s=p.read_text()
+          assert 'u.total_cost AS cost_base' in s
+          p.write_text(s.replace('u.total_cost AS cost_base','COALESCE(u.account_stats_cost,u.total_cost) AS cost_base'))
+          PYRED
+          set +e
+          go test -tags=integration ./internal/repository -run '^TestProfitOperationsHTTPPostgresWithoutModelChannelBinding$' -count=1 -v > "$RUNNER_TEMP/profit-cost-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/profit-cost-red.log"
+          test "$result" -ne 0
+          grep -q 'FAIL: TestProfitOperationsHTTPPostgresWithoutModelChannelBinding' "$RUNNER_TEMP/profit-cost-red.log"
+          grep -q 'standard model charge base, not account statistics override' "$RUNNER_TEMP/profit-cost-red.log"
+      - run: go test -tags=integration ./internal/repository -run '^TestProfitOperations' -count=1 -v
+        working-directory: backend
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - run: pnpm exec vitest run src/views/admin/__tests__/ProfitOperationsView.spec.ts src/components/admin/operations/__tests__/SmartOpsNav.spec.ts src/components/layout/__tests__/AppSidebar.spec.ts --maxWorkers=1 --minWorkers=1 --no-file-parallelism
+        working-directory: frontend
+      - run: pnpm --dir frontend run build
+      - name: Install isolated browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/upstream-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/upstream-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Independent profit page with synthetic data and zero live requests
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/upstream-browser/node_modules/playwright
+          UPSTREAM_SCREENSHOT_DIR: ${{ runner.temp }}/upstream-screenshots
+        run: node .github/scripts/upstream-profit-operations-screenshot.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: upstream-profit-ui-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/upstream-screenshots
+          if-no-files-found: error

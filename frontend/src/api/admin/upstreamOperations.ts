@@ -1,0 +1,8 @@
+import { apiClient } from '../client'
+import type { Section, Quality, ErrorLogs } from './channelOperations'
+export interface OperationsQuery { from: string; until: string; upstream: string; account_id: number; group_id: number; model: string; model_scope: 'public'|'recorded'|'upstream'; dimension: 'upstream'|'account'|'model'; sort: string; direction: 'asc'|'desc'; page: number; page_size: number }
+export interface UpstreamMetrics { requests: number; attributed_requests: number; unknown_upstream_requests: number; samples: number; unknown_samples: number; p50_ms: number|null; p90_ms: number|null; p95_ms: number|null; duration_p90_ms: number|null; latest_config_updated_at: string|null; oldest_config_updated_at: string|null }
+export interface OperationsRow extends UpstreamMetrics { key: string; name: string }
+export interface AccountBasis { id: number; name: string; key: string; attribution: string; updated_at: string; deleted: boolean }
+export interface OperationsSnapshot { scope: OperationsQuery; queried_at: string; attribution: string; usage: { summary: UpstreamMetrics; rows: OperationsRow[]; total: number; accounts: AccountBasis[]; members: AccountBasis[]; member_total: number; capacity: {accounts: number; schedulable: number; configured_concurrency: number}; catalog: Array<{key: string; name: string; accounts: number}>; catalog_total: number; account_details_limit: number }; quality: Section<Quality & { total: number }>; errors: Section<ErrorLogs> }
+export async function readOperations(params: OperationsQuery, signal?: AbortSignal): Promise<OperationsSnapshot> { return (await apiClient.get<OperationsSnapshot>('/admin/upstream-operations/snapshot',{params,signal})).data }

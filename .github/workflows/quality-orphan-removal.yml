@@ -1,0 +1,110 @@
+name: Quality orphan model removal
+on:
+  push:
+    branches: [fix/quality-orphan-isolation-release]
+  pull_request:
+    paths:
+      - 'backend/internal/**/quality*'
+      - 'frontend/src/**/QualityOwnershipReview*'
+      - 'frontend/src/**/AccountQualityView*'
+      - '.github/workflows/quality-orphan-removal.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Record exact head and unchanged regression inputs
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/head.txt
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          sha256sum backend/internal/repository/quality_orphan*test.go frontend/src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts > evidence/test-input.sha256
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Old repository source must fail real PostgreSQL business regression
+        shell: bash
+        env:
+          CI: 'true'
+        run: |
+          set -euo pipefail
+          baseline=5c035675aa891568ad312ec6ce81d2e1d1fc221b
+          source=backend/internal/repository/quality_ownership.go
+          cp "$source" "$RUNNER_TEMP/quality-current.go"
+          trap 'cp "$RUNNER_TEMP/quality-current.go" "$source"' EXIT
+          git fetch --no-tags --depth=1 origin "$baseline"
+          git rev-parse "$baseline" > evidence/red-source-head.txt
+          git show "$baseline:$source" > "$source"
+          set +e
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestQualityOrphanRemovalAtomicScopeContraction$' -count=1 -v) > evidence/red-storage.log 2>&1
+          result=$?
+          set -e
+          cat evidence/red-storage.log
+          test "$result" -ne 0
+          if grep -Eq '\[build failed\]|\[setup failed\]|undefined:|syntax error:|no tests to run|panic:|--- SKIP:' evidence/red-storage.log; then exit 1; fi
+          grep -F -- '--- FAIL: TestQualityOrphanRemovalAtomicScopeContraction' evidence/red-storage.log
+          grep -F 'no model removal preview for sol' evidence/red-storage.log
+      - name: Exact head PostgreSQL repository and HTTP regressions with retained guards
+        env:
+          CI: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          sha256sum -c evidence/test-input.sha256
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestQuality(Orphan|Ownership|Isolation|152|LiveDeleteHTTP)' -count=1 -v) 2>&1 | tee evidence/green-storage.log
+          if grep -Eq -- '--- SKIP:|no tests to run' evidence/green-storage.log; then exit 1; fi
+          for name in TestQualityOrphanRemovalAtomicScopeContraction TestQualityOrphanRemovalRejectsUnsafeCurrentEntries TestQualityOrphanRemovalRevalidatesFullPreviewAndLease TestQualityOrphanRemovalConcurrentConfirmations TestQualityOrphanRemovalMatchingAndMappedMarkers TestQualityOrphanRule152ModelsAndStaleClaims TestQualityOrphanHTTPPreviewConfirmReadbackAndSave; do
+            grep -F -- "--- PASS: $name" evidence/green-storage.log
+          done
+      - name: Admin authorization and consent boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd backend && go test ./internal/handler/admin -run '^TestQuality(Orphan|Ownership|Live|Scope)' -count=1 -v) 2>&1 | tee evidence/green-handler.log
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Old component must fail unchanged preview-confirm-readback interaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=frontend/src/components/admin/operations/QualityOwnershipReview.vue
+          cp "$source" "$RUNNER_TEMP/quality-current.vue"
+          trap 'cp "$RUNNER_TEMP/quality-current.vue" "$source"' EXIT
+          git show "5c035675aa891568ad312ec6ce81d2e1d1fc221b:$source" > "$source"
+          set +e
+          pnpm --dir frontend exec vitest run src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts -t 'releases an orphan and contracts scope only after explicit consent and readback' > evidence/red-ui.log 2>&1
+          result=$?
+          set -e
+          cat evidence/red-ui.log
+          test "$result" -ne 0
+          grep -F 'Unable to get [data-testid="quality-removal-model"]' evidence/red-ui.log
+      - name: Current component and full editor interaction regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          sha256sum -c evidence/test-input.sha256
+          pnpm --dir frontend exec vitest run src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts src/views/admin/__tests__/AccountQualityView.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts 2>&1 | tee evidence/green-ui.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-orphan-${{ github.event_name }}-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,4 @@
+/**
+ * Common component types
+ */
+export {};

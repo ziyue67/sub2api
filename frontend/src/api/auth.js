@@ -1,0 +1,427 @@
+/**
+ * Authentication API endpoints
+ * Handles user login, registration, and logout operations
+ */
+import { apiClient } from './client';
+import { refreshAuthTokens } from './tokenRefresh';
+export function buildOAuthLoginStartURL(request) {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+    const normalized = apiBase.replace(/\/$/, '');
+    const query = new URLSearchParams(request.params).toString();
+    const path = `${normalized}/auth/oauth/${request.provider}/start`;
+    return query ? `${path}?${query}` : path;
+}
+export async function startOAuthLogin(request, proof) {
+    const { data } = await apiClient.post(`/auth/oauth/${request.provider}/start`, proof, { params: request.params });
+    return data;
+}
+/**
+ * Type guard to check if login response requires 2FA
+ */
+export function isTotp2FARequired(response) {
+    return 'requires_2fa' in response && response.requires_2fa === true;
+}
+/**
+ * Store authentication token in localStorage
+ */
+export function setAuthToken(token) {
+    localStorage.setItem('auth_token', token);
+}
+/**
+ * Store refresh token in localStorage
+ */
+export function setRefreshToken(token) {
+    localStorage.setItem('refresh_token', token);
+}
+/**
+ * Store token expiration timestamp in localStorage
+ * Converts expires_in (seconds) to absolute timestamp (milliseconds)
+ */
+export function setTokenExpiresAt(expiresIn) {
+    const expiresAt = Date.now() + expiresIn * 1000;
+    localStorage.setItem('token_expires_at', String(expiresAt));
+}
+/**
+ * Get authentication token from localStorage
+ */
+export function getAuthToken() {
+    return localStorage.getItem('auth_token');
+}
+/**
+ * Get refresh token from localStorage
+ */
+export function getRefreshToken() {
+    return localStorage.getItem('refresh_token');
+}
+/**
+ * Get token expiration timestamp from localStorage
+ */
+export function getTokenExpiresAt() {
+    const value = localStorage.getItem('token_expires_at');
+    return value ? parseInt(value, 10) : null;
+}
+/**
+ * Clear authentication token from localStorage
+ */
+export function clearAuthToken() {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('refresh_token');
+    localStorage.removeItem('auth_user');
+    localStorage.removeItem('token_expires_at');
+}
+/**
+ * User login
+ * @param credentials - Email and password
+ * @returns Authentication response with token and user data, or 2FA required response
+ */
+export async function login(credentials) {
+    const { data } = await apiClient.post('/auth/login', credentials);
+    // Only store token if 2FA is not required
+    if (!isTotp2FARequired(data)) {
+        setAuthToken(data.access_token);
+        if (data.refresh_token) {
+            setRefreshToken(data.refresh_token);
+        }
+        if (data.expires_in) {
+            setTokenExpiresAt(data.expires_in);
+        }
+        localStorage.setItem('auth_user', JSON.stringify(data.user));
+    }
+    return data;
+}
+/**
+ * Complete login with 2FA code
+ * @param request - Temp token and TOTP code
+ * @returns Authentication response with token and user data
+ */
+export async function login2FA(request) {
+    const { data } = await apiClient.post('/auth/login/2fa', request);
+    // Store token and user data
+    setAuthToken(data.access_token);
+    if (data.refresh_token) {
+        setRefreshToken(data.refresh_token);
+    }
+    if (data.expires_in) {
+        setTokenExpiresAt(data.expires_in);
+    }
+    localStorage.setItem('auth_user', JSON.stringify(data.user));
+    return data;
+}
+/**
+ * User registration
+ * @param userData - Registration data (username, email, password)
+ * @returns Authentication response with token and user data
+ */
+export async function register(userData) {
+    const { data } = await apiClient.post('/auth/register', userData);
+    // Store token and user data
+    setAuthToken(data.access_token);
+    if (data.refresh_token) {
+        setRefreshToken(data.refresh_token);
+    }
+    if (data.expires_in) {
+        setTokenExpiresAt(data.expires_in);
+    }
+    localStorage.setItem('auth_user', JSON.stringify(data.user));
+    return data;
+}
+/** Resolve and persist a click-time affiliate attribution on the server. */
+export async function captureAffiliateAttribution(affCode) {
+    const code = affCode.trim();
+    if (!code)
+        return false;
+    const { data } = await apiClient.get('/auth/affiliate/click', {
+        params: { aff_code: code }
+    });
+    return data.captured === true;
+}
+/**
+ * Get current authenticated user
+ * @returns User profile data
+ */
+export async function getCurrentUser() {
+    return apiClient.get('/auth/me');
+}
+/**
+ * User logout
+ * Clears authentication token and user data from localStorage
+ * Optionally revokes the refresh token on the server
+ */
+export async function logout() {
+    const refreshToken = getRefreshToken();
+    // Try to revoke the refresh token on the server
+    if (refreshToken) {
+        try {
+            await apiClient.post('/auth/logout', { refresh_token: refreshToken });
+        }
+        catch {
+            // Ignore errors - we still want to clear local state
+        }
+    }
+    clearAuthToken();
+}
+function serializeOAuthAdoptionDecision(decision) {
+    const payload = {};
+    if (typeof decision?.adoptDisplayName === 'boolean') {
+        payload.adopt_display_name = decision.adoptDisplayName;
+    }
+    if (typeof decision?.adoptAvatar === 'boolean') {
+        payload.adopt_avatar = decision.adoptAvatar;
+    }
+    return payload;
+}
+export function isOAuthLoginCompletion(completion) {
+    return typeof completion.access_token === 'string' && completion.access_token.trim().length > 0;
+}
+export function getOAuthCompletionKind(completion) {
+    return isOAuthLoginCompletion(completion) ? 'login' : 'bind';
+}
+export function getPendingOAuthBindLoginKind(completion) {
+    return getOAuthCompletionKind(completion);
+}
+export function isPendingOAuthCreateAccountRequired(completion) {
+    return completion.error === 'invitation_required';
+}
+export function hasPendingOAuthSuggestedProfile(completion) {
+    return Boolean(completion.suggested_display_name || completion.suggested_avatar_url);
+}
+export function persistOAuthTokenContext(tokens) {
+    if (tokens.refresh_token) {
+        setRefreshToken(tokens.refresh_token);
+    }
+    if (tokens.expires_in) {
+        setTokenExpiresAt(tokens.expires_in);
+    }
+}
+export async function prepareOAuthBindAccessTokenCookie() {
+    if (!getAuthToken()) {
+        return;
+    }
+    await apiClient.post('/auth/oauth/bind-token');
+}
+/**
+ * Refresh the access token using the refresh token
+ * @returns New token pair
+ */
+export async function refreshToken() {
+    return refreshAuthTokens();
+}
+/**
+ * Revoke all sessions for the current user
+ * @returns Response with message
+ */
+export async function revokeAllSessions() {
+    const { data } = await apiClient.post('/auth/revoke-all-sessions');
+    return data;
+}
+/**
+ * Check if user is authenticated
+ * @returns True if user has valid token
+ */
+export function isAuthenticated() {
+    return getAuthToken() !== null;
+}
+/**
+ * Get public settings (no auth required)
+ * @returns Public settings including registration and Turnstile config
+ */
+export async function getPublicSettings() {
+    const { data } = await apiClient.get('/settings/public');
+    return data;
+}
+export function isWeChatWebOAuthEnabled(settings) {
+    const legacyEnabled = settings?.wechat_oauth_enabled ?? false;
+    const hasExplicitCapabilities = typeof settings?.wechat_oauth_open_enabled === 'boolean' ||
+        typeof settings?.wechat_oauth_mp_enabled === 'boolean';
+    if (!hasExplicitCapabilities) {
+        return legacyEnabled;
+    }
+    return settings?.wechat_oauth_open_enabled === true || settings?.wechat_oauth_mp_enabled === true;
+}
+export function hasExplicitWeChatOAuthCapabilities(settings) {
+    return typeof settings?.wechat_oauth_open_enabled === 'boolean'
+        && typeof settings?.wechat_oauth_mp_enabled === 'boolean';
+}
+export function resolveWeChatOAuthStart(settings, userAgent) {
+    const normalizedUserAgent = (userAgent
+        ?? (typeof navigator !== 'undefined' ? navigator.userAgent : '')
+        ?? '').trim();
+    const isWeChatBrowser = /MicroMessenger/i.test(normalizedUserAgent);
+    const legacyEnabled = settings?.wechat_oauth_enabled ?? false;
+    const openEnabled = typeof settings?.wechat_oauth_open_enabled === 'boolean'
+        ? settings.wechat_oauth_open_enabled
+        : legacyEnabled;
+    const mpEnabled = typeof settings?.wechat_oauth_mp_enabled === 'boolean'
+        ? settings.wechat_oauth_mp_enabled
+        : legacyEnabled;
+    const mobileEnabled = typeof settings?.wechat_oauth_mobile_enabled === 'boolean'
+        ? settings.wechat_oauth_mobile_enabled
+        : false;
+    if (isWeChatBrowser) {
+        if (mpEnabled) {
+            return { mode: 'mp', openEnabled, mpEnabled, mobileEnabled, isWeChatBrowser, unavailableReason: null };
+        }
+        if (openEnabled) {
+            return { mode: null, openEnabled, mpEnabled, mobileEnabled, isWeChatBrowser, unavailableReason: 'external_browser_required' };
+        }
+        return { mode: null, openEnabled, mpEnabled, mobileEnabled, isWeChatBrowser, unavailableReason: 'not_configured' };
+    }
+    if (openEnabled) {
+        return { mode: 'open', openEnabled, mpEnabled, mobileEnabled, isWeChatBrowser, unavailableReason: null };
+    }
+    if (mpEnabled) {
+        return { mode: null, openEnabled, mpEnabled, mobileEnabled, isWeChatBrowser, unavailableReason: 'wechat_browser_required' };
+    }
+    return { mode: null, openEnabled, mpEnabled, mobileEnabled, isWeChatBrowser, unavailableReason: 'not_configured' };
+}
+export function resolveWeChatOAuthStartStrict(settings, userAgent) {
+    const normalizedUserAgent = (userAgent
+        ?? (typeof navigator !== 'undefined' ? navigator.userAgent : '')
+        ?? '').trim();
+    const isWeChatBrowser = /MicroMessenger/i.test(normalizedUserAgent);
+    if (!hasExplicitWeChatOAuthCapabilities(settings)) {
+        return {
+            mode: null,
+            openEnabled: false,
+            mpEnabled: false,
+            mobileEnabled: false,
+            isWeChatBrowser,
+            unavailableReason: 'capability_unknown',
+        };
+    }
+    return resolveWeChatOAuthStart(settings, normalizedUserAgent);
+}
+/**
+ * Send verification code to email
+ * @param request - Email and optional Turnstile token
+ * @returns Response with countdown seconds
+ */
+export async function sendVerifyCode(request) {
+    const { data } = await apiClient.post('/auth/send-verify-code', request);
+    return data;
+}
+export async function sendPendingOAuthVerifyCode(request) {
+    const { data } = await apiClient.post('/auth/oauth/pending/send-verify-code', request);
+    return data;
+}
+/**
+ * Validate promo code (public endpoint, no auth required)
+ * @param code - Promo code to validate
+ * @returns Validation result with bonus amount if valid
+ */
+export async function validatePromoCode(code) {
+    const { data } = await apiClient.post('/auth/validate-promo-code', { code });
+    return data;
+}
+/**
+ * Validate invitation code (public endpoint, no auth required)
+ * @param code - Invitation code to validate
+ * @returns Validation result
+ */
+export async function validateInvitationCode(code) {
+    const { data } = await apiClient.post('/auth/validate-invitation-code', { code });
+    return data;
+}
+/**
+ * Request password reset link
+ * @param request - Email and optional Turnstile token
+ * @returns Response with message
+ */
+export async function forgotPassword(request) {
+    const { data } = await apiClient.post('/auth/forgot-password', request);
+    return data;
+}
+/**
+ * Reset password with token
+ * @param request - Email, token, and new password
+ * @returns Response with message
+ */
+export async function resetPassword(request) {
+    const { data } = await apiClient.post('/auth/reset-password', request);
+    return data;
+}
+/**
+ * Complete LinuxDo OAuth registration by supplying an invitation code
+ * @param invitationCode - Invitation code entered by the user
+ * @returns Token pair on success
+ */
+export async function completeLinuxDoOAuthRegistration(invitationCode, decision, affiliateCode) {
+    return createPendingLinuxDoOAuthAccount(invitationCode, decision, affiliateCode);
+}
+/**
+ * Complete OIDC OAuth registration by supplying an invitation code
+ * @param invitationCode - Invitation code entered by the user
+ * @returns Token pair on success
+ */
+export async function completeOIDCOAuthRegistration(invitationCode, decision, affiliateCode) {
+    return createPendingOIDCOAuthAccount(invitationCode, decision, affiliateCode);
+}
+export async function completeWeChatOAuthRegistration(invitationCode, decision, affiliateCode) {
+    return createPendingWeChatOAuthAccount(invitationCode, decision, affiliateCode);
+}
+async function createPendingOAuthAccount(provider, invitationCode, decision, affiliateCode) {
+    const normalizedAffiliateCode = affiliateCode?.trim();
+    const { data } = await apiClient.post(`/auth/oauth/${provider}/complete-registration`, {
+        invitation_code: invitationCode,
+        ...(normalizedAffiliateCode ? { aff_code: normalizedAffiliateCode } : {}),
+        ...serializeOAuthAdoptionDecision(decision)
+    });
+    return data;
+}
+export async function createPendingLinuxDoOAuthAccount(invitationCode, decision, affiliateCode) {
+    return createPendingOAuthAccount('linuxdo', invitationCode, decision, affiliateCode);
+}
+export async function createPendingOIDCOAuthAccount(invitationCode, decision, affiliateCode) {
+    return createPendingOAuthAccount('oidc', invitationCode, decision, affiliateCode);
+}
+export async function createPendingWeChatOAuthAccount(invitationCode, decision, affiliateCode) {
+    return createPendingOAuthAccount('wechat', invitationCode, decision, affiliateCode);
+}
+export async function createPendingDingTalkOAuthAccount(invitationCode, decision, affiliateCode) {
+    return createPendingOAuthAccount('dingtalk', invitationCode, decision, affiliateCode);
+}
+export async function completePendingOAuthBindLogin(decision) {
+    const { data } = await apiClient.post('/auth/oauth/pending/exchange', serializeOAuthAdoptionDecision(decision));
+    return data;
+}
+export async function exchangePendingOAuthCompletion(decision) {
+    return completePendingOAuthBindLogin(decision);
+}
+export const authAPI = {
+    login,
+    login2FA,
+    isTotp2FARequired,
+    register,
+    getCurrentUser,
+    logout,
+    isAuthenticated,
+    setAuthToken,
+    setRefreshToken,
+    setTokenExpiresAt,
+    getAuthToken,
+    getRefreshToken,
+    getTokenExpiresAt,
+    clearAuthToken,
+    getPublicSettings,
+    sendVerifyCode,
+    sendPendingOAuthVerifyCode,
+    validatePromoCode,
+    validateInvitationCode,
+    forgotPassword,
+    resetPassword,
+    refreshToken,
+    revokeAllSessions,
+    getPendingOAuthBindLoginKind,
+    isPendingOAuthCreateAccountRequired,
+    hasPendingOAuthSuggestedProfile,
+    completePendingOAuthBindLogin,
+    createPendingLinuxDoOAuthAccount,
+    createPendingOIDCOAuthAccount,
+    createPendingWeChatOAuthAccount,
+    exchangePendingOAuthCompletion,
+    completeLinuxDoOAuthRegistration,
+    completeOIDCOAuthRegistration,
+    completeWeChatOAuthRegistration,
+    createPendingDingTalkOAuthAccount
+};
+export default authAPI;
