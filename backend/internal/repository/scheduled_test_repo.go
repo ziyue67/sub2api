@@ -29,6 +29,9 @@ type planRowQuerier interface {
 
 // insertScheduledTestPlan is shared with group rules, which insert inside their own transaction.
 func insertScheduledTestPlan(ctx context.Context, q planRowQuerier, plan *service.ScheduledTestPlan) (*service.ScheduledTestPlan, error) {
+	if err := validateQualityGroupReferences(ctx, q, plan.PelicanConfig); err != nil {
+		return nil, err
+	}
 	row := q.QueryRowContext(ctx, `
 		INSERT INTO scheduled_test_plans (account_id, model_id, cron_expression, enabled, max_results, auto_recover, next_run_at, created_at, updated_at, pelican_config)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8)
@@ -104,6 +107,9 @@ func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.
 		}
 	}
 	if err = checkQualityIsolationScope(updated, &state); err != nil {
+		return nil, err
+	}
+	if err = validateQualityGroupReferences(ctx, tx, updated.PelicanConfig); err != nil {
 		return nil, err
 	}
 	if !plan.PreserveQualityState && updated.PelicanConfig != nil && updated.PelicanConfig.Quality != nil && updated.PelicanConfig.Quality.Action == service.QualityActionObserveOnly {

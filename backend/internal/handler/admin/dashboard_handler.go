@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -51,7 +52,10 @@ func (r dashboardTimeRange) EndLabel() string {
 
 // parseTimeRange parses start_date, end_date query parameters
 // Uses user's timezone if provided, otherwise falls back to server timezone
-func parseTimeRange(c *gin.Context) dashboardTimeRange {
+// parseTimeRange 解析查询时间窗：缺省仍是最近 7 个自然日，但显式传入的边界
+// 必须是合法日期/RFC3339 且 start 早于 end，否则返回错误由调用方回 400，
+// 避免非法边界被静默放宽成默认窗口。
+func parseTimeRange(c *gin.Context) (dashboardTimeRange, error) {
 	userTZ := c.Query("timezone") // Get user's timezone from request
 	now := timezone.NowInUserLocation(userTZ)
 	startDate := c.Query("start_date")
@@ -60,25 +64,29 @@ func parseTimeRange(c *gin.Context) dashboardTimeRange {
 	var timeRange dashboardTimeRange
 
 	if startDate != "" {
-		if t, hasTime, err := timezone.ParseDateOrDateTimeInUserLocation(startDate, userTZ); err == nil {
-			timeRange.Start = t
-			timeRange.StartHasTime = hasTime
-		} else {
-			timeRange.Start = timezone.StartOfDayInUserLocation(now.AddDate(0, 0, -7), userTZ)
+		t, hasTime, err := timezone.ParseDateOrDateTimeInUserLocation(startDate, userTZ)
+		if err != nil {
+			return dashboardTimeRange{}, fmt.Errorf("invalid start_date: %w", err)
 		}
+		timeRange.Start = t
+		timeRange.StartHasTime = hasTime
 	} else {
 		timeRange.Start = timezone.StartOfDayInUserLocation(now.AddDate(0, 0, -7), userTZ)
 	}
 
 	if endDate != "" {
-		if t, hasTime, err := timezone.ParseRangeEndInUserLocation(endDate, userTZ); err == nil {
-			timeRange.End = t
-			timeRange.EndHasTime = hasTime
-		} else {
-			timeRange.End = timezone.StartOfDayInUserLocation(now.AddDate(0, 0, 1), userTZ)
+		t, hasTime, err := timezone.ParseRangeEndInUserLocation(endDate, userTZ)
+		if err != nil {
+			return dashboardTimeRange{}, fmt.Errorf("invalid end_date: %w", err)
 		}
+		timeRange.End = t
+		timeRange.EndHasTime = hasTime
 	} else {
 		timeRange.End = timezone.StartOfDayInUserLocation(now.AddDate(0, 0, 1), userTZ)
+	}
+
+	if !timeRange.Start.Before(timeRange.End) {
+		return dashboardTimeRange{}, errors.New("start_date must be before end_date")
 	}
 
 	// 秒级边界会让每个请求的缓存 key 唯一，服务端统一截断到分钟，时间桶不依赖客户端对齐。
@@ -89,9 +97,8 @@ func parseTimeRange(c *gin.Context) dashboardTimeRange {
 		timeRange.End = timeRange.End.Truncate(time.Minute)
 	}
 
-	return timeRange
+	return timeRange, nil
 }
-
 func parseOptionalBoolDashboardFilter(c *gin.Context, name string) (*bool, error) {
 	raw := strings.TrimSpace(c.Query(name))
 	if raw == "" {
@@ -231,7 +238,11 @@ func (h *DashboardHandler) GetRealtimeMetrics(c *gin.Context) {
 // GET /api/v1/admin/dashboard/trend
 // Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), user_id, api_key_id, model, account_id, group_id, request_type, stream, billing_type
 func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	granularity := c.DefaultQuery("granularity", "day")
 
 	// Parse optional filter params
@@ -320,7 +331,11 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 // GET /api/v1/admin/dashboard/models
 // Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id, account_id, group_id, request_type, stream, billing_type
 func (h *DashboardHandler) GetModelStats(c *gin.Context) {
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	// Parse optional filter params
 	var userID, apiKeyID, accountID, groupID int64
@@ -411,7 +426,11 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 // GET /api/v1/admin/dashboard/groups
 // Query params: start_date, end_date (YYYY-MM-DD), user_id, api_key_id, account_id, group_id, request_type, stream, billing_type
 func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	var userID, apiKeyID, accountID, groupID int64
 	var requestType *int16
@@ -493,7 +512,11 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 // GET /api/v1/admin/dashboard/api-keys-trend
 // Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 5)
 func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	granularity := c.DefaultQuery("granularity", "day")
 	limitStr := c.DefaultQuery("limit", "5")
 	limit, err := strconv.Atoi(limitStr)
@@ -520,7 +543,11 @@ func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
 // GET /api/v1/admin/dashboard/users-trend
 // Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 12)
 func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	granularity := c.DefaultQuery("granularity", "day")
 	limitStr := c.DefaultQuery("limit", "12")
 	limit, err := strconv.Atoi(limitStr)
@@ -584,7 +611,11 @@ func parseUserBreakdownSortBy(raw string) (string, bool) {
 // GetUserSpendingRanking handles getting user spending ranking data.
 // GET /api/v1/admin/dashboard/users-ranking
 func (h *DashboardHandler) GetUserSpendingRanking(c *gin.Context) {
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	startTime, endTime := timeRange.Start, timeRange.End
 	limit := parseRankingLimit(c.DefaultQuery("limit", "12"))
 
@@ -593,8 +624,8 @@ func (h *DashboardHandler) GetUserSpendingRanking(c *gin.Context) {
 		End   string `json:"end"`
 		Limit int    `json:"limit"`
 	}{
-		Start: startTime.UTC().Format(time.RFC3339),
-		End:   endTime.UTC().Format(time.RFC3339),
+		Start: startTime.UTC().Format(time.RFC3339Nano),
+		End:   endTime.UTC().Format(time.RFC3339Nano),
 		Limit: limit,
 	})
 	cacheKey := string(keyRaw)
@@ -715,7 +746,11 @@ func (h *DashboardHandler) GetBatchAPIKeysUsage(c *gin.Context) {
 // GET /api/v1/admin/dashboard/user-breakdown
 // Query params: start_date, end_date, group_id, model, endpoint, endpoint_type, limit
 func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
-	timeRange := parseTimeRange(c)
+	timeRange, err := parseTimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	dim := usagestats.UserBreakdownDimension{}
 	if v := c.Query("group_id"); v != "" {

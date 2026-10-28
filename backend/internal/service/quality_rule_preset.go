@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 // QualityRulePreset has no account, filter, ownership or scheduling identity.
@@ -25,13 +27,22 @@ type QualityRulePreset struct {
 // Rebuild the editable inputs rather than retaining result snapshots. The
 // typed BPS and judge structs contain business options only, no credentials.
 func reusableQualityConfig(source *PelicanTestConfig) (*PelicanTestConfig, error) {
-	if source == nil || source.Quality == nil || source.Quality.Action == QualityActionOpenAITwoFAAdmission {
+	if source == nil || source.Quality != nil && source.Quality.Action == QualityActionOpenAITwoFAAdmission {
 		return nil, fmt.Errorf("presets require a configurable quality rule")
 	}
 	q := source.Quality
+	if q == nil {
+		q = &QualityPolicy{}
+	}
+	action := q.Action
+	// Old presets omitted penalty settings. They must never inherit the editor's
+	// last policy (or its destructive new-rule default).
+	if action == "" {
+		action = QualityActionObserveOnly
+	}
 	policy := &QualityPolicy{
 		TriggerOnUpstream5xx: q.TriggerOnUpstream5xx, ExpectedAnswer: q.ExpectedAnswer,
-		Action: q.Action, RemoveGroupIDs: append([]int64(nil), q.RemoveGroupIDs...),
+		Action: action, RemoveGroupIDs: append([]int64(nil), q.RemoveGroupIDs...),
 		RemoveModels: append([]string(nil), q.RemoveModels...), RecoveryConcurrency: q.RecoveryConcurrency,
 		AutoRestore: q.AutoRestore,
 	}
@@ -48,6 +59,23 @@ func reusableQualityConfig(source *PelicanTestConfig) (*PelicanTestConfig, error
 		}
 		policy.BPS = &bps
 	}
+	if action != "remove_groups" && action != QualityActionIsolateModels {
+		policy.RemoveGroupIDs = nil
+	}
+	if action != QualityActionRemoveModel {
+		policy.RemoveModels = nil
+		policy.RecoveryConcurrency = 0
+	}
+	if action != QualityActionEnableBPS {
+		policy.BPS = nil
+	}
+	if action == QualityActionObserveOnly {
+		policy.AutoRestore = false
+	}
+	if source.QuestionKind == OpenAICodexStateProbeQuestionKind {
+		policy.Judge = nil
+		policy.ExpectedAnswer = ""
+	}
 	return &PelicanTestConfig{
 		Quality: policy, QuestionKind: source.QuestionKind, TestChannel: source.TestChannel,
 		Prompt: source.Prompt, ReasoningEffort: source.ReasoningEffort, ParallelCount: source.ParallelCount,
@@ -59,7 +87,24 @@ func (s *ScheduledTestService) ListQualityPresets(ctx context.Context) ([]*Quali
 	if s.templateRepo == nil {
 		return nil, errQualityTemplatesUnavailable
 	}
-	return s.templateRepo.ListPresets(ctx)
+	if _, observer := ObserverGroupIDs(ctx); observer {
+		return nil, ErrObserverScope
+	}
+	presets, err := s.templateRepo.ListPresets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*QualityRulePreset, 0, len(presets))
+	for _, preset := range presets {
+		config, err := reusableQualityConfig(preset.PelicanConfig)
+		if err != nil {
+			return nil, err
+		}
+		copy := *preset
+		copy.PelicanConfig = config
+		out = append(out, &copy)
+	}
+	return out, nil
 }
 
 // CreateQualityPreset validates a future plan, but only persists its reusable
@@ -68,6 +113,17 @@ func (s *ScheduledTestService) CreateQualityPreset(ctx context.Context, input *Q
 	if s.templateRepo == nil {
 		return nil, errQualityTemplatesUnavailable
 	}
+	if _, observer := ObserverGroupIDs(ctx); observer {
+		return nil, ErrObserverScope
+	}
+	preset, err := prepareQualityPreset(input)
+	if err != nil {
+		return nil, err
+	}
+	return s.templateRepo.CreatePreset(ctx, preset)
+}
+
+func prepareQualityPreset(input *QualityRulePreset) (*QualityRulePreset, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" || utf8.RuneCountInString(name) > 100 {
 		return nil, fmt.Errorf("preset name must be 1-100 characters")
@@ -85,5 +141,27 @@ func (s *ScheduledTestService) CreateQualityPreset(ctx context.Context, input *Q
 	sample.PelicanConfig.ModelID = ""
 	preset := &QualityRulePreset{Name: name, ModelID: sample.ModelID, CronExpression: sample.CronExpression,
 		Enabled: input.Enabled, MaxResults: sample.MaxResults, PelicanConfig: sample.PelicanConfig}
-	return s.templateRepo.CreatePreset(ctx, preset)
+	return preset, nil
+}
+
+// Editing a passive preset never distributes it to accounts or changes plans.
+// The optional extension keeps existing template dispatch repositories unchanged.
+type QualityRulePresetEditor interface {
+	UpdatePreset(context.Context, *QualityRulePreset) (*QualityRulePreset, error)
+}
+
+func (s *ScheduledTestService) UpdateQualityPreset(ctx context.Context, id int64, input *QualityRulePreset) (*QualityRulePreset, error) {
+	if _, observer := ObserverGroupIDs(ctx); observer {
+		return nil, ErrObserverScope
+	}
+	repo, ok := s.templateRepo.(QualityRulePresetEditor)
+	if !ok {
+		return nil, infraerrors.ServiceUnavailable("QUALITY_PRESET_EDIT_UNAVAILABLE", "preset editing unavailable")
+	}
+	preset, err := prepareQualityPreset(input)
+	if err != nil {
+		return nil, err
+	}
+	preset.ID = id
+	return repo.UpdatePreset(ctx, preset)
 }

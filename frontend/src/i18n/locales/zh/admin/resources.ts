@@ -605,6 +605,7 @@ export default {
         button: '清理',
         title: '清理使用记录',
         warning: '清理不可恢复，且会影响历史统计回看。',
+        calendarRangeRequired: '滚动或精确时间范围不可直接清理。请先选择自然日；清理将删除所选日期的整日记录。',
         submit: '提交清理',
         submitting: '提交中...',
         confirmTitle: '确认清理',

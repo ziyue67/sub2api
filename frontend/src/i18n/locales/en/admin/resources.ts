@@ -608,6 +608,7 @@ export default {
         button: 'Cleanup',
         title: 'Cleanup Usage Records',
         warning: 'Cleanup is irreversible and will affect historical stats.',
+        calendarRangeRequired: 'Cleanup is unavailable for rolling or precise time ranges. Select calendar dates first; cleanup deletes the full selected days.',
         submit: 'Submit Cleanup',
         submitting: 'Submitting...',
         confirmTitle: 'Confirm Cleanup',

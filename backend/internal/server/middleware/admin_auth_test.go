@@ -123,6 +123,44 @@ func TestAdminAuthJWTValidatesTokenVersion(t *testing.T) {
 	})
 }
 
+func TestUserQuickEnableRequiresAdministrator(t *testing.T) {
+	for _, tc := range []struct {
+		name, role, status string
+		code               int
+	}{
+		{"anonymous", "", service.StatusActive, http.StatusUnauthorized},
+		{"user", service.RoleUser, service.StatusActive, http.StatusForbidden},
+		{"observer", service.RoleObserver, service.StatusActive, http.StatusForbidden},
+		{"inactive admin", service.RoleAdmin, service.StatusDisabled, http.StatusUnauthorized},
+		{"admin", service.RoleAdmin, service.StatusActive, http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{JWT: config.JWTConfig{Secret: "quick-enable-test-secret", ExpireHour: 1}}
+			auth := service.NewAuthService(nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+			actor := &service.User{ID: 17, Role: tc.role, Status: tc.status}
+			repo := &stubUserRepo{getByID: func(context.Context, int64) (*service.User, error) { return actor, nil }}
+			router := gin.New()
+			router.Use(gin.HandlerFunc(NewAdminAuthMiddleware(auth, service.NewUserService(repo, nil, nil, nil), nil, nil)))
+			writes := 0
+			router.PUT("/api/v1/admin/users/:id", func(c *gin.Context) { writes++; c.Status(http.StatusNoContent) })
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/users/306", nil)
+			if tc.role != "" {
+				token, err := auth.GenerateToken(context.Background(), actor)
+				require.NoError(t, err)
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, tc.code, w.Code, w.Body.String())
+			if tc.code == http.StatusNoContent {
+				require.Equal(t, 1, writes)
+			} else {
+				require.Zero(t, writes)
+			}
+		})
+	}
+}
+
 type stubUserRepo struct {
 	getByID func(ctx context.Context, id int64) (*service.User, error)
 }

@@ -74,7 +74,7 @@
     </div>
 
     <!-- Existing rule editor moves into a focused drawer instead of shifting both lists. -->
-    <BaseDialog :show="showForm" :title="savingPreset ? t('qualityOps.savePreset') : copying ? t('qualityOps.copy') : bulkEditing ? t('qualityOps.bulkEditTitle', { count: bulkRuleIds.length }) : editingTemplate ? t('qualityOps.editTemplate') : editing ? t('qualityOps.edit') : t('qualityOps.create')" placement="right" width="wide" :close-on-escape="!busy && !deleteTargets.length && !templateDeleteTarget && !discardPrompt" @close="closeForm">
+    <BaseDialog :show="showForm" :title="savingPreset ? t(editingPreset ? 'qualityOps.editPreset' : 'qualityOps.savePreset') : copying ? t('qualityOps.copy') : bulkEditing ? t('qualityOps.bulkEditTitle', { count: bulkRuleIds.length }) : editingTemplate ? t('qualityOps.editTemplate') : editing ? t('qualityOps.edit') : t('qualityOps.create')" placement="right" width="wide" :close-on-escape="!busy && !deleteTargets.length && !templateDeleteTarget && !discardPrompt" @close="closeForm">
       <p v-if="error" role="alert" class="editor-error">{{ error }}</p>
       <p v-if="store.groupsError" role="alert" class="editor-error">{{ store.groupsError }} <button class="underline" @click="store.refreshGroups">{{ t('qualityOps.retry') }}</button></p>
             <form id="quality-rule-form" class="quality-editor space-y-5" @submit.prevent="save"><fieldset :disabled="busy" class="space-y-5">
@@ -101,6 +101,7 @@
           <p v-if="store.presetsError" role="alert">{{ t('qualityOps.presetsLoadFailed') }} {{ store.presetsError }} <button type="button" class="underline" @click="store.refreshPresets">{{ t('qualityOps.retry') }}</button></p>
           <p class="font-medium">{{ t('qualityOps.selectPreset') }}</p>
           <label class="block space-y-1"><span>{{ t('qualityOps.savedPresets') }}</span><select v-model="selectedPresetId" class="input" data-testid="quality-preset-select" :disabled="store.presetsLoading || !canCopyRules"><option value="">{{ t(store.presetsLoading ? 'qualityOps.loading' : 'qualityOps.selectPreset') }}</option><option v-for="preset in presets" :key="preset.id" :value="String(preset.id)">{{ preset.name }}</option></select></label>
+          <button type="button" class="btn btn-secondary" data-testid="quality-edit-preset" :disabled="!selectedPresetId || !canCopyRules || store.presetsLoading" @click="editPreset">{{ t('qualityOps.editPreset') }}</button>
           <button type="button" class="btn btn-secondary" data-testid="quality-apply-preset" :disabled="!selectedPresetId || !canCopyRules || store.presetsLoading" @click="applyPreset">{{ t('qualityOps.applyPreset') }}</button>
           <p class="text-xs text-gray-500">{{ t('qualityOps.reuseHint') }}</p>
           <section v-if="reuseSourceLabel" class="space-y-3 border-t pt-3" data-testid="quality-reuse-preview">
@@ -117,7 +118,7 @@
         </fieldset>
         <p v-if="reuseSourceLabel" class="template-hint" data-testid="quality-draft-source">{{ t('qualityOps.draftSource') }}: {{ reuseSourceLabel }} · {{ t('qualityOps.draftNotSaved') }}</p>
         <p v-if="editing && reuseEditingPlan" data-testid="quality-saved-models">{{ t('qualityOps.savedModels') }}: {{ ruleModels(reuseEditingPlan).join(', ') }} · {{ t('qualityOps.nameIsLabel') }}</p>
-        <QualityOwnershipReview v-if="editing" :plan-id="editing" :draft-action="form.pelican_config.quality.action" :draft-models="[form.model_id, ...form.pelican_config.model_ids]" :draft-group-ids="form.pelican_config.quality.remove_group_ids" @blocked="ownershipBlocked = $event" @reconciled="store.refreshRules(true)" />
+        <QualityOwnershipReview v-if="editing" :plan-id="editing" :draft-action="form.pelican_config.quality.action" :draft-models="[form.model_id, ...form.pelican_config.model_ids]" :draft-group-ids="form.pelican_config.quality.remove_group_ids" @blocked="ownershipBlocked = $event" @reconciled="store.refreshRules(true)" :disabled="busy || !canCopyRules" @working="ownershipWorking = $event" @model-removed="ownedModelRemoved" />
         <label v-if="!bulkEditing && !savingPreset" class="block space-y-1"><span>{{ t('qualityOps.ruleName') }}</span><input v-model.trim="form.pelican_config.rule_name" maxlength="100" class="input" data-testid="quality-rule-name-input" /></label>
         <p v-if="editingTemplate" class="template-hint" data-testid="quality-template-edit-hint">{{ t('qualityOps.templateEditHint', { count: editingTemplateRecord?.plan_ids.length ?? 0 }) }}</p>
         <p v-else-if="editing && planTemplate[editing]" class="template-hint" data-testid="quality-plan-template-hint">{{ t('qualityOps.planFromTemplate', { id: planTemplate[editing] }) }}</p>
@@ -186,13 +187,13 @@
         <fieldset v-if="editsField('action') && form.pelican_config.test_channel !== 'bps'" class="space-y-3 rounded-lg border p-4 dark:border-dark-600">
           <legend class="px-2 font-medium">{{ t(isProbe ? 'qualityOps.probeFailureAction' : 'qualityOps.failureAction') }}</legend>
           <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="observe_only" data-testid="quality-action-observe-only" />{{ t('qualityOps.observeOnly') }}</label>
-          <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="remove_groups" />{{ t('qualityOps.removeGroups') }}</label>
+          <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="remove_groups" data-testid="quality-action-remove-groups" />{{ t('qualityOps.removeGroups') }}</label>
           <label v-if="!isProbe" class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="isolate_models" data-testid="quality-action-isolate-models" />{{ t('qualityOps.isolateModels') }}</label>
           <p v-if="form.pelican_config.quality.action === 'isolate_models'" class="pl-6 text-sm text-gray-500" data-testid="quality-isolation-help">{{ t('qualityOps.isolationHelp') }}</p>
           <div v-if="qualityUsesGroups(form.pelican_config.quality.action)" class="grid max-h-40 gap-2 overflow-auto pl-6 sm:grid-cols-2">
-            <label v-for="group in groups" :key="group.id" class="flex items-center gap-2 text-sm"><input v-model="form.pelican_config.quality.remove_group_ids" type="checkbox" :value="group.id" />{{ group.name }} #{{ group.id }}</label>
+            <label v-for="group in groups" :key="group.id" class="flex items-center gap-2 text-sm"><input v-model="form.pelican_config.quality.remove_group_ids" type="checkbox" :value="group.id" :data-testid="`quality-target-group-${group.id}`" />{{ group.name }} #{{ group.id }}</label>
           </div>
-          <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="disable_scheduling" />{{ t('qualityOps.disableScheduling') }}</label>
+          <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="disable_scheduling" data-testid="quality-action-disable-scheduling" />{{ t('qualityOps.disableScheduling') }}</label>
           <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.action" type="radio" value="remove_models" data-testid="quality-action-remove-models" />{{ t('qualityOps.removeModels') }}</label>
           <label v-if="form.pelican_config.quality.action === 'remove_models'" class="block space-y-1 pl-6"><span>{{ t('qualityOps.removeModelsInput') }}</span><input :value="(form.pelican_config.quality.remove_models || []).join(', ')" class="input" placeholder="gpt-6-astra, gpt-5.6-sol" @input="form.pelican_config.quality.remove_models = [...new Set(($event.target as HTMLInputElement).value.split(/[,\n]/).map(v => v.trim()).filter(Boolean))]" /></label>
           <p v-if="form.pelican_config.quality.action === 'remove_models'" class="pl-6 text-sm text-gray-500" data-testid="quality-model-independence">{{ t('qualityOps.cooldownPerModelHint') }}</p>
@@ -206,20 +207,20 @@
           <QualityBPSRestoreOptions v-if="form.pelican_config.quality.action === 'enable_bps'" v-model:bps="form.pelican_config.quality.bps" v-model:auto-restore="form.pelican_config.quality.auto_restore" class="text-sm" always-show-hold />
           <template v-else><label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.auto_restore" type="checkbox" data-testid="quality-auto-restore" />{{ t('qualityOps.autoRestore') }}</label><p class="text-sm text-gray-500">{{ t(form.pelican_config.quality.action === 'isolate_models' ? 'qualityOps.isolationRestoreHelp' : 'qualityOps.restoreHelp') }}</p></template>
         </template>
-        <template v-if="!bulkEditing">
+        <template v-if="editsField('trigger')">
           <label class="flex items-center gap-2"><input v-model="form.pelican_config.quality.trigger_on_upstream_5xx" type="checkbox" data-testid="quality-trigger-5xx" />{{ t('qualityOps.trigger5xx') }}</label>
           <p class="text-sm text-gray-500">{{ t('qualityOps.trigger5xxHint') }}</p>
         </template>
-        <label v-if="copying || savingPreset || (!!reuseSourceLabel && !bulkEditing)" class="block space-y-1"><span>{{ t('qualityOps.maxResults') }}</span><input v-model.number="form.max_results" type="number" min="1" max="200" required class="input" data-testid="quality-copy-max-results" /></label>
+        <label v-if="editsField('retention')" class="block space-y-1"><span>{{ t('qualityOps.maxResults') }}</span><input v-model.number="form.max_results" type="number" min="1" max="200" required class="input" data-testid="quality-copy-max-results" /></label>
         <label v-if="editsField('enabled')" class="flex items-center gap-2"><input v-model="form.enabled" type="checkbox" data-testid="quality-rule-enabled" />{{ t('qualityOps.enabled') }}</label>
       </fieldset></form>
-      <template #footer><div class="editor-footer"><button v-if="editing || bulkEditing" type="button" class="delete-rule" data-testid="quality-editor-delete" :disabled="busy || selectingAccounts || (bulkEditing && !bulkRuleIds.length)" @click="requestDelete(bulkEditing ? bulkRuleIds : editing ? [editing] : [])">{{ bulkEditing ? t('qualityOps.bulkDelete') : t('qualityOps.delete') }}</button><button v-else-if="editingTemplate" type="button" class="delete-rule" :disabled="busy" data-testid="quality-delete-template" @click="openTemplateDelete">{{ t('qualityOps.deleteTemplate') }}</button><span class="flex-1" /><button class="btn btn-secondary" :disabled="busy" @click="closeForm">{{ t('qualityOps.cancel') }}</button><button form="quality-rule-form" type="submit" class="btn btn-primary" :disabled="busy || selectingAccounts || (!!editing && ownershipBlocked) || (bulkEditing ? !bulkFields.length || !bulkRuleIds.length || (!!reuseSourceLabel && !reuseConfirmed) : !savingPreset && !editing && !editingTemplate && accountScope !== 'all' && !selectedAccounts.length)">{{ busy ? t('qualityOps.saving') : savingPreset ? t('qualityOps.savePreset') : bulkEditing ? t('qualityOps.applyToRules', { count: bulkRuleIds.length }) : t('qualityOps.save') }}</button></div></template>
+      <template #footer><div class="editor-footer"><button v-if="editing || bulkEditing" type="button" class="delete-rule" data-testid="quality-editor-delete" :disabled="busy || selectingAccounts || (bulkEditing && !bulkRuleIds.length)" @click="requestDelete(bulkEditing ? bulkRuleIds : editing ? [editing] : [])">{{ bulkEditing ? t('qualityOps.bulkDelete') : t('qualityOps.delete') }}</button><button v-else-if="editingTemplate" type="button" class="delete-rule" :disabled="busy" data-testid="quality-delete-template" @click="openTemplateDelete">{{ t('qualityOps.deleteTemplate') }}</button><span class="flex-1" /><button class="btn btn-secondary" :disabled="busy" @click="closeForm">{{ t('qualityOps.cancel') }}</button><button form="quality-rule-form" type="submit" class="btn btn-primary" :disabled="busy || ownershipWorking || selectingAccounts || (!!editing && ownershipBlocked) || (bulkEditing ? !bulkFields.length || !bulkRuleIds.length || (!!reuseSourceLabel && !reuseConfirmed) : !savingPreset && !editing && !editingTemplate && accountScope !== 'all' && !selectedAccounts.length)">{{ busy ? t('qualityOps.saving') : savingPreset ? t('qualityOps.savePreset') : bulkEditing ? t('qualityOps.applyToRules', { count: bulkRuleIds.length }) : t('qualityOps.save') }}</button></div></template>
     </BaseDialog>
     <BaseDialog :show="!!historyPlan" :title="detailOperation ? t('qualityOps.roundDetail') : t('qualityOps.history')" placement="right" width="extra-wide" close-on-click-outside @close="closeDetails">
       <template v-if="historyPlan">
         <div class="detail-heading"><span class="account-avatar">{{ detailAccountName.slice(0, 1) }}</span><div><h3>{{ detailAccountName }}</h3><p>{{ t('qualityOps.rule') }} {{ historyPlan.id }}<span class="mx-2">·</span>{{ detailOperation ? date(detailOperation.started_at) : t('qualityOps.historyHelp') }}</p></div><a class="account-management-link" href="/admin/accounts">{{ t('qualityOps.manageAccount') }}<Icon name="externalLink" size="xs" /></a></div>
         <div v-if="detailOperation" class="round-overview"><div><span>{{ t('qualityOps.testResult') }}</span><strong :class="allPassed(detailOperation) ? 'text-emerald-600' : 'text-rose-600'">{{ detailOperation.passed_count }} / {{ detailOperation.total_count }} {{ t('qualityOps.passed') }}</strong><span v-if="detailOperation.skipped_count">{{ t('qualityOps.skippedCount', { n: detailOperation.skipped_count }) }}</span></div><div><span>{{ t('qualityOps.accountAction') }}</span><strong>{{ operationLabel(detailOperation) }}</strong></div></div>
-        <aside v-if="detailAction === 'restore_conflict'" class="conflict-explanation" role="note"><Icon name="exclamationTriangle" size="md" /><div v-if="detailRestoreDiagnostic" data-testid="quality-restore-diagnostic"><h4>{{ t('qualityOps.restoreDiagnosticTitle') }}</h4><p>{{ restoreDiagnosticReason }}</p><p v-if="detailRestoreDiagnostic.disposition === 'external_membership_present'">{{ t('qualityOps.externalMembershipHelp') }}</p><p v-if="detailRestoreDiagnostic.scope === 'isolate_models'">{{ t('qualityOps.isolationRestoreRolledBack') }}</p><details class="conflict-causes"><summary>{{ t('qualityOps.restoreDiagnosticEvidence') }}</summary><pre class="whitespace-pre-wrap break-words text-xs">{{ JSON.stringify(detailRestoreDiagnostic, null, 2) }}</pre></details><strong>{{ t('qualityOps.restoreDiagnosticNextStep') }}</strong><QualityOwnershipReview v-if="historyPlan" :plan-id="historyPlan.id" @reconciled="store.refreshRules(true)" /></div><div v-else-if="detailBPS"><h4>{{ t('qualityOps.conflictTitle') }}</h4><p>{{ t('qualityOps.bpsConflictExplanation') }}</p><details class="conflict-causes"><summary>{{ t('qualityOps.conflictChecks') }}</summary><ul><li>{{ t('qualityOps.bpsConflictOptions') }}</li><li>{{ t('qualityOps.bpsConflict403') }}</li><li>{{ t('qualityOps.bpsConflictAvailability') }}</li></ul></details><p class="conflict-limit">{{ t('qualityOps.conflictUnknown') }}</p><strong>{{ t('qualityOps.bpsConflictNextStep') }}</strong></div>
+        <aside v-if="detailAction === 'restore_conflict'" class="conflict-explanation" role="note"><Icon name="exclamationTriangle" size="md" /><div v-if="detailRestoreDiagnostic" data-testid="quality-restore-diagnostic"><h4>{{ t('qualityOps.restoreDiagnosticTitle') }}</h4><p>{{ restoreDiagnosticReason }}</p><p v-if="detailRestoreDiagnostic.disposition === 'external_membership_present'">{{ t('qualityOps.externalMembershipHelp') }}</p><p v-if="detailRestoreDiagnostic.scope === 'isolate_models'">{{ t('qualityOps.isolationRestoreRolledBack') }}</p><details class="conflict-causes"><summary>{{ t('qualityOps.restoreDiagnosticEvidence') }}</summary><pre class="whitespace-pre-wrap break-words text-xs">{{ JSON.stringify(detailRestoreDiagnostic, null, 2) }}</pre></details><strong>{{ t('qualityOps.restoreDiagnosticNextStep') }}</strong><QualityOwnershipReview v-if="historyPlan" :plan-id="historyPlan.id" :disabled="!canCopyRules" @reconciled="store.refreshRules(true)" /></div><div v-else-if="detailBPS"><h4>{{ t('qualityOps.conflictTitle') }}</h4><p>{{ t('qualityOps.bpsConflictExplanation') }}</p><details class="conflict-causes"><summary>{{ t('qualityOps.conflictChecks') }}</summary><ul><li>{{ t('qualityOps.bpsConflictOptions') }}</li><li>{{ t('qualityOps.bpsConflict403') }}</li><li>{{ t('qualityOps.bpsConflictAvailability') }}</li></ul></details><p class="conflict-limit">{{ t('qualityOps.conflictUnknown') }}</p><strong>{{ t('qualityOps.bpsConflictNextStep') }}</strong></div>
           <div v-else><h4>{{ t('qualityOps.conflictTitle') }}</h4><p>{{ t('qualityOps.conflictExplanation') }}</p><details class="conflict-causes"><summary>{{ t('qualityOps.conflictChecks') }}</summary><ul><li>{{ t('qualityOps.conflictAccount') }}</li><li>{{ t('qualityOps.conflictMembership') }}</li><li>{{ t('qualityOps.conflictAvailability') }}</li></ul></details><p class="conflict-limit">{{ t('qualityOps.conflictUnknown') }}</p><strong>{{ t('qualityOps.conflictNextStep') }}</strong></div></aside>
         <div v-else-if="detailAction" class="action-explanation"><Icon name="infoCircle" size="sm" /><p>{{ actionExplanation(detailAction) }}</p></div>
         <section v-if="detailModelResults" class="model-summary">
@@ -280,7 +281,7 @@ import QualityBPSSettings from '@/components/admin/operations/QualityBPSSettings
 import QualityBPSRestoreOptions from '@/components/admin/operations/QualityBPSRestoreOptions.vue'
 import { useAccountQualityStore } from '@/stores/accountQuality'
 import { useAuthStore } from '@/stores/auth'
-import { createQualityPreset, createQualityTemplate, deleteQualityTemplate, runQualityPlan, updateQualityTemplate, type QualityOperation, type QualityRuleAccountFilter, type QualityRuleTemplate } from '@/api/admin/accountQuality'
+import { updateQualityPreset, createQualityPreset, createQualityTemplate, deleteQualityTemplate, runQualityPlan, updateQualityTemplate, type QualityOperation, type QualityRuleAccountFilter, type QualityRuleTemplate } from '@/api/admin/accountQuality'
 import scheduledTests from '@/api/admin/scheduledTests'
 import * as accountsAPI from '@/api/admin/accounts'
 import * as groupsAPI from '@/api/admin/groups'
@@ -328,7 +329,13 @@ function showAccountPicker() { return showForm.value && !editing.value && !savin
 
 const selectedAccounts = ref<number[]>([]), editing = ref<number | null>(null)
 const ownershipBlocked = ref(false)
+const ownershipWorking = ref(false)
+function ownedModelRemoved(model: string) {
+  form.value.pelican_config.model_ids = form.value.pelican_config.model_ids.filter(value => value !== model)
+  if (form.value.model_id === model) form.value.model_id = form.value.pelican_config.model_ids[0] || ''
+}
 const copying = ref(false), copySourceAccountId = ref<number | null>(null)
+const editingPreset = ref<number | null>(null)
 const savingPreset = ref(false), presetName = ref(''), selectedPresetId = ref('')
 const sourceAccountId = ref(''), sourceRuleId = ref('')
 const reuseSourceLabel = ref(''), reuseBefore = ref<ReturnType<typeof defaults> | null>(null), reuseConfirmation = ref('')
@@ -426,10 +433,12 @@ function reuseSnapshot() {
 }
 const reuseConfirmed = computed(() => !!reuseSourceLabel.value && reuseConfirmation.value === reuseSnapshot())
 function confirmReuse(event: Event) { reuseConfirmation.value = (event.target as HTMLInputElement).checked ? reuseSnapshot() : '' }
-function reuseFieldSummary(rule: Pick<ScheduledTestPlan, 'model_id' | 'cron_expression' | 'enabled' | 'pelican_config'>, field: QualityRuleField): string {
+function reuseFieldSummary(rule: Pick<ScheduledTestPlan, 'model_id' | 'cron_expression' | 'enabled' | 'pelican_config'> & { max_results?: number }, field: QualityRuleField): string {
   const cfg = rule.pelican_config, q = cfg?.quality
   if (field === 'model') return [...new Set([rule.model_id, ...(cfg?.model_ids || [])])].join(' / ')
   if (field === 'schedule') return rule.cron_expression
+  if (field === 'retention') return String(('max_results' in rule ? rule.max_results : '') ?? '')
+  if (field === 'trigger') return t(q?.trigger_on_upstream_5xx ? 'qualityOps.on' : 'qualityOps.off')
   if (field === 'enabled') return t(rule.enabled ? 'qualityOps.on' : 'qualityOps.off')
   if (field === 'action') return policyTarget(q)
   if (field === 'restore') return [t(q?.auto_restore ? 'qualityOps.on' : 'qualityOps.off'),
@@ -443,7 +452,7 @@ function reuseFieldSummary(rule: Pick<ScheduledTestPlan, 'model_id' | 'cron_expr
 function reusedBulkPatch(plan: ScheduledTestPlan) {
   const body = buildQualityRulePatch(plan, form.value, bulkFields.value)
   if (reuseSourceLabel.value) {
-    if (body.max_results && body.max_results !== plan.max_results) throw new Error(t('qualityOps.reuseRetention', { before: plan.max_results, after: body.max_results }))
+    if (!bulkFields.value.includes('retention') && body.max_results && body.max_results !== plan.max_results) throw new Error(t('qualityOps.reuseRetention', { before: plan.max_results, after: body.max_results }))
     const after = { ...plan, ...body }
     for (const field of qualityRuleFields) {
       if (!bulkFields.value.includes(field) && JSON.stringify(qualityRuleFieldValue(plan, field)) !== JSON.stringify(qualityRuleFieldValue(after, field))) {
@@ -672,7 +681,7 @@ async function selectMatchingAccounts() {
 function newPlan() {
   if (busy.value) return
   resetReuse()
-  copying.value = false; copySourceAccountId.value = null; savingPreset.value = false; presetName.value = ''
+  copying.value = false; copySourceAccountId.value = null; savingPreset.value = false; editingPreset.value = null; presetName.value = ''
   sourceAccountId.value = sourceRuleId.value = selectedPresetId.value = ''
   bulkEditing.value = false; bulkRuleIds.value = []; bulkFields.value = []; bulkProgress.value = ''
   closeDetails(); invalidateAccountRequests(); error.value = ''; editing.value = null; editingTemplate.value = null; form.value = defaults()
@@ -751,7 +760,7 @@ function applyPreset() {
 function edit(plan: ScheduledTestPlan) {
   if (busy.value || pending.value[plan.id] || plan.pelican_config?.quality?.action === 'openai_two_fa_admission') return
   resetReuse()
-  copying.value = false; copySourceAccountId.value = null; savingPreset.value = false; presetName.value = ''
+  copying.value = false; copySourceAccountId.value = null; savingPreset.value = false; editingPreset.value = null; presetName.value = ''
   sourceAccountId.value = sourceRuleId.value = selectedPresetId.value = ''
   bulkEditing.value = false; bulkRuleIds.value = []; bulkFields.value = []; bulkProgress.value = ''
   closeDetails(); error.value = ''; editing.value = plan.id; editingTemplate.value = null; selectedAccounts.value = []
@@ -766,11 +775,11 @@ function edit(plan: ScheduledTestPlan) {
 function editTemplate(tpl: QualityRuleTemplate) {
   if (busy.value) return
   resetReuse()
-  copying.value = false; copySourceAccountId.value = null; savingPreset.value = false; presetName.value = ''
+  copying.value = false; copySourceAccountId.value = null; savingPreset.value = false; editingPreset.value = null; presetName.value = ''
   sourceAccountId.value = sourceRuleId.value = selectedPresetId.value = ''
   bulkEditing.value = false; bulkRuleIds.value = []; bulkFields.value = []; bulkProgress.value = ''
   closeDetails(); error.value = ''; editing.value = null; editingTemplate.value = tpl.id; selectedAccounts.value = []
-  form.value = { ...defaults(), model_id: tpl.model_id, cron_expression: tpl.cron_expression, enabled: tpl.enabled, max_results: tpl.max_results, pelican_config: { ...defaults().pelican_config, ...JSON.parse(JSON.stringify(tpl.pelican_config || {})) } }
+  form.value = reusedForm(tpl)
   form.value.pelican_config.model_ids = (form.value.pelican_config.model_ids || []).filter(model => model !== form.value.model_id)
   form.value.pelican_config.quality.judge ||= defaults().pelican_config.quality.judge
   form.value.pelican_config.quality.bps = qualityBPSForm(form.value.pelican_config.quality.bps)
@@ -861,8 +870,19 @@ function payload() {
   delete nextQuality.judge
   return { ...form.value, pelican_config: { ...form.value.pelican_config, model_ids, prompt: '', parallel_count: 1, quality: nextQuality } }
 }
+function editPreset() {
+  if (busy.value || !canCopyRules.value || store.presetsLoading) return
+  const preset = presets.value.find(item => String(item.id) === selectedPresetId.value)
+  if (!preset) { error.value = t('qualityOps.presetUnavailable'); return }
+  try {
+    const next = reusedForm(preset)
+    newPlan(); savingPreset.value = true; editingPreset.value = preset.id; presetName.value = preset.name
+    form.value = next; selectedAccounts.value = []; invalidateAccountRequests(); initialForm.value = formSnapshot()
+    void loadJudgeModels()
+  } catch (cause) { error.value = t(cause instanceof Error ? cause.message : 'qualityOps.copyUnsupported') }
+}
 async function save() {
-  if (busy.value || selectingAccounts.value) return
+  if (busy.value || ownershipWorking.value || selectingAccounts.value) return
   if ((copying.value || savingPreset.value) && !canCopyRules.value) { error.value = t(savingPreset.value ? 'qualityOps.reusePermission' : 'qualityOps.copyPermission'); return }
   if (editing.value && ownershipBlocked.value) { error.value = t('qualityOps.scopeConflictHelp'); return }
   if (bulkEditing.value) { await saveBulkRules(); return }
@@ -887,7 +907,9 @@ async function save() {
       const { model_id, cron_expression, enabled, max_results, pelican_config } = payload()
       const config = copyQualityRuleConfig(pelican_config)
       delete config.rule_name
-      await createQualityPreset({ name, model_id, cron_expression, enabled, max_results, pelican_config: config })
+      const presetBody = { name, model_id, cron_expression, enabled, max_results, pelican_config: config }
+      if (editingPreset.value) await updateQualityPreset(editingPreset.value, presetBody)
+      else await createQualityPreset(presetBody)
       if (!alive || scope !== identity()) return
       showForm.value = false; notice.value = t('qualityOps.presetSaved')
       await store.refreshPresets()
@@ -1156,7 +1178,7 @@ function retryDetails() {
   else if (historyPlan.value) void history(historyPlan.value)
 }
 function navigateOperation(offset: number) { const next = filteredOperations.value[operationIndex.value + offset]; if (next) void operationDetails(next) }
-watch(() => identity(), () => { resetReuse(); error.value = notice.value = ''; closeDetails(); showForm.value = false; copying.value = false; copySourceAccountId.value = null; savingPreset.value = false; presetName.value = ''; sourceAccountId.value = sourceRuleId.value = selectedPresetId.value = ''; discardPrompt.value = false; deleteTargets.value = []; deleteError.value = deleteProgress.value = ''; editingTemplate.value = null; templateDeleteTarget.value = null; templatePending.value = {}; accounts.value = []; knownAccounts.clear(); selectedRuleIds.value = []; bulkRuleIds.value = []; bulkEditing.value = false; accountRequest++; judgeModelsRequest++ })
+watch(() => identity(), () => { resetReuse(); error.value = notice.value = ''; closeDetails(); showForm.value = false; copying.value = false; copySourceAccountId.value = null; savingPreset.value = false; editingPreset.value = null; presetName.value = ''; sourceAccountId.value = sourceRuleId.value = selectedPresetId.value = ''; discardPrompt.value = false; deleteTargets.value = []; deleteError.value = deleteProgress.value = ''; editingTemplate.value = null; templateDeleteTarget.value = null; templatePending.value = {}; accounts.value = []; knownAccounts.clear(); selectedRuleIds.value = []; bulkRuleIds.value = []; bulkEditing.value = false; accountRequest++; judgeModelsRequest++ })
 const operationsRoute = useRoute()
 onMounted(() => {
   const planId = Number(operationsRoute?.query.plan_id)

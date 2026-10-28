@@ -99,3 +99,73 @@ func TestQualityPresetKeepsBPSOptionsAndDropsGeneratedQuestionData(t *testing.T)
 	require.Empty(t, saved.PelicanConfig.Quality.ExpectedAnswer)
 	require.Equal(t, "Configured question", input.PelicanConfig.Prompt)
 }
+
+func TestQualityTemplateCompleteLegacyPresetDefaultsToObservation(t *testing.T) {
+	repo := newFakeTemplateRepo(newTemplatePlanRepo())
+	svc := ProvideScheduledTestService(nil, nil, repo, nil)
+	input := presetInput()
+	input.PelicanConfig.Quality.Action = ""
+	input.PelicanConfig.Quality.RemoveGroupIDs = []int64{21}
+	input.PelicanConfig.Quality.AutoRestore = true
+	saved, err := svc.CreateQualityPreset(context.Background(), input)
+	require.NoError(t, err)
+	require.Equal(t, QualityActionObserveOnly, saved.PelicanConfig.Quality.Action)
+	require.Empty(t, saved.PelicanConfig.Quality.RemoveGroupIDs)
+	require.False(t, saved.PelicanConfig.Quality.AutoRestore)
+	// Legacy stored rows pass through the same safe read normalization, while the
+	// source stays unchanged (fake repositories may return pointers they retain).
+	legacy := presetInput()
+	legacy.PelicanConfig.Quality.Action = ""
+	legacy.ID = 42
+	repo.presets = append(repo.presets, legacy)
+	listed, err := svc.ListQualityPresets(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, QualityActionObserveOnly, listed[len(listed)-1].PelicanConfig.Quality.Action)
+	require.Empty(t, repo.templates)
+}
+
+func TestQualityTemplateCompletePolicyWhitelistAndDependencies(t *testing.T) {
+	for _, action := range []string{QualityActionObserveOnly, "remove_groups", QualityActionIsolateModels, "disable_scheduling", QualityActionRemoveModel, QualityActionEnableBPS} {
+		t.Run(action, func(t *testing.T) {
+			input := presetInput()
+			q := input.PelicanConfig.Quality
+			q.Action = action
+			q.RemoveGroupIDs = []int64{21}
+			q.RemoveModels = []string{"test-model"}
+			q.RecoveryConcurrency = 9
+			q.TriggerOnUpstream5xx = true
+			q.Judge = &QualityJudgeConfig{Kind: "jev", Prompt: "Grade", GroupID: 0}
+			if action == QualityActionEnableBPS {
+				input.PelicanConfig.QuestionKind = OpenAICodexStateProbeQuestionKind
+				input.PelicanConfig.ParallelCount = 1
+				q.BPS = &QualityBPSPolicy{FailureThreshold: 2, AllModels: true, PassThreshold: 3}
+			}
+			input.PelicanConfig.ModelIDs = []string{"test-model"}
+			input.PelicanConfig.TriggerSource = "must-not-copy"
+			input.PelicanConfig.QualityModelOutcomes = map[string]string{"test-model": "failed"}
+			repo := newFakeTemplateRepo(newTemplatePlanRepo())
+			svc := ProvideScheduledTestService(nil, nil, repo, nil)
+			saved, err := svc.CreateQualityPreset(context.Background(), input)
+			require.NoError(t, err)
+			cfg := saved.PelicanConfig
+			require.Equal(t, action, cfg.Quality.Action)
+			require.Empty(t, cfg.TriggerSource)
+			require.Nil(t, cfg.QualityModelOutcomes)
+			require.Equal(t, action != "observe_only", cfg.Quality.AutoRestore)
+			if action == "remove_groups" || action == QualityActionIsolateModels {
+				require.Equal(t, []int64{21}, cfg.Quality.RemoveGroupIDs)
+			} else {
+				require.Empty(t, cfg.Quality.RemoveGroupIDs)
+			}
+			if action != QualityActionRemoveModel {
+				require.Empty(t, cfg.Quality.RemoveModels)
+				require.Zero(t, cfg.Quality.RecoveryConcurrency)
+			}
+			if action == QualityActionEnableBPS {
+				require.Nil(t, cfg.Quality.Judge)
+			} else {
+				require.Equal(t, "jev", cfg.Quality.Judge.Kind)
+			}
+		})
+	}
+}

@@ -2022,6 +2022,12 @@ func longContextMultiplierOrOne(m float64) float64 {
 	return m
 }
 
+// longContextBillableInputTokens 是长上下文阶梯比较的输入侧 token。
+// 普通输入、缓存创建和缓存读取都计入，避免缓存越多越少收附加费。
+func longContextBillableInputTokens(tokens UsageTokens) int {
+	return tokens.InputTokens + tokens.CacheCreationTokens + tokens.CacheReadTokens
+}
+
 func (s *BillingService) shouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPricing) bool {
 	if pricing == nil || pricing.LongContextInputThreshold <= 0 {
 		return false
@@ -2029,7 +2035,7 @@ func (s *BillingService) shouldApplySessionLongContextPricing(tokens UsageTokens
 	if pricing.LongContextInputMultiplier <= 1 && pricing.LongContextOutputMultiplier <= 1 {
 		return false
 	}
-	totalInputTokens := tokens.InputTokens + tokens.CacheCreationTokens + tokens.CacheReadTokens
+	totalInputTokens := longContextBillableInputTokens(tokens)
 	if pricing.LongContextThresholdInclusive {
 		return totalInputTokens >= pricing.LongContextInputThreshold
 	}

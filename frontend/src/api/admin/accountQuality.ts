@@ -90,6 +90,11 @@ export async function createQualityPreset(body: QualityRulePresetRequest): Promi
   return data
 }
 
+export async function updateQualityPreset(id: number, body: QualityRulePresetRequest): Promise<QualityRulePreset> {
+  const { data } = await apiClient.put<QualityRulePreset>(`/admin/account-quality-presets/${id}`, body)
+  return data
+}
+
 export interface QualityOwnershipEntry {
   kind: 'model' | 'group'
   model?: string
@@ -105,7 +110,15 @@ export interface QualityOwnershipEntry {
   changed_fields: string[]
   can_relinquish: boolean
 }
+export interface QualityModelRemoval {
+  model: string
+  isolation_model: string
+  ready: boolean
+  effect: string
+  blocked_reason?: string
+}
 export interface QualityOwnershipPreview {
+  model_removals?: QualityModelRemoval[]
   plan_id: number
   account_id: number
   rule_version: string
@@ -132,5 +145,10 @@ export async function reconcileQualityOwnership(id: number, fence: string): Prom
 
 export async function restoreQualityOwnership(id: number, fence: string): Promise<QualityOwnershipPreview> {
   const { data } = await apiClient.post<QualityOwnershipPreview>(`/admin/account-quality-plans/${id}/ownership/restore`, { fence, confirm: true })
+  return data
+}
+
+export async function removeQualityOwnedModel(id: number, fence: string, model: string, reason_code: string): Promise<QualityOwnershipPreview> {
+  const { data } = await apiClient.post<QualityOwnershipPreview>(`/admin/account-quality-plans/${id}/ownership/remove-model`, { fence, model, reason_code, confirm: true })
   return data
 }

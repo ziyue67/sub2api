@@ -1,0 +1,21 @@
+
+ RUN  v2.1.9 /data/development/projects/sub2api-usage-rolling-24h/frontend
+
+Browserslist: browsers data (caniuse-lite) is 10 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+ ✓ src/views/admin/__tests__/UsageView.spec.ts (20 tests) 772ms
+ ✓ src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts (14 tests) 232ms
+ ✓ src/components/admin/usage/__tests__/UsageCleanupDialog.spec.ts (3 tests) 105ms
+ ✓ src/components/admin/usage/__tests__/UsageStatsCards.spec.ts (3 tests) 78ms
+ ✓ src/components/common/__tests__/DateRangePicker.spec.ts (2 tests) 66ms
+ ✓ src/components/common/__tests__/DateRangePicker.dismiss.spec.ts (4 tests) 125ms
+ ✓ src/components/common/__tests__/DateRangePicker.midnight.spec.ts (4 tests) 141ms
+
+ Test Files  7 passed (7)
+      Tests  50 passed (50)
+   Start at  22:29:04
+   Duration  10.99s (transform 2.66s, setup 592ms, collect 3.33s, tests 1.52s, environment 3.39s, prepare 560ms)
+
+
+exit_code=0

@@ -1,0 +1,228 @@
+//go:build integration
+
+package repository
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
+	"testing"
+	"time"
+)
+
+func TestProfitOperationsPersistedProfitIndependentFromAccountDebit(t *testing.T) {
+	f := newChannelOperationsFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err := integrationDB.Exec(`UPDATE accounts SET type='apikey',credentials='{"base_url":"HTTPS://RELAY.EXAMPLE:8443/tenant/v1/","api_key":"fixture-secret"}',extra='{"cost_multiplier":0.25}',rate_multiplier=99 WHERE id=$1`, f.account)
+	require.NoError(t, err)
+	for i, v := range []struct{ base, income, stats float64 }{{10, 4, 8}, {2, 0, 4}, {0, 0, 0}} {
+		_, err = integrationDB.Exec(`INSERT INTO usage_logs(user_id,api_key_id,account_id,request_id,model,total_cost,actual_cost,account_stats_cost,account_rate_multiplier,created_at) VALUES($1,$2,$3,$4,'fixture-model',$5,$6,$7,99,$8)`, f.user, f.key, f.account, "profit-fixture-"+now.Format("150405")+string(rune('a'+i)), v.base, v.income, v.stats, now.Add(-time.Hour))
+		require.NoError(t, err)
+	}
+	q := service.UpstreamOperationsFilter{From: now.Add(-24 * time.Hour), Until: now, AccountID: f.account, Dimension: "upstream", ModelScope: "public", Sort: "requests", Direction: "desc", Page: 1, PageSize: 1}
+	out, err := f.repo.ReadProfitOperations(context.Background(), q)
+	require.NoError(t, err)
+	var data struct {
+		Summary struct {
+			Requests int      `json:"requests"`
+			Standard float64  `json:"standard_charge"`
+			Income   float64  `json:"request_income"`
+			Cost     *float64 `json:"estimated_cost"`
+			Profit   *float64 `json:"estimated_profit"`
+			Margin   *float64 `json:"margin"`
+		}
+		Rows []struct {
+			Key string `json:"key"`
+		}
+		Total int
+	}
+	require.NoError(t, json.Unmarshal(out.Usage, &data))
+	require.Equal(t, 3, data.Summary.Requests, "automatically attributed usage must not need model-channel bindings")
+	require.Equal(t, 12.0, data.Summary.Standard)
+	require.Equal(t, 4.0, data.Summary.Income)
+	require.NotNil(t, data.Summary.Cost)
+	require.InDelta(t, 3, *data.Summary.Cost, 1e-9, "cost uses saved standard model charge × independent cost multiplier, never account debit 99")
+	require.NotNil(t, data.Summary.Profit)
+	require.InDelta(t, 1, *data.Summary.Profit, 1e-9)
+	require.NotNil(t, data.Summary.Margin)
+	require.InDelta(t, .25, *data.Summary.Margin, 1e-9, "margin uses total amounts")
+	require.Len(t, data.Rows, 1)
+	require.Equal(t, "https://relay.example:8443/tenant/v1", data.Rows[0].Key)
+	require.NotContains(t, string(out.Usage), "fixture-secret")
+}
+
+func TestProfitOperationsZeroLossUnknownAndCurrentConfiguration(t *testing.T) {
+	f := newChannelOperationsFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err := integrationDB.Exec(`UPDATE accounts SET type='apikey',credentials='{"base_url":"https://source.example/tenant/v1"}',extra='{"cost_multiplier":0.5}' WHERE id=$1`, f.account)
+	require.NoError(t, err)
+	_, err = integrationDB.Exec(`INSERT INTO usage_logs(user_id,api_key_id,account_id,request_id,model,total_cost,actual_cost,account_stats_cost,created_at) VALUES($1,$2,$3,'loss-fixture','model',10,0,8,$4)`, f.user, f.key, f.account, now.Add(-time.Hour))
+	require.NoError(t, err)
+	q := service.UpstreamOperationsFilter{From: now.Add(-24 * time.Hour), Until: now, AccountID: f.account, Dimension: "account", ModelScope: "public", Sort: "requests", Direction: "desc", Page: 1, PageSize: 20}
+	read := func() map[string]any {
+		out, e := f.repo.ReadProfitOperations(context.Background(), q)
+		require.NoError(t, e)
+		var data map[string]any
+		require.NoError(t, json.Unmarshal(out.Usage, &data))
+		return data
+	}
+	data := read()
+	sum := data["summary"].(map[string]any)
+	require.Equal(t, 5.0, sum["estimated_cost"])
+	require.Equal(t, -5.0, sum["estimated_profit"])
+	require.Nil(t, sum["margin"], "zero revenue margin is unknown")
+	for _, tc := range []struct {
+		extra    string
+		cost     any
+		defaults float64
+		unknown  float64
+	}{
+		{`{"cost_multiplier":0}`, 0.0, 0, 0}, {`{}`, 1.0, 1, 0}, {`{"cost_multiplier":"bad"}`, nil, 0, 1}, {`{"cost_multiplier":-1}`, nil, 0, 1},
+	} {
+		_, err = integrationDB.Exec(`UPDATE accounts SET extra=$2::jsonb,updated_at=clock_timestamp() WHERE id=$1`, f.account, tc.extra)
+		require.NoError(t, err)
+		data = read()
+		sum = data["summary"].(map[string]any)
+		require.Equal(t, tc.cost, sum["estimated_cost"])
+		require.Equal(t, tc.defaults, sum["default_multiplier_requests"])
+		require.Equal(t, tc.unknown, sum["unknown_cost_requests"])
+	}
+	_, err = integrationDB.Exec(`UPDATE accounts SET credentials='{"base_url":"https://new.example/different/v1"}',extra='{"cost_multiplier":0.25}',deleted_at=NOW() WHERE id=$1`, f.account)
+	require.NoError(t, err)
+	data = read()
+	sum = data["summary"].(map[string]any)
+	require.Equal(t, 1.0, sum["deleted_account_requests"])
+	require.Equal(t, 2.5, sum["estimated_cost"])
+	var base, income, stats float64
+	require.NoError(t, integrationDB.QueryRow(`SELECT total_cost,actual_cost,account_stats_cost FROM usage_logs WHERE account_id=$1`, f.account).Scan(&base, &income, &stats))
+	require.Equal(t, 10.0, base)
+	require.Zero(t, income)
+	require.Equal(t, 8.0, stats, "configuration edits never rewrite history")
+}
+
+func TestProfitOperationsUnknownURLNoSecretsAndInvalidAmounts(t *testing.T) {
+	f := newChannelOperationsFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err := integrationDB.Exec(`UPDATE accounts SET type='apikey',credentials='{"base_url":"https://user:private@secret.example/v1?token=private#private","api_key":"not-for-response"}',extra='{"cost_multiplier":0.25}' WHERE id=$1`, f.account)
+	require.NoError(t, err)
+	_, err = integrationDB.Exec(`INSERT INTO usage_logs(user_id,api_key_id,account_id,request_id,model,total_cost,actual_cost,account_stats_cost,created_at) VALUES($1,$2,$3,'unknown-fixture','missing-price','NaN'::numeric,2,8,$4)`, f.user, f.key, f.account, now.Add(-time.Minute))
+	require.NoError(t, err)
+	q := service.UpstreamOperationsFilter{From: now.Add(-time.Hour), Until: now, AccountID: f.account, Dimension: "upstream", ModelScope: "public", Sort: "estimated_profit", Direction: "desc", Page: 1, PageSize: 20}
+	out, err := f.repo.ReadProfitOperations(context.Background(), q)
+	require.NoError(t, err)
+	var data struct {
+		Summary struct {
+			Cost            *float64 `json:"estimated_cost"`
+			Unknown         int      `json:"unknown_cost_requests"`
+			UpstreamUnknown int      `json:"unknown_upstream_requests"`
+		}
+		Rows []struct{ Key string }
+	}
+	require.NoError(t, json.Unmarshal(out.Usage, &data))
+	require.Nil(t, data.Summary.Cost)
+	require.Equal(t, 1, data.Summary.Unknown)
+	require.Equal(t, 1, data.Summary.UpstreamUnknown)
+	require.Len(t, data.Rows, 1)
+	require.Equal(t, "unknown:invalid_url", data.Rows[0].Key)
+	for _, secret := range []string{"private", "secret.example", "not-for-response", "NaN", "Infinity"} {
+		require.NotContains(t, string(out.Usage), secret)
+	}
+	q.Upstream = data.Rows[0].Key
+	filtered, err := f.repo.ReadProfitOperations(context.Background(), q)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(filtered.Usage, &data))
+	require.Len(t, data.Rows, 1, "unknown attribution stays reachable by its bucket")
+}
+
+func TestProfitOperationsSameURLWeightedMarginWithoutGroupJoinDuplication(t *testing.T) {
+	f := newChannelOperationsFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	var otherGroup int64
+	require.NoError(t, integrationDB.QueryRow(`INSERT INTO groups(name,platform) VALUES('profit duplicate-group fixture','openai') RETURNING id`).Scan(&otherGroup))
+	t.Cleanup(func() { _, _ = integrationDB.Exec(`DELETE FROM groups WHERE id=$1`, otherGroup) })
+	for _, id := range []int64{f.account, f.outsider} {
+		_, err := integrationDB.Exec(`UPDATE accounts SET type='apikey',credentials='{"base_url":"https://shared.example:8443/tenant/v1"}',extra='{"cost_multiplier":0.5}' WHERE id=$1`, id)
+		require.NoError(t, err)
+		_, err = integrationDB.Exec(`INSERT INTO account_groups(account_id,group_id) VALUES($1,$2)`, id, otherGroup)
+		require.NoError(t, err)
+	}
+	for i, v := range []struct {
+		id           int64
+		income, base float64
+	}{{f.account, 10, 10}, {f.outsider, 2, 8}} {
+		_, err := integrationDB.Exec(`INSERT INTO usage_logs(user_id,api_key_id,account_id,request_id,model,total_cost,actual_cost,account_stats_cost,created_at) VALUES($1,$2,$3,$4,'cached-per-request',10,$5,$6,$7)`, f.user, f.key, v.id, fmt.Sprintf("weighted-%d-%d", f.account, i), v.income, v.base, now.Add(-time.Minute))
+		require.NoError(t, err)
+	}
+	q := service.UpstreamOperationsFilter{From: now.Add(-time.Hour), Until: now, Upstream: "https://shared.example:8443/tenant/v1", Dimension: "account", ModelScope: "public", Sort: "request_income", Direction: "desc", Page: 1, PageSize: 1}
+	out, err := f.repo.ReadProfitOperations(context.Background(), q)
+	require.NoError(t, err)
+	var data struct {
+		Summary struct {
+			Requests int
+			Income   float64 `json:"request_income"`
+			Cost     float64 `json:"estimated_cost"`
+			Margin   float64
+		}
+		Rows  []struct{ Margin float64 }
+		Total int
+	}
+	require.NoError(t, json.Unmarshal(out.Usage, &data))
+	require.Equal(t, 2, data.Summary.Requests)
+	require.Equal(t, 12.0, data.Summary.Income)
+	require.Equal(t, 10.0, data.Summary.Cost)
+	require.InDelta(t, 1.0/6, data.Summary.Margin, 1e-9, "weighted margin is (12-10)/12, not average of 50 percent and -150 percent")
+	require.Equal(t, 2, data.Total)
+	require.Len(t, data.Rows, 1)
+	require.InDelta(t, .5, data.Rows[0].Margin, 1e-9)
+	q.Dimension = "upstream"
+	out, err = f.repo.ReadProfitOperations(context.Background(), q)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(out.Usage, &data))
+	require.Equal(t, 1, data.Total, "same effective URL groups independent accounts once")
+}
+
+func TestProfitOperationsHalfOpenPagingGroupsAndPathIsolation(t *testing.T) {
+	f := newChannelOperationsFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	from := now.Add(-24 * time.Hour)
+	for _, a := range []struct {
+		id   int64
+		base string
+	}{{f.account, "https://same.example:8443/A/v1/"}, {f.outsider, "https://same.example:8443/B/v1/"}} {
+		_, err := integrationDB.Exec(`UPDATE accounts SET type='apikey',credentials=jsonb_build_object('base_url',$2::text),extra='{"cost_multiplier":0}' WHERE id=$1`, a.id, a.base)
+		require.NoError(t, err)
+		for i, at := range []time.Time{from, now, from.Add(-time.Microsecond)} {
+			_, err = integrationDB.Exec(`INSERT INTO usage_logs(user_id,api_key_id,account_id,request_id,model,total_cost,actual_cost,group_id,created_at) VALUES($1,$2,$3,$4,'per-request',2,1,$5,$6)`, f.user, f.key, a.id, fmt.Sprintf("range-%d-%d", a.id, i), f.group, at)
+			require.NoError(t, err)
+		}
+	}
+	q := service.UpstreamOperationsFilter{From: from, Until: now, GroupID: f.group, Dimension: "upstream", ModelScope: "public", Sort: "name", Direction: "asc", Page: 1, PageSize: 1}
+	read := func() map[string]any {
+		out, err := f.repo.ReadProfitOperations(context.Background(), q)
+		require.NoError(t, err)
+		var data map[string]any
+		require.NoError(t, json.Unmarshal(out.Usage, &data))
+		require.Equal(t, "ready", out.Errors.Status)
+		if q.Model != "" && q.ModelScope != "upstream" {
+			require.Equal(t, "unsupported_scope", out.Quality.Status)
+		} else {
+			require.Equal(t, "ready", out.Quality.Status)
+		}
+		return data
+	}
+	first := read()
+	require.Equal(t, 2.0, first["total"])
+	require.Equal(t, 2.0, first["summary"].(map[string]any)["requests"])
+	require.Len(t, first["rows"], 1)
+	require.Equal(t, "https://same.example:8443/A/v1", first["rows"].([]any)[0].(map[string]any)["key"])
+	require.Equal(t, 1.0, first["summary"].(map[string]any)["margin"], "zero procurement cost remains an explicit 100 percent margin")
+	q.Page = 2
+	second := read()
+	require.Equal(t, first["summary"], second["summary"])
+	require.Equal(t, "https://same.example:8443/B/v1", second["rows"].([]any)[0].(map[string]any)["key"])
+	q.Model = "nonexistent"
+	empty := read()
+	require.Equal(t, 0.0, empty["summary"].(map[string]any)["requests"])
+}

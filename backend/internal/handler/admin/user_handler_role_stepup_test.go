@@ -2,11 +2,14 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -65,6 +68,51 @@ func TestUpdateUserRegularRoleSkipsStepUp(t *testing.T) {
 
 	rec := doJSON(t, router, http.MethodPut, "/api/v1/admin/users/1", map[string]any{"role": "user", "email": "u@example.com"})
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestUserQuickEnableReasonLimit(t *testing.T) {
+	router, _ := setupRoleStepUpRouter(t)
+	for _, length := range []int{1, 500, 501} {
+		rec := doJSON(t, router, http.MethodPut, "/api/v1/admin/users/1", map[string]any{
+			"status": "active", "reason": strings.Repeat("审", length),
+		})
+		if length > 500 {
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		} else {
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+type quickEnableAdminService struct {
+	service.AdminService
+	input *service.UpdateUserInput
+}
+
+func (s *quickEnableAdminService) UpdateUser(_ context.Context, id int64, input *service.UpdateUserInput) (*service.User, error) {
+	s.input = input
+	return &service.User{ID: id, Role: service.RoleUser, Status: input.Status}, nil
+}
+
+func TestUserQuickEnableUsesExistingStatusUpdate(t *testing.T) {
+	svc := &quickEnableAdminService{}
+	h := NewUserHandler(svc, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 17})
+		c.Next()
+	})
+	router.PUT("/api/v1/admin/users/:id", h.Update)
+	rec := doJSON(t, router, http.MethodPut, "/api/v1/admin/users/306", map[string]any{
+		"status": "active", "reason": "reviewed disable source",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, &service.UpdateUserInput{Status: service.StatusActive, ActorAdminID: 17}, svc.input)
+	require.Contains(t, rec.Body.String(), `"status":"active"`)
+	svc.input = nil
+	rec = doJSON(t, router, http.MethodPut, "/api/v1/admin/users/306", map[string]any{"status": "unknown"})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Nil(t, svc.input, "invalid status must not reach the user management service")
 }
 
 func TestCreateAdminUserRequiresStepUp(t *testing.T) {

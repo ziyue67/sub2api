@@ -92,6 +92,9 @@ func (r *qualityRuleTemplateRepository) Get(ctx context.Context, id int64) (*ser
 }
 
 func (r *qualityRuleTemplateRepository) Create(ctx context.Context, t *service.QualityRuleTemplate) (*service.QualityRuleTemplate, error) {
+	if err := validateQualityGroupReferences(ctx, r.db, t.PelicanConfig); err != nil {
+		return nil, err
+	}
 	filter, err := marshalQualityRuleAccountFilter(t.AccountFilter)
 	if err != nil {
 		return nil, err
@@ -109,6 +112,9 @@ func (r *qualityRuleTemplateRepository) Create(ctx context.Context, t *service.Q
 
 // Update bumps updated_at, which makes any sync still holding the old version skip its accounts.
 func (r *qualityRuleTemplateRepository) Update(ctx context.Context, t *service.QualityRuleTemplate) (*service.QualityRuleTemplate, error) {
+	if err := validateQualityGroupReferences(ctx, r.db, t.PelicanConfig); err != nil {
+		return nil, err
+	}
 	filter, err := marshalQualityRuleAccountFilter(t.AccountFilter)
 	if err != nil {
 		return nil, err

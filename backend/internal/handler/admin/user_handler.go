@@ -76,6 +76,8 @@ type CreateUserRequest struct {
 // UpdateUserRequest represents admin update user request
 // 使用指针类型来区分"未提供"和"设置为0"
 type UpdateUserRequest struct {
+	// Reason is audit-only metadata; the existing middleware records the request body.
+	Reason               string                        `json:"reason" binding:"omitempty,max=500"`
 	Email                string                        `json:"email" binding:"omitempty,email"`
 	Password             string                        `json:"password" binding:"omitempty,min=6"`
 	Username             *string                       `json:"username"`

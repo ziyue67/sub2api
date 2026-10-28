@@ -56,3 +56,31 @@ func TestQualityPresetHTTPCreateAndReloadWithoutPlanWrites(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &reloaded))
 	require.Equal(t, []service.QualityRulePreset{saved}, reloaded)
 }
+
+func TestQualityPresetCompleteRejectsObserverAndInvalidName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, observer := range []bool{false, true} {
+		repo := &handlerPresetRepo{}
+		h := NewScheduledTestHandler(service.ProvideScheduledTestService(nil, nil, repo, nil))
+		r := gin.New()
+		if observer {
+			r.Use(func(c *gin.Context) {
+				c.Request = c.Request.WithContext(service.WithObserverScope(c.Request.Context(), []int64{}))
+				c.Next()
+			})
+		}
+		r.POST("/presets", h.CreateQualityPreset)
+		r.PUT("/presets/:id", h.UpdateQualityPreset)
+		r.GET("/presets", h.ListQualityPresets)
+		req := httptest.NewRequest("POST", "/presets", strings.NewReader(`{"name":"","pelican_config":{"quality":{"action":"observe_only"}}}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if observer {
+			require.Equal(t, 403, w.Code)
+		} else {
+			require.Equal(t, 400, w.Code)
+		}
+		require.Empty(t, repo.presets)
+	}
+}

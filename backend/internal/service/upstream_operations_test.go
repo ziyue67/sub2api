@@ -1,0 +1,118 @@
+package service
+
+import (
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/stretchr/testify/require"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestUpstreamOperationsIdentityBoundaries(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
+		{"HTTPS://RELAY.EXAMPLE:8443/Tenant/v1/", "https://relay.example:8443/Tenant/v1"},
+		{"https://relay.example/Other/v1", "https://relay.example/Other/v1"},
+	} {
+		got, status := ResolveOperationsUpstream(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": tc.raw}})
+		require.Equal(t, tc.want, got, "effective API base paths and ports must survive normalization")
+		require.Equal(t, "current_config", status)
+	}
+	got, _ := ResolveOperationsUpstream(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey})
+	require.Equal(t, "https://api.openai.com", got, "use actual forwarding default")
+	for _, raw := range []string{"https://user:secret@relay.example/v1?token=secret#secret", "not a URL"} {
+		got, status := ResolveOperationsUpstream(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": raw}})
+		require.Empty(t, got, "unsafe URL must not leak or masquerade as an established upstream")
+		require.NotEqual(t, "current_config", status)
+	}
+}
+func TestUpstreamOperationsRejectUnboundedAndInvalidQueries(t *testing.T) {
+	now := time.Now().UTC()
+	valid := UpstreamOperationsFilter{From: now.Add(-24 * time.Hour), Until: now, Dimension: "upstream", ModelScope: "public", Sort: "requests", Direction: "desc", Page: 1, PageSize: 20}
+	require.NoError(t, ValidateUpstreamOperationsFilter(valid))
+	for _, change := range []func(*UpstreamOperationsFilter){func(f *UpstreamOperationsFilter) { f.From = time.Time{} }, func(f *UpstreamOperationsFilter) { f.From = now.Add(-32 * 24 * time.Hour) }, func(f *UpstreamOperationsFilter) { f.PageSize = 101 }, func(f *UpstreamOperationsFilter) { f.Sort = "actual_cost;DROP TABLE usage_logs" }, func(f *UpstreamOperationsFilter) { f.AccountID = -1 }, func(f *UpstreamOperationsFilter) { f.Until = f.From }} {
+		f := valid
+		change(&f)
+		require.Error(t, ValidateUpstreamOperationsFilter(f), "invalid query must fail before SQL")
+	}
+}
+
+func TestUpstreamOperationsOAuthAmbiguity(t *testing.T) {
+	oauth := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"base_url": "https://ignored.example"}}
+	got, status := ResolveOperationsUpstream(oauth)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex", got)
+	require.Equal(t, "current_config", status)
+	oauth.Extra = map[string]any{OpenAISIWCEnabledKey: true}
+	got, status = ResolveOperationsUpstream(oauth)
+	require.Empty(t, got)
+	require.Equal(t, "oauth_dynamic_endpoint", status)
+	multi := &Account{Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_protocol": "adaptive", "api_base_urls": map[string]any{"chat_completions": "https://relay.example/v1", "anthropic": "https://relay.example/anthropic", "responses": "https://relay.example/v1"}}}
+	got, status = ResolveOperationsUpstream(multi)
+	require.Empty(t, got)
+	require.Equal(t, "multiple_effective_bases", status)
+}
+
+func TestUpstreamOperationsProviderDefaultsAndAntigravityRelayPath(t *testing.T) {
+	for _, tc := range []struct{ platform, kind, raw, want string }{
+		{PlatformAnthropic, AccountTypeAPIKey, "", "https://api.anthropic.com"},
+		{PlatformGemini, AccountTypeAPIKey, "", "https://generativelanguage.googleapis.com"},
+		{PlatformTypeSafe, AccountTypeAPIKey, "", "https://api.typesafe.ai"},
+		{PlatformAntigravity, AccountTypeUpstream, "https://relay.example/tenant/", "https://relay.example/tenant"},
+		{PlatformAntigravity, AccountTypeUpstream, "https://relay.example/tenant//", "https://relay.example/tenant/"},
+		{PlatformDeepseek, AccountTypeAPIKey, "", DefaultDeepseekBaseURL},
+	} {
+		got, status := ResolveOperationsUpstream(&Account{Platform: tc.platform, Type: tc.kind, Credentials: map[string]any{"base_url": tc.raw}})
+		require.Equal(t, tc.want, got)
+		require.Equal(t, "current_config", status)
+	}
+	for _, a := range []*Account{{Platform: PlatformGemini, Type: AccountTypeServiceAccount}, {Platform: PlatformGrok, Type: "legacy_unknown"}, {Platform: PlatformOpenAI, Type: AccountTypeBedrock}, {Platform: PlatformDeepseek, Type: AccountTypeOAuth}} {
+		got, status := ResolveOperationsUpstream(a)
+		require.Empty(t, got)
+		require.NotEqual(t, "current_config", status)
+	}
+}
+
+func TestUpstreamOperationsNeverEchoSecretURLFilter(t *testing.T) {
+	now := time.Now().UTC()
+	f := UpstreamOperationsFilter{From: now.Add(-time.Hour), Until: now, Dimension: "upstream", ModelScope: "public", Sort: "requests", Direction: "desc", Page: 1, PageSize: 20}
+	for _, url := range []string{"https://user:private@example.test/v1", "https://example.test/v1?token=private", "https://example.test/v1#private", "unknown:private"} {
+		f.Upstream = url
+		require.Error(t, ValidateUpstreamOperationsFilter(f))
+	}
+}
+
+func TestUpstreamOperationsEscapedTrailingSlashIsNotASeparator(t *testing.T) {
+	for _, raw := range []string{"https://relay.example/tenant%2F", "https://relay.example/a%2Fb", "https://relay.example/a%2fb/"} {
+		a := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": raw}}
+		got, status := ResolveOperationsUpstream(a)
+		require.Equal(t, strings.TrimSuffix(raw, "/"), got, "escaped path boundary must survive")
+		require.Equal(t, "current_config", status)
+	}
+}
+func TestUpstreamOperationsGrokTextDefaultDoesNotRewriteMediaOrVoice(t *testing.T) {
+	key := &Account{Platform: PlatformGrok, Type: AccountTypeAPIKey}
+	got, status := ResolveOperationsUpstream(key, "https://cli-chat-proxy.grok.com/v1")
+	require.Empty(t, got)
+	require.Equal(t, "multiple_effective_bases", status, "text site default and API-key media default differ")
+	require.Nil(t, key.Credentials, "attribution must not modify account configuration")
+	got, status = ResolveOperationsUpstream(key, "https://api.x.ai/v1")
+	require.Equal(t, "https://api.x.ai/v1", got)
+	require.Equal(t, "current_config", status)
+	key.Credentials = map[string]any{"base_url": "https://cli-chat-proxy.grok.com/v1"}
+	got, status = ResolveOperationsUpstream(key)
+	require.Empty(t, got)
+	require.Equal(t, "multiple_effective_bases", status, "voice leaves the CLI text/media base")
+}
+
+func TestUpstreamOperationsExcelOAuthCannotMasqueradeAsNativeCodex(t *testing.T) {
+	a := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Credentials: map[string]any{"client_id": openai.ExcelClientID}, Extra: map[string]any{"openai_excel_bps": false}}
+	got, status := ResolveOperationsUpstream(a)
+	require.Empty(t, got, "Excel-only OAuth cannot be attributed to native Codex")
+	require.Equal(t, "oauth_dynamic_endpoint", status)
+}
+
+func TestUpstreamOperationsPinnedResponsesPreservesExplicitRelayBase(t *testing.T) {
+	a := &Account{Platform: PlatformDeepseek, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_protocol": APIProtocolResponses, "base_url": "https://pinned-relay.example:8443/tenant/v1/"}}
+	got, status := ResolveOperationsUpstream(a)
+	require.Equal(t, "https://pinned-relay.example:8443/tenant/v1", got, "pinned Responses must retain explicit relay base just like buildUpstreamRequest")
+	require.Equal(t, "current_config", status)
+}

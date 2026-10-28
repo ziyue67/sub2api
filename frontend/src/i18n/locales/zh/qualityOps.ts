@@ -417,6 +417,8 @@ export default {
   "bulkEditTitle": "批量编辑 {count} 条规则",
   "bulkEditHint": "勾选需要统一修改的字段，未勾选的字段保留每条规则自己的值。初始值来自第一条已选规则；检测配置包含检测方式、检测通道、题目、参考答案、推理强度、检测次数和判题模型。",
   "bulkFields": {
+    "retention": "结果保留次数",
+    "trigger": "上游 5xx 触发",
     "model": "检测模型",
     "schedule": "检测频率",
     "test": "检测配置",
@@ -508,7 +510,7 @@ export default {
   "ownershipConfirm": "我已核对完整差异，确认仅放弃不存在或已属其他主体的旧归属；真实限制保持不变。",
   "relinquishOldOwnership": "确认放弃所列旧归属",
   "ownershipReconciled": "旧归属已对账，真实限制未改动。已重新预览，草稿尚未保存。",
-  "keepDraftHelp": "部分对账不是部分范围迁移；仍有受管项就保留原范围。无需丢弃草稿或重新触发检测。",
+  "keepDraftHelp": "普通对账不会缩减规则范围。若只移除一个模型，请使用上方定向解除并确认；提交后，其余草稿修改仍需保存。",
   "ownershipPreviewChanged": "归属或版本已改变，请重新预览确认；没有自动重试。",
   "ownershipLoadFailed": "无法读取或确认归属，请重新预览；未改动限制。",
   "draftSource": "本次草稿来源",
@@ -516,5 +518,18 @@ export default {
   "savedModels": "当前已保存模型",
   "nameIsLabel": "规则名称是显示标签，不表示绑定的检测模板",
   "ownershipOwners": {"this_rule": "本规则", "other_rule": "其他规则", "external": "外部/管理员", "absent": "无现存项", "unrecognized": "无法确定"},
-  "ownershipStates": {"managed": "匹配原记录", "missing": "限制项已缺失", "external_owner": "现存项已属其他主体", "changed_same_owner": "仍标本规则但内容已变，需人工核对", "unrecognized": "未知记录，保留", "group_missing": "目标组已不存在", "external_membership_present": "组成员已由外部重建"}
+  "ownershipStates": {"orphan_same_owner": "当前仍归本规则但原快照缺失，仅可单独预览定向处理", "managed": "匹配原记录", "missing": "限制项已缺失", "external_owner": "现存项已属其他主体", "changed_same_owner": "仍标本规则但内容已变，需人工核对", "unrecognized": "未知记录，保留", "group_missing": "目标组已不存在", "external_membership_present": "组成员已由外部重建"},
+  "modelRemovalTitle": "定向解除隔离并移除一个模型",
+  "modelRemovalHelp": "仅修改所选模型并同步缩减规则范围，其他模型和分组保留。缺少原快照时不会恢复或猜测旧值；仅能移除格式完整、独占且仍属本规则的隔离标记。",
+  "modelRemovalReason": "操作原因",
+  "modelRemovalReasons": {"orphan_marker_recovery": "处理原快照缺失的孤立标记", "retire_model": "停止管理该模型"},
+  "modelRemovalConfirm": "我确认解除 {model} 的所示标记并立即从本规则移除该模型。其他草稿修改仍需另行保存。",
+  "modelRemovalSubmit": "确认解除并移除模型",
+  "modelRemovalReadback": "已重新读取并确认移除 {model}；其他草稿修改仍需保存。",
+  "modelRemovalEffects": {"remove_target_only": "仅移除规则目标，不改限制", "remove_missing_target": "当前标记缺失：仅移除目标及其旧归属", "remove_orphan_marker_only": "原快照缺失：仅移除本规则独占隔离标记，不恢复任何旧值", "remove_matching_marker": "移除与原快照匹配的本规则隔离标记"},
+  "modelRemovalBlocked": {"not_owned": "当前项不归本规则所有，不能解除。", "additional_or_unrecognized_restriction": "包含额外限制或格式未知，保留并人工核对。", "unrecognized_snapshot": "原快照不可识别，保留并人工核对。", "changed_same_owner": "仍属本规则但内容已变化，保留并人工核对。", "previous_restriction": "原记录包含其他限制，本操作不覆盖旧值。", "ambiguous_mapping": "模型映射存在歧义，保留并人工核对。", "shared_mapping": "其他受测模型共用该隔离项，不能单独解除。", "last_model": "必须保留至少一个模型；移除整条规则请走独立恢复流程。", "scope_conflict": "当前配置与保存的隔离范围不一致，请先核对。", "account_unavailable": "账号当前不可用，不能解除。", "rule_running": "规则正在运行，请等待本轮完成后重新预览。"},
+  "modelRemovalReadbackFailed": "确认可能已经提交，请重新预览并核对规则模型范围，再继续编辑；不要重复解除。",
+  "editPreset": "编辑检测模板",
+  "invalidMaxResults": "保留结果数必须为 1–200。",
+  "retentionTooSmall": "保留结果数必须容纳本轮全部模型与样本。"
 }

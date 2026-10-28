@@ -276,3 +276,31 @@ describe('composed model isolation', () => {
     expect(() => buildQualityRulePatch(probePlan(), input, ['action'])).toThrow('qualityOps.isolationRequiresCandy')
   })
 })
+
+
+describe('complete template selected fields', () => {
+  it('imports retention and 5xx trigger only with their explicit bulk checkboxes', () => {
+    const source = { ...draft(), max_results: 173 }
+    source.pelican_config.quality.trigger_on_upstream_5xx = true
+    const untouched = buildQualityRulePatch(plan(), source, ['enabled'])
+    expect(untouched).toEqual({ enabled: false })
+    const retention = buildQualityRulePatch(plan(), source, ['retention'])
+    expect(retention).toEqual({ max_results: 173 })
+    const triggered = buildQualityRulePatch(plan(), source, ['trigger'])
+    expect(triggered.pelican_config!.quality!.trigger_on_upstream_5xx).toBe(true)
+    expect(triggered.pelican_config!.quality!.action).toBe(plan().pelican_config!.quality!.action)
+    expect(triggered).not.toHaveProperty('max_results')
+  })
+  it('rejects retention too small for the targets existing samples when only retention is selected', () => {
+    const target = plan(); target.pelican_config!.model_ids = ['first', 'second']; target.pelican_config!.parallel_count = 3
+    expect(() => buildQualityRulePatch(target, { ...draft(), max_results: 5 }, ['retention'])).toThrow('qualityOps.retentionTooSmall')
+    expect(buildQualityRulePatch(target, { ...draft(), max_results: 6 }, ['retention'])).toEqual({ max_results: 6 })
+  })
+  it('never inherits a punitive action for old presets and removes hidden restrictions', () => {
+    const source = draft().pelican_config
+    delete (source.quality as any).action
+    const copied = copyQualityRuleConfig(source)
+    expect(copied.quality.action).toBe('observe_only'); expect(copied.quality.remove_group_ids).toEqual([]); expect(copied.quality.auto_restore).toBe(false)
+    expect(copied.quality.remove_models).toBeUndefined(); expect(copied.quality.bps).toBeUndefined()
+  })
+})

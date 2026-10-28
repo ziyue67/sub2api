@@ -1,0 +1,13 @@
+# 渠道运维纠正（独立 PR）
+
+渠道身份是 API 账号有效上游 base URL。共享只读归属层在本 PR；不包含利润页面、利润 API 或成本/毛利润指标。原混合 #584 的 7b3eb60fee47438197dd27cc4a168914b3b24bfc 与证据保留。
+
+按 URL → 账号 → 模型自动发现（含窗口内无请求账号），无需模型定价渠道绑定。保留用量、持久化转发 TTFT/总耗时、冻结质量完整性、留存错误、当前容量。模型只作筛选下钻。31天内半开窗口，同一只读 repeatable-read 快照，SQL聚合分页；错误不当成功0。
+
+复用有效默认 getter，保留 host/port/path/编码斜杠边界；拒绝userinfo/query/fragment。OAuth动态端点、多端点、影子/无法解析/缺失账号保留未知。历史无URL快照时明确当前配置估算。软删有窗口记录保留。不会返回credentials。
+
+只读，不改账本/计费/设置。旧#573分类API保留兼容但不用于新页面。安全修复独立提交 a0b4c39f2，仅 backend/go.mod、backend/go.sum；原动态结果只作保留证据，新head须独立CI。
+
+- [ ] 当前head服务/handler/repository/PostgreSQL和URL/质量/时间/分页边界。
+- [ ] 当前head前端定向、完整构建及桌面/移动浏览器。
+- [ ] 当前head常规push/PR CI。

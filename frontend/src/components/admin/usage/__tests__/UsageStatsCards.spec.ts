@@ -44,6 +44,18 @@ const stats = {
 }
 
 describe('UsageStatsCards', () => {
+  it('keeps total consumption, standard cost and account cost distinct', () => {
+    const wrapper = mount(UsageStatsCards, {
+      props: { stats: { ...stats, total_actual_cost: 3, total_cost: 12, total_account_cost: 5 } },
+      global: { stubs: { Icon: true } },
+    })
+    const costCard = wrapper.findAll('.card')[2]
+    expect(costCard.get('.text-xl').text()).toBe('$3.0000')
+    expect(costCard.text()).toContain('Standard $12.0000')
+    expect(costCard.text()).toContain('Cost $5.0000')
+    wrapper.unmount()
+  })
+
   it('shows cache token breakdown values', () => {
     const wrapper = mount(UsageStatsCards, {
       props: {

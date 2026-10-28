@@ -40,6 +40,33 @@ type auditCaptureRepository struct {
 	logs []*service.AuditLog
 }
 
+func TestUserQuickEnableUsesUserManagementAudit(t *testing.T) {
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyUser), AuthSubject{UserID: 17})
+		c.Set(string(ContextKeyUserRole), "admin")
+		c.Next()
+	})
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	router.PUT("/api/v1/admin/users/:id", func(c *gin.Context) { c.Status(http.StatusOK) })
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/users/306", strings.NewReader(`{"status":"active","reason":"reviewed disable source"}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	auditService.Stop()
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Len(t, repository.logs, 1)
+	entry := repository.logs[0]
+	require.Equal(t, "admin.users.update", entry.Action)
+	require.Equal(t, int64(17), *entry.ActorUserID)
+	require.Equal(t, "admin", entry.ActorRole)
+	require.Equal(t, map[string]string{"id": "306"}, entry.Extra["params"])
+	require.JSONEq(t, `{"status":"active","reason":"reviewed disable source"}`, entry.RequestBody)
+}
+
 func (r *auditCaptureRepository) BatchInsert(_ context.Context, logs []*service.AuditLog) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

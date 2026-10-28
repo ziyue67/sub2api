@@ -227,3 +227,8 @@ issues/
 
 # Local macOS re-auth Worker runtime (ephemeral, never commit)
 tools/local-worker/
+
+# 前端源码目录只保留 .ts/.vue：误跑 tsc/vue-tsc 会在同名位置生成 .js，
+# 而 Vite 解析优先 .js，会静默覆盖真正的 .ts 源码。
+frontend/src/**/*.js
+frontend/src/**/*.js.map

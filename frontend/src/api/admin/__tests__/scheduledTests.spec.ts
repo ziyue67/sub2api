@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from '../../client'
 import { listPelicanHistory } from '../scheduledTests'
-import { createQualityPreset, listQualityPresets } from '../accountQuality'
+import { createQualityPreset, listQualityPresets, updateQualityPreset } from '../accountQuality'
 
-vi.mock('../../client', () => ({ apiClient: { get: vi.fn(), post: vi.fn() } }))
+vi.mock('../../client', () => ({ apiClient: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }))
 
 beforeEach(() => {
   vi.mocked(apiClient.get).mockReset().mockResolvedValue({ data: { items: [], next_cursor: 0 } })
-  vi.mocked(apiClient.post).mockReset()
+  vi.mocked(apiClient.post).mockReset(); vi.mocked(apiClient.put).mockReset()
 })
 
 describe('reusable quality templates API', () => {
@@ -24,6 +24,9 @@ describe('reusable quality templates API', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/admin/account-quality-presets', body)
     expect(apiClient.get).toHaveBeenCalledTimes(1)
     expect(apiClient.get).toHaveBeenCalledWith('/admin/account-quality-presets')
+    vi.mocked(apiClient.put).mockResolvedValueOnce({ data: persisted })
+    expect(await updateQualityPreset(17, body)).toEqual(persisted)
+    expect(apiClient.put).toHaveBeenCalledWith('/admin/account-quality-presets/17', body)
   })
 })
 

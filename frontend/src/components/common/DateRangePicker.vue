@@ -42,8 +42,8 @@
             <label class="date-picker-label">{{ t('dates.startDate') }}</label>
             <input
               type="date"
-              v-model="localStartDate"
-              :max="localEndDate || tomorrow()"
+              v-model="startDateInput"
+              :max="endDateInput || tomorrow()"
               class="date-picker-input"
               @change="onDateChange"
             />
@@ -55,8 +55,8 @@
             <label class="date-picker-label">{{ t('dates.endDate') }}</label>
             <input
               type="date"
-              v-model="localEndDate"
-              :min="localStartDate"
+              v-model="endDateInput"
+              :min="startDateInput"
               :max="tomorrow()"
               class="date-picker-input"
               @change="onDateChange"
@@ -96,6 +96,8 @@ interface DatePreset {
 interface Props {
   startDate: string
   endDate: string
+  // Opt in where the consumer accepts RFC3339 instants as well as calendar dates.
+  rolling24Hours?: boolean
 }
 
 interface Emits {
@@ -133,6 +135,16 @@ const formatDateToString = (date: Date): string => {
   return `${year}-${month}-${day}`
 }
 
+const calendarDate = (value: string) => value.includes('T') ? formatDateToString(new Date(value)) : value
+const startDateInput = computed({
+  get: () => calendarDate(localStartDate.value),
+  set: (value: string) => { localStartDate.value = value }
+})
+const endDateInput = computed({
+  get: () => calendarDate(localEndDate.value),
+  set: (value: string) => { localEndDate.value = value }
+})
+
 const presets: DatePreset[] = [
   {
     labelKey: 'dates.today',
@@ -155,8 +167,16 @@ const presets: DatePreset[] = [
   {
     labelKey: 'dates.last24Hours',
     value: 'last24Hours',
-    getRange: getLast24HourRange,
-    // 滚动范围带时间部分;只有本预设会生成这样的边界
+    getRange: () => {
+      if (props.rolling24Hours) {
+        // 滚动模式要求精确到毫秒的 [now-24h, now)，便于前后端对齐同一窗口。
+        const end = new Date()
+        const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
+        return { start: start.toISOString(), end: end.toISOString() }
+      }
+      return getLast24HourRange()
+    },
+    // 只有带时间部分的边界才算滚动窗口；两个自然日不算。
     matches: (start, end) => hasTimeComponent(start) && hasTimeComponent(end)
   },
   {
@@ -252,8 +272,16 @@ const matchesCurrentRange = (preset: DatePreset): boolean => {
   return range.start === localStartDate.value && range.end === localEndDate.value
 }
 
-const onDateChange = () => {
+// 按当前边界值反查命中的预设（matches 优先，否则精确比对 getRange）。
+const detectPreset = () => {
   activePreset.value = presets.find(matchesCurrentRange)?.value ?? null
+}
+
+const onDateChange = () => {
+  // 手工编辑任一边界后，整段范围回到「自然日」语义，再据此重算命中的预设。
+  localStartDate.value = calendarDate(localStartDate.value)
+  localEndDate.value = calendarDate(localEndDate.value)
+  detectPreset()
 }
 
 const toggle = () => {
@@ -261,6 +289,9 @@ const toggle = () => {
 }
 
 const apply = () => {
+  if (props.rolling24Hours && activePreset.value === 'last24Hours') {
+    selectPreset(presets.find(preset => preset.value === 'last24Hours')!)
+  }
   emit('update:startDate', localStartDate.value)
   emit('update:endDate', localEndDate.value)
   emit('change', {
@@ -288,31 +319,22 @@ watch(isOpen, (open) => {
   if (open) return
   localStartDate.value = props.startDate
   localEndDate.value = props.endDate
-  onDateChange()
+  detectAppliedRange()
 }, { flush: 'post' })
 
 // Sync local state with props
-watch(
-  () => props.startDate,
-  (val) => {
-    localStartDate.value = val
-    onDateChange()
-  }
-)
+const detectAppliedRange = () => {
+  localStartDate.value = props.startDate
+  localEndDate.value = props.endDate
+  detectPreset()
+}
+watch(() => [props.startDate, props.endDate], detectAppliedRange)
 
-watch(
-  () => props.endDate,
-  (val) => {
-    localEndDate.value = val
-    onDateChange()
-  }
-)
+detectPreset()
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
   document.addEventListener('keydown', handleEscape)
-  // Initialize active preset detection
-  onDateChange()
 })
 
 onUnmounted(() => {

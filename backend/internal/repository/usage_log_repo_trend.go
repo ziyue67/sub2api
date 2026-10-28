@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
 
@@ -417,7 +418,7 @@ func (r *usageLogRepository) GetUsageTrendWithUsageFilters(ctx context.Context, 
 }
 
 func (r *usageLogRepository) getUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string, upstreamModelMismatch *bool, nativeCompactionV2 *bool) (results []TrendDataPoint, err error) {
-	if shouldUsePreaggregatedTrend(granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, billingMode, upstreamModelMismatch, nativeCompactionV2) {
+	if trendRangeMatchesAggregateBuckets(startTime, endTime, granularity) && shouldUsePreaggregatedTrend(granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, billingMode, upstreamModelMismatch, nativeCompactionV2) {
 		aggregated, aggregatedErr := r.getUsageTrendFromAggregates(ctx, startTime, endTime, granularity)
 		if aggregatedErr == nil && len(aggregated) > 0 {
 			return aggregated, nil
@@ -491,6 +492,25 @@ func (r *usageLogRepository) getUsageTrendWithFilters(ctx context.Context, start
 	return results, nil
 }
 
+// Aggregates are generated in the configured server timezone. The current
+// read-side bucket mapping is only proven equivalent for UTC-aligned UTC data;
+// all other zones and boundaries must use raw logs.
+func trendRangeMatchesAggregateBuckets(start, end time.Time, granularity string) bool {
+	if timezone.Name() != "UTC" {
+		return false
+	}
+	var bucket time.Duration
+	switch granularity {
+	case "hour":
+		bucket = time.Hour
+	case "day":
+		bucket = 24 * time.Hour
+	default:
+		return false
+	}
+	return start.Equal(start.UTC().Truncate(bucket)) && end.Equal(end.UTC().Truncate(bucket))
+}
+
 func shouldUsePreaggregatedTrend(granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8, billingMode string, upstreamModelMismatch *bool, nativeCompactionV2 *bool) bool {
 	if granularity != "day" && granularity != "hour" {
 		return false
@@ -511,7 +531,9 @@ func shouldUsePreaggregatedTrend(granularity string, userID, apiKeyID, accountID
 func (r *usageLogRepository) getUsageTrendFromAggregates(ctx context.Context, startTime, endTime time.Time, granularity string) (results []TrendDataPoint, err error) {
 	dateFormat := safeDateFormat(granularity)
 	query := ""
-	args := []any{startTime, endTime}
+	// Daily parameters are cast directly to date: encode UTC dates even when
+	// the caller expressed these UTC-aligned instants using a different offset.
+	args := []any{startTime.UTC(), endTime.UTC()}
 
 	switch granularity {
 	case "hour":

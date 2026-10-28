@@ -1,0 +1,350 @@
+
+ RUN  v2.1.9 /data/development/projects/sub2api-usage-rolling-24h/frontend
+
+Browserslist: browsers data (caniuse-lite) is 10 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+ ❯ src/views/admin/__tests__/UsageView.spec.ts (20 tests | 5 failed) 790ms
+   × admin UsageView distribution metric toggles > keeps model and group metric toggles independent without refetching chart data 36ms
+     → expected "spy" to be called with arguments: [ ObjectContaining{…} ]
+
+Received:
+
+  1st spy call:
+
+  Array [
+-   ObjectContaining {
+-     "end_date": "2026-10-27T13:25:49.985Z",
++   Object {
++     "account_id": undefined,
++     "api_key_id": undefined,
++     "billing_type": null,
++     "end_date": "2026-10-27",
+      "granularity": "hour",
+-     "start_date": "2026-10-26T13:25:49.985Z",
++     "group_id": undefined,
++     "include_group_stats": true,
++     "include_model_stats": false,
++     "include_stats": false,
++     "include_trend": true,
++     "include_users_trend": false,
++     "model": undefined,
++     "native_compaction_v2": null,
++     "request_type": undefined,
++     "start_date": "2026-10-26",
++     "stream": undefined,
++     "upstream_model_mismatch": undefined,
++     "user_id": undefined,
+    },
+  ]
+
+
+Number of calls: 1
+
+   × admin UsageView rolling 24 hour requests > uses the same precise cross-midnight window for list, cards and charts on initial load 30ms
+     → expected { page: 1, page_size: 20, …(12) } to match object { …(2) }
+(12 matching properties omitted from actual)
+   × admin UsageView rolling 24 hour requests > refreshes the rolling window once and keeps pagination/export on that applied snapshot 32ms
+     → expected { page: 1, page_size: 20, …(12) } to match object { …(2) }
+(12 matching properties omitted from actual)
+   × admin UsageView rolling 24 hour requests > applies the actual picker selection after midnight and resets back to rolling time 63ms
+     → expected { page: 1, page_size: 20, …(12) } to match object { …(2) }
+(12 matching properties omitted from actual)
+   × admin UsageView rolling 24 hour requests > preserves manual/routed calendar dates on refresh 35ms
+     → expected 'dates.last24Hours' not to contain 'dates.last24Hours'
+ ❯ src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts (14 tests | 7 failed) 238ms
+   × DateRangePicker rolling 24 hours > emits precise instants for [now - 24h, now) at 2026-10-01T00:00:00.123+09:00 74ms
+     → expected [ { startDate: '2026-09-30', …(2) } ] to deeply equal [ { …(3) } ]
+   × DateRangePicker rolling 24 hours > emits precise instants for [now - 24h, now) at 2026-10-01T23:59:59.999+09:00 16ms
+     → expected [ { startDate: '2026-09-30', …(2) } ] to deeply equal [ { …(3) } ]
+   × DateRangePicker rolling 24 hours > emits precise instants for [now - 24h, now) at 2026-03-08T03:30:00.123-04:00 37ms
+     → expected [ { startDate: '2026-03-07', …(2) } ] to deeply equal [ { …(3) } ]
+   × DateRangePicker rolling 24 hours > emits precise instants for [now - 24h, now) at 2026-11-01T01:30:00.123-05:00 12ms
+     → expected [ { startDate: '2026-10-31', …(2) } ] to deeply equal [ { …(3) } ]
+   × DateRangePicker rolling 24 hours > anchors the window to Apply even when midnight passes after selecting the preset 12ms
+     → expected { startDate: '2026-09-29', …(2) } to deeply equal { …(3) }
+   × DateRangePicker rolling 24 hours > does not recognize two manually supplied dates as a rolling window 5ms
+     → expected 'dates.last24Hours' not to contain 'dates.last24Hours'
+   × DateRangePicker rolling 24 hours > keeps timestamp props usable in date inputs and manual edits switch to calendar dates 11ms
+     → expected [ '', '' ] to deeply equal [ '2026-09-30', '2026-10-01' ]
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts > DateRangePicker rolling 24 hours > emits precise instants for [now - 24h, now) at 2026-10-01T00:00:00.123+09:00
+ FAIL  src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts > DateRangePicker rolling 24 hours > emits precise instants for [now - 24h, now) at 2026-10-01T23:59:59.999+09:00
+AssertionError: expected [ { startDate: '2026-09-30', …(2) } ] to deeply equal [ { …(3) } ]
+
+- Expected
++ Received
+
+  Array [
+    Object {
+-     "endDate": "2026-09-30T15:00:00.123Z",
++     "endDate": "2026-10-01",
+      "preset": "last24Hours",
+-     "startDate": "2026-09-29T15:00:00.123Z",
++     "startDate": "2026-09-30",
+    },
+  ]
+
+ ❯ src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts:35:44
+     33|     const startDate = new Date(now.getTime() - 86_400_000).toISOString…
+     34|     const endDate = now.toISOString()
+     35|     expect(wrapper.emitted('change')?.[0]).toEqual([{ startDate, endDa…
+       |                                            ^
+     36|     expect(wrapper.emitted('update:startDate')?.[0]).toEqual([startDat…
+     37|     expect(wrapper.emitted('update:endDate')?.[0]).toEqual([endDate])
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯
+
+ FAIL  src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts > DateRangePicker rolling 24 hours > emits precise instants for [now - 24h, now) at 2026-03-08T03:30:00.123-04:00
+AssertionError: expected [ { startDate: '2026-03-07', …(2) } ] to deeply equal [ { …(3) } ]
+
+- Expected
++ Received
+
+  Array [
+    Object {
+-     "endDate": "2026-03-08T07:30:00.123Z",
++     "endDate": "2026-03-08",
+      "preset": "last24Hours",
+-     "startDate": "2026-03-07T07:30:00.123Z",
++     "startDate": "2026-03-07",
+    },
+  ]
+
+ ❯ src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts:35:44
+     33|     const startDate = new Date(now.getTime() - 86_400_000).toISOString…
+     34|     const endDate = now.toISOString()
+     35|     expect(wrapper.emitted('change')?.[0]).toEqual([{ startDate, endDa…
+       |                                            ^
+     36|     expect(wrapper.emitted('update:startDate')?.[0]).toEqual([startDat…
+     37|     expect(wrapper.emitted('update:endDate')?.[0]).toEqual([endDate])
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/12]⎯
+
+ FAIL  src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts > DateRangePicker rolling 24 hours > emits precise instants for [now - 24h, now) at 2026-11-01T01:30:00.123-05:00
+AssertionError: expected [ { startDate: '2026-10-31', …(2) } ] to deeply equal [ { …(3) } ]
+
+- Expected
++ Received
+
+  Array [
+    Object {
+-     "endDate": "2026-11-01T06:30:00.123Z",
++     "endDate": "2026-11-01",
+      "preset": "last24Hours",
+-     "startDate": "2026-10-31T06:30:00.123Z",
++     "startDate": "2026-10-31",
+    },
+  ]
+
+ ❯ src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts:35:44
+     33|     const startDate = new Date(now.getTime() - 86_400_000).toISOString…
+     34|     const endDate = now.toISOString()
+     35|     expect(wrapper.emitted('change')?.[0]).toEqual([{ startDate, endDa…
+       |                                            ^
+     36|     expect(wrapper.emitted('update:startDate')?.[0]).toEqual([startDat…
+     37|     expect(wrapper.emitted('update:endDate')?.[0]).toEqual([endDate])
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/12]⎯
+
+ FAIL  src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts > DateRangePicker rolling 24 hours > anchors the window to Apply even when midnight passes after selecting the preset
+AssertionError: expected { startDate: '2026-09-29', …(2) } to deeply equal { …(3) }
+
+- Expected
++ Received
+
+  Object {
+-   "endDate": "2026-09-30T15:00:00.123Z",
++   "endDate": "2026-09-30",
+    "preset": "last24Hours",
+-   "startDate": "2026-09-29T15:00:00.123Z",
++   "startDate": "2026-09-29",
+  }
+
+ ❯ src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts:49:49
+     47|     vi.setSystemTime(appliedAt)
+     48|     await wrapper.get('.date-picker-apply').trigger('click')
+     49|     expect(wrapper.emitted('change')?.[0]?.[0]).toEqual({
+       |                                                 ^
+     50|       startDate: new Date(appliedAt.getTime() - 86_400_000).toISOStrin…
+     51|       endDate: appliedAt.toISOString(),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/12]⎯
+
+ FAIL  src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts > DateRangePicker rolling 24 hours > does not recognize two manually supplied dates as a rolling window
+AssertionError: expected 'dates.last24Hours' not to contain 'dates.last24Hours'
+ ❯ src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts:58:66
+     56|   it('does not recognize two manually supplied dates as a rolling wind…
+     57|     vi.setSystemTime(new Date(2026, 9, 1, 12))
+     58|     expect(mountPicker().get('.date-picker-trigger').text()).not.toCon…
+       |                                                                  ^
+     59|   })
+     60|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/12]⎯
+
+ FAIL  src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts > DateRangePicker rolling 24 hours > keeps timestamp props usable in date inputs and manual edits switch to calendar dates
+AssertionError: expected [ '', '' ] to deeply equal [ '2026-09-30', '2026-10-01' ]
+
+- Expected
++ Received
+
+  Array [
+-   "2026-09-30",
+-   "2026-10-01",
++   "",
++   "",
+  ]
+
+ ❯ src/components/common/__tests__/DateRangePicker.rolling24h.spec.ts:68:46
+     66|     await wrapper.get('.date-picker-trigger').trigger('click')
+     67|     const inputs = wrapper.findAll<HTMLInputElement>('input[type="date…
+     68|     expect(inputs.map(i => i.element.value)).toEqual(['2026-09-30', '2…
+       |                                              ^
+     69|     await inputs[0].setValue('2026-09-29')
+     70|     await wrapper.get('.date-picker-apply').trigger('click')
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/12]⎯
+
+ FAIL  src/views/admin/__tests__/UsageView.spec.ts > admin UsageView distribution metric toggles > keeps model and group metric toggles independent without refetching chart data
+AssertionError: expected "spy" to be called with arguments: [ ObjectContaining{…} ]
+
+Received:
+
+  1st spy call:
+
+  Array [
+-   ObjectContaining {
+-     "end_date": "2026-10-27T13:25:49.985Z",
++   Object {
++     "account_id": undefined,
++     "api_key_id": undefined,
++     "billing_type": null,
++     "end_date": "2026-10-27",
+      "granularity": "hour",
+-     "start_date": "2026-10-26T13:25:49.985Z",
++     "group_id": undefined,
++     "include_group_stats": true,
++     "include_model_stats": false,
++     "include_stats": false,
++     "include_trend": true,
++     "include_users_trend": false,
++     "model": undefined,
++     "native_compaction_v2": null,
++     "request_type": undefined,
++     "start_date": "2026-10-26",
++     "stream": undefined,
++     "upstream_model_mismatch": undefined,
++     "user_id": undefined,
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ src/views/admin/__tests__/UsageView.spec.ts:440:27
+    438|     const now = new Date()
+    439|     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    440|     expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining…
+       |                           ^
+    441|       start_date: yesterday.toISOString(),
+    442|       end_date: now.toISOString(),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/12]⎯
+
+ FAIL  src/views/admin/__tests__/UsageView.spec.ts > admin UsageView rolling 24 hour requests > uses the same precise cross-midnight window for list, cards and charts on initial load
+AssertionError: expected { page: 1, page_size: 20, …(12) } to match object { …(2) }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  Object {
+-   "end_date": "2026-09-30T15:01:02.123Z",
+-   "start_date": "2026-09-29T15:01:02.123Z",
++   "end_date": "2026-10-01",
++   "start_date": "2026-09-30",
+  }
+
+ ❯ expectRequests src/views/admin/__tests__/UsageView.spec.ts:911:42
+    909|     const range = { start_date: new Date(end.getTime() - 86_400_000).t…
+    910|     for (const request of [list, getStats, getModelStats, getSnapshotV…
+    911|       expect(request.mock.lastCall?.[0]).toMatchObject(range)
+       |                                          ^
+    912|       const params = request.mock.lastCall![0]
+    913|       expect(Date.parse(params.end_date) - Date.parse(params.start_dat…
+ ❯ src/views/admin/__tests__/UsageView.spec.ts:922:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/12]⎯
+
+ FAIL  src/views/admin/__tests__/UsageView.spec.ts > admin UsageView rolling 24 hour requests > refreshes the rolling window once and keeps pagination/export on that applied snapshot
+AssertionError: expected { page: 1, page_size: 20, …(12) } to match object { …(2) }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  Object {
+-   "end_date": "2026-10-01T15:00:00.456Z",
+-   "start_date": "2026-09-30T15:00:00.456Z",
++   "end_date": "2026-10-01",
++   "start_date": "2026-09-30",
+  }
+
+ ❯ expectRequests src/views/admin/__tests__/UsageView.spec.ts:911:42
+    909|     const range = { start_date: new Date(end.getTime() - 86_400_000).t…
+    910|     for (const request of [list, getStats, getModelStats, getSnapshotV…
+    911|       expect(request.mock.lastCall?.[0]).toMatchObject(range)
+       |                                          ^
+    912|       const params = request.mock.lastCall![0]
+    913|       expect(Date.parse(params.end_date) - Date.parse(params.start_dat…
+ ❯ src/views/admin/__tests__/UsageView.spec.ts:936:19
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/12]⎯
+
+ FAIL  src/views/admin/__tests__/UsageView.spec.ts > admin UsageView rolling 24 hour requests > applies the actual picker selection after midnight and resets back to rolling time
+AssertionError: expected { page: 1, page_size: 20, …(12) } to match object { …(2) }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  Object {
+-   "end_date": "2026-09-30T15:01:02.123Z",
+-   "start_date": "2026-09-29T15:01:02.123Z",
++   "end_date": "2026-10-01",
++   "start_date": "2026-09-30",
+  }
+
+ ❯ expectRequests src/views/admin/__tests__/UsageView.spec.ts:911:42
+    909|     const range = { start_date: new Date(end.getTime() - 86_400_000).t…
+    910|     for (const request of [list, getStats, getModelStats, getSnapshotV…
+    911|       expect(request.mock.lastCall?.[0]).toMatchObject(range)
+       |                                          ^
+    912|       const params = request.mock.lastCall![0]
+    913|       expect(Date.parse(params.end_date) - Date.parse(params.start_dat…
+ ❯ src/views/admin/__tests__/UsageView.spec.ts:959:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/12]⎯
+
+ FAIL  src/views/admin/__tests__/UsageView.spec.ts > admin UsageView rolling 24 hour requests > preserves manual/routed calendar dates on refresh
+AssertionError: expected 'dates.last24Hours' not to contain 'dates.last24Hours'
+ ❯ src/views/admin/__tests__/UsageView.spec.ts:977:91
+    975|       expect(request.mock.lastCall?.[0]).toMatchObject({ start_date: '…
+    976|     }
+    977|     expect(wrapper.findComponent(DateRangePicker).get('.date-picker-tr…
+       |                                                                                           ^
+    978|   })
+    979| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/12]⎯
+
+ Test Files  2 failed (2)
+      Tests  12 failed | 22 passed (34)
+   Start at  22:25:45
+   Duration  6.11s (transform 2.50s, setup 183ms, collect 3.02s, tests 1.03s, environment 987ms, prepare 170ms)
+
+
+exit_code=1

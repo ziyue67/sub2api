@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { post } = vi.hoisted(() => ({
+const { post, put } = vi.hoisted(() => ({
   post: vi.fn(),
+  put: vi.fn(),
 }))
 
 vi.mock('@/api/client', () => ({
   apiClient: {
     post,
+    put,
   },
 }))
 
 import {
   batchUpdateLimits,
   bindUserAuthIdentity,
+  update,
   type AdminBindAuthIdentityRequest,
   type AdminBoundAuthIdentity,
   type BatchUpdateUserLimitsRequest,
@@ -84,6 +87,7 @@ const batchResponseContractExact: Assert<
 describe('admin users api auth identity binding', () => {
   beforeEach(() => {
     post.mockReset()
+    put.mockReset()
   })
 
   it('posts the backend-compatible auth identity bind payload and returns the backend response shape', async () => {
@@ -146,5 +150,14 @@ describe('admin users api auth identity binding', () => {
     expect(result).toEqual({ affected: 2 })
     expect(batchRequestContractExact).toBe(true)
     expect(batchResponseContractExact).toBe(true)
+  })
+
+  it('uses the existing user management update endpoint with only status and audit reason', async () => {
+    const user = { id: 306, status: 'active' }
+    put.mockResolvedValue({ data: user })
+    expect(await update(306, { status: 'active', reason: 'reviewed disable source' })).toEqual(user)
+    expect(put).toHaveBeenCalledTimes(1)
+    expect(put).toHaveBeenCalledWith('/admin/users/306', { status: 'active', reason: 'reviewed disable source' })
+    expect(post).not.toHaveBeenCalled()
   })
 })

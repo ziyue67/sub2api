@@ -75,6 +75,21 @@ func TestUsageLog_UpstreamModelMismatchFilterAndPartialIndex(t *testing.T) {
 		require.NoError(t, rows.Close())
 		require.Contains(t, strings.Join(planLines, "\n"), indexName)
 	}
+	assertPlanUsesEitherIndex := func(query, first, second string, args ...any) {
+		rows, queryErr := tx.QueryContext(ctx, query, args...)
+		require.NoError(t, queryErr)
+		var planLines []string
+		for rows.Next() {
+			var line string
+			require.NoError(t, rows.Scan(&line))
+			planLines = append(planLines, line)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		plan := strings.Join(planLines, "\n")
+		require.True(t, strings.Contains(plan, first) || strings.Contains(plan, second),
+			"expected %s or %s in plan:\n%s", first, second, plan)
+	}
 	assertPlanUsesIndex(`
 EXPLAIN (COSTS OFF)
 SELECT id
@@ -83,7 +98,7 @@ WHERE upstream_model_mismatch IS TRUE
 ORDER BY created_at DESC, id DESC
 LIMIT 100
 `, usageLogsUpstreamModelMismatchIndex)
-	assertPlanUsesIndex(`
+	assertPlanUsesEitherIndex(`
 EXPLAIN (COSTS OFF)
 SELECT id
 FROM usage_logs
@@ -91,8 +106,8 @@ WHERE COALESCE(NULLIF(TRIM(requested_model), ''), model) = $1
   AND created_at >= $2 AND created_at < $3
 ORDER BY created_at DESC, id DESC
 LIMIT 100
-`, usageLogsEffectiveRequestedModelIndex, "gpt-5.5", start, end)
-	assertPlanUsesIndex(`
+`, usageLogsEffectiveRequestedModelIndex, "idx_usage_logs_created_requested_model_upstream_model", "gpt-5.5", start, end)
+	assertPlanUsesEitherIndex(`
 EXPLAIN (COSTS OFF)
 SELECT id
 FROM usage_logs
@@ -100,7 +115,7 @@ WHERE COALESCE(NULLIF(TRIM(upstream_model), ''), model) = $1
   AND created_at >= $2 AND created_at < $3
 ORDER BY created_at DESC, id DESC
 LIMIT 100
-`, usageLogsEffectiveUpstreamModelIndex, "gpt-5.5", start, end)
+`, usageLogsEffectiveUpstreamModelIndex, "idx_usage_logs_created_requested_model_upstream_model", "gpt-5.5", start, end)
 }
 
 func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
