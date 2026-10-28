@@ -15,6 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// parseAndTruncateToMinute 解析 RFC3339 时间并截断到分钟，用于校验 dashboard 侧口径。
+func parseAndTruncateToMinute(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	require.NoError(t, err)
+	return parsed.Truncate(time.Minute)
+}
+
 func TestAdminUsageTimeRange(t *testing.T) {
 	for _, tc := range []struct {
 		name, start, end, tz, wantStart, wantEnd string
@@ -51,9 +59,13 @@ func TestAdminUsageTimeRange(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodGet, "/admin/dashboard/snapshot-v2?"+query, nil)
 			timeRange, err := parseTimeRange(c)
 			require.NoError(t, err)
-			require.Equal(t, tc.wantStart, timeRange.Start.UTC().Format(time.RFC3339Nano))
-			require.Equal(t, tc.wantEnd, timeRange.End.UTC().Format(time.RFC3339Nano))
-			require.Equal(t, tc.wantDuration, timeRange.End.Sub(timeRange.Start))
+			// dashboard 侧沿用本 fork 的「带时间边界统一截断到分钟」口径（缓存 key 稳定），
+			// usage 列表/统计仍保留精确边界（见上面的 repo 断言）。
+			wantStartParsed := parseAndTruncateToMinute(t, tc.wantStart)
+			wantEndParsed := parseAndTruncateToMinute(t, tc.wantEnd)
+			require.Equal(t, wantStartParsed.UTC().Format(time.RFC3339Nano), timeRange.Start.UTC().Format(time.RFC3339Nano))
+			require.Equal(t, wantEndParsed.UTC().Format(time.RFC3339Nano), timeRange.End.UTC().Format(time.RFC3339Nano))
+			require.Equal(t, wantEndParsed.Sub(wantStartParsed), timeRange.End.Sub(timeRange.Start))
 		})
 	}
 }
@@ -123,7 +135,9 @@ func TestAdminDashboardRolling24HoursQueriesAndCachePrecision(t *testing.T) {
 	router.GET("/models", handler.GetModelStats)
 	end, err := time.Parse(time.RFC3339Nano, "2026-10-01T00:00:00.123+09:00")
 	require.NoError(t, err)
-	for _, shift := range []time.Duration{0, 0, time.Millisecond} {
+	// 本 fork 的时间窗按分钟对齐，毫秒级差异会被合并成同一份缓存；
+	// 这里用 1 分钟差异验证「不同窗口仍然分别缓存」。
+	for _, shift := range []time.Duration{0, 0, time.Minute} {
 		upper := end.Add(shift)
 		query := url.Values{
 			"start_date":    {upper.Add(-24 * time.Hour).Format(time.RFC3339Nano)},
@@ -141,7 +155,7 @@ func TestAdminDashboardRolling24HoursQueriesAndCachePrecision(t *testing.T) {
 	for _, name := range []string{"trend", "models", "groups"} {
 		require.Len(t, repo.windows[name], 2, "%s must cache identical bounds but distinguish milliseconds", name)
 		for i, window := range repo.windows[name] {
-			wantEnd := end.Add(time.Duration(i) * time.Millisecond)
+			wantEnd := end.Truncate(time.Minute).Add(time.Duration(i) * time.Minute)
 			require.True(t, window[0].Equal(wantEnd.Add(-24*time.Hour)), name)
 			require.True(t, window[1].Equal(wantEnd), name)
 			require.Equal(t, 24*time.Hour, window[1].Sub(window[0]), name)
