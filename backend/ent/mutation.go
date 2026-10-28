@@ -14,6 +14,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/accountgroup"
+	"github.com/Wei-Shaw/sub2api/ent/accountproxylane"
 	"github.com/Wei-Shaw/sub2api/ent/announcement"
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
@@ -68,6 +69,7 @@ const (
 	TypeAPIKey                        = "APIKey"
 	TypeAccount                       = "Account"
 	TypeAccountGroup                  = "AccountGroup"
+	TypeAccountProxyLane              = "AccountProxyLane"
 	TypeAnnouncement                  = "Announcement"
 	TypeAnnouncementRead              = "AnnouncementRead"
 	TypeAuthIdentity                  = "AuthIdentity"
@@ -5908,6 +5910,1169 @@ func (m *AccountGroupMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown AccountGroup edge %s", name)
+}
+
+// AccountProxyLaneMutation represents an operation that mutates the AccountProxyLane nodes in the graph.
+type AccountProxyLaneMutation struct {
+	config
+	op             Op
+	typ            string
+	id             *int64
+	created_at     *time.Time
+	updated_at     *time.Time
+	name           *string
+	transport      *accountproxylane.Transport
+	concurrency    *int
+	addconcurrency *int
+	weight         *int
+	addweight      *int
+	priority       *int
+	addpriority    *int
+	status         *string
+	schedulable    *bool
+	cooldown_until *time.Time
+	clearedFields  map[string]struct{}
+	account        *int64
+	clearedaccount bool
+	proxy          *int64
+	clearedproxy   bool
+	done           bool
+	oldValue       func(context.Context) (*AccountProxyLane, error)
+	predicates     []predicate.AccountProxyLane
+}
+
+var _ ent.Mutation = (*AccountProxyLaneMutation)(nil)
+
+// accountproxylaneOption allows management of the mutation configuration using functional options.
+type accountproxylaneOption func(*AccountProxyLaneMutation)
+
+// newAccountProxyLaneMutation creates new mutation for the AccountProxyLane entity.
+func newAccountProxyLaneMutation(c config, op Op, opts ...accountproxylaneOption) *AccountProxyLaneMutation {
+	m := &AccountProxyLaneMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeAccountProxyLane,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withAccountProxyLaneID sets the ID field of the mutation.
+func withAccountProxyLaneID(id int64) accountproxylaneOption {
+	return func(m *AccountProxyLaneMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *AccountProxyLane
+		)
+		m.oldValue = func(ctx context.Context) (*AccountProxyLane, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().AccountProxyLane.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withAccountProxyLane sets the old AccountProxyLane of the mutation.
+func withAccountProxyLane(node *AccountProxyLane) accountproxylaneOption {
+	return func(m *AccountProxyLaneMutation) {
+		m.oldValue = func(context.Context) (*AccountProxyLane, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m AccountProxyLaneMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m AccountProxyLaneMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *AccountProxyLaneMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *AccountProxyLaneMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().AccountProxyLane.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *AccountProxyLaneMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *AccountProxyLaneMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *AccountProxyLaneMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *AccountProxyLaneMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *AccountProxyLaneMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *AccountProxyLaneMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *AccountProxyLaneMutation) SetAccountID(i int64) {
+	m.account = &i
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *AccountProxyLaneMutation) AccountID() (r int64, exists bool) {
+	v := m.account
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldAccountID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *AccountProxyLaneMutation) ResetAccountID() {
+	m.account = nil
+}
+
+// SetProxyID sets the "proxy_id" field.
+func (m *AccountProxyLaneMutation) SetProxyID(i int64) {
+	m.proxy = &i
+}
+
+// ProxyID returns the value of the "proxy_id" field in the mutation.
+func (m *AccountProxyLaneMutation) ProxyID() (r int64, exists bool) {
+	v := m.proxy
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProxyID returns the old "proxy_id" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldProxyID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProxyID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProxyID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProxyID: %w", err)
+	}
+	return oldValue.ProxyID, nil
+}
+
+// ClearProxyID clears the value of the "proxy_id" field.
+func (m *AccountProxyLaneMutation) ClearProxyID() {
+	m.proxy = nil
+	m.clearedFields[accountproxylane.FieldProxyID] = struct{}{}
+}
+
+// ProxyIDCleared returns if the "proxy_id" field was cleared in this mutation.
+func (m *AccountProxyLaneMutation) ProxyIDCleared() bool {
+	_, ok := m.clearedFields[accountproxylane.FieldProxyID]
+	return ok
+}
+
+// ResetProxyID resets all changes to the "proxy_id" field.
+func (m *AccountProxyLaneMutation) ResetProxyID() {
+	m.proxy = nil
+	delete(m.clearedFields, accountproxylane.FieldProxyID)
+}
+
+// SetName sets the "name" field.
+func (m *AccountProxyLaneMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *AccountProxyLaneMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *AccountProxyLaneMutation) ResetName() {
+	m.name = nil
+}
+
+// SetTransport sets the "transport" field.
+func (m *AccountProxyLaneMutation) SetTransport(a accountproxylane.Transport) {
+	m.transport = &a
+}
+
+// Transport returns the value of the "transport" field in the mutation.
+func (m *AccountProxyLaneMutation) Transport() (r accountproxylane.Transport, exists bool) {
+	v := m.transport
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTransport returns the old "transport" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldTransport(ctx context.Context) (v accountproxylane.Transport, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTransport is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTransport requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTransport: %w", err)
+	}
+	return oldValue.Transport, nil
+}
+
+// ResetTransport resets all changes to the "transport" field.
+func (m *AccountProxyLaneMutation) ResetTransport() {
+	m.transport = nil
+}
+
+// SetConcurrency sets the "concurrency" field.
+func (m *AccountProxyLaneMutation) SetConcurrency(i int) {
+	m.concurrency = &i
+	m.addconcurrency = nil
+}
+
+// Concurrency returns the value of the "concurrency" field in the mutation.
+func (m *AccountProxyLaneMutation) Concurrency() (r int, exists bool) {
+	v := m.concurrency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConcurrency returns the old "concurrency" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldConcurrency(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConcurrency is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConcurrency requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConcurrency: %w", err)
+	}
+	return oldValue.Concurrency, nil
+}
+
+// AddConcurrency adds i to the "concurrency" field.
+func (m *AccountProxyLaneMutation) AddConcurrency(i int) {
+	if m.addconcurrency != nil {
+		*m.addconcurrency += i
+	} else {
+		m.addconcurrency = &i
+	}
+}
+
+// AddedConcurrency returns the value that was added to the "concurrency" field in this mutation.
+func (m *AccountProxyLaneMutation) AddedConcurrency() (r int, exists bool) {
+	v := m.addconcurrency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetConcurrency resets all changes to the "concurrency" field.
+func (m *AccountProxyLaneMutation) ResetConcurrency() {
+	m.concurrency = nil
+	m.addconcurrency = nil
+}
+
+// SetWeight sets the "weight" field.
+func (m *AccountProxyLaneMutation) SetWeight(i int) {
+	m.weight = &i
+	m.addweight = nil
+}
+
+// Weight returns the value of the "weight" field in the mutation.
+func (m *AccountProxyLaneMutation) Weight() (r int, exists bool) {
+	v := m.weight
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWeight returns the old "weight" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldWeight(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWeight is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWeight requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWeight: %w", err)
+	}
+	return oldValue.Weight, nil
+}
+
+// AddWeight adds i to the "weight" field.
+func (m *AccountProxyLaneMutation) AddWeight(i int) {
+	if m.addweight != nil {
+		*m.addweight += i
+	} else {
+		m.addweight = &i
+	}
+}
+
+// AddedWeight returns the value that was added to the "weight" field in this mutation.
+func (m *AccountProxyLaneMutation) AddedWeight() (r int, exists bool) {
+	v := m.addweight
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetWeight resets all changes to the "weight" field.
+func (m *AccountProxyLaneMutation) ResetWeight() {
+	m.weight = nil
+	m.addweight = nil
+}
+
+// SetPriority sets the "priority" field.
+func (m *AccountProxyLaneMutation) SetPriority(i int) {
+	m.priority = &i
+	m.addpriority = nil
+}
+
+// Priority returns the value of the "priority" field in the mutation.
+func (m *AccountProxyLaneMutation) Priority() (r int, exists bool) {
+	v := m.priority
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPriority returns the old "priority" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldPriority(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPriority is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPriority requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPriority: %w", err)
+	}
+	return oldValue.Priority, nil
+}
+
+// AddPriority adds i to the "priority" field.
+func (m *AccountProxyLaneMutation) AddPriority(i int) {
+	if m.addpriority != nil {
+		*m.addpriority += i
+	} else {
+		m.addpriority = &i
+	}
+}
+
+// AddedPriority returns the value that was added to the "priority" field in this mutation.
+func (m *AccountProxyLaneMutation) AddedPriority() (r int, exists bool) {
+	v := m.addpriority
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPriority resets all changes to the "priority" field.
+func (m *AccountProxyLaneMutation) ResetPriority() {
+	m.priority = nil
+	m.addpriority = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *AccountProxyLaneMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *AccountProxyLaneMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *AccountProxyLaneMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetSchedulable sets the "schedulable" field.
+func (m *AccountProxyLaneMutation) SetSchedulable(b bool) {
+	m.schedulable = &b
+}
+
+// Schedulable returns the value of the "schedulable" field in the mutation.
+func (m *AccountProxyLaneMutation) Schedulable() (r bool, exists bool) {
+	v := m.schedulable
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSchedulable returns the old "schedulable" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldSchedulable(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSchedulable is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSchedulable requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSchedulable: %w", err)
+	}
+	return oldValue.Schedulable, nil
+}
+
+// ResetSchedulable resets all changes to the "schedulable" field.
+func (m *AccountProxyLaneMutation) ResetSchedulable() {
+	m.schedulable = nil
+}
+
+// SetCooldownUntil sets the "cooldown_until" field.
+func (m *AccountProxyLaneMutation) SetCooldownUntil(t time.Time) {
+	m.cooldown_until = &t
+}
+
+// CooldownUntil returns the value of the "cooldown_until" field in the mutation.
+func (m *AccountProxyLaneMutation) CooldownUntil() (r time.Time, exists bool) {
+	v := m.cooldown_until
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCooldownUntil returns the old "cooldown_until" field's value of the AccountProxyLane entity.
+// If the AccountProxyLane object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountProxyLaneMutation) OldCooldownUntil(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCooldownUntil is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCooldownUntil requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCooldownUntil: %w", err)
+	}
+	return oldValue.CooldownUntil, nil
+}
+
+// ClearCooldownUntil clears the value of the "cooldown_until" field.
+func (m *AccountProxyLaneMutation) ClearCooldownUntil() {
+	m.cooldown_until = nil
+	m.clearedFields[accountproxylane.FieldCooldownUntil] = struct{}{}
+}
+
+// CooldownUntilCleared returns if the "cooldown_until" field was cleared in this mutation.
+func (m *AccountProxyLaneMutation) CooldownUntilCleared() bool {
+	_, ok := m.clearedFields[accountproxylane.FieldCooldownUntil]
+	return ok
+}
+
+// ResetCooldownUntil resets all changes to the "cooldown_until" field.
+func (m *AccountProxyLaneMutation) ResetCooldownUntil() {
+	m.cooldown_until = nil
+	delete(m.clearedFields, accountproxylane.FieldCooldownUntil)
+}
+
+// ClearAccount clears the "account" edge to the Account entity.
+func (m *AccountProxyLaneMutation) ClearAccount() {
+	m.clearedaccount = true
+	m.clearedFields[accountproxylane.FieldAccountID] = struct{}{}
+}
+
+// AccountCleared reports if the "account" edge to the Account entity was cleared.
+func (m *AccountProxyLaneMutation) AccountCleared() bool {
+	return m.clearedaccount
+}
+
+// AccountIDs returns the "account" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// AccountID instead. It exists only for internal usage by the builders.
+func (m *AccountProxyLaneMutation) AccountIDs() (ids []int64) {
+	if id := m.account; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetAccount resets all changes to the "account" edge.
+func (m *AccountProxyLaneMutation) ResetAccount() {
+	m.account = nil
+	m.clearedaccount = false
+}
+
+// ClearProxy clears the "proxy" edge to the Proxy entity.
+func (m *AccountProxyLaneMutation) ClearProxy() {
+	m.clearedproxy = true
+	m.clearedFields[accountproxylane.FieldProxyID] = struct{}{}
+}
+
+// ProxyCleared reports if the "proxy" edge to the Proxy entity was cleared.
+func (m *AccountProxyLaneMutation) ProxyCleared() bool {
+	return m.ProxyIDCleared() || m.clearedproxy
+}
+
+// ProxyIDs returns the "proxy" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// ProxyID instead. It exists only for internal usage by the builders.
+func (m *AccountProxyLaneMutation) ProxyIDs() (ids []int64) {
+	if id := m.proxy; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetProxy resets all changes to the "proxy" edge.
+func (m *AccountProxyLaneMutation) ResetProxy() {
+	m.proxy = nil
+	m.clearedproxy = false
+}
+
+// Where appends a list predicates to the AccountProxyLaneMutation builder.
+func (m *AccountProxyLaneMutation) Where(ps ...predicate.AccountProxyLane) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the AccountProxyLaneMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *AccountProxyLaneMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.AccountProxyLane, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *AccountProxyLaneMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *AccountProxyLaneMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (AccountProxyLane).
+func (m *AccountProxyLaneMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *AccountProxyLaneMutation) Fields() []string {
+	fields := make([]string, 0, 12)
+	if m.created_at != nil {
+		fields = append(fields, accountproxylane.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, accountproxylane.FieldUpdatedAt)
+	}
+	if m.account != nil {
+		fields = append(fields, accountproxylane.FieldAccountID)
+	}
+	if m.proxy != nil {
+		fields = append(fields, accountproxylane.FieldProxyID)
+	}
+	if m.name != nil {
+		fields = append(fields, accountproxylane.FieldName)
+	}
+	if m.transport != nil {
+		fields = append(fields, accountproxylane.FieldTransport)
+	}
+	if m.concurrency != nil {
+		fields = append(fields, accountproxylane.FieldConcurrency)
+	}
+	if m.weight != nil {
+		fields = append(fields, accountproxylane.FieldWeight)
+	}
+	if m.priority != nil {
+		fields = append(fields, accountproxylane.FieldPriority)
+	}
+	if m.status != nil {
+		fields = append(fields, accountproxylane.FieldStatus)
+	}
+	if m.schedulable != nil {
+		fields = append(fields, accountproxylane.FieldSchedulable)
+	}
+	if m.cooldown_until != nil {
+		fields = append(fields, accountproxylane.FieldCooldownUntil)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *AccountProxyLaneMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case accountproxylane.FieldCreatedAt:
+		return m.CreatedAt()
+	case accountproxylane.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case accountproxylane.FieldAccountID:
+		return m.AccountID()
+	case accountproxylane.FieldProxyID:
+		return m.ProxyID()
+	case accountproxylane.FieldName:
+		return m.Name()
+	case accountproxylane.FieldTransport:
+		return m.Transport()
+	case accountproxylane.FieldConcurrency:
+		return m.Concurrency()
+	case accountproxylane.FieldWeight:
+		return m.Weight()
+	case accountproxylane.FieldPriority:
+		return m.Priority()
+	case accountproxylane.FieldStatus:
+		return m.Status()
+	case accountproxylane.FieldSchedulable:
+		return m.Schedulable()
+	case accountproxylane.FieldCooldownUntil:
+		return m.CooldownUntil()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *AccountProxyLaneMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case accountproxylane.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case accountproxylane.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case accountproxylane.FieldAccountID:
+		return m.OldAccountID(ctx)
+	case accountproxylane.FieldProxyID:
+		return m.OldProxyID(ctx)
+	case accountproxylane.FieldName:
+		return m.OldName(ctx)
+	case accountproxylane.FieldTransport:
+		return m.OldTransport(ctx)
+	case accountproxylane.FieldConcurrency:
+		return m.OldConcurrency(ctx)
+	case accountproxylane.FieldWeight:
+		return m.OldWeight(ctx)
+	case accountproxylane.FieldPriority:
+		return m.OldPriority(ctx)
+	case accountproxylane.FieldStatus:
+		return m.OldStatus(ctx)
+	case accountproxylane.FieldSchedulable:
+		return m.OldSchedulable(ctx)
+	case accountproxylane.FieldCooldownUntil:
+		return m.OldCooldownUntil(ctx)
+	}
+	return nil, fmt.Errorf("unknown AccountProxyLane field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AccountProxyLaneMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case accountproxylane.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case accountproxylane.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case accountproxylane.FieldAccountID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
+	case accountproxylane.FieldProxyID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProxyID(v)
+		return nil
+	case accountproxylane.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
+	case accountproxylane.FieldTransport:
+		v, ok := value.(accountproxylane.Transport)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTransport(v)
+		return nil
+	case accountproxylane.FieldConcurrency:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConcurrency(v)
+		return nil
+	case accountproxylane.FieldWeight:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWeight(v)
+		return nil
+	case accountproxylane.FieldPriority:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPriority(v)
+		return nil
+	case accountproxylane.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case accountproxylane.FieldSchedulable:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSchedulable(v)
+		return nil
+	case accountproxylane.FieldCooldownUntil:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCooldownUntil(v)
+		return nil
+	}
+	return fmt.Errorf("unknown AccountProxyLane field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *AccountProxyLaneMutation) AddedFields() []string {
+	var fields []string
+	if m.addconcurrency != nil {
+		fields = append(fields, accountproxylane.FieldConcurrency)
+	}
+	if m.addweight != nil {
+		fields = append(fields, accountproxylane.FieldWeight)
+	}
+	if m.addpriority != nil {
+		fields = append(fields, accountproxylane.FieldPriority)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *AccountProxyLaneMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case accountproxylane.FieldConcurrency:
+		return m.AddedConcurrency()
+	case accountproxylane.FieldWeight:
+		return m.AddedWeight()
+	case accountproxylane.FieldPriority:
+		return m.AddedPriority()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *AccountProxyLaneMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case accountproxylane.FieldConcurrency:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddConcurrency(v)
+		return nil
+	case accountproxylane.FieldWeight:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddWeight(v)
+		return nil
+	case accountproxylane.FieldPriority:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPriority(v)
+		return nil
+	}
+	return fmt.Errorf("unknown AccountProxyLane numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *AccountProxyLaneMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(accountproxylane.FieldProxyID) {
+		fields = append(fields, accountproxylane.FieldProxyID)
+	}
+	if m.FieldCleared(accountproxylane.FieldCooldownUntil) {
+		fields = append(fields, accountproxylane.FieldCooldownUntil)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *AccountProxyLaneMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *AccountProxyLaneMutation) ClearField(name string) error {
+	switch name {
+	case accountproxylane.FieldProxyID:
+		m.ClearProxyID()
+		return nil
+	case accountproxylane.FieldCooldownUntil:
+		m.ClearCooldownUntil()
+		return nil
+	}
+	return fmt.Errorf("unknown AccountProxyLane nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *AccountProxyLaneMutation) ResetField(name string) error {
+	switch name {
+	case accountproxylane.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case accountproxylane.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case accountproxylane.FieldAccountID:
+		m.ResetAccountID()
+		return nil
+	case accountproxylane.FieldProxyID:
+		m.ResetProxyID()
+		return nil
+	case accountproxylane.FieldName:
+		m.ResetName()
+		return nil
+	case accountproxylane.FieldTransport:
+		m.ResetTransport()
+		return nil
+	case accountproxylane.FieldConcurrency:
+		m.ResetConcurrency()
+		return nil
+	case accountproxylane.FieldWeight:
+		m.ResetWeight()
+		return nil
+	case accountproxylane.FieldPriority:
+		m.ResetPriority()
+		return nil
+	case accountproxylane.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case accountproxylane.FieldSchedulable:
+		m.ResetSchedulable()
+		return nil
+	case accountproxylane.FieldCooldownUntil:
+		m.ResetCooldownUntil()
+		return nil
+	}
+	return fmt.Errorf("unknown AccountProxyLane field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *AccountProxyLaneMutation) AddedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.account != nil {
+		edges = append(edges, accountproxylane.EdgeAccount)
+	}
+	if m.proxy != nil {
+		edges = append(edges, accountproxylane.EdgeProxy)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *AccountProxyLaneMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case accountproxylane.EdgeAccount:
+		if id := m.account; id != nil {
+			return []ent.Value{*id}
+		}
+	case accountproxylane.EdgeProxy:
+		if id := m.proxy; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *AccountProxyLaneMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 2)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *AccountProxyLaneMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *AccountProxyLaneMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 2)
+	if m.clearedaccount {
+		edges = append(edges, accountproxylane.EdgeAccount)
+	}
+	if m.clearedproxy {
+		edges = append(edges, accountproxylane.EdgeProxy)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *AccountProxyLaneMutation) EdgeCleared(name string) bool {
+	switch name {
+	case accountproxylane.EdgeAccount:
+		return m.clearedaccount
+	case accountproxylane.EdgeProxy:
+		return m.clearedproxy
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *AccountProxyLaneMutation) ClearEdge(name string) error {
+	switch name {
+	case accountproxylane.EdgeAccount:
+		m.ClearAccount()
+		return nil
+	case accountproxylane.EdgeProxy:
+		m.ClearProxy()
+		return nil
+	}
+	return fmt.Errorf("unknown AccountProxyLane unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *AccountProxyLaneMutation) ResetEdge(name string) error {
+	switch name {
+	case accountproxylane.EdgeAccount:
+		m.ResetAccount()
+		return nil
+	case accountproxylane.EdgeProxy:
+		m.ResetProxy()
+		return nil
+	}
+	return fmt.Errorf("unknown AccountProxyLane edge %s", name)
 }
 
 // AnnouncementMutation represents an operation that mutates the Announcement nodes in the graph.
@@ -23928,6 +25093,7 @@ type GroupMutation struct {
 	adddefault_validity_days                *int
 	allow_image_generation                  *bool
 	allow_batch_image_generation            *bool
+	image_count_billing                     *bool
 	image_rate_independent                  *bool
 	image_rate_multiplier                   *float64
 	addimage_rate_multiplier                *float64
@@ -25261,6 +26427,42 @@ func (m *GroupMutation) OldAllowBatchImageGeneration(ctx context.Context) (v boo
 // ResetAllowBatchImageGeneration resets all changes to the "allow_batch_image_generation" field.
 func (m *GroupMutation) ResetAllowBatchImageGeneration() {
 	m.allow_batch_image_generation = nil
+}
+
+// SetImageCountBilling sets the "image_count_billing" field.
+func (m *GroupMutation) SetImageCountBilling(b bool) {
+	m.image_count_billing = &b
+}
+
+// ImageCountBilling returns the value of the "image_count_billing" field in the mutation.
+func (m *GroupMutation) ImageCountBilling() (r bool, exists bool) {
+	v := m.image_count_billing
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldImageCountBilling returns the old "image_count_billing" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldImageCountBilling(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldImageCountBilling is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldImageCountBilling requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldImageCountBilling: %w", err)
+	}
+	return oldValue.ImageCountBilling, nil
+}
+
+// ResetImageCountBilling resets all changes to the "image_count_billing" field.
+func (m *GroupMutation) ResetImageCountBilling() {
+	m.image_count_billing = nil
 }
 
 // SetImageRateIndependent sets the "image_rate_independent" field.
@@ -28036,7 +29238,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 73)
+	fields := make([]string, 0, 74)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -28111,6 +29313,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.allow_batch_image_generation != nil {
 		fields = append(fields, group.FieldAllowBatchImageGeneration)
+	}
+	if m.image_count_billing != nil {
+		fields = append(fields, group.FieldImageCountBilling)
 	}
 	if m.image_rate_independent != nil {
 		fields = append(fields, group.FieldImageRateIndependent)
@@ -28314,6 +29519,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.AllowImageGeneration()
 	case group.FieldAllowBatchImageGeneration:
 		return m.AllowBatchImageGeneration()
+	case group.FieldImageCountBilling:
+		return m.ImageCountBilling()
 	case group.FieldImageRateIndependent:
 		return m.ImageRateIndependent()
 	case group.FieldImageRateMultiplier:
@@ -28469,6 +29676,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldAllowImageGeneration(ctx)
 	case group.FieldAllowBatchImageGeneration:
 		return m.OldAllowBatchImageGeneration(ctx)
+	case group.FieldImageCountBilling:
+		return m.OldImageCountBilling(ctx)
 	case group.FieldImageRateIndependent:
 		return m.OldImageRateIndependent(ctx)
 	case group.FieldImageRateMultiplier:
@@ -28748,6 +29957,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetAllowBatchImageGeneration(v)
+		return nil
+	case group.FieldImageCountBilling:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetImageCountBilling(v)
 		return nil
 	case group.FieldImageRateIndependent:
 		v, ok := value.(bool)
@@ -29694,6 +30910,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldAllowBatchImageGeneration:
 		m.ResetAllowBatchImageGeneration()
+		return nil
+	case group.FieldImageCountBilling:
+		m.ResetImageCountBilling()
 		return nil
 	case group.FieldImageRateIndependent:
 		m.ResetImageRateIndependent()

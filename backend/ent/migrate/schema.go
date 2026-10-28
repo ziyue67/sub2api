@@ -263,6 +263,64 @@ var (
 			},
 		},
 	}
+	// AccountProxyLanesColumns holds the columns for the "account_proxy_lanes" table.
+	AccountProxyLanesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Size: 100},
+		{Name: "transport", Type: field.TypeEnum, Enums: []string{"proxy", "direct"}, Default: "proxy"},
+		{Name: "concurrency", Type: field.TypeInt, Default: 1},
+		{Name: "weight", Type: field.TypeInt, Default: 1},
+		{Name: "priority", Type: field.TypeInt, Default: 50},
+		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
+		{Name: "schedulable", Type: field.TypeBool, Default: true},
+		{Name: "cooldown_until", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "account_id", Type: field.TypeInt64},
+		{Name: "proxy_id", Type: field.TypeInt64, Nullable: true},
+	}
+	// AccountProxyLanesTable holds the schema information for the "account_proxy_lanes" table.
+	AccountProxyLanesTable = &schema.Table{
+		Name:       "account_proxy_lanes",
+		Columns:    AccountProxyLanesColumns,
+		PrimaryKey: []*schema.Column{AccountProxyLanesColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "account_proxy_lanes_accounts_account",
+				Columns:    []*schema.Column{AccountProxyLanesColumns[11]},
+				RefColumns: []*schema.Column{AccountsColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+			{
+				Symbol:     "account_proxy_lanes_proxies_proxy",
+				Columns:    []*schema.Column{AccountProxyLanesColumns[12]},
+				RefColumns: []*schema.Column{ProxiesColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "accountproxylane_account_id_name",
+				Unique:  true,
+				Columns: []*schema.Column{AccountProxyLanesColumns[11], AccountProxyLanesColumns[3]},
+			},
+			{
+				Name:    "accountproxylane_account_id_status_schedulable",
+				Unique:  false,
+				Columns: []*schema.Column{AccountProxyLanesColumns[11], AccountProxyLanesColumns[8], AccountProxyLanesColumns[9]},
+			},
+			{
+				Name:    "accountproxylane_account_id_priority",
+				Unique:  false,
+				Columns: []*schema.Column{AccountProxyLanesColumns[11], AccountProxyLanesColumns[7]},
+			},
+			{
+				Name:    "accountproxylane_proxy_id",
+				Unique:  false,
+				Columns: []*schema.Column{AccountProxyLanesColumns[12]},
+			},
+		},
+	}
 	// AnnouncementsColumns holds the columns for the "announcements" table.
 	AnnouncementsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -976,6 +1034,7 @@ var (
 		{Name: "default_validity_days", Type: field.TypeInt, Default: 30},
 		{Name: "allow_image_generation", Type: field.TypeBool, Default: false},
 		{Name: "allow_batch_image_generation", Type: field.TypeBool, Default: false},
+		{Name: "image_count_billing", Type: field.TypeBool, Default: false},
 		{Name: "image_rate_independent", Type: field.TypeBool, Default: false},
 		{Name: "image_rate_multiplier", Type: field.TypeFloat64, Default: 1, SchemaType: map[string]string{"postgres": "decimal(10,4)"}},
 		{Name: "image_price_1k", Type: field.TypeFloat64, Nullable: true, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
@@ -1059,7 +1118,7 @@ var (
 			{
 				Name:    "group_sort_order",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[56]},
+				Columns: []*schema.Column{GroupsColumns[57]},
 			},
 			{
 				Name:    "idx_groups_duplicate_operation_id_active",
@@ -2159,6 +2218,7 @@ var (
 		APIKeysTable,
 		AccountsTable,
 		AccountGroupsTable,
+		AccountProxyLanesTable,
 		AnnouncementsTable,
 		AnnouncementReadsTable,
 		AuthIdentitiesTable,
@@ -2214,6 +2274,11 @@ func init() {
 	AccountGroupsTable.ForeignKeys[1].RefTable = GroupsTable
 	AccountGroupsTable.Annotation = &entsql.Annotation{
 		Table: "account_groups",
+	}
+	AccountProxyLanesTable.ForeignKeys[0].RefTable = AccountsTable
+	AccountProxyLanesTable.ForeignKeys[1].RefTable = ProxiesTable
+	AccountProxyLanesTable.Annotation = &entsql.Annotation{
+		Table: "account_proxy_lanes",
 	}
 	AnnouncementsTable.Annotation = &entsql.Annotation{
 		Table: "announcements",
