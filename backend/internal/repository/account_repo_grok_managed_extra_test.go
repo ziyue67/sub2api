@@ -135,15 +135,30 @@ func TestLockAndMergeAccountProbeExtraKeepsLatestGrokManagedKeys(t *testing.T) {
 
 			credentials, err := json.Marshal(normalizeJSONMap(tt.credentials))
 			require.NoError(t, err)
+			// 本 fork 在行锁内一次性读取整份 extra（COALESCE(extra,'{}')），
+			// 受管键从解析后的 map 取，因此这里也按整份 JSON 造行。
+			lockedExtra := map[string]any{}
+			if tt.databaseModels != nil {
+				var decoded any
+				require.NoError(t, json.Unmarshal(tt.databaseModels, &decoded))
+				lockedExtra["grok_observed_models"] = decoded
+			}
+			if tt.databaseMetadata != nil {
+				var decoded any
+				require.NoError(t, json.Unmarshal(tt.databaseMetadata, &decoded))
+				lockedExtra[service.UpstreamModelMetadataExtraKey] = decoded
+			}
+			lockedExtraJSON, err := json.Marshal(lockedExtra)
+			require.NoError(t, err)
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(int64(41), service.PlatformGrok, tt.accountType, string(credentials), nil).
 				WillReturnRows(sqlmock.NewRows([]string{
 					"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged",
-					"enabled", "rate_sync_enabled", "snapshot",
+					"enabled", "rate_sync_enabled", "snapshot", "usage_snapshot",
 					"ollama_session", "ollama_auto", "ollama_snapshot",
 					"opencode_group_unchanged", "opencode_auto", "opencode_snapshot",
-					"grok_observed_models", "upstream_model_metadata",
-				}).AddRow(false, false, true, nil, nil, nil, nil, nil, nil, false, nil, nil, tt.databaseModels, tt.databaseMetadata))
+					"current_extra",
+				}).AddRow(false, false, true, nil, nil, nil, nil, nil, nil, nil, false, nil, nil, lockedExtraJSON))
 
 			account := &service.Account{
 				ID:          41,

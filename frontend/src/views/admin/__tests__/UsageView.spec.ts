@@ -54,7 +54,7 @@ const messages: Record<string, string> = {
 	'common.no': 'No',
 }
 
-const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/
+const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
 vi.mock('@/api/admin', () => ({
   adminAPI: {
@@ -332,6 +332,13 @@ describe('admin UsageView route filters', () => {
       end_date: now.toISOString(),
       granularity: 'hour'
     }))
+    // 边界必须是带时区的精确时刻，且跨度正好 24 小时。
+    const snapshotParams = getSnapshotV2.mock.calls[0][0]
+    expect(snapshotParams.start_date).toMatch(RFC3339_RE)
+    expect(snapshotParams.end_date).toMatch(RFC3339_RE)
+    expect(
+      new Date(snapshotParams.end_date).getTime() - new Date(snapshotParams.start_date).getTime()
+    ).toBe(24 * 60 * 60 * 1000)
 
     const modelChart = wrapper.find('[data-test="model-chart"]')
     const groupChart = wrapper.find('[data-test="group-chart"]')

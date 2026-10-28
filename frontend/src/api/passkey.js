@@ -1,3 +1,4 @@
+/* global PublicKeyCredential */
 import { apiClient } from './client';
 function requirePasskeySupport() {
     if (!window.PublicKeyCredential || !navigator.credentials) {

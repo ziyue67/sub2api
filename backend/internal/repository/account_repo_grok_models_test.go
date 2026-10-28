@@ -213,6 +213,9 @@ func TestGrokCatalogCASRefreshesSingleAccountOutsideTransaction(t *testing.T) {
 		WillReturnRows(updatedAccountRows(25, `{"unrelated":"keep","grok_observed_models":{"models":["grok-4.7"],"fetched_at":"2026-10-25T02:00:01Z"}}`))
 	mock.ExpectQuery(`(?s)account_groups`).
 		WillReturnRows(sqlmock.NewRows([]string{"account_id", "group_id", "priority", "created_at"}))
+	// 本 fork 的账号读取还会同步 proxy lane 快照，这里给空结果即可。
+	mock.ExpectQuery(`(?s)account_proxy_lanes`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "account_id", "proxy_id", "name", "transport", "concurrency", "weight", "priority", "status", "schedulable", "cooldown_until", "created_at", "updated_at"}))
 
 	applied, err := repo.CompareAndSwapGrokObservedModels(context.Background(), 25, nil, nextJSON)
 

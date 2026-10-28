@@ -49,11 +49,11 @@ func TestAdminUsageTimeRange(t *testing.T) {
 			// The same parser feeds snapshot, model, group, ranking and breakdown queries.
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodGet, "/admin/dashboard/snapshot-v2?"+query, nil)
-			start, end, err := parseTimeRange(c)
+			timeRange, err := parseTimeRange(c)
 			require.NoError(t, err)
-			require.Equal(t, tc.wantStart, start.UTC().Format(time.RFC3339Nano))
-			require.Equal(t, tc.wantEnd, end.UTC().Format(time.RFC3339Nano))
-			require.Equal(t, tc.wantDuration, end.Sub(start))
+			require.Equal(t, tc.wantStart, timeRange.Start.UTC().Format(time.RFC3339Nano))
+			require.Equal(t, tc.wantEnd, timeRange.End.UTC().Format(time.RFC3339Nano))
+			require.Equal(t, tc.wantDuration, timeRange.End.Sub(timeRange.Start))
 		})
 	}
 }
