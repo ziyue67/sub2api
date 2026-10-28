@@ -36,6 +36,10 @@ jobs:
           trap 'cp "$RUNNER_TEMP/upstream-current-service.go" "$target"' EXIT
           git fetch --no-tags --depth=1 origin ecf63af98587c151fe40893f3e3c322a777b17df
           git show ecf63af98587c151fe40893f3e3c322a777b17df:backend/internal/service/upstream_operations.go > "$target"
+          # 基线里 OperationsCostMultiplier 还定义在 upstream_operations.go，
+          # 新版本已挪到 profit_operations.go；回退后重名会让红门禁变成编译失败，
+          # 这里只把回退文件里的旧副本改个名（两个断言都不涉及它）。
+          sed -i 's/^func OperationsCostMultiplier(/func operationsCostMultiplierLegacy(/' "$target"
           set +e
           go test -tags=unit ./internal/service -run '^TestUpstreamOperations(ExcelOAuthCannotMasqueradeAsNativeCodex|PinnedResponsesPreservesExplicitRelayBase)$' -count=1 -v > "$RUNNER_TEMP/upstream-excel-red.log" 2>&1
           result=$?
