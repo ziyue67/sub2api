@@ -566,6 +566,11 @@ func (j *ImageArchiveCapture) FinishWithError(c *gin.Context, result *OpenAIForw
 		generation = "succeeded"
 	}
 	j.parameter("_generation_status", generation)
+	if forwardErr != nil && count == 0 {
+		// Both Images handlers skip RecordUsage for a failed zero-image attempt.
+		// This describes this attempt only, never a later successful retry.
+		j.parameter("_billing_outcome", "not_submitted_v1")
+	}
 	j.parameter("_delivery_status", "unknown")
 	if count > 0 {
 		j.parameter("_delivery_status", "returned")

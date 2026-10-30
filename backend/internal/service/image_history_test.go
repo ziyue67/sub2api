@@ -16,10 +16,14 @@ import (
 
 type historyTestRepository struct {
 	*archiveTestRepository
-	filter       ImageArchiveFilter
-	billing      ImageHistoryBilling
-	billingErr   error
-	billingCalls int
+	filter         ImageArchiveFilter
+	billing        ImageHistoryBilling
+	billingErr     error
+	billingCalls   int
+	legacyBilling  ImageHistoryBilling
+	legacyErr      error
+	legacyCalls    int
+	legacyIdentity []any
 }
 
 func (r *historyTestRepository) List(_ context.Context, f ImageArchiveFilter) ([]ImageArchiveRecord, int64, error) {
@@ -29,6 +33,15 @@ func (r *historyTestRepository) List(_ context.Context, f ImageArchiveFilter) ([
 func (r *historyTestRepository) ImageHistoryBilling(_ context.Context, user, key int64, request string) (ImageHistoryBilling, error) {
 	r.billingCalls++
 	return r.billing, r.billingErr
+}
+
+func (r *historyTestRepository) ImageHistoryLegacyBilling(_ context.Context, user, key, account int64, upstream string) (ImageHistoryBilling, error) {
+	r.legacyCalls++
+	r.legacyIdentity = []any{user, key, account, upstream}
+	if r.legacyBilling.Status == "" {
+		return ImageHistoryBilling{Status: "unknown"}, r.legacyErr
+	}
+	return r.legacyBilling, r.legacyErr
 }
 
 func TestImageHistoryOwnershipExpiryAndFiles(t *testing.T) {
@@ -116,6 +129,7 @@ func TestImageHistoryFailureAndInterruptedCapture(t *testing.T) {
 				require.Equal(t, "unknown", got.Parameters["_delivery_status"])
 				require.Equal(t, "failed", got.Parameters["_generation_status"])
 				require.NotContains(t, got.Parameters, "_billing_request_id")
+				require.Equal(t, "not_submitted_v1", got.Parameters["_billing_outcome"])
 			}
 		})
 	}
@@ -134,4 +148,82 @@ func TestImageHistoryBillingUnknownWithoutDurableReceipt(t *testing.T) {
 	require.Equal(t, "charged", s.HistoryBilling(context.Background(), record).Status)
 	repo.billingErr = sql.ErrNoRows
 	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
+}
+
+func TestImageHistoryFailedAttemptBillingProof(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*ImageArchiveRecord)
+		want   string
+	}{
+		{"legacy_failed_attempt", nil, "no_charge"},
+		{"new_failed_attempt", func(r *ImageArchiveRecord) { r.Parameters["_billing_outcome"] = "not_submitted_v1" }, "no_charge"},
+		{"in_memory_count", func(r *ImageArchiveRecord) { r.Parameters["_image_count"] = 0 }, "no_charge"},
+		{"reference_only", func(r *ImageArchiveRecord) { r.Files = []ImageArchiveFile{{Role: "reference"}} }, "no_charge"},
+		{"missing_failure_evidence", func(r *ImageArchiveRecord) { r.ErrorCodes = "missing_results" }, "unknown"},
+		{"substring_is_not_failure", func(r *ImageArchiveRecord) { r.ErrorCodes = "not_forward_failed" }, "unknown"},
+		{"missing_generation_evidence", func(r *ImageArchiveRecord) { delete(r.Parameters, "_generation_status") }, "unknown"},
+		{"missing_count", func(r *ImageArchiveRecord) { delete(r.Parameters, "_image_count") }, "unknown"},
+		{"nonzero_count", func(r *ImageArchiveRecord) { r.Parameters["_image_count"] = float64(1) }, "unknown"},
+		{"invalid_count", func(r *ImageArchiveRecord) { r.Parameters["_image_count"] = "0" }, "unknown"},
+		{"result_exists", func(r *ImageArchiveRecord) { r.Files = []ImageArchiveFile{{Role: "result"}} }, "unknown"},
+		{"future_contract", func(r *ImageArchiveRecord) { r.Parameters["_billing_outcome"] = "future_version" }, "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := archiveTestService(t)
+			record := &ImageArchiveRecord{UserID: 12, APIKeyID: 34, ErrorCodes: "forward_failed,missing_results", Parameters: map[string]any{"_generation_status": "failed", "_image_count": float64(0)}}
+			if tc.mutate != nil {
+				tc.mutate(record)
+			}
+			got := s.HistoryBilling(context.Background(), record)
+			require.Equal(t, tc.want, got.Status)
+			if tc.want == "no_charge" {
+				require.NotNil(t, got.Amount)
+				require.Zero(t, *got.Amount)
+			} else {
+				require.Nil(t, got.Amount)
+			}
+		})
+	}
+}
+
+func TestImageHistoryCanonicalReceiptWinsOverFailureMetadata(t *testing.T) {
+	s, base := archiveTestService(t)
+	amount := 0.125
+	repo := &historyTestRepository{archiveTestRepository: base, billing: ImageHistoryBilling{Status: "charged", Amount: &amount}}
+	s.repo = repo
+	record := &ImageArchiveRecord{UserID: 12, APIKeyID: 34, ErrorCodes: "forward_failed", Parameters: map[string]any{"_generation_status": "failed", "_image_count": float64(0), "_billing_outcome": "not_submitted_v1", "_billing_request_id": "client:paid"}}
+	require.Equal(t, "charged", s.HistoryBilling(context.Background(), record).Status)
+	repo.billingErr = sql.ErrNoRows
+	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
+}
+
+func TestImageHistoryLegacyBillingUsesVerifiedIdentity(t *testing.T) {
+	s, base := archiveTestService(t)
+	amount := 0.25
+	repo := &historyTestRepository{archiveTestRepository: base, legacyBilling: ImageHistoryBilling{Status: "charged", Amount: &amount}}
+	s.repo = repo
+	record := &ImageArchiveRecord{UserID: 12, APIKeyID: 34, AccountID: 56, RequestID: "upstream-request", Parameters: map[string]any{}, Files: []ImageArchiveFile{{Role: "result"}}}
+	got := s.HistoryBilling(context.Background(), record)
+	require.Equal(t, "charged", got.Status)
+	require.Equal(t, []any{int64(12), int64(34), int64(56), "upstream-request"}, repo.legacyIdentity)
+	require.Zero(t, repo.billingCalls)
+	callsBefore := repo.legacyCalls
+	record.Files = []ImageArchiveFile{{Role: "reference"}}
+	record.ErrorCodes = "forward_failed"
+	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
+	require.Equal(t, callsBefore, repo.legacyCalls, "old bare failed attempts must not borrow a successful retry receipt")
+	record.Files = []ImageArchiveFile{{Role: "result"}}
+	record.Parameters["_generation_status"] = "failed"
+	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
+	require.Equal(t, callsBefore, repo.legacyCalls)
+	delete(record.Parameters, "_generation_status")
+	repo.legacyErr = errors.New("database unavailable")
+	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
+	repo.legacyErr = nil
+	record.Parameters["_billing_request_id"] = "client:canonical"
+	repo.billingErr = sql.ErrNoRows
+	calls := repo.legacyCalls
+	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
+	require.Equal(t, calls, repo.legacyCalls, "a missing canonical receipt must not fall back to an unrelated legacy charge")
 }

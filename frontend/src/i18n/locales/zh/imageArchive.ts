@@ -5,7 +5,7 @@ export default {
   customerBilling: '本次扣费', chargedAmount: '已扣费 ${amount}',
   downloadSaved: '下载已保存图片', transferInterrupted: '结果传输中断。',
   generation: { succeeded: '已生成', failed: '生图未完成', unknown: '生成状态待确认' },
-  receipt: { charged: '已扣费', no_charge: '未扣费', pending: '结算中', unknown: '扣费状态待确认' },
+  receipt: { charged: '已扣费', no_charge: '本站未计费', pending: '结算中', unknown: '暂无可核验扣费记录' },
   title: '生图记录', description: '查看已开启留档的生图请求、原图和参考图。',
   settings: '留档设置', storage: '已用容量 / 容量上限', retention: '保留天数', days: '{n} 天',
   capture: '留档开关', enabled: '已开启', disabled: '未开启', freeDisk: '磁盘可用',

@@ -57,6 +57,18 @@ describe('customer API image history', () => {
     wrapper.unmount(); expect(finalSignal.aborted).toBe(true)
   })
 
+  it.each(['no_charge', 'pending', 'unknown'])('distinguishes %s receipts without exposing private details', async (status) => {
+    mocks.list.mockResolvedValueOnce({ items: [{ ...record, files: [], status: 'failed', billing: { status, ...(status === 'no_charge' ? { amount: 0 } : {}) } }], total: 1, page: 1 })
+    const wrapper = mount(ImageHistoryView); await flushPromises()
+    expect(wrapper.text()).toContain(`imageArchive.receipt.${status}`)
+    for (const other of ['no_charge', 'pending', 'unknown'].filter(value => value !== status)) {
+      expect(wrapper.text()).not.toContain(`imageArchive.receipt.${other}`)
+    }
+    expect(wrapper.text()).not.toContain('SECRET_')
+    expect(wrapper.text()).not.toContain('imageArchive.chargedAmount')
+    wrapper.unmount()
+  })
+
   it('shows a generic load error and does not render raw backend errors', async () => {
     mocks.list.mockRejectedValue(new Error('SECRET_INTERNAL_ERROR'))
     const wrapper = mount(ImageHistoryView); await flushPromises()

@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"regexp"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -49,6 +51,71 @@ func TestImageHistoryRepositoryBillingStatesAndIdentity(t *testing.T) {
 			if tc.want == "charged" || tc.want == "no_charge" {
 				require.NotNil(t, got.Amount)
 				require.InDelta(t, tc.balance+tc.subscription, *got.Amount, 1e-9)
+			} else {
+				require.Nil(t, got.Amount)
+			}
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestImageHistoryLegacyBillingRequiresUniqueTenantReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		ids                  []string
+		state, want          string
+		account              int64
+		queryErr, receiptErr bool
+	}{
+		{name: "unique_applied", ids: []string{"client:one"}, state: "applied", account: 56, want: "charged"},
+		{name: "unique_pending", ids: []string{"client:one"}, state: "pending", account: 56, want: "pending"},
+		{name: "wrong_account", ids: []string{"client:one"}, state: "complete", account: 99, want: "unknown"},
+		{name: "ambiguous", ids: []string{"client:one", "client:two"}, want: "unknown"},
+		{name: "missing", want: "unknown"},
+		{name: "query_error", queryErr: true, want: "unknown"},
+		{name: "receipt_missing", ids: []string{"client:one"}, receiptErr: true, want: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			repo := &imageArchiveRepository{db: db}
+			q := mock.ExpectQuery(regexp.QuoteMeta(`SELECT DISTINCT request_id FROM usage_logs
+				WHERE user_id=$1 AND api_key_id=$2 AND account_id=$3 AND image_count>0
+				AND request_id<>'' AND (upstream_request_id=$4 OR request_id=$4) LIMIT 2`)).
+				WithArgs(int64(12), int64(34), int64(56), "upstream-one")
+			if tc.queryErr {
+				q.WillReturnError(errors.New("unavailable"))
+			} else {
+				rows := sqlmock.NewRows([]string{"request_id"})
+				for _, id := range tc.ids {
+					rows.AddRow(id)
+				}
+				q.WillReturnRows(rows).RowsWillBeClosed()
+			}
+			if len(tc.ids) == 1 {
+				receipt := mock.ExpectQuery(`SELECT state,payload FROM usage_billing_events`).WithArgs(tc.ids[0], int64(34), int64(12))
+				if tc.receiptErr {
+					receipt.WillReturnError(errors.New("missing receipt"))
+				} else {
+					event := service.UsageBillingEvent{Version: 1, Command: service.UsageBillingCommand{
+						UserID: 12, APIKeyID: 34, AccountID: tc.account, RequestID: tc.ids[0], BalanceCost: 0.12,
+					}}
+					payload, err := json.Marshal(event)
+					require.NoError(t, err)
+					receipt.WillReturnRows(sqlmock.NewRows([]string{"state", "payload"}).AddRow(tc.state, payload))
+				}
+			}
+			got, err := repo.ImageHistoryLegacyBilling(context.Background(), 12, 34, 56, "upstream-one")
+			if tc.queryErr || tc.receiptErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.want, got.Status)
+			if tc.want == "charged" {
+				require.NotNil(t, got.Amount)
+				require.InDelta(t, 0.12, *got.Amount, 1e-9)
 			} else {
 				require.Nil(t, got.Amount)
 			}
