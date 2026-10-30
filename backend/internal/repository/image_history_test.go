@@ -37,7 +37,7 @@ func TestImageHistoryRepositoryBillingStatesAndIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			repo := &imageArchiveRepository{db: db}
 			event := service.UsageBillingEvent{Version: 1, Command: service.UsageBillingCommand{UserID: tc.user, APIKeyID: tc.key, RequestID: tc.request, BalanceCost: tc.balance, SubscriptionCost: tc.subscription}}
 			payload, err := json.Marshal(event)
