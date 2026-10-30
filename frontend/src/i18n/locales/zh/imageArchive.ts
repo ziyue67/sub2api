@@ -1,5 +1,7 @@
 export default {
   customerTitle: '我的 API 生图',
+  retry: '重新加载', pagination: '生图记录分页', pageOf: '第 {page} 页 / 共 {pages} 页',
+  savedImages: '{n} 张图片', selectImage: '选择图片', imageNumber: '第 {n} 张图片',
   customerHint: '查看已保留的 API 生图结果与扣费状态，图片在到期后清理。',
   customerEmpty: '暂无已保留的记录。仅展示已开启留档范围内、尚未到期的请求。',
   customerBilling: '本次扣费', chargedAmount: '已扣费 ${amount}',
