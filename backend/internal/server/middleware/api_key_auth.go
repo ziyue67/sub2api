@@ -200,13 +200,14 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			isPublicPelicanShowcasePath(c.Request.URL.Path)
 		// Showcase reads are free but still require an unexpired site API key,
 		// including in simple mode. The existing user/group/IP checks above apply.
-		if pelicanReadRequest && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
+		imageHistoryRead := isImageHistoryRead(c.Request.Method, c.Request.URL.Path)
+		if (pelicanReadRequest || imageHistoryRead) && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
 			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key 已过期")
 			return
 		}
 		// Read-only endpoints must remain discoverable after a generation consumes
 		// the key's remaining balance. They never trigger upstream model usage.
-		metadataReadRequest := billingInfoRequest || pelicanReadRequest
+		metadataReadRequest := billingInfoRequest || pelicanReadRequest || imageHistoryRead
 		skipBilling := c.Request.URL.Path == "/v1/usage" || metadataReadRequest ||
 			isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path) ||
 			isModelListRead(c.Request.Method, c.Request.URL.Path)

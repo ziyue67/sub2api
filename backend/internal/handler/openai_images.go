@@ -300,13 +300,13 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			capture := h.imageArchive.Begin(c, subject.UserID, apiKey.ID, apiKey.GroupID, account.ID, parsed)
 			var forwarded *service.OpenAIForwardResult
-			defer func() { capture.Finish(c, forwarded) }()
+			var forwardErr error
+			defer func() { capture.FinishWithError(c, forwarded, forwardErr) }()
 			defer func() {
 				if accountReleaseFunc != nil {
 					accountReleaseFunc()
 				}
 			}()
-			var forwardErr error
 			forwarded, forwardErr = h.gatewayService.ForwardImages(rpmAdmission.forwardContext(requestCtx, account), c, account, body, parsed, channelMapping.MappedModel)
 			return forwarded, forwardErr
 		}()

@@ -93,6 +93,11 @@ func RegisterUserRoutes(
 				studioBridge.GET("/session-probe", h.StudioBridge.SessionProbe)
 			}
 
+			// API image history uses a customer DTO, never the admin archive DTO.
+			user.GET("/image-history", h.OpenAIGateway.UserImageHistory)
+			user.GET("/image-history/:id", h.OpenAIGateway.UserImageHistoryDetail)
+			user.GET("/image-history/:id/files/:file", h.OpenAIGateway.UserImageHistoryFile)
+
 			// 生图（Image Creator）
 			imageCreator := user.Group("/image-creator")
 			{

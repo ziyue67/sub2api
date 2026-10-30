@@ -1,4 +1,11 @@
 export default {
+  customerTitle: 'My API images',
+  customerHint: 'View retained API image results and payment status. Images are removed after expiry.',
+  customerEmpty: 'No retained records. Only unexpired requests within enabled archive scopes appear here.',
+  customerBilling: 'Payment', chargedAmount: 'Charged ${amount}',
+  downloadSaved: 'Download saved image', transferInterrupted: 'Result transfer was interrupted.',
+  generation: { succeeded: 'Generated', failed: 'Generation incomplete', unknown: 'Generation status unconfirmed' },
+  receipt: { charged: 'Charged', no_charge: 'Not charged', pending: 'Settling', unknown: 'Payment status unconfirmed' },
   title: 'Image archive', description: 'Inspect archived image requests, originals, and reference images.',
   settings: 'Archive settings', storage: 'Storage used / limit', retention: 'Retention in days', days: '{n} days',
   capture: 'Capture', enabled: 'Enabled', disabled: 'Disabled', freeDisk: 'Free disk space',
@@ -9,7 +16,7 @@ export default {
   noImages: 'No saved images', empty: 'No archived requests',
   emptyHint: 'Select accounts or groups in archive settings to start saving new Images requests.',
   previous: 'Previous', next: 'Next', enableCapture: 'Enable image archiving',
-  scopeHint: 'Capture when either the account or group matches. An empty scope captures nothing. Visible to administrators only.',
+  scopeHint: 'Capture when either the account or group matches. An empty scope captures nothing. Administrators see full archives; customers see only their own result images.',
   capacityGiB: 'Storage limit (GiB)', groups: 'Capture by group', accounts: 'Capture by upstream account',
   searchAccounts: 'Search account names', selectedIDs: 'Selected account IDs:', clearAccounts: 'Clear selected accounts',
   storageHint: 'Stored locally with at least 2 GiB of free disk space. Skip archiving when full. Retention changes apply to new records; expired records are cleaned hourly.',
@@ -30,6 +37,7 @@ export default {
   roles: { result: 'Result', reference: 'Reference', mask: 'Mask' },
   status: { saved: 'Saved', partial: 'Partially saved', failed: 'Save failed' },
   errors: {
+    forward_failed: 'Request forwarding or result transfer did not complete',
     delete_restore_failed: 'File restoration after failed deletion needs attention', delete_cleanup_failed: 'Deleted file cleanup pending',
     settings_unavailable: 'Archive settings unavailable', queue_full: 'Queue or memory budget full', storage_busy: 'Storage lock timed out',
     storage_unavailable: 'Local storage unavailable', capture_limit: 'Capture or memory limit exceeded', prompt_limit: 'Prompt capture limit exceeded', parameter_limit: 'Parameter capture limit exceeded',

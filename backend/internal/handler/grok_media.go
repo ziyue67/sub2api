@@ -487,7 +487,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				})
 			}
 			result, err := h.gatewayService.ForwardGrokMedia(requestCtx, c, account, endpoint, requestID, body, contentType)
-			capture.Finish(c, result)
+			capture.FinishWithError(c, result, err)
 			return result, err
 		}()
 

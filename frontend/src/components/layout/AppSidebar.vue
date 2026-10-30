@@ -789,6 +789,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/model-square', label: '模型广场', icon: ChannelIcon },
     { path: '/canvas', label: '绘图工作站', icon: BatchImageIcon },
+    { path: '/image-history', label: t('imageArchive.customerTitle'), icon: GalleryIcon },
     { path: '/leaderboard', label: '总排行榜', icon: ChartIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: !authStore.isObserver },

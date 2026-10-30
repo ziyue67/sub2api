@@ -17,6 +17,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('authenticated archive images', () => {
+  it('uses the injected customer file loader without calling administrator endpoints', async () => {
+    const customerFile = vi.fn().mockResolvedValue(new Blob(['own image']))
+    const wrapper = mount(ImageArchiveAsset, { props: { recordID: 'own-record', file, full: true, loadFile: customerFile } })
+    await flushPromises()
+    expect(customerFile).toHaveBeenCalledWith('own-record', 1, false, expect.any(AbortSignal))
+    expect(mocks.file).not.toHaveBeenCalled()
+    await wrapper.get('img').trigger('click')
+    expect(wrapper.find('[data-testid="viewer"]').exists()).toBe(true)
+    const signal = customerFile.mock.calls[0][3] as AbortSignal
+    wrapper.unmount()
+    expect(signal.aborted).toBe(true)
+    expect(mocks.revoke).toHaveBeenCalledWith('blob:archive-test')
+  })
+
   it('opens the original in a viewer, zooms with buttons and wheel, resets and closes on image change', async () => {
     mocks.file.mockResolvedValue(new Blob(['image']))
     const wrapper = mount(ImageArchiveAsset, { props: { recordID: 'record', file, full: true } })
