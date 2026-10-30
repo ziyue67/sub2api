@@ -43,7 +43,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import { useI18n } from 'vue-i18n'
 import { imageArchiveAPI, type ImageArchiveFile } from '@/api/admin/imageArchive'
 
-const props = defineProps<{ recordID: string; file: ImageArchiveFile; full?: boolean; closeOnBackdrop?: boolean }>()
+const props = defineProps<{ recordID: string; file: Pick<ImageArchiveFile, 'id' | 'role' | 'thumbnail' | 'preview_only'>; full?: boolean; closeOnBackdrop?: boolean; loadFile?: typeof imageArchiveAPI.file }>()
 const { t } = useI18n()
 const src = ref('')
 const failed = ref(false)
@@ -172,7 +172,7 @@ watch(() => [props.recordID, props.file.id, props.full], async () => {
   if (!props.full && !props.file.thumbnail) return
   controller = new AbortController()
   try {
-    const blob = await imageArchiveAPI.file(props.recordID, props.file.id, !props.full, controller.signal)
+    const blob = await (props.loadFile ?? imageArchiveAPI.file)(props.recordID, props.file.id, !props.full, controller.signal)
     if (request === generation) src.value = URL.createObjectURL(blob)
   } catch {
     if (request === generation && !controller.signal.aborted) failed.value = true

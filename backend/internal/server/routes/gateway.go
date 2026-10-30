@@ -252,6 +252,11 @@ func RegisterGatewayRoutes(
 	gateway.Use(captureTraffic)
 	gateway.Use(imageAdmission)
 	gateway.GET("/sub2api/billing", h.Gateway.KeyBillingInfo)
+	// Customer-scoped image history. These routes use API-key ownership and
+	// intentionally bypass model/stream admission middleware.
+	gateway.GET("/images/history", h.OpenAIGateway.ImageHistory)
+	gateway.GET("/images/history/:id", h.OpenAIGateway.ImageHistoryDetail)
+	gateway.GET("/images/history/:id/files/:file", h.OpenAIGateway.ImageHistoryFile)
 	gateway.Use(groupModelAllowlist)
 	gateway.Use(groupCodexCLIOnly, groupBlockSubagents)
 	gateway.Use(groupStreamOnly)

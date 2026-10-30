@@ -1,4 +1,11 @@
 export default {
+  customerTitle: '我的 API 生图',
+  customerHint: '查看已保留的 API 生图结果与扣费状态，图片在到期后清理。',
+  customerEmpty: '暂无已保留的记录。仅展示已开启留档范围内、尚未到期的请求。',
+  customerBilling: '本次扣费', chargedAmount: '已扣费 ${amount}',
+  downloadSaved: '下载已保存图片', transferInterrupted: '结果传输中断。',
+  generation: { succeeded: '已生成', failed: '生图未完成', unknown: '生成状态待确认' },
+  receipt: { charged: '已扣费', no_charge: '未扣费', pending: '结算中', unknown: '扣费状态待确认' },
   title: '生图记录', description: '查看已开启留档的生图请求、原图和参考图。',
   settings: '留档设置', storage: '已用容量 / 容量上限', retention: '保留天数', days: '{n} 天',
   capture: '留档开关', enabled: '已开启', disabled: '未开启', freeDisk: '磁盘可用',
@@ -9,7 +16,7 @@ export default {
   noImages: '没有保存的图片', empty: '暂无生图记录',
   emptyHint: '在留档设置中选择账号或分组，开启后保存新的 Images 请求。',
   previous: '上一页', next: '下一页', enableCapture: '开启生图留档',
-  scopeHint: '账号或分组任意一项命中即留档；未选择范围时不采集。仅管理员可查看。',
+  scopeHint: '账号或分组任意一项命中即留档；未选择范围时不采集。管理员可查看完整留档，客户仅可查看自己的结果图。',
   capacityGiB: '容量上限（GiB）', groups: '按分组开启', accounts: '按上游账号开启',
   searchAccounts: '搜索账号名称', selectedIDs: '已选账号 ID：', clearAccounts: '清空已选账号',
   storageHint: '本机保存，磁盘至少预留 2 GiB。空间不足时跳过留档。修改保留天数只影响新记录；过期记录每小时清理。',
@@ -30,6 +37,7 @@ export default {
   roles: { result: '结果图', reference: '参考图', mask: 'Mask' },
   status: { saved: '已保存', partial: '部分保存', failed: '保存失败' },
   errors: {
+    forward_failed: '请求转发或结果传输未完成',
     delete_restore_failed: '删除失败后的文件恢复异常', delete_cleanup_failed: '删除后的残留文件待清理',
     settings_unavailable: '无法读取留档设置', queue_full: '队列或内存额度已满', storage_busy: '存储锁等待超时',
     storage_unavailable: '本机存储不可用', capture_limit: '单次采集或内存大小超限', prompt_limit: '提示词采集超限', parameter_limit: '生成参数采集超限',

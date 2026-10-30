@@ -82,6 +82,9 @@ func imageArchiveWhere(f service.ImageArchiveFilter) (string, []any) {
 	if f.UserID > 0 {
 		add("a.user_id =", f.UserID)
 	}
+	if f.APIKeyID > 0 {
+		add("a.api_key_id =", f.APIKeyID)
+	}
 	if f.AccountID > 0 {
 		add("a.account_id =", f.AccountID)
 	}

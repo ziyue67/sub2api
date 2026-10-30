@@ -114,6 +114,7 @@ type ImageArchiveFilter struct {
 	Page      int
 	PageSize  int
 	UserID    int64
+	APIKeyID  int64
 	AccountID int64
 	GroupID   int64
 	Model     string
@@ -537,13 +538,44 @@ func ObserveImageArchiveJSON(c *gin.Context, body []byte) {
 
 // Finish is non-blocking and must run even when the client disconnected or forwarding returned a partial error.
 func (j *ImageArchiveCapture) Finish(c *gin.Context, result *OpenAIForwardResult) {
+	j.FinishWithError(c, result, nil)
+}
+
+// FinishWithError is non-blocking and preserves a failed request record when the
+// upstream returned no image. This lets the owner inspect a charged/failed
+// request instead of losing it at the archive boundary.
+func (j *ImageArchiveCapture) FinishWithError(c *gin.Context, result *OpenAIForwardResult, forwardErr error) {
 	if j == nil {
 		return
 	}
 	c.Set(imageArchiveContextKey, (*ImageArchiveCapture)(nil))
-	if j.outputs == 0 && (result == nil || result.ImageCount <= 0) {
+	if forwardErr != nil {
+		j.issue("forward_failed")
+	}
+	if result == nil && forwardErr == nil && j.outputs == 0 {
 		j.release()
 		return
+	}
+	count := j.outputs
+	if result != nil && result.ImageCount > count {
+		count = result.ImageCount
+	}
+	j.parameter("_image_count", count)
+	generation := "failed"
+	if count > 0 {
+		generation = "succeeded"
+	}
+	j.parameter("_generation_status", generation)
+	j.parameter("_delivery_status", "unknown")
+	if count > 0 {
+		j.parameter("_delivery_status", "returned")
+		if forwardErr != nil || (c.Request != nil && c.Request.Context().Err() != nil) {
+			j.parameter("_delivery_status", "interrupted")
+		}
+	}
+	j.parameter("_client_request_id", c.Writer.Header().Get("X-Client-Request-ID"))
+	if result != nil && result.ImageCount > 0 && c.Request != nil {
+		j.parameter("_billing_request_id", resolveUsageBillingRequestID(c.Request.Context(), result.RequestID))
 	}
 	if result != nil {
 		j.record.RequestID = j.smallString(result.RequestID)

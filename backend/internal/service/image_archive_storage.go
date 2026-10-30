@@ -56,6 +56,19 @@ func (s *ImageArchiveService) process(job *ImageArchiveCapture) {
 	if !s.config.Load().matches(job.record.AccountID, job.record.GroupID) {
 		return
 	}
+	// Metadata-only failures must not depend on image disk availability.
+	if len(job.assets) == 0 {
+		job.record.Status = "failed"
+		job.issue("missing_results")
+		job.record.ErrorCodes = imageArchiveErrorCodes(job.issues)
+		if err := s.repo.Insert(ctx, &job.record); err != nil {
+			s.failed.Add(1)
+			s.warn("database_write_failed")
+			return
+		}
+		s.failed.Add(1)
+		return
+	}
 	unlock, err := s.repo.Lock(ctx)
 	if err != nil {
 		s.failed.Add(1)
@@ -494,6 +507,7 @@ func (s *ImageArchiveService) OpenFile(ctx context.Context, id string, fileID in
 func (s *ImageArchiveService) List(ctx context.Context, filter ImageArchiveFilter) ([]ImageArchiveRecord, int64, error) {
 	return s.repo.List(ctx, filter)
 }
+
 func (s *ImageArchiveService) Get(ctx context.Context, id string) (*ImageArchiveRecord, error) {
 	if !imageArchiveValidID(id) {
 		return nil, sql.ErrNoRows

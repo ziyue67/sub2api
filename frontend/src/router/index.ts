@@ -291,6 +291,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/image-history',
+    name: 'ImageHistory',
+    component: () => import('@/views/user/ImageHistoryView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'My API Images',
+      titleKey: 'imageArchive.customerTitle',
+      descriptionKey: 'imageArchive.customerHint'
+    }
+  },
+  {
     path: '/image-manager',
     name: 'ImageManager',
     component: () => import('@/views/user/ImageManagerView.vue'),
