@@ -203,11 +203,21 @@ func TestImageHistoryLegacyBillingUsesVerifiedIdentity(t *testing.T) {
 	amount := 0.25
 	repo := &historyTestRepository{archiveTestRepository: base, legacyBilling: ImageHistoryBilling{Status: "charged", Amount: &amount}}
 	s.repo = repo
-	record := &ImageArchiveRecord{UserID: 12, APIKeyID: 34, AccountID: 56, RequestID: "upstream-request", Parameters: map[string]any{}}
+	record := &ImageArchiveRecord{UserID: 12, APIKeyID: 34, AccountID: 56, RequestID: "upstream-request", Parameters: map[string]any{}, Files: []ImageArchiveFile{{Role: "result"}}}
 	got := s.HistoryBilling(context.Background(), record)
 	require.Equal(t, "charged", got.Status)
 	require.Equal(t, []any{int64(12), int64(34), int64(56), "upstream-request"}, repo.legacyIdentity)
 	require.Zero(t, repo.billingCalls)
+	callsBefore := repo.legacyCalls
+	record.Files = []ImageArchiveFile{{Role: "reference"}}
+	record.ErrorCodes = "forward_failed"
+	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
+	require.Equal(t, callsBefore, repo.legacyCalls, "old bare failed attempts must not borrow a successful retry receipt")
+	record.Files = []ImageArchiveFile{{Role: "result"}}
+	record.Parameters["_generation_status"] = "failed"
+	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
+	require.Equal(t, callsBefore, repo.legacyCalls)
+	delete(record.Parameters, "_generation_status")
 	repo.legacyErr = errors.New("database unavailable")
 	require.Equal(t, "unknown", s.HistoryBilling(context.Background(), record).Status)
 	repo.legacyErr = nil

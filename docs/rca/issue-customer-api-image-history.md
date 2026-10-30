@@ -60,7 +60,7 @@ Authorization: Bearer <SITE_API_KEY>
 
 生成状态 `succeeded/failed/unknown`、传输状态 `returned/interrupted/unknown` 与留档的 `saved/partial/failed` 分开。`returned` 仅表示服务端转发函数未报告错误，不证明客户端已展示或持久保存。
 
-扣费优先通过采集时记录的**本站规范结算请求 ID**，与 `usage_billing_events` 的同一用户、同一 Key 匹配。旧记录缺规范 ID 时，只接受 `usage_logs` 中同一用户、Key、上游账号、图片数量大于零、请求 ID 唯一匹配的关联，再读取持久结算事件并核对账号；单条使用记录或费用估算不能证明实际扣款。
+扣费优先通过采集时记录的**本站规范结算请求 ID**，与 `usage_billing_events` 的同一用户、同一 Key 匹配。旧记录缺规范 ID 时，必须仍保存结果图且没有明确失败的生成状态，才接受 `usage_logs` 中同一用户、Key、上游账号、图片数量大于零、请求 ID 唯一匹配的关联，再读取持久结算事件并核对账号；单条使用记录或费用估算不能证明实际扣款。
 
 | 结算事件 | 客户状态 | 金额 |
 | --- | --- | --- |

@@ -84,7 +84,14 @@ func (s *ImageArchiveService) HistoryBilling(ctx context.Context, record *ImageA
 	}
 	// Old captures may have an upstream ID but no canonical billing ID. Only a
 	// unique, same-owner/key/account usage link AND its durable receipt suffice.
-	if record.RequestID != "" && record.AccountID > 0 {
+	hasResult := false
+	for _, file := range record.Files {
+		if file.Role == "result" {
+			hasResult = true
+			break
+		}
+	}
+	if hasResult && record.Parameters["_generation_status"] != "failed" && record.RequestID != "" && record.AccountID > 0 {
 		if reader, ok := s.repo.(imageHistoryLegacyBillingReader); ok {
 			billing, err := reader.ImageHistoryLegacyBilling(ctx, record.UserID, record.APIKeyID, record.AccountID, record.RequestID)
 			if err == nil {
