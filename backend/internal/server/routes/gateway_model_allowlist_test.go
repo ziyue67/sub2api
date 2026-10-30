@@ -92,12 +92,16 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 		{group: "antigravityV1Beta", auth: "middleware.APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg)", marker: "antigravityV1Beta.Use(groupModelAllowlist)", composite: "antigravityV1Beta.Use(requireGroupGoogle)"},
 	}
 	for _, chain := range chains {
-		re := regexp.MustCompile(
-			regexp.QuoteMeta(chain.group+".Use("+chain.auth) +
-				`[\s\S]{0,400}?` + regexp.QuoteMeta(chain.marker) +
-				`[\s\S]{0,400}?` + regexp.QuoteMeta(chain.composite))
-		require.Regexp(t, re, source,
-			"%s chain must mount groupModelAllowlist after auth and before %s", chain.group, chain.composite)
+		// Read-only routes may be registered between auth and generation admission.
+		// Verify the unique middleware statements and their order, not byte distance.
+		auth := chain.group + ".Use(" + chain.auth
+		for _, statement := range []string{auth, chain.marker, chain.composite} {
+			require.Equal(t, 1, strings.Count(source, statement), "%s must be mounted exactly once", statement)
+		}
+		require.Less(t, strings.Index(source, auth), strings.Index(source, chain.marker),
+			"%s chain must mount groupModelAllowlist after auth", chain.group)
+		require.Less(t, strings.Index(source, chain.marker), strings.Index(source, chain.composite),
+			"%s chain must mount groupModelAllowlist before %s", chain.group, chain.composite)
 	}
 
 	// codexDirect 链是一条 Use 调用，直接断言顺序。
