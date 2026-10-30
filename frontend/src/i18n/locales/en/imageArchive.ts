@@ -5,7 +5,7 @@ export default {
   customerBilling: 'Payment', chargedAmount: 'Charged ${amount}',
   downloadSaved: 'Download saved image', transferInterrupted: 'Result transfer was interrupted.',
   generation: { succeeded: 'Generated', failed: 'Generation incomplete', unknown: 'Generation status unconfirmed' },
-  receipt: { charged: 'Charged', no_charge: 'Not charged', pending: 'Settling', unknown: 'Payment status unconfirmed' },
+  receipt: { charged: 'Charged', no_charge: 'Not charged by this site', pending: 'Settling', unknown: 'No verifiable payment record' },
   title: 'Image archive', description: 'Inspect archived image requests, originals, and reference images.',
   settings: 'Archive settings', storage: 'Storage used / limit', retention: 'Retention in days', days: '{n} days',
   capture: 'Capture', enabled: 'Enabled', disabled: 'Disabled', freeDisk: 'Free disk space',
