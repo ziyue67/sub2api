@@ -1,5 +1,7 @@
 export default {
   customerTitle: 'My API images',
+  retry: 'Reload', pagination: 'Image history pagination', pageOf: 'Page {page} of {pages}',
+  savedImages: '{n} images', selectImage: 'Select image', imageNumber: 'Image {n}',
   customerHint: 'View retained API image results and payment status. Images are removed after expiry.',
   customerEmpty: 'No retained records. Only unexpired requests within enabled archive scopes appear here.',
   customerBilling: 'Payment', chargedAmount: 'Charged ${amount}',

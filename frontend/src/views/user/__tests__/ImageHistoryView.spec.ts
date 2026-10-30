@@ -76,4 +76,36 @@ describe('customer API image history', () => {
     expect(wrapper.text()).not.toContain('SECRET_')
     wrapper.unmount()
   })
+
+  it('recovers from a failed load and shows an empty state without stale pagination', async () => {
+    mocks.list.mockRejectedValueOnce(new Error('SECRET_INTERNAL_ERROR'))
+    mocks.list.mockResolvedValueOnce({ items: [], total: 0, page: 1, page_size: 20 })
+    const wrapper = mount(ImageHistoryView); await flushPromises()
+    const retry = wrapper.findAll('button').find(button => button.text() === 'imageArchive.retry')!
+    await retry.trigger('click'); await flushPromises()
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('imageArchive.customerEmpty')
+    expect(wrapper.find('nav').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('uses server page size and switches the selected file before downloading', async () => {
+    const secondFile = { ...record.files[0], id: 3, mime_type: 'image/webp', preview_only: false }
+    mocks.list.mockResolvedValueOnce({ items: [{ ...record, files: [...record.files, secondFile] }], total: 8, page: 1, page_size: 5 })
+    mocks.file.mockResolvedValue(new Blob(['image'], { type: 'image/webp' }))
+    const wrapper = mount(ImageHistoryView); await flushPromises()
+    expect(wrapper.text()).toContain('imageArchive.pageOf{"page":1,"pages":2}')
+    const next = wrapper.findAll('button').find(button => button.text() === 'imageArchive.next')!
+    expect(next.attributes('disabled')).toBeUndefined()
+    await wrapper.findAll('button').find(button => button.text() === 'imageArchive.detail')!.trigger('click')
+    await wrapper.get('[aria-label=\'imageArchive.imageNumber{"n":2}\']').trigger('click')
+    expect(wrapper.get('[aria-label=\'imageArchive.imageNumber{"n":2}\']').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('[data-testid="detail"]').text()).not.toContain('imageArchive.previewOnlyFile')
+    await wrapper.findAll('button').find(button => button.text() === 'imageArchive.downloadSaved')!.trigger('click')
+    await flushPromises()
+    expect(mocks.file).toHaveBeenCalledWith('own-record', 3, false, expect.any(AbortSignal))
+    expect(mocks.save).toHaveBeenCalledWith(expect.any(Blob), 'image-own-record-3.webp')
+    wrapper.unmount()
+  })
 })
