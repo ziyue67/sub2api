@@ -299,7 +299,6 @@ func issue600Finish(t *testing.T, h *openAIWSPassthroughHandlerHarness, headers 
 // Real handler -> production forwarder -> synthetic WS/HTTP upstream. No call to
 // an extracted identity resolver or an admission hook stands in for the network.
 func TestIssue600ClientIdentityNetwork(t *testing.T) {
-	t.Skip("ranxi 合成入带的后续轮模型白名单/客户端身份一致性校验尚未移植到本 fork 的 WS ingress；本 fork 该文件保留断连时按已产生用量计费的行为，两条能力需单独移植，见 #143 说明。")
 	stable := `{"type":"response.create","model":"gpt-5.1","client_metadata":{"thread_id":"fixture-client-thread"},"input":"fixture"}`
 	omitted := `{"type":"response.create","model":"gpt-5.1","input":"fixture-followup"}`
 	changed := strings.ReplaceAll(stable, "fixture-client-thread", "fixture-different-thread")

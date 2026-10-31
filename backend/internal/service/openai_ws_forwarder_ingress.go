@@ -1229,8 +1229,11 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		var bridgeAccountFailoverInput []json.RawMessage
 		bridgeAccountFailoverInputExists := false
 		for turn := 1; ; turn++ {
-			if turn > 1 && hooks != nil && hooks.BeforeRequest != nil {
-				if err := hooks.BeforeRequest(turn, currentBridgePayload.rawForHash, currentBridgePayload.originalModel); err != nil {
+			// 逐轮回调必须走 client-payload 版本：handler 只注册
+			// BeforeRequestWithClientPayload（模型白名单/客户端身份一致性都在里面），
+			// 只判 BeforeRequest 会让原生路径整轮跳过准入校验。
+			if turn > 1 && hooks != nil {
+				if err := hooks.beforeRequest(turn, currentBridgePayload.payloadRaw, currentBridgePayload.accountIdentitySourceRaw, currentBridgePayload.originalModel); err != nil {
 					s.invalidateOpenAIWSTurnStateAfterAdmissionFailureForRequest(
 						ctx,
 						c,
@@ -2284,8 +2287,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			)
 			return err
 		}
-		if turn > 1 && !skipBeforeTurn && hooks != nil && hooks.BeforeRequest != nil {
-			if err := hooks.BeforeRequest(turn, currentClientPayload, currentOriginalModel); err != nil {
+		if turn > 1 && !skipBeforeTurn && hooks != nil {
+			if err := hooks.beforeRequest(turn, currentPayload, currentClientPayload, currentOriginalModel); err != nil {
 				s.invalidateOpenAIWSTurnStateAfterAdmissionFailureForRequest(
 					ctx,
 					c,

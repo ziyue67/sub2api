@@ -61,7 +61,6 @@ func TestOpenAIResponsesWebSocket_SubsequentTurnModelNotAllowedCloses_Passthroug
 
 // 后续 turn 切换到白名单外的模型：连接被 1008 关闭（原生 ingress 模式）。
 func TestOpenAIResponsesWebSocket_SubsequentTurnModelNotAllowedCloses_NativeIngress(t *testing.T) {
-	t.Skip("ranxi 合成入带的后续轮模型白名单/客户端身份一致性校验尚未移植到本 fork 的 WS ingress；本 fork 该文件保留断连时按已产生用量计费的行为，两条能力需单独移植，见 #143 说明。")
 	runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
 		firstPayload:            `{"type":"response.create","model":"gpt-5.4","stream":false}`,
 		secondPayload:           `{"type":"response.create","model":"gpt-4.1","stream":false}`,
@@ -127,7 +126,6 @@ func TestOpenAIResponsesWebSocket_FirstFrameCaseVariantModelKeyRejected(t *testi
 
 // 后续 turn 含重复 model 键（首个在白名单、末个不在）：拒绝并关闭连接。
 func TestOpenAIResponsesWebSocket_SubsequentTurnDuplicateModelKeysRejected(t *testing.T) {
-	t.Skip("ranxi 合成入带的后续轮模型白名单/客户端身份一致性校验尚未移植到本 fork 的 WS ingress；本 fork 该文件保留断连时按已产生用量计费的行为，两条能力需单独移植，见 #143 说明。")
 	for _, mode := range []string{service.OpenAIWSIngressModePassthrough, service.OpenAIWSIngressModeDedicated} {
 		t.Run(mode, func(t *testing.T) {
 			runOpenAIResponsesWebSocketUsageLogCase(t, openAIResponsesWSUsageLogCase{
