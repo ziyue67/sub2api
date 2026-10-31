@@ -947,6 +947,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	if apiKey.GroupID != nil {
 		routeAttempts[*apiKey.GroupID] = struct{}{}
 	}
+	headerTimeoutRetries := 0
 	var forbiddenBudget grokForbiddenFailoverBudget
 	firstOutputTimeoutSwitchCount := 0
 	profitVetoCount := 0
@@ -1182,6 +1183,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			}()
 			return h.gatewayService.Forward(rpmAdmission.forwardContext(c.Request.Context(), account), c, account, attemptBody)
 		}()
+		if result != nil {
+			result.HeaderTimeoutRetries = headerTimeoutRetries
+		}
 		if retryOpenAIInitialAdmission(c, err, result, forwardBody, account.ID, failedAccountIDs, &switchCount, maxAccountSwitches) {
 			lastAdmissionErr = err
 			reqLog.Info("openai.admission_reselecting", zap.Int64("account_id", account.ID), zap.Int("switch_count", switchCount))
@@ -1286,6 +1290,13 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					// connection-layer failure.  Provider 4xx/5xx responses retain
 					// the lane and therefore do not churn IPs.
 					h.gatewayService.ClearLaneStickyOnTransportFailure(c.Request.Context(), apiKey.GroupID, forwardModel, sessionHash, failoverErr, failoverErr.StatusCode)
+					if failoverErr.HeaderTimeoutSubmitted {
+						headerTimeoutRetries++
+						reqLog.Warn("openai.header_timeout_failover",
+							zap.Int64("account_id", account.ID),
+							zap.Int("header_timeout_retries", headerTimeoutRetries),
+						)
+					}
 					if failoverClientGone(c) {
 						reqLog.Info("openai.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
@@ -1756,6 +1767,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	headerTimeoutRetries := 0
 	var forbiddenBudget grokForbiddenFailoverBudget
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -1888,6 +1900,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			}()
 			return h.gatewayService.ForwardAsAnthropic(rpmAdmission.forwardContext(c.Request.Context(), account), c, account, forwardBody, promptCacheKey, defaultMappedModel)
 		}()
+		if result != nil {
+			result.HeaderTimeoutRetries = headerTimeoutRetries
+		}
 		if h.handleOpenAIRPMForwardError(c, err, streamStarted, true) {
 			return
 		}
@@ -1964,6 +1979,13 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					h.gatewayService.ClearLaneStickyOnTransportFailure(c.Request.Context(), apiKey.GroupID, currentRoutingModel, sessionHash, failoverErr, failoverErr.StatusCode)
+					if failoverErr.HeaderTimeoutSubmitted {
+						headerTimeoutRetries++
+						reqLog.Warn("openai.header_timeout_failover",
+							zap.Int64("account_id", account.ID),
+							zap.Int("header_timeout_retries", headerTimeoutRetries),
+						)
+					}
 					if failoverClientGone(c) {
 						reqLog.Info("openai_messages.failover_aborted_client_disconnected",
 							zap.Int64("account_id", account.ID),
@@ -3957,16 +3979,18 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					turnErr,
 				)
 				if turnErr != nil {
-					if result == nil || (result.ImageCount <= 0 && result.WebSearchCalls <= 0) {
+					if result == nil || (result.ImageCount <= 0 && !result.ObservedUsageOnError && result.WebSearchCalls <= 0) {
 						return
 					}
-					// 已完成的图片/托管搜索必须与 token 在同一条 usage 中结算。
-					// cyber 记录器在这种情况下只记录风控事件，不再异步写第二条账单。
-					reqLog.Warn("openai.websocket_partial_error_with_billable_result",
+					// cyber 命中时该 turn 的用量已由 recordCyberPolicyIfMarked(forwardErrored=true)
+					// 按真实 token 记录，这里不再走下方 RecordUsage，避免对同一 turn 双写/双扣费。
+					if service.GetOpsCyberPolicy(c) != nil {
+						return
+					}
+					reqLog.Warn("openai.websocket_partial_error_with_observed_result",
 						zap.Int64("account_id", account.ID),
 						zap.Int("image_count", result.ImageCount),
-						zap.Int("web_search_calls", result.WebSearchCalls),
-						zap.Error(turnErr),
+						zap.Bool("observed_usage", result.ObservedUsageOnError),
 					)
 				}
 				if result == nil {
