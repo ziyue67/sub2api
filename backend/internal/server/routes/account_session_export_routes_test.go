@@ -43,3 +43,17 @@ func TestOpenAISessionExportRequiresAuthAndStepUp(t *testing.T) {
 	}
 	require.Equal(t, 2, stepUpCalls)
 }
+
+func TestTKSecurityTotpExportRequiresStepUp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	group := router.Group("/api/v1/admin")
+	stepUp := servermiddleware.StepUpAuthMiddleware(func(c *gin.Context) { c.AbortWithStatus(403) })
+	h := &handler.Handlers{Admin: &handler.AdminHandlers{Account: &adminhandler.AccountHandler{}, OpenAIOAuthReauth: &adminhandler.OpenAIOAuthReauthHandler{}}}
+	registerAccountRoutes(group, h, stepUp)
+	for _, path := range []string{"/totp-export", "/totp-rotation", "/totp-rotation/verify"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/7"+path, nil))
+		require.Equal(t, 403, rec.Code, "sensitive handler must not execute before step-up")
+	}
+}

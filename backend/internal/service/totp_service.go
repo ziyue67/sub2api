@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -27,6 +29,8 @@ var (
 
 // TotpCache defines cache operations for TOTP service
 type TotpCache interface {
+	// ConsumeVerifyStep atomically rejects reuse across login and step-up.
+	ConsumeVerifyStep(ctx context.Context, userID int64, secretFingerprint string, step int64, ttl time.Duration) (bool, error)
 	// Setup session methods
 	GetSetupSession(ctx context.Context, userID int64) (*TotpSetupSession, error)
 	SetSetupSession(ctx context.Context, userID int64, session *TotpSetupSession, ttl time.Duration) error
@@ -335,8 +339,11 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		"code_len", len(code))
 
 	// Check rate limiting
-	attempts, err := s.cache.GetVerifyAttempts(ctx, userID)
-	if err == nil && attempts >= maxTotpAttempts {
+	attempts, err := s.cache.IncrementVerifyAttempts(ctx, userID)
+	if err != nil {
+		return ErrServiceUnavailable
+	}
+	if attempts > maxTotpAttempts {
 		return ErrTotpTooManyAttempts
 	}
 
@@ -370,27 +377,27 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 		return infraerrors.InternalServer("TOTP_VERIFY_ERROR", "failed to verify totp code")
 	}
 
-	secretPrefix := "N/A"
-	if len(secret) >= 4 {
-		secretPrefix = secret[:4]
+	// Find the exact accepted step using the same +/- one-step skew as Validate.
+	// The secret fingerprint separates authenticator rotations without storing
+	// either the secret or the six-digit verification code in Redis/logs.
+	step := time.Now().Unix() / 30
+	matched := int64(-1)
+	for _, offset := range []int64{0, -1, 1} {
+		valid, err := totp.ValidateCustom(code, secret, time.Unix((step+offset)*30, 0), totp.ValidateOpts{Period: 30, Skew: 0, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1})
+		if err == nil && valid {
+			matched = step + offset
+			break
+		}
 	}
-	slog.Debug("totp_verify_decrypted",
-		"user_id", userID,
-		"secret_len", len(secret),
-		"secret_prefix", secretPrefix)
-
-	// Verify the code
-	valid := totp.Validate(code, secret)
-	slog.Debug("totp_verify_result",
-		"user_id", userID,
-		"valid", valid,
-		"secret_len", len(secret),
-		"secret_prefix", secretPrefix,
-		"server_time", time.Now().UTC().Format(time.RFC3339))
-
-	if !valid {
-		// Increment failed attempts
-		_, _ = s.cache.IncrementVerifyAttempts(ctx, userID)
+	if matched < 0 {
+		return ErrTotpInvalidCode
+	}
+	fingerprint := sha256.Sum256([]byte(secret))
+	consumed, err := s.cache.ConsumeVerifyStep(ctx, userID, hex.EncodeToString(fingerprint[:]), matched, 2*time.Minute)
+	if err != nil {
+		return ErrServiceUnavailable
+	}
+	if !consumed {
 		return ErrTotpInvalidCode
 	}
 
@@ -406,6 +413,9 @@ const StepUpGrantTTL = 15 * time.Minute
 // VerifyStepUp 校验 TOTP 码并授予当前会话一段时间的 step-up 权限。
 // 返回授权有效期，供前端展示/设置提醒。
 func (s *TotpService) VerifyStepUp(ctx context.Context, userID int64, sessionKey, code string) (time.Duration, error) {
+	if sessionKey == "" {
+		return 0, ErrInvalidToken
+	}
 	if err := s.VerifyCode(ctx, userID, code); err != nil {
 		return 0, err
 	}

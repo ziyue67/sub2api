@@ -234,7 +234,11 @@ func RegisterGatewayRoutes(
 				})
 				return
 			}
-			if service.IsOpenAIResponsesInputTokensRequestPath(c) && isOpenAIResponsesCompatibleGatewayPlatform(c) {
+			if service.IsOpenAIResponsesInputTokensRequestPath(c) {
+				if !isOpenAIResponsesCompatibleGatewayPlatform(c) {
+					c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_request_error", "message": "This platform does not support Responses token counting; use /v1/messages/count_tokens"}})
+					return
+				}
 				h.OpenAIGateway.ResponsesInputTokens(c)
 				return
 			}

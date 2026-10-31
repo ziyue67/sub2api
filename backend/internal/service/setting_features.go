@@ -281,11 +281,20 @@ func (s *SettingService) IsSessionBindingEnabled(ctx context.Context) bool {
 // 开启时账号/代理导出、备份创建/下载、S3 配置修改、提升管理员等操作
 // 要求当前会话在有效期内完成过 TOTP step-up 验证。
 func (s *SettingService) IsStepUpEnabled(ctx context.Context) bool {
+	enabled, err := s.StepUpState(ctx)
+	return err != nil || enabled
+}
+
+// StepUpState distinguishes the unset default from an unavailable setting store.
+func (s *SettingService) StepUpState(ctx context.Context) (bool, error) {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyStepUpEnabled)
 	if err != nil {
-		return false // 默认关闭
+		if errors.Is(err, ErrSettingNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
-	return value == "true"
+	return value == "true", nil
 }
 
 // defaultAuditLogRetentionDays 审计日志默认保留天数。

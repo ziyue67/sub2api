@@ -25,7 +25,7 @@ func TestResolveBillingServiceTier(t *testing.T) {
 		{name: "no declaration keeps request", requested: "priority", observed: "", billing: "priority"},
 		{name: "no request no declaration", requested: "", observed: "", billing: ""},
 		{name: "response never raises the tier", requested: "", observed: "priority", billing: ""},
-		{name: "flex never raised to default", requested: "flex", observed: "default", billing: "flex"},
+		{name: "unconfirmed flex uses standard", requested: "flex", observed: "default", billing: "default"},
 		{name: "default echoed for untiered request", requested: "", observed: "default", billing: ""},
 		{name: "unknown response tier ignored", requested: "priority", observed: "turbo", billing: "priority"},
 		{name: "case and whitespace normalised", requested: " Priority ", observed: "DEFAULT", billing: "default", downgraded: true},

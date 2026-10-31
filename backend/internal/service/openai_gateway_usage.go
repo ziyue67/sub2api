@@ -185,7 +185,6 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if !isGrokVideoUsageResult(result, nil) {
 		ApplyOpenAIImageBillingResolution(result)
 	}
-	logServiceTierBillingDowngrade("service.openai_gateway", account, result.RequestID, ApplyOpenAIServiceTierBillingResolution(billingAccount, result))
 
 	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
 	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
@@ -257,6 +256,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		result.Model,
 	)
 	billingModels = s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, billingModels)
+	requestedServiceTier := optionalStringValue(result.ServiceTier)
+	var tierPricing *ModelPricing
+	if resolved := s.resolveOpenAIChannelPricing(ctx, firstUsageBillingModel(billingModels), apiKey); resolved != nil {
+		tierPricing = resolved.BasePricing
+	}
+	logServiceTierBillingDowngrade("service.openai_gateway", account, result.RequestID, ApplyOpenAIServiceTierBillingResolution(billingAccount, result, tierPricing))
 	serviceTier := ""
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
@@ -307,9 +312,18 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	); responseModel != "" && !strings.EqualFold(responseModel, baselineBillingModel) {
 		if identified, responseChannelPriced := s.hasIdentifiedOpenAIResponsePricing(ctx, responseModel, apiKey); identified {
 			responseModels := s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, usageBillingModelCandidates(responseModel))
+			// A response-model switch must not inherit another model's explicit
+			// flex permission. Resolve from the original outbound tier again.
+			responseTierResult := &OpenAIForwardResult{ServiceTier: &requestedServiceTier, UpstreamResponseServiceTier: result.UpstreamResponseServiceTier}
+			var responseTierPricing *ModelPricing
+			if resolved := s.resolveOpenAIChannelPricing(ctx, firstUsageBillingModel(responseModels), apiKey); resolved != nil {
+				responseTierPricing = resolved.BasePricing
+			}
+			responseTierResolution := ApplyOpenAIServiceTierBillingResolution(billingAccount, responseTierResult, responseTierPricing)
+			responseTier := optionalStringValue(responseTierResult.ServiceTier)
 			responseCost, responseErr := s.calculateOpenAIRecordUsageCost(
 				ctx, result, apiKey, responseModels, multiplier, imageMultiplier,
-				videoMultiplier, baseMultiplier, tokens, serviceTier, longContextBillingGate, modelLongContextExempt, pricingAt,
+				videoMultiplier, baseMultiplier, tokens, responseTier, longContextBillingGate, modelLongContextExempt, pricingAt,
 			)
 			// 基线定价源以 baselineBillingModel 为准：它正是 calculateOpenAIRecordUsageCost
 			// 内部做渠道定价判断时使用的模型，且"首候选有渠道价"必然意味着首候选就是实际
@@ -320,6 +334,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 					baselineBillingModel, responseModel, cost, responseCost)
 				billingModels = responseModels
 				cost = responseCost
+				serviceTier = responseTier
+				result.ServiceTier = responseTierResult.ServiceTier
+				logServiceTierBillingDowngrade("service.openai_gateway", account, result.RequestID, responseTierResolution)
 			}
 		}
 	}

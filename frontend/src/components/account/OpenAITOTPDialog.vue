@@ -38,6 +38,7 @@
     <template #footer><button type="button" class="btn btn-secondary" @click="close">{{ t('tokenGuardV2.totpManage.close') }}</button></template>
   </BaseDialog>
   <OpenAISessionExportDialog v-if="sessionExportOpen" :account="sessionExportAccount" @close="sessionExportOpen = false" />
+  <TotpStepUpDialog v-if="stepUp.visible.value" :controller="stepUp" />
 </template>
 
 <script setup lang="ts">
@@ -47,9 +48,12 @@ import QRCode from 'qrcode'
 import { BaseDialog } from '@/components/common'
 import { exportTOTP, getTOTPRotation, rotateTOTP, verifyTOTP, type TOTPExport, type TOTPExportSource, type TOTPRotation } from '@/api/admin/openaiTotp'
 import OpenAISessionExportDialog from '@/components/account/OpenAISessionExportDialog.vue'
+import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import { useStepUp, isStepUpCancelled } from '@/composables/useStepUp'
 
 const props = defineProps<{ accountId: number; accountName: string; configured: boolean }>()
 const { t } = useI18n()
+const stepUp = useStepUp()
 const opened = ref(false), busy = ref(false), loaded = ref(false)
 const task = ref<TOTPRotation | null>(null)
 const error = ref(''), qr = ref('')
@@ -62,6 +66,7 @@ let timer: ReturnType<typeof setInterval> | undefined
 let generation = 0
 function clearExport() { exported.value = null; qr.value = '' }
 function close() {
+  stepUp.onCancel()
   generation++; opened.value = false; busy.value = false; loaded.value = false; includePassword.value = false; sessionExportOpen.value = false
   clearExport(); error.value = ''; if (timer) clearInterval(timer); timer = undefined
 }
@@ -83,22 +88,23 @@ async function open() {
 async function start() {
   if (!window.confirm(t('tokenGuardV2.totpManage.confirm', { account: props.accountName }))) return
   const current = generation
-  await perform(async () => { const result = await rotateTOTP(props.accountId); if (opened.value && current === generation) task.value = result })
+  await perform(async () => { const result = await stepUp.run(() => rotateTOTP(props.accountId)); if (opened.value && current === generation) task.value = result })
 }
 async function verify(action: 'verify_new' | 'verify_old') {
   if (!task.value) return
   const id = task.value.task_id
-  await perform(async () => { await verifyTOTP(props.accountId, id, action); await refresh() })
+  await perform(async () => { await stepUp.run(() => verifyTOTP(props.accountId, id, action)); await refresh() })
 }
 async function perform(work: () => Promise<void>) {
   const current = generation; busy.value = true; error.value = ''; clearExport()
-  try { await work() } catch { if (opened.value && current === generation) error.value = t('tokenGuardV2.error') }
+  try { await work() } catch (err) { if (!isStepUpCancelled(err) && opened.value && current === generation) error.value = t('tokenGuardV2.error') }
   finally { if (current === generation) busy.value = false }
 }
 async function reveal() {
   const current = generation
   await perform(async () => {
-    const data = await exportTOTP(props.accountId, source.value, includePassword.value)
+    const selectedSource = source.value, selectedIncludePassword = includePassword.value
+    const data = await stepUp.run(() => exportTOTP(props.accountId, selectedSource, selectedIncludePassword))
     if (!opened.value || current !== generation) return
     exported.value = data
     const image = await QRCode.toDataURL(data.otpauth_uri, { width: 192, margin: 2 })

@@ -826,15 +826,21 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	// 允许空请求体（向后兼容）
 	_ = c.ShouldBindJSON(&req)
 
-	// 如果提供了Refresh Token，撤销它
+	// Clear browser state even if shared-store revocation fails, but report the
+	// failure so the caller never mistakes local cleanup for server revocation.
+	var revokeErr error
 	if req.RefreshToken != "" {
 		if err := h.authService.RevokeRefreshToken(c.Request.Context(), req.RefreshToken); err != nil {
-			slog.Debug("failed to revoke refresh token", "error", err)
-			// 不影响登出流程
+			slog.Error("failed to revoke refresh token", "error", err)
+			revokeErr = err
 		}
 	}
 	h.consumePendingOAuthSessionOnLogout(c)
 	clearOAuthLogoutCookies(c)
+	if revokeErr != nil {
+		response.ErrorWithDetails(c, http.StatusServiceUnavailable, "Session revocation unavailable; please retry", "SESSION_REVOCATION_UNAVAILABLE", nil)
+		return
+	}
 
 	response.Success(c, LogoutResponse{
 		Message: "Logged out successfully",

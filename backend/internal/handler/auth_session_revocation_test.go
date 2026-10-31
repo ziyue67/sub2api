@@ -3,9 +3,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -14,6 +17,25 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type failedLogoutCache struct{ service.RefreshTokenCache }
+
+func (failedLogoutCache) DeleteRefreshToken(context.Context, string) error {
+	return errors.New("fixture cache unavailable")
+}
+
+func TestTKSecurityLogoutDoesNotReportFailedRevocationAsSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	auth := service.NewAuthService(nil, nil, nil, failedLogoutCache{}, &config.Config{}, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := &AuthHandler{authService: auth}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader(`{"refresh_token":"rt_fixture"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.Logout(c)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.NotContains(t, rec.Body.String(), "Logged out successfully")
+}
 
 func TestAuthHandlerRevokeAllSessionsInvalidatesAccessTokens(t *testing.T) {
 	gin.SetMode(gin.TestMode)
