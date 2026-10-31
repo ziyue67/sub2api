@@ -66,7 +66,7 @@
     "overrides": {
       "decode-uri-component@<=0.5.0": "0.5.1",
       "js-cookie": "3.0.7",
-      "follow-redirects@<1.16.1": "1.16.1",
+      "follow-redirects@<1.16.2": "1.16.2",
       "source-map-js@<1.2.2": ">=1.2.2",
       "form-data@<4.0.6": ">=4.0.6",
       "postcss@<8.5.18": ">=8.5.18",
