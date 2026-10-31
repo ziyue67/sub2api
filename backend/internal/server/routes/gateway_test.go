@@ -15,6 +15,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTKSecurityAnthropicResponseCountNeverGenerates(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformAnthropic)
+	for _, path := range []string{"/v1/responses/input_tokens", "/responses/input_tokens"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"claude-fixture","input":"hi"}`))
+		req.Header.Set("Content-Type", "application/json")
+		require.NotPanics(t, func() { router.ServeHTTP(rec, req) }, "must reject before reaching the generation handler")
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "count_tokens")
+	}
+}
+
 func newGatewayRoutesTestRouter(platform ...string) *gin.Engine {
 	return newGatewayRoutesTestRouterWithConfig(&config.Config{
 		Gateway: config.GatewayConfig{

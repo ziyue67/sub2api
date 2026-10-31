@@ -1523,11 +1523,12 @@ func TestOpenAIGatewayServiceRecordUsage_ServiceTierFlexHalvesCost(t *testing.T)
 
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 		Result: &OpenAIForwardResult{
-			RequestID:   "resp_service_tier_flex",
-			ServiceTier: &serviceTier,
-			Usage:       usage,
-			Model:       "gpt-5.4",
-			Duration:    time.Second,
+			RequestID:                   "resp_service_tier_flex",
+			ServiceTier:                 &serviceTier,
+			UpstreamResponseServiceTier: "flex",
+			Usage:                       usage,
+			Model:                       "gpt-5.4",
+			Duration:                    time.Second,
 		},
 		APIKey:  &APIKey{ID: 1016},
 		User:    &User{ID: 2016},

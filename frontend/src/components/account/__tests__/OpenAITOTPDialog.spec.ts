@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import OpenAITOTPDialog from '../OpenAITOTPDialog.vue'
+import type { StepUpController } from '@/composables/useStepUp'
 
 const api = vi.hoisted(() => ({ status: vi.fn(), rotate: vi.fn(), verify: vi.fn(), export: vi.fn(), session: vi.fn(), sessionStatus: vi.fn(), sessionDownload: vi.fn() }))
 vi.mock('@/api/admin/openaiTotp', () => ({ getTOTPRotation: api.status, rotateTOTP: api.rotate, verifyTOTP: api.verify, exportTOTP: api.export, exportChatGPTSession: api.session, getChatGPTSessionExportTask: api.sessionStatus, downloadChatGPTSession: api.sessionDownload }))
@@ -18,6 +19,31 @@ beforeEach(() => { vi.clearAllMocks(); vi.useFakeTimers(); api.status.mockResolv
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers(); vi.restoreAllMocks() })
 
 describe('2FA rotation and credential export', () => {
+  it('requests step-up before exporting and retries once after verification', async () => {
+    api.export.mockRejectedValueOnce({ code: 'STEP_UP_REQUIRED' }).mockResolvedValue(exported)
+    await open()
+    await wrapper.get('[data-testid="totp-export"]').trigger('click'); await flushPromises()
+    const controller = wrapper.findComponent({ name: 'TotpStepUpDialog' }).props('controller') as StepUpController
+    expect(controller.visible.value).toBe(true)
+    expect(api.export).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="totp-export-result"]').exists()).toBe(false)
+    controller.onVerified(); await flushPromises()
+    expect(api.export).toHaveBeenCalledTimes(2)
+    expect(api.export).toHaveBeenLastCalledWith(42, 'current', false)
+    expect(wrapper.get('[data-testid="totp-export-result"]').exists()).toBe(true)
+  })
+  it('cancels pending step-up on close without exporting or retrying', async () => {
+    api.export.mockRejectedValueOnce({ code: 'STEP_UP_REQUIRED' })
+    await open()
+    await wrapper.get('[data-testid="totp-export"]').trigger('click'); await flushPromises()
+    const controller = wrapper.findComponent({ name: 'TotpStepUpDialog' }).props('controller') as StepUpController
+    expect(controller.visible.value).toBe(true)
+    await wrapper.get('[data-testid="close"]').trigger('click'); await flushPromises()
+    controller.onVerified(); await flushPromises()
+    expect(api.export).toHaveBeenCalledTimes(1)
+    expect(controller.visible.value).toBe(false)
+    expect(wrapper.html()).not.toContain(exported.secret)
+  })
   it('does not fetch secrets until explicitly requested and omits password by default', async () => {
     await open(); expect(api.export).not.toHaveBeenCalled()
     await wrapper.get('[data-testid="totp-export"]').trigger('click'); await flushPromises()

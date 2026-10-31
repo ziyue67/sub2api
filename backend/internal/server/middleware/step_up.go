@@ -2,7 +2,9 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -33,7 +35,13 @@ func StepUpSessionKey(c *gin.Context, userID int64) string {
 	if sid := c.GetString(ContextKeySessionID); sid != "" {
 		return sid
 	}
-	return fmt.Sprintf("u%d", userID)
+	// Legacy JWTs without sid still receive token-specific grants. Never share
+	// a user-level grant across devices, and never store the bearer token itself.
+	parts := strings.Fields(c.GetHeader("Authorization"))
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return fmt.Sprintf("u%d:t%x", userID, sha256.Sum256([]byte(parts[1])))
+	}
+	return ""
 }
 
 // NewStepUpAuthMiddleware 创建敏感操作 step-up 2FA 门控中间件。
@@ -114,8 +122,21 @@ func MachineCredentialReason(c *gin.Context) (string, bool) {
 func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader stepUpUserReader, settings stepUpSettingReader) bool {
 	// 功能开关关闭时直接放行（含 admin API key），恢复门控引入前的行为。
 	// settings 为 nil 时保持门控（fail-closed）：正常装配不会出现 nil。
-	if settings != nil && !settings.IsStepUpEnabled(c.Request.Context()) {
-		return true
+	if settings != nil {
+		if reader, ok := settings.(interface {
+			StepUpState(context.Context) (bool, error)
+		}); ok {
+			enabled, err := reader.StepUpState(c.Request.Context())
+			if err != nil {
+				AbortWithError(c, 503, "STEP_UP_UNAVAILABLE", "Step-up verification service unavailable")
+				return false
+			}
+			if !enabled {
+				return true
+			}
+		} else if !settings.IsStepUpEnabled(c.Request.Context()) {
+			return true
+		}
 	}
 
 	if reason, machine := MachineCredentialReason(c); machine {
@@ -142,6 +163,10 @@ func enforceStepUp(c *gin.Context, grantChecker stepUpGrantChecker, userReader s
 	}
 
 	sessionKey := StepUpSessionKey(c, subject.UserID)
+	if sessionKey == "" {
+		AbortWithError(c, 403, "STEP_UP_REQUIRED", "Please sign in again before this operation")
+		return false
+	}
 	granted, err := grantChecker.HasStepUpGrant(c.Request.Context(), subject.UserID, sessionKey)
 	if err != nil {
 		// 安全门控故障时选择 fail-closed。

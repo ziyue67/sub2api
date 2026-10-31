@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -3511,9 +3512,22 @@ func (s *oauthPendingFlowDefaultSubAssignerStub) AssignOrExtendSubscription(
 }
 
 type oauthPendingFlowTotpCacheStub struct {
+	usedSteps      map[string]bool
 	setupSessions  map[int64]*service.TotpSetupSession
 	loginSessions  map[string]*service.TotpLoginSession
 	verifyAttempts map[int64]int
+}
+
+func (s *oauthPendingFlowTotpCacheStub) ConsumeVerifyStep(_ context.Context, userID int64, fingerprint string, step int64, _ time.Duration) (bool, error) {
+	if s.usedSteps == nil {
+		s.usedSteps = map[string]bool{}
+	}
+	key := fmt.Sprintf("%d:%s:%d", userID, fingerprint, step)
+	if s.usedSteps[key] {
+		return false, nil
+	}
+	s.usedSteps[key] = true
+	return true, nil
 }
 
 func (s *oauthPendingFlowTotpCacheStub) GetSetupSession(_ context.Context, userID int64) (*service.TotpSetupSession, error) {

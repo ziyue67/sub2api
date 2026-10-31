@@ -42,12 +42,35 @@ func (s stubStepUpSettingReader) IsStepUpEnabled(ctx context.Context) bool {
 // stepUpEnabled 功能开关开启的设置桩，供既有门控分支测试使用。
 var stepUpEnabled = stubStepUpSettingReader{enabled: true}
 
+type unavailableStepUpSettings struct{ stubStepUpSettingReader }
+
+func (unavailableStepUpSettings) StepUpState(context.Context) (bool, error) {
+	return false, errors.New("fixture setting store unavailable")
+}
+
+func TestTKSecurityStepUpSettingsFailureIsClosed(t *testing.T) {
+	c, rec := newStepUpTestContext(t)
+	c.Set(string(ContextKeyUser), AuthSubject{UserID: 1})
+	ok := enforceStepUp(c, stubStepUpGrantChecker{granted: true}, stubStepUpUserReader{user: &service.User{ID: 1, TotpEnabled: true}}, unavailableStepUpSettings{})
+	require.False(t, ok)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+func TestTKSecurityStepUpDoesNotShareLegacyUserGrant(t *testing.T) {
+	a, _ := newStepUpTestContext(t)
+	b, _ := newStepUpTestContext(t)
+	a.Request.Header.Set("Authorization", "Bearer first-device-token")
+	b.Request.Header.Set("Authorization", "Bearer second-device-token")
+	require.NotEqual(t, StepUpSessionKey(a, 1), StepUpSessionKey(b, 1), "legacy sessions cannot share one user's step-up grant")
+}
+
 func newStepUpTestContext(t *testing.T) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/sensitive", nil)
+	c.Request.Header.Set("Authorization", "Bearer fixture-session-token")
 	return c, rec
 }
 

@@ -113,21 +113,17 @@ func (c *TotpCache) DeleteLoginSession(ctx context.Context, tempToken string) er
 func (c *TotpCache) IncrementVerifyAttempts(ctx context.Context, userID int64) (int, error) {
 	key := fmt.Sprintf("%s%d", totpAttemptsKeyPrefix, userID)
 
-	// Use pipeline for atomic increment and set TTL
-	pipe := c.rdb.Pipeline()
-	incrCmd := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, totpAttemptsTTL)
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, fmt.Errorf("increment verify attempts: %w", err)
-	}
-
-	count, err := incrCmd.Result()
+	count, err := redis.NewScript(`local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('PEXPIRE',KEYS[1],ARGV[1]) end; return n`).Run(ctx, c.rdb, []string{key}, totpAttemptsTTL.Milliseconds()).Int()
 	if err != nil {
 		return 0, fmt.Errorf("get increment result: %w", err)
 	}
 
 	return int(count), nil
+}
+
+func (c *TotpCache) ConsumeVerifyStep(ctx context.Context, userID int64, fingerprint string, step int64, ttl time.Duration) (bool, error) {
+	key := fmt.Sprintf("totp:used:%d:%s:%d", userID, fingerprint, step)
+	return c.rdb.SetNX(ctx, key, "1", ttl).Result()
 }
 
 // GetVerifyAttempts gets the current verify attempt count

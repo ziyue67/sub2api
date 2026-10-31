@@ -211,6 +211,7 @@ issues/
 !docs/harvest-gateway-borrow.md
 
 !docs/openai-2fa-rotation.md
+!docs/tk-security-20261031.md
 **/totp-recovery/
 **/*.sealed
 

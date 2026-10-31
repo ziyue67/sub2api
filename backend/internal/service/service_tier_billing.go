@@ -16,16 +16,22 @@ type ServiceTierBillingResolution struct {
 }
 
 // ResolveBillingServiceTier picks the tier to bill. The upstream declaration is
-// trusted only to lower the bill: a request served below the tier it asked for
+// trusted to lower the bill: a request served below the tier it asked for
 // (OpenAI "priority" answered with service_tier "default", Anthropic speed=fast
 // answered with usage.speed "standard") is billed at the cheaper tier. A response
 // that claims a more expensive tier, an unknown one, or none at all leaves the
 // requested tier in place, which is also the behaviour for upstreams that never
-// declare a tier.
+// declare a tier. Flex is different: an unconfirmed discount uses standard.
 func ResolveBillingServiceTier(requested, observed string) ServiceTierBillingResolution {
 	requested = normalizeBillingServiceTier(requested)
 	observed = normalizeBillingServiceTier(observed)
 	resolution := ServiceTierBillingResolution{Requested: requested, Observed: observed, Billing: requested}
+	// Discounts require upstream confirmation. A client cannot obtain flex
+	// pricing merely by asking an untiered provider for it.
+	if requested == "flex" && observed != "flex" {
+		resolution.Billing = "default"
+		return resolution
+	}
 	if observed == "" || observed == requested {
 		return resolution
 	}
@@ -66,7 +72,7 @@ func serviceTierCostRank(tier string) (rank int, known bool) {
 // reports default for effective Fast turns, so OAuth-like credentials retain
 // the final outbound tier while still exposing the observed value.
 func ResolveOpenAIServiceTierBilling(account *Account, requested, observed string) ServiceTierBillingResolution {
-	if account != nil && account.IsOpenAIOAuthLike() && codexOAuthResponseTierIsNonAuthoritative(observed) {
+	if account != nil && account.IsOpenAIOAuthLike() && normalizeBillingServiceTier(requested) != "flex" && codexOAuthResponseTierIsNonAuthoritative(observed) {
 		return ServiceTierBillingResolution{
 			Requested: normalizeBillingServiceTier(requested),
 			Observed:  normalizeBillingServiceTier(observed),
@@ -85,14 +91,19 @@ func codexOAuthResponseTierIsNonAuthoritative(observed string) bool {
 	}
 }
 
-// ApplyOpenAIServiceTierBillingResolution lowers result.ServiceTier only when
-// the selected credential's upstream response tier is authoritative.
-func ApplyOpenAIServiceTierBillingResolution(account *Account, result *OpenAIForwardResult) ServiceTierBillingResolution {
+// ApplyOpenAIServiceTierBillingResolution settles confirmed tiers and rejects
+// unconfirmed client-only discounts, while preserving explicit operator pricing.
+func ApplyOpenAIServiceTierBillingResolution(account *Account, result *OpenAIForwardResult, explicitPricing ...*ModelPricing) ServiceTierBillingResolution {
 	if result == nil {
 		return ServiceTierBillingResolution{}
 	}
 	resolution := ResolveOpenAIServiceTierBilling(account, optionalStringValue(result.ServiceTier), result.UpstreamResponseServiceTier)
-	if resolution.Downgraded {
+	// Only operator-owned prices can enable an unconfirmed tier. A global
+	// default multiplier is not evidence that the selected channel supports it.
+	if resolution.Requested == "flex" && len(explicitPricing) > 0 && explicitPricing[0] != nil && explicitPricing[0].FlexMultiplier != nil {
+		resolution.Billing = "flex"
+	}
+	if resolution.Billing != resolution.Requested {
 		billing := resolution.Billing
 		result.ServiceTier = &billing
 	}
@@ -106,17 +117,17 @@ func ApplyForwardServiceTierBillingResolution(result *ForwardResult) ServiceTier
 		return ServiceTierBillingResolution{}
 	}
 	resolution := ResolveBillingServiceTier(optionalStringValue(result.ServiceTier), result.UpstreamResponseServiceTier)
-	if resolution.Downgraded {
+	if resolution.Billing != resolution.Requested {
 		billing := resolution.Billing
 		result.ServiceTier = &billing
 	}
 	return resolution
 }
 
-// logServiceTierBillingDowngrade leaves an audit trail for every request billed
-// below the tier it asked for; unchanged tiers are not logged.
+// logServiceTierBillingDowngrade records any difference between outgoing and
+// settled tiers, including rejected client-only discounts.
 func logServiceTierBillingDowngrade(component string, account *Account, requestID string, resolution ServiceTierBillingResolution) {
-	if !resolution.Downgraded {
+	if resolution.Billing == resolution.Requested {
 		return
 	}
 	attrs := []any{
@@ -129,5 +140,5 @@ func logServiceTierBillingDowngrade(component string, account *Account, requestI
 	if account != nil {
 		attrs = append(attrs, "platform", account.Platform, "account_id", account.ID)
 	}
-	slog.Info("billing.service_tier_downgraded", attrs...)
+	slog.Info("billing.service_tier_resolved", attrs...)
 }
