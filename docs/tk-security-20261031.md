@@ -22,6 +22,18 @@
 
 本批 flex 修复收紧的是最终结算授权，不新增全平台出站参数过滤或新的渠道能力配置。未承诺上游实际按请求档位执行。已有强制缓存 TTL、5m/1h 计费转换规则不在本次修改范围。
 
+## 第二批：补齐敏感数据路由的 step-up
+
+ARTEX #1284 的首次修复只覆盖了 TOTP 导出与轮转三条 POST 路由。后续复测确认，同组已有导出路由受 step-up 保护，但下列敏感数据入口仍可在管理员完成普通认证后直接进入 handler：
+
+- `POST /api/v1/admin/accounts/data`：导入上游账号及凭据；
+- `POST /api/v1/admin/proxies/data`：导入代理地址及认证信息；
+- `GET /api/v1/admin/redeem-codes/export`：导出兑换码。
+
+第二批为这三条路由复用既有 `StepUpAuthMiddleware`。开关关闭时保持现有兼容行为；开关开启时，未完成当前会话 step-up 的请求在 handler 执行前返回 403。修改不新增数据库迁移，也不改变其他账号、代理或兑换码操作。
+
+回归入口为 `TestTKSecuritySensitiveDataRoutesRequireStepUp`。测试用拦截型 step-up 中间件分别请求三条路由，要求全部在 handler 前返回 403，并确认中间件恰好执行三次。
+
 ## 会话存储与兼容边界
 
 - 不新增数据库迁移。JWT 增加可选 `sv`；旧 JWT/refresh 缺字段时视为版本 0，用户级撤销同样能覆盖。

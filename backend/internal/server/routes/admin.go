@@ -85,7 +85,7 @@ func RegisterAdminRoutes(
 		registerProxyRoutes(admin, h, stepUpAuth)
 
 		// 卡密管理
-		registerRedeemCodeRoutes(admin, h)
+		registerRedeemCodeRoutes(admin, h, stepUpAuth)
 
 		// 优惠码管理
 		registerPromoCodeRoutes(admin, h)
@@ -519,7 +519,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/:id/export-session", gin.HandlerFunc(stepUpAuth), h.Admin.Account.ExportOpenAISession)
 		accounts.GET("/:id/export-session/:task_id", h.Admin.Account.GetOpenAISessionExportTask)
 		accounts.GET("/:id/export-session/:task_id/download", gin.HandlerFunc(stepUpAuth), h.Admin.Account.DownloadOpenAISessionExport)
-		accounts.POST("/data", h.Admin.Account.ImportData)
+		accounts.POST("/data", gin.HandlerFunc(stepUpAuth), h.Admin.Account.ImportData)
 		accounts.POST("/batch-update-credentials", h.Admin.Account.BatchUpdateCredentials)
 		accounts.POST("/batch-refresh-tier", h.Admin.Account.BatchRefreshTier)
 		accounts.POST("/bulk-update", h.Admin.Account.BulkUpdate)
@@ -675,7 +675,7 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 		proxies.GET("/all", h.Admin.Proxy.GetAll)
 		// 代理导出泄露账号密码原文——要求 step-up 2FA
 		proxies.GET("/data", gin.HandlerFunc(stepUpAuth), h.Admin.Proxy.ExportData)
-		proxies.POST("/data", h.Admin.Proxy.ImportData)
+		proxies.POST("/data", gin.HandlerFunc(stepUpAuth), h.Admin.Proxy.ImportData)
 		proxies.GET("/:id", h.Admin.Proxy.GetByID)
 		proxies.POST("", h.Admin.Proxy.Create)
 		proxies.PUT("/:id", h.Admin.Proxy.Update)
@@ -689,12 +689,12 @@ func registerProxyRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth
 	}
 }
 
-func registerRedeemCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+func registerRedeemCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	codes := admin.Group("/redeem-codes")
 	{
 		codes.GET("", h.Admin.Redeem.List)
 		codes.GET("/stats", h.Admin.Redeem.GetStats)
-		codes.GET("/export", h.Admin.Redeem.Export)
+		codes.GET("/export", gin.HandlerFunc(stepUpAuth), h.Admin.Redeem.Export)
 		codes.GET("/:id", h.Admin.Redeem.GetByID)
 		codes.POST("/create-and-redeem", h.Admin.Redeem.CreateAndRedeem)
 		codes.POST("/generate", h.Admin.Redeem.Generate)
