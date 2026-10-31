@@ -302,6 +302,9 @@ func (s *CanvasService) CreateRun(ctx context.Context, userID int64, input Canva
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateCanvasRunAPIKeyOwnership(ctx, userID, doc, normalized); err != nil {
+		return nil, err
+	}
 	run, err := s.repo.CreateCanvasRun(ctx, userID, normalized)
 	if err != nil {
 		return nil, err
@@ -309,6 +312,55 @@ func (s *CanvasService) CreateRun(ctx context.Context, userID int64, input Canva
 	run = s.executeCanvasRun(ctx, userID, run, doc, normalized)
 	normalizeCanvasRunJSON(run)
 	return run, nil
+}
+
+func (s *CanvasService) validateCanvasRunAPIKeyOwnership(ctx context.Context, userID int64, doc *CanvasDocument, input CanvasRunCreateInput) error {
+	executableNodes := canvasExecutableImageNodes(doc.Nodes)
+	if len(executableNodes) > 0 && input.APIKeyID <= 0 {
+		return infraerrors.BadRequest("CANVAS_API_KEY_REQUIRED", "api_key_id is required to run image nodes")
+	}
+
+	uniqueIDs := make(map[int64]struct{}, len(executableNodes)+1)
+	if input.APIKeyID > 0 {
+		uniqueIDs[input.APIKeyID] = struct{}{}
+	}
+	for _, node := range executableNodes {
+		config := canvasNodeConfig(node)
+		apiKeyID := firstPositiveInt64(
+			canvasInt64(config, "apiKeyId"),
+			canvasInt64(config, "api_key_id"),
+			input.APIKeyID,
+		)
+		if apiKeyID <= 0 {
+			return infraerrors.BadRequest("CANVAS_API_KEY_REQUIRED", "api_key_id is required to run image nodes")
+		}
+		uniqueIDs[apiKeyID] = struct{}{}
+	}
+	if len(uniqueIDs) == 0 {
+		return nil
+	}
+	if s == nil || s.apiKeys == nil {
+		return infraerrors.InternalServer("CANVAS_API_KEY_VALIDATION_UNAVAILABLE", "canvas api key validation is unavailable")
+	}
+
+	apiKeyIDs := make([]int64, 0, len(uniqueIDs))
+	for apiKeyID := range uniqueIDs {
+		apiKeyIDs = append(apiKeyIDs, apiKeyID)
+	}
+	validIDs, err := s.apiKeys.VerifyOwnership(ctx, userID, apiKeyIDs)
+	if err != nil {
+		return err
+	}
+	validSet := make(map[int64]struct{}, len(validIDs))
+	for _, apiKeyID := range validIDs {
+		validSet[apiKeyID] = struct{}{}
+	}
+	for _, apiKeyID := range apiKeyIDs {
+		if _, ok := validSet[apiKeyID]; !ok {
+			return infraerrors.Forbidden("API_KEY_FORBIDDEN", "api key does not belong to current user")
+		}
+	}
+	return nil
 }
 
 func (s *CanvasService) ListRuns(ctx context.Context, userID int64, filters CanvasRunListFilters) ([]CanvasRun, int, error) {

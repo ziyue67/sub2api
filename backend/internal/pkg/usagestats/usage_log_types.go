@@ -181,8 +181,9 @@ type TokenLeaderboardItem struct {
 	// ActualCost is optional because ordinary users may be denied the actual
 	// deducted amount by the administrator. A nil pointer omits the JSON field;
 	// zero remains distinguishable from a hidden value when it is exposed.
-	ActualCost   *float64 `json:"actual_cost,omitempty"`
-	AccountCost  float64  `json:"account_cost"`
+	ActualCost *float64 `json:"actual_cost,omitempty"`
+	// AccountCost is internal provider cost and is only populated for admins.
+	AccountCost  *float64 `json:"account_cost,omitempty"`
 	LastActiveAt string   `json:"last_active_at"`
 	IsMe         bool     `json:"is_me"`
 }

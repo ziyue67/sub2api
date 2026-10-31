@@ -79,8 +79,32 @@ go test -tags integration ./...
 
 前端：`pnpm exec vitest run --maxWorkers=4 --minWorkers=1`、`pnpm run typecheck`、`pnpm run build`。
 
+## 第三批：画布 Key 预检与排行榜内部成本隔离
+
+基线 `c9106fe73` 上新增回归用例后确认两项缺陷：
+
+- `CanvasService.CreateRun` 在校验请求级 Key 与节点覆盖 Key 的用户归属前先写入 `canvas_runs`。节点按顺序创建任务，后续节点的非法 Key 可能在前序任务已经创建后才失败。
+- 用户排行榜对普通用户和 observer 序列化 `account_cost`，并接受 `sort_by=account_cost`，形成直接字段泄露和排序侧信道。
+
+修复后，画布在写入运行记录前收集请求 Key 及所有可执行生图节点的有效 Key，去重后一次性调用现有 `VerifyOwnership`。任一 Key 不属于当前用户时返回既有 `API_KEY_FORBIDDEN`，不创建运行记录、不创建任何图片任务，也不进入计费路径；全部 Key 合法时保持原来的任务创建行为。该修复只证明并修正提前落库与部分执行，不把历史非法引用表述为已经发生的盗刷。
+
+排行榜的 `account_cost` 改为仅 `RoleAdmin` 序列化。普通用户和 observer 即使手工发送 `sort_by=account_cost`，仓储查询和响应中的 `sort_by` 都回退为 `tokens`。公开前端请求类型不再提供该排序值；管理员专用用量接口保持原行为。既有 `actual_cost` 可见性开关不受影响。
+
+回归入口：
+
+- `TestCanvasCreateRunRejectsUnownedRequestKeyBeforePersistingRun`
+- `TestCanvasCreateRunPreflightsAllNodeOverrideKeysBeforeCreatingAnyTask`
+- `TestCanvasCreateRunCreatesTasksAfterAllEffectiveKeysPassOwnershipPreflight`
+- `TestDashboardLeaderboardHidesAccountCostAndSortOracleForOrdinaryUsers`
+- `TestDashboardLeaderboardHidesAccountCostAndSortOracleForObservers`
+- `TestDashboardLeaderboardKeepsAccountCostAndSortForAdmins`
+
+`audit/tk-panel-20261031/batch2-red-tests-c9106fe7-real.txt` 保存了修复前的确定性失败：画布两项均未报错，普通用户和 observer 的查询仍按 `account_cost` 排序。修复后上述定向 Go 测试通过，`internal/handler` 整包通过；前端排行榜 4 项测试、`vue-tsc --noEmit` 和生产构建通过。
+
+Windows 上 `internal/service` 整包仍不是全绿，失败集中在已有的文件权限/持久化交付测试，以及 `Issue578`、quality 调度用例；这些失败不涉及本批修改文件，也不能计作本批通过或在本文中宣称已修复。最终合并门槛仍以 GitHub Linux CI 全部必需检查通过为准。
+
 ## 尚未纳入与发布状态
 
-账号维度登录/改密失败桶、非 admin 排行榜内部成本、画布运行前 Key 归属校验、DTO/原始错误体最小化、其他敏感管理路由仍需独立复现和修复。没有将执行阶段已拒绝的画布 Key 引用称为成功盗刷。
+账号维度登录/改密失败桶、DTO/原始错误体最小化、其他敏感管理路由仍需独立复现和修复。
 
 此文档描述修复分支及隔离验证，不能作为生产已部署、历史账单已修正、全部漏洞已清除或 CI 全绿的证明。生产仍需独立发布与验收。
