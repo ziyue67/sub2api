@@ -17,9 +17,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The synthetic upstream is deliberately idle: cancellation must not depend on
-// another upstream token, a keepalive, or the data-interval timeout.
+func setClaudeDisconnectDrainTimeout(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	original := anthropicNativeDisconnectDrainTimeout
+	anthropicNativeDisconnectDrainTimeout = timeout
+	t.Cleanup(func() { anthropicNativeDisconnectDrainTimeout = original })
+}
+
+// Even an idle accepted stream must release its upstream within the total
+// disconnect limit, independently of tokens, keepalives or the idle setting.
 func TestClaudeClientCancelSilentStream(t *testing.T) {
+	setClaudeDisconnectDrainTimeout(t, 100*time.Millisecond)
 	gin.SetMode(gin.TestMode)
 	svc := newStreamingResponseTestGatewayService()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -41,7 +49,7 @@ func TestClaudeClientCancelSilentStream(t *testing.T) {
 	select {
 	case <-finished:
 	case <-time.After(time.Second):
-		t.Fatal("idle upstream was not stopped")
+		t.Fatal("idle upstream outlived the disconnect drain limit")
 	}
 	require.ErrorIs(t, err, context.Canceled)
 	require.True(t, result.clientDisconnect)
@@ -87,6 +95,7 @@ func TestClaudeClientCancelAfterTerminalPreservesCompletedUsage(t *testing.T) {
 }
 
 func TestClaudeClientCancelWriteOrFlushPreservesCurrentUsage(t *testing.T) {
+	setClaudeDisconnectDrainTimeout(t, 100*time.Millisecond)
 	for _, mode := range []string{"write", "flush"} {
 		t.Run(mode, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
@@ -133,6 +142,7 @@ func TestClaudeClientCancelWriteOrFlushPreservesCurrentUsage(t *testing.T) {
 }
 
 func TestClaudeClientCancelKeepaliveFlush(t *testing.T) {
+	setClaudeDisconnectDrainTimeout(t, 100*time.Millisecond)
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(&claudeFlushFailure{httptest.NewRecorder()})
 	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
@@ -162,14 +172,14 @@ func (u *claudeCancelHTTPUpstream) DoWithTLS(req *http.Request, _ string, _ int6
 	return http.DefaultClient.Do(req)
 }
 
-func TestClaudeClientCancelForwardStopsActualHTTPAndDoesNotRetry(t *testing.T) {
-	for _, sendUsage := range []bool{false, true} {
-		name := "before_headers"
-		if sendUsage {
-			name = "after_usage"
-		}
+func TestClaudeClientCancelForwardActualHTTPAndDoesNotRetry(t *testing.T) {
+	setClaudeDisconnectDrainTimeout(t, 200*time.Millisecond)
+	for _, name := range []string{"before_headers", "after_usage", "after_usage_api_key", "after_usage_timeout"} {
+		sendUsage := name != "before_headers"
+		wantFinalUsage := name == "after_usage" || name == "after_usage_api_key"
 		t.Run(name, func(t *testing.T) {
 			started, stopped := make(chan struct{}), make(chan struct{})
+			sendFinal := make(chan struct{})
 			cleanup := make(chan struct{})
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
@@ -181,6 +191,18 @@ func TestClaudeClientCancelForwardStopsActualHTTPAndDoesNotRetry(t *testing.T) {
 					}
 				}
 				close(started)
+				if sendUsage {
+					select {
+					case <-sendFinal:
+						_, _ = io.WriteString(w, "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
+						_ = http.NewResponseController(w).Flush()
+					case <-r.Context().Done():
+						close(stopped)
+						return
+					case <-cleanup:
+						return
+					}
+				}
 				select {
 				case <-r.Context().Done():
 					close(stopped)
@@ -197,6 +219,12 @@ func TestClaudeClientCancelForwardStopsActualHTTPAndDoesNotRetry(t *testing.T) {
 			repo := &gatewayForwardErrorPolicyRepoStub{}
 			svc.accountRepo = repo
 			account := newAnthropicOAuthAccountForPartialUsageTest()
+			if name == "after_usage_api_key" {
+				account.Type = AccountTypeAPIKey
+				// Keep normal HTTPS validation; claudeCancelHTTPUpstream redirects
+				// the actual transport exclusively to the local test server.
+				account.Credentials = map[string]any{"api_key": "synthetic-test-key", "base_url": "https://api.anthropic.com"}
+			}
 			gin.SetMode(gin.TestMode)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -211,6 +239,8 @@ func TestClaudeClientCancelForwardStopsActualHTTPAndDoesNotRetry(t *testing.T) {
 			go func() { result, err = svc.Forward(ctx, c, account, parsed); close(finished) }()
 			select {
 			case <-started:
+			case <-finished:
+				t.Fatalf("forward returned before reaching the local upstream: %v", err)
 			case <-time.After(2 * time.Second):
 				t.Fatal("upstream not reached")
 			}
@@ -222,17 +252,31 @@ func TestClaudeClientCancelForwardStopsActualHTTPAndDoesNotRetry(t *testing.T) {
 				}
 			}
 			cancel()
+			if wantFinalUsage {
+				select {
+				case <-stopped:
+					t.Fatal("accepted upstream was canceled before it could report final Usage")
+				case <-time.After(30 * time.Millisecond):
+				}
+				close(sendFinal)
+			}
 			select {
 			case <-stopped:
 			case <-time.After(time.Second):
-				t.Fatal("actual upstream HTTP was not canceled")
+				t.Fatal("actual upstream HTTP was not released after cancellation or final Usage")
 			}
 			select {
 			case <-finished:
 			case <-time.After(time.Second):
 				t.Fatal("forward did not return")
 			}
-			require.Error(t, err)
+			if wantFinalUsage {
+				require.NoError(t, err, "accepted stream must collect the final Usage after downstream cancellation")
+			} else if sendUsage {
+				require.ErrorContains(t, err, "disconnect drain timeout")
+			} else {
+				require.ErrorIs(t, err, context.Canceled, "cancellation before headers must still stop the upstream")
+			}
 			var failover *UpstreamFailoverError
 			require.False(t, errors.As(err, &failover))
 			require.EqualValues(t, 1, transport.calls.Load())
@@ -244,7 +288,11 @@ func TestClaudeClientCancelForwardStopsActualHTTPAndDoesNotRetry(t *testing.T) {
 				require.True(t, result.ClientDisconnect)
 				require.Equal(t, 11, result.Usage.InputTokens)
 				require.Equal(t, 7, result.Usage.CacheReadInputTokens)
-				require.Equal(t, 2, result.Usage.OutputTokens)
+				if wantFinalUsage {
+					require.Equal(t, 7, result.Usage.OutputTokens)
+				} else {
+					require.Equal(t, 2, result.Usage.OutputTokens, "timeout must preserve actual observed Usage, not guess a final value")
+				}
 			} else {
 				require.Nil(t, result)
 			}

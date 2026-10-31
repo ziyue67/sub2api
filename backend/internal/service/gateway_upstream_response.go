@@ -725,8 +725,12 @@ func FlushGatewayResponse(w gin.ResponseWriter) error {
 	}
 }
 
+// Also bounds a busy upstream that never sends final Usage. Tests shorten this
+// duration without changing the configured upstream idle timeout.
+var anthropicNativeDisconnectDrainTimeout = 180 * time.Second
+
 func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, startTime time.Time, originalModel, mappedModel string, mimicClaudeCode bool) (*streamingResult, error) {
-	// Stop the upstream read as soon as forwarding ends, including silent upstreams.
+	// Always release the upstream, including when the bounded Usage drain expires.
 	defer func() { _ = resp.Body.Close() }()
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -846,9 +850,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	// 事件格式遵循 Anthropic SSE 标准：{"type":"error","error":{"type":<reason>,"message":<message>}}
 	// 这样 Anthropic SDK / Claude Code 等客户端能按标准 error 类型解析，UI 能显示具体错误文案，
 	// 服务端 ExtractUpstreamErrorMessage 也能从透传的 body 中提取 message。
+	clientDisconnected := false
 	errorEventSent := false
 	sendErrorEvent := func(reason, message string) {
-		if errorEventSent {
+		if errorEventSent || clientDisconnected {
 			return
 		}
 		errorEventSent = true
@@ -872,6 +877,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 	needModelReplace := originalModel != mappedModel
 	sawTerminalEvent := false
+	sawFinalUsage := false
 	useNoopDeltaKeepalive := c != nil && c.Request != nil && shouldUseClaudeCodeNoopDeltaKeepalive(c.GetHeader("User-Agent"))
 	noopDeltaKeepaliveBlockIndex := -1
 	noopDeltaKeepaliveDeltaType := ""
@@ -984,6 +990,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		// Extract the raw upstream usage before rewriting the event sent downstream.
 		// Billing/audit must retain the provider's original 5m/1h split.
 		usagePatch := s.extractSSEUsagePatch(event)
+		if eventType == "message_delta" && usagePatch != nil && usagePatch.hasOutputTokens {
+			sawFinalUsage = true
+		}
 
 		// Cache TTL Override: 重写 SSE 事件中的 cache_creation 分类。
 		// 账号级设置优先；全局 1h 请求注入开启时，默认把 usage 计费归回 5m。
@@ -1042,45 +1051,101 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		return []string{block}, string(newData), usagePatch, nil
 	}
 
-	clientGone := func(cause error) (*streamingResult, error) {
-		logger.LegacyPrintf("service.gateway", "Client disconnected; stopping upstream stream: account=%d observed_input=%d observed_output=%d", account.ID, usage.InputTokens, usage.OutputTokens)
-		result := &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}
-		if sawTerminalEvent {
-			return result, nil
-		}
-		return result, fmt.Errorf("stream usage incomplete: client disconnected: %w", cause)
-	}
 	clientCtx := c.Request.Context()
-	for {
-		// Give cancellation priority over a busy stream or a timeout tick.
-		if err := clientCtx.Err(); err != nil {
-			return clientGone(err)
+	clientDone, forwardDone := clientCtx.Done(), ctx.Done()
+	var disconnectCause error
+	var drainTimer *time.Timer
+	var drainCh <-chan time.Time
+	var drainDeadline time.Time
+	defer func() {
+		if drainTimer != nil {
+			drainTimer.Stop()
 		}
-		if err := ctx.Err(); err != nil {
-			return clientGone(err)
+	}()
+	result := func() *streamingResult {
+		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}
+	}
+	incompleteDrain := func(cause error) (*streamingResult, error) {
+		logger.LegacyPrintf("service.gateway", "Stream usage incomplete after client disconnect: account=%d observed_input=%d observed_output=%d reason=%v", account.ID, usage.InputTokens, usage.OutputTokens, cause)
+		return result(), fmt.Errorf("stream usage incomplete after client disconnected: %w", errors.Join(disconnectCause, cause))
+	}
+	markClientDisconnected := func(cause error) {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		disconnectCause = cause
+		// Disable cancellation/keepalive cases so a closed channel cannot spin,
+		// and no writes or flushes are attempted after the first failed write.
+		clientDone, forwardDone, keepaliveCh = nil, nil, nil
+		if keepaliveTimer != nil {
+			keepaliveTimer.Stop()
+		}
+		drainDeadline = time.Now().Add(anthropicNativeDisconnectDrainTimeout)
+		drainTimer = time.NewTimer(anthropicNativeDisconnectDrainTimeout)
+		drainCh = drainTimer.C
+		if streamInterval == 0 {
+			streamInterval = 180 * time.Second
+			intervalTicker = time.NewTicker(streamInterval)
+			intervalCh = intervalTicker.C
+		}
+		logger.LegacyPrintf("service.gateway", "Client disconnected; draining upstream for final Usage: account=%d timeout=%s", account.ID, anthropicNativeDisconnectDrainTimeout)
+	}
+	defer func() {
+		// intervalTicker can be enabled only after a disconnect.
+		if intervalTicker != nil {
+			intervalTicker.Stop()
+		}
+	}()
+	observeClientDisconnect := func() {
+		if clientDisconnected {
+			return
+		}
+		if err := clientCtx.Err(); err != nil {
+			markClientDisconnected(err)
+		} else if err := ctx.Err(); err != nil {
+			markClientDisconnected(err)
+		}
+	}
+	for {
+		observeClientDisconnect()
+		if clientDisconnected {
+			if sawTerminalEvent {
+				if !sawFinalUsage {
+					return incompleteDrain(errors.New("terminal event missing final Usage"))
+				}
+				return result(), nil
+			}
+			// Prioritize the total limit even if a busy upstream keeps events ready.
+			if !time.Now().Before(drainDeadline) {
+				return incompleteDrain(errors.New("disconnect drain timeout"))
+			}
 		}
 		select {
-		case <-clientCtx.Done():
-			return clientGone(clientCtx.Err())
-		case <-ctx.Done():
-			return clientGone(ctx.Err())
+		case <-clientDone:
+			markClientDisconnected(clientCtx.Err())
+		case <-forwardDone:
+			markClientDisconnected(ctx.Err())
+		case <-drainCh:
+			return incompleteDrain(errors.New("disconnect drain timeout"))
 		case ev, ok := <-events:
-			if err := clientCtx.Err(); err != nil {
-				return clientGone(err)
-			}
-			if err := ctx.Err(); err != nil {
-				return clientGone(err)
-			}
+			observeClientDisconnect()
 			if !ok {
 				// 上游完成，返回结果
 				if !sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: false}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					if clientDisconnected {
+						return incompleteDrain(errors.New("missing terminal event"))
+					}
+					return result(), fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: false}, nil
+				return result(), nil
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: false}, nil
+					return result(), nil
+				}
+				if clientDisconnected {
+					return incompleteDrain(ev.err)
 				}
 				// 检测 context 取消（客户端断开会导致 context 取消，进而影响上游读取）
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
@@ -1128,11 +1193,17 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				outputBlocks, data, usagePatch, err := processSSEEvent(pendingEventLines)
 				pendingEventLines = pendingEventLines[:0]
 				if err != nil {
+					if clientDisconnected {
+						// An upstream error while draining must preserve observed Usage
+						// and must not be converted into a failover/replayed request.
+						return incompleteDrain(errors.New("upstream SSE error event"))
+					}
 					return nil, err
 				}
 
 				// Merge the current event before writing: even a failed write may carry
-				// upstream-metered usage. Do not read future events after disconnect.
+				// upstream-metered usage. After disconnect, continue merging final
+				// Usage but never write or flush again.
 				if data != "" {
 					if firstTokenMs == nil && data != "[DONE]" {
 						ms := int(time.Since(startTime).Milliseconds())
@@ -1142,13 +1213,18 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 						mergeSSEUsagePatch(usage, usagePatch)
 					}
 				}
+				if clientDisconnected {
+					continue
+				}
 				for _, block := range outputBlocks {
 					restored := reverseToolNamesIfPresent(c, []byte(block))
 					if _, werr := fmt.Fprint(w, string(restored)); werr != nil {
-						return clientGone(werr)
+						markClientDisconnected(werr)
+						break
 					}
 					if err := FlushGatewayResponse(w); err != nil {
-						return clientGone(err)
+						markClientDisconnected(err)
+						break
 					}
 					lastDataAt = time.Now()
 					resetKeepaliveTimer()
@@ -1164,6 +1240,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				continue
 			}
 			logger.LegacyPrintf("service.gateway", "Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			if clientDisconnected {
+				return incompleteDrain(errors.New("stream data interval timeout"))
+			}
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
@@ -1183,10 +1262,12 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				}
 			}
 			if _, werr := fmt.Fprint(w, keepaliveBlock); werr != nil {
-				return clientGone(werr)
+				markClientDisconnected(werr)
+				continue
 			}
 			if err := FlushGatewayResponse(w); err != nil {
-				return clientGone(err)
+				markClientDisconnected(err)
+				continue
 			}
 			lastDataAt = time.Now()
 			resetKeepaliveTimer()
