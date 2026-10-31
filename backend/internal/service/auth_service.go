@@ -97,6 +97,7 @@ type AuthService struct {
 	affiliateService      *AffiliateService
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	mcpGrantRevoker       MCPGrantRevoker
 }
 
 type CaptchaProof struct {
@@ -104,6 +105,11 @@ type CaptchaProof struct {
 	TurnstileToken string
 	TencentTicket  string
 	TencentRandstr string
+}
+
+// MCPGrantRevoker revokes MCP authorizations, which outlive browser sessions.
+type MCPGrantRevoker interface {
+	RevokeAllGrants(ctx context.Context, userID int64) error
 }
 
 type DefaultSubscriptionAssigner interface {
@@ -163,6 +169,10 @@ func (s *AuthService) SetTencentCaptchaService(tencentCaptchaService *TencentCap
 
 func (s *AuthService) SetAliyunCaptchaService(aliyunCaptchaService *AliyunCaptchaService) {
 	s.aliyunCaptchaService = aliyunCaptchaService
+}
+
+func (s *AuthService) SetMCPGrantRevoker(revoker MCPGrantRevoker) {
+	s.mcpGrantRevoker = revoker
 }
 
 // Register 用户注册，返回token和用户
@@ -2048,6 +2058,13 @@ func (s *AuthService) RevokeAllUserTokens(ctx context.Context, userID int64) err
 
 	if err := s.RevokeAllUserSessions(ctx, userID); err != nil {
 		logger.LegacyPrintf("service.auth", "[Auth] Failed to revoke refresh sessions after token invalidation for user %d: %v", userID, err)
+	}
+	// A browser JWT can mint a long-lived MCP grant, so revoking every session
+	// must also revoke those grants. Fail loudly: the caller can retry.
+	if s.mcpGrantRevoker != nil {
+		if err := s.mcpGrantRevoker.RevokeAllGrants(ctx, userID); err != nil {
+			return fmt.Errorf("revoke MCP grants: %w", err)
+		}
 	}
 	return nil
 }

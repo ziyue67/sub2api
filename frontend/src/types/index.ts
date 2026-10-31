@@ -306,6 +306,8 @@ export interface PublicSettings {
   usage_show_cache_rate_to_users?: boolean
   /** 是否向终端用户展示上游响应里声明的实际模型。缺失时按关闭处理。 */
   usage_show_upstream_response_model_to_users?: boolean
+  /** True when the deployment configures MCP_PUBLIC_URL; MCP is disabled otherwise. */
+  mcp_enabled?: boolean
 }
 
 export interface AuthResponse {
