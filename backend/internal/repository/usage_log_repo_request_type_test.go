@@ -105,7 +105,8 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			log.NativeCompactionV2,
 			sqlmock.AnyArg(), // tool_surcharges
 			createdAt,
-			nil, // cache_creation_billing
+			nil,              // cache_creation_billing
+			sqlmock.AnyArg(), // queue_timing
 
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -204,7 +205,8 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			log.NativeCompactionV2,
 			sqlmock.AnyArg(), // tool_surcharges
 			createdAt,
-			nil, // cache_creation_billing
+			nil,              // cache_creation_billing
+			sqlmock.AnyArg(), // queue_timing
 
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -286,10 +288,10 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	prepared := prepareUsageLogInsert(log)
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4])
-	require.Equal(t, true, prepared.args[len(prepared.args)-4])
-	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3])
-	require.Nil(t, prepared.args[len(prepared.args)-3])
+	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-5])
+	require.Equal(t, true, prepared.args[len(prepared.args)-5])
+	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4])
+	require.Nil(t, prepared.args[len(prepared.args)-4])
 	require.Equal(t, int16(service.RequestTypeStream), prepared.args[30])
 	require.Equal(t, service.RequestTypeStream, log.RequestType)
 	require.True(t, log.Stream)
@@ -338,7 +340,7 @@ func TestPrepareUsageLogInsert_PersistsToolSurchargesJSON(t *testing.T) {
 		}},
 	})
 
-	encoded, ok := prepared.args[len(prepared.args)-3].(string)
+	encoded, ok := prepared.args[len(prepared.args)-4].(string)
 	require.True(t, ok)
 	require.JSONEq(t, `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225,"account_cost":0.03}]`, encoded)
 }
@@ -928,7 +930,11 @@ func (s usageLogScannerStub) Scan(dest ...any) error {
 		if dv.Kind() != reflect.Pointer {
 			return fmt.Errorf("dest[%d] is not pointer", i)
 		}
-		dv.Elem().Set(reflect.ValueOf(s.values[i]))
+		value := reflect.ValueOf(s.values[i])
+		if value.IsValid() && !value.Type().AssignableTo(dv.Type().Elem()) {
+			return fmt.Errorf("dest[%d] is %s but value is %s", i, dv.Type().Elem(), value.Type())
+		}
+		dv.Elem().Set(value)
 	}
 	return nil
 }
@@ -991,6 +997,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{Valid: true, String: `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225,"account_cost":0.03}]`}, // tool_surcharges
 			now,
 			sql.NullString{}, // cache_creation_billing
+			sql.NullString{}, // queue_timing
 
 		}})
 		require.NoError(t, err)
@@ -1078,6 +1085,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // tool_surcharges
 			now,
 			sql.NullString{}, // cache_creation_billing
+			sql.NullString{}, // queue_timing
 
 		}})
 		require.NoError(t, err)
@@ -1145,6 +1153,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // tool_surcharges
 			now,
 			sql.NullString{}, // cache_creation_billing
+			sql.NullString{}, // queue_timing
 
 		}})
 		require.NoError(t, err)
@@ -1213,6 +1222,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // tool_surcharges
 			now,
 			sql.NullString{}, // cache_creation_billing
+			sql.NullString{}, // queue_timing
 
 		}})
 		require.NoError(t, err)
