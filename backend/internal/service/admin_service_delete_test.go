@@ -5,6 +5,8 @@ package service
 import (
 	"context"
 	"errors"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -645,6 +647,8 @@ func TestAdminService_DeleteUser_AdminGuard(t *testing.T) {
 	err := svc.DeleteUser(context.Background(), 1)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "cannot delete admin user")
+	require.Equal(t, http.StatusBadRequest, infraerrors.Code(err))
+	require.Equal(t, "ADMIN_DELETE_FORBIDDEN", infraerrors.Reason(err))
 	require.Empty(t, repo.deletedIDs)
 }
 

@@ -195,6 +195,97 @@ func (c *gatewayCache) DeleteSessionLane(ctx context.Context, groupID int64, mod
 
 var _ service.LaneStickyCache = (*gatewayCache)(nil)
 
+// scanOpenAISessionBindings returns only session-hash -> account bindings.
+// Response continuation (openai:response:*) and response-owner
+// (openai:http-response-owner:*) entries are ownership state, not sticky
+// routing, and must survive an operator-triggered session rebalance.
+func (c *gatewayCache) scanOpenAISessionBindings(ctx context.Context, groupID int64) (map[string]int64, error) {
+	prefix := fmt.Sprintf("%s%d:openai:", stickySessionPrefix, groupID)
+	pattern := prefix + "*"
+	keys := make([]string, 0, 256)
+	var cursor uint64
+	for {
+		batch, next, err := c.rdb.Scan(ctx, cursor, pattern, 500).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range batch {
+			if !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			suffix := strings.TrimPrefix(key, prefix)
+			if strings.HasPrefix(suffix, "response:") || strings.HasPrefix(suffix, "http-response-owner:") {
+				continue
+			}
+			keys = append(keys, key)
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	out := make(map[string]int64, len(keys))
+	for start := 0; start < len(keys); start += 200 {
+		end := min(start+200, len(keys))
+		values, err := c.rdb.MGet(ctx, keys[start:end]...).Result()
+		if err != nil {
+			return nil, err
+		}
+		for index, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				continue
+			}
+			accountID, err := strconv.ParseInt(text, 10, 64)
+			if err != nil || accountID <= 0 {
+				continue
+			}
+			out[keys[start+index]] = accountID
+		}
+	}
+	return out, nil
+}
+
+func (c *gatewayCache) CountStickySessionBindings(ctx context.Context, groupID int64) (map[int64]int, error) {
+	bindings, err := c.scanOpenAISessionBindings(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[int64]int, len(bindings))
+	for _, accountID := range bindings {
+		counts[accountID]++
+	}
+	return counts, nil
+}
+
+func (c *gatewayCache) ClearStickySessionBindings(ctx context.Context, groupID int64, accountIDs map[int64]struct{}) (int, error) {
+	bindings, err := c.scanOpenAISessionBindings(ctx, groupID)
+	if err != nil {
+		return 0, err
+	}
+	keys := make([]string, 0, len(bindings))
+	for key, accountID := range bindings {
+		// nil means "all bindings"; an explicit empty map means "none".
+		if accountIDs == nil {
+			keys = append(keys, key)
+			continue
+		}
+		if _, ok := accountIDs[accountID]; ok {
+			keys = append(keys, key)
+		}
+	}
+	deleted := 0
+	for start := 0; start < len(keys); start += 200 {
+		end := min(start+200, len(keys))
+		count, err := c.rdb.Del(ctx, keys[start:end]...).Result()
+		if err != nil {
+			return deleted, err
+		}
+		deleted += int(count)
+	}
+	return deleted, nil
+}
+
 var claimOpenAIResponsesSessionWindowScript = redis.NewScript(`
 local previous = redis.call('GET', KEYS[1])
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])

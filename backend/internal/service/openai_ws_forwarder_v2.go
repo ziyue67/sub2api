@@ -458,6 +458,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		if err == nil {
 			err = s.checkOpenAIWSBinding(latest, mappedModel, lease.conn.turnBinding)
 		}
+		if err == nil {
+			_, err = s.beginPriorityLatencyTurn(ctx, c, account, originalModel)
+		}
 		if err != nil {
 			s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
 				ctx,
@@ -515,6 +518,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return err
 		}
 		if err := controlledSubmission(ctx, "native_ws"); err != nil {
+			return err
+		}
+		if err := s.priorityLatencyBeforeSend(ctx, account); err != nil {
 			return err
 		}
 		if err := lease.WriteJSONWithContextTimeout(ctx, value, s.openAIWSWriteTimeout()); err != nil {

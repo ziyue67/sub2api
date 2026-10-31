@@ -1,0 +1,83 @@
+name: Issue 582 Redis compatibility
+
+on:
+  push:
+    branches: [fix/issue-582-redis-compatibility]
+  pull_request:
+    branches: [production]
+    paths:
+      - 'backend/**'
+      - 'README*.md'
+      - 'deploy/README.md'
+      - 'docs/redis-compatibility.md'
+      - 'docs/openai-siwc.md'
+      - '.github/workflows/issue-582-regression.yml'
+      - '.github/scripts/issue-582-red.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    if: github.head_ref == 'fix/issue-582-redis-compatibility' || github.ref_name == 'fix/issue-582-redis-compatibility'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - redis: '6.0'
+            image: redis:6.0.20-alpine
+          - redis: '7.4'
+            image: redis:7.4.12-alpine
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SUB2API_TEST_REDIS_IMAGE: ${{ matrix.image }}
+      ISSUE_582_REDIS_VERSION: ${{ matrix.redis }}
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Install Redis binary for existing readiness adapter test
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends redis-server
+      - name: Assert exact head and static formatting
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git rev-parse HEAD
+          git diff --check
+          test -z "$(git diff --name-only 08d69a522 HEAD -- '*.go' | xargs -r gofmt -l)"
+      - name: Real Redis 6.0 baseline RED
+        if: matrix.redis == '6.0'
+        run: bash .github/scripts/issue-582-red.sh
+      - name: Exact head real Redis snapshot, outbox, queue and session behavior
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          go test -race -tags=integration ./internal/repository -run '^(TestIssue582|TestUserMsgQueueCacheSuite|TestConcurrencyCacheSuite|TestSchedulerCache|TestSchedulerSnapshotOutboxReplay)' -count=1 -v | tee "$RUNNER_TEMP/issue-582-real-redis.log"
+          ! grep -E -- '--- SKIP: TestIssue582' "$RUNNER_TEMP/issue-582-real-redis.log"
+      - name: Preserve scheduler memo, fencing and failure protections
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          go test -race -tags=unit ./internal/repository -run '^Test(Scheduler|APIKeyCacheIncrementCreateCount)' -count=1 -v | tee "$RUNNER_TEMP/issue-582-scheduler-unit.log"
+      - name: Session, IP risk and serverless regressions
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          go test -race -tags=unit ./internal/pkg/redissession ./internal/pkg/rediscompat ./internal/iprisk ./internal/serverless -count=1 -v | tee "$RUNNER_TEMP/issue-582-audit-unit.log"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue-582-${{ matrix.redis }}-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/issue-582-*.log

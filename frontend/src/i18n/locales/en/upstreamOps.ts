@@ -40,7 +40,7 @@ export default {
   "duration": "Duration P90 (ms)",
   "samples": "Valid TTFT samples",
   "unknown": "Unknown",
-  "latencyNote": "Latency uses persisted forwarding TTFT for streamed rows with metered usage and a positive first-token time. It is not isolated upstream semantic latency. Duration uses duration_ms. No complete failed-request denominator exists, so request error rates are unavailable.",
+  "latencyNote": "Latency retains persisted legacy first_token_ms and duration_ms for records with token/cost evidence and valid positive timings. Legacy timer scope varies by protocol; passthrough and bridge can already include admission. These are server observations, not client E2E. Separately sourced queue-inclusive metrics exclude historical unmeasured rows. Usage logs lack a complete failed-request denominator.",
   "previous": "Previous",
   "next": "Next",
   "quality": "Quality history",

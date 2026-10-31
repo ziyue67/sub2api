@@ -39,6 +39,9 @@ func (s *OpenAIGatewayService) UnifiedAstraTicketsEnabled(ctx context.Context) b
 }
 
 func astraTicketAccountEligible(ctx context.Context, a *Account) bool {
+	if a != nil && (a.AuthConnectionID != "" || a.HasManagedOpenAIConnections()) {
+		return false
+	}
 	// Explicit preparation can restore a target paused by Astra scheduling, but
 	// never bypasses authentication, expiry, transport or upstream cooldowns.
 	if a == nil || !a.IsActive() || !isOpenAICodexTicketAccount(a, OpenAICodexStateProbeDefaultModel) || a.ParentAccountID != nil {

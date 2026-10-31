@@ -48,6 +48,9 @@ const (
 
 // OAuthSession stores OAuth flow state for OpenAI
 type OAuthSession struct {
+	ConnectionID            string
+	ConnectionRevision      int64
+	ConnectionKind          string
 	SIWCAccountID           int64
 	SIWCNonce               string
 	SIWCHostID              string

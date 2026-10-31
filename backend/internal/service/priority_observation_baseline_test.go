@@ -121,12 +121,18 @@ func TestPriorityObservationBaselineHardStop(t *testing.T) {
 	candidate := priorityCandidate(1, .1, 0)
 	candidate.account.Status = StatusActive
 	candidate.account.Schedulable = true
-	svc.accountRepo = schedulerTestOpenAIAccountRepo{accounts: []Account{*candidate.account}}
-	svc.cache = &schedulerTestGatewayCache{}
+	peer := priorityCandidate(2, 1, 0)
+	peer.account.Status = StatusActive
+	peer.account.Schedulable = true
+	reader.signal[2] = PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500}
+	svc.accountRepo = schedulerTestOpenAIAccountRepo{accounts: []Account{*candidate.account, *peer.account}}
+	svc.cache = &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:baseline-hard": 1}}
 	svc.cfg = newSchedulerTestOpenAIWSV2Config()
 	svc.concurrencyService = NewConcurrencyService(schedulerTestConcurrencyCache{})
-	req := OpenAIAccountScheduleRequest{Platform: PlatformOpenAI, RequestedModel: "gpt-test", UseUpstreamTokenCost: true}
-	require.Eventually(t, func() bool { return svc.priorityHistory(req, cfg, []openAIAccountCandidateScore{candidate}).ready() }, time.Second, time.Millisecond)
+	req := OpenAIAccountScheduleRequest{Platform: PlatformOpenAI, RequestedModel: "gpt-test", UseUpstreamTokenCost: true, SessionHash: "baseline-hard", StickyAccountID: 1, DisableStickyEscape: true}
+	require.Eventually(t, func() bool {
+		return svc.priorityHistory(req, cfg, []openAIAccountCandidateScore{candidate, peer}).ready()
+	}, time.Second, time.Millisecond)
 	scheduler := &defaultOpenAIAccountScheduler{service: svc, stats: newOpenAIAccountRuntimeStats()}
 	selected, _, err := scheduler.Select(context.Background(), req)
 	if selected != nil && selected.ReleaseFunc != nil {

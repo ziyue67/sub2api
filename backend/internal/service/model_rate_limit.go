@@ -21,6 +21,12 @@ const (
 
 // isRateLimitActiveForKey 检查指定 key 的限流是否生效
 func (a *Account) isRateLimitActiveForKey(key string) bool {
+	if a != nil {
+		limits, _ := a.Extra[modelRateLimitsKey].(map[string]any)
+		if IsQualityModelCooldown(limits[key]) {
+			return true
+		}
+	}
 	resetAt := a.modelRateLimitResetAt(key)
 	return resetAt != nil && time.Now().Before(*resetAt)
 }
@@ -40,6 +46,12 @@ func (a *Account) getRateLimitRemainingForKey(key string) time.Duration {
 
 func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedModel string) bool {
 	for _, key := range a.modelRateLimitKeysForRequest(ctx, requestedModel) {
+		if ctx.Value(qualityProbeContextKey{}) == true {
+			limits, _ := a.Extra[modelRateLimitsKey].(map[string]any)
+			if IsQualityModelCooldown(limits[key]) {
+				continue
+			}
+		}
 		if a.isRateLimitActiveForKey(key) {
 			return true
 		}

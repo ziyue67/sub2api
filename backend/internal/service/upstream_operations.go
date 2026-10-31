@@ -8,6 +8,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,6 +19,7 @@ type UpstreamOperationsFilter struct {
 	From       time.Time `json:"from"`
 	Until      time.Time `json:"until"`
 	Upstream   string    `json:"upstream"`
+	ChannelID  int64     `json:"channel_id,omitempty"`
 	AccountID  int64     `json:"account_id"`
 	GroupID    int64     `json:"group_id"`
 	Model      string    `json:"model"`
@@ -43,7 +45,15 @@ type UpstreamOperationsRepository interface {
 }
 
 func ValidateUpstreamOperationsFilter(f UpstreamOperationsFilter) error {
-	if f.From.IsZero() || !f.Until.After(f.From) || f.Until.Sub(f.From) > 31*24*time.Hour || f.Until.After(time.Now().Add(time.Minute)) || f.AccountID < 0 || f.GroupID < 0 || f.Page < 1 || f.Page > 1000000 || f.PageSize < 1 || f.PageSize > 100 || len(f.Model) > 200 || len(f.Upstream) > 2048 ||
+	if strings.HasPrefix(f.Upstream, "channel:") {
+		id, err := strconv.ParseInt(strings.TrimPrefix(f.Upstream, "channel:"), 10, 64)
+		if err != nil || id < 1 || f.Upstream != "channel:"+strconv.FormatInt(id, 10) || (f.ChannelID != 0 && f.ChannelID != id) {
+			return ErrUpstreamOperationsValidation
+		}
+		f.ChannelID = id
+		f.Upstream = ""
+	}
+	if f.From.IsZero() || !f.Until.After(f.From) || f.Until.Sub(f.From) > 31*24*time.Hour || f.Until.After(time.Now().Add(time.Minute)) || f.AccountID < 0 || f.GroupID < 0 || f.ChannelID < 0 || f.Page < 1 || f.Page > 1000000 || f.PageSize < 1 || f.PageSize > 100 || len(f.Model) > 200 || len(f.Upstream) > 2048 ||
 		!slices.Contains([]string{"upstream", "account", "model"}, f.Dimension) || !slices.Contains([]string{"public", "recorded", "upstream"}, f.ModelScope) ||
 		!slices.Contains([]string{"requests", "name"}, f.Sort) || !slices.Contains([]string{"asc", "desc"}, f.Direction) {
 		return ErrUpstreamOperationsValidation

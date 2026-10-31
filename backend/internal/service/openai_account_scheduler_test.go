@@ -543,6 +543,14 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_LoadBat
 	require.EqualError(t, err, "no available OpenAI accounts supporting model: gpt-5.4-mini (pool=3, filtered: excluded=1 model_not_supported=1 quota_auto_pause_7d=1)")
 }
 
+func TestBuildOpenAIAccountLoadRequestUsesRealConcurrency(t *testing.T) {
+	factor := 10000
+	account := &Account{ID: 903, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 2, LoadFactor: &factor}
+	loads := buildOpenAIAccountLoadRequest([]*Account{account})
+
+	require.Equal(t, []AccountWithConcurrency{{ID: 903, MaxConcurrency: 2}}, loads)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_RequiredWSV2_SkipsHTTPOnlyAccount(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 

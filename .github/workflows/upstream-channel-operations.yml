@@ -36,10 +36,21 @@ jobs:
           trap 'cp "$RUNNER_TEMP/upstream-current-service.go" "$target"' EXIT
           git fetch --no-tags --depth=1 origin ecf63af98587c151fe40893f3e3c322a777b17df
           git show ecf63af98587c151fe40893f3e3c322a777b17df:backend/internal/service/upstream_operations.go > "$target"
-          # 基线里 OperationsCostMultiplier 还定义在 upstream_operations.go，
-          # 新版本已挪到 profit_operations.go；回退后重名会让红门禁变成编译失败，
-          # 这里只把回退文件里的旧副本改个名（两个断言都不涉及它）。
-          sed -i 's/^func OperationsCostMultiplier(/func operationsCostMultiplierLegacy(/' "$target"
+          # Preserve the independent entity filter DTO while reverting only
+          # the endpoint-attribution implementation under test. Cost metadata
+          # moved to profit_operations.go; don't restore its former duplicate.
+          python3 - <<'PYCOMPAT'
+          from pathlib import Path
+          import re
+          p=Path('internal/service/upstream_operations.go')
+          s=p.read_text()
+          if '`json:"channel_id,omitempty"`' not in s:
+              s=s.replace('Upstream   string    `json:"upstream"`', 'Upstream   string    `json:"upstream"`\n ChannelID int64 `json:"channel_id,omitempty"`')
+          s=re.sub(r'\n// OperationsCostMultiplier distinguishes.*?\n}\s*$', '\n', s, flags=re.S)
+          assert '`json:"channel_id,omitempty"`' in s
+          assert 'func OperationsCostMultiplier' not in s
+          p.write_text(s)
+          PYCOMPAT
           set +e
           go test -tags=unit ./internal/service -run '^TestUpstreamOperations(ExcelOAuthCannotMasqueradeAsNativeCodex|PinnedResponsesPreservesExplicitRelayBase)$' -count=1 -v > "$RUNNER_TEMP/upstream-excel-red.log" 2>&1
           result=$?
@@ -67,7 +78,7 @@ jobs:
           version: 9
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm --dir frontend install --frozen-lockfile

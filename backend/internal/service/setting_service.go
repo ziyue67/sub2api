@@ -133,6 +133,7 @@ type WebSearchManagerBuilder func(cfg *WebSearchEmulationConfig, proxyURLs map[i
 
 // SettingService 系统设置服务
 type SettingService struct {
+	scopedAdminKeyRepo                 ScopedAdminKeyRepository
 	IPRisk                             *iprisk.Manager     // Initialized before requests start.
 	Serverless                         *serverless.Manager // Initialized before requests start.
 	modelBillingCache                  modelBillingConfigCache
@@ -142,7 +143,6 @@ type SettingService struct {
 	astraRoutingOnSaved                func(config.AstraRoutingSettings)
 	astraRoutingCache                  *config.AstraRoutingSettings
 	astraRoutingExpires                time.Time
-	scopedAdminKeyRepo                 ScopedAdminKeyRepository
 	settingRepo                        SettingRepository
 	defaultSubGroupReader              DefaultSubscriptionGroupReader
 	proxyRepo                          ProxyRepository // for resolving websearch provider proxy URLs
@@ -196,7 +196,15 @@ type SettingService struct {
 	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
 
 	// studioBridgeDefaultGroupReader 用于验证 studio bridge 兜底分组是否存在且活跃。
-	studioBridgeDefaultGroupReader   StudioBridgeGroupReader
+	studioBridgeDefaultGroupReader StudioBridgeGroupReader
+	// openAIResponseHeaderTimeoutCache lets the HTTP upstream client read the
+	// admin-configurable OpenAI response-header timeout without a DB hit per
+	// request. SetOpenAIResponseHeaderTimeoutSettings refreshes it immediately.
+	openAIResponseHeaderTimeoutCache atomic.Value // *cachedOpenAIResponseHeaderTimeoutSettings
+	openAIResponseHeaderTimeoutSF    singleflight.Group
+	openAIResponseHeaderTimeoutMu    sync.Mutex
+	openAIResponseHeaderTimeoutGen   uint64 // guarded by Mu; successful saves supersede in-flight reads
+
 	channelMonitorRuntimeListenersMu sync.Mutex
 	channelMonitorRuntimeListeners   []func()
 	codexHarvestWakeOnce             sync.Once

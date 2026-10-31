@@ -13,7 +13,7 @@ import (
 
 // Values are explicit persisted identities, never inferred endpoint/capability aliases.
 const channelOperationsUsageBase = `WITH base AS (
- SELECT u.account_id,u.channel_id,u.model,u.upstream_model,u.model_mapping_chain,u.stream,u.first_token_ms,u.duration_ms,u.created_at, COALESCE(m.upstream_id,0) AS operation_upstream_id,
+ SELECT u.account_id,u.channel_id,u.model,u.upstream_model,u.model_mapping_chain,u.stream,u.first_token_ms,u.queue_wait_ms,u.queue_timing,u.duration_ms,u.created_at, COALESCE(m.upstream_id,0) AS operation_upstream_id,
  COALESCE(NULLIF(u.requested_model,''),u.model) AS public_model,
  (u.actual_cost>0 OR u.total_cost>0 OR u.account_stats_cost>0 OR u.input_tokens>0 OR u.output_tokens>0 OR u.cache_read_tokens>0 OR u.cache_creation_tokens>0) AS measured
  FROM usage_logs u LEFT JOIN channel_operation_members m ON m.channel_id=u.channel_id AND m.account_id=u.account_id
@@ -106,7 +106,7 @@ func (r *channelRepository) ReadChannelOperations(ctx context.Context, f service
 	}
 	aggregate := `count(*) AS requests,count(*) FILTER(WHERE ttft IS NOT NULL) AS samples,count(*) FILTER(WHERE stream AND measured AND ttft IS NULL) AS unknown_samples,count(*) FILTER(WHERE duration IS NOT NULL) AS duration_samples,
  percentile_cont(.5) WITHIN GROUP(ORDER BY ttft) AS p50_ms,percentile_cont(.9) WITHIN GROUP(ORDER BY ttft) AS p90_ms,percentile_cont(.95) WITHIN GROUP(ORDER BY ttft) AS p95_ms,
- percentile_cont(.9) WITHIN GROUP(ORDER BY duration) AS duration_p90_ms,max(created_at) AS latest_sample_at`
+ percentile_cont(.9) WITHIN GROUP(ORDER BY duration) AS duration_p90_ms,max(created_at) AS latest_sample_at` + queueInclusiveOperationsAggregate("duration")
 	out.Usage = r.operationsSection(ctx, channelOperationsUsageBase+`, buckets AS (SELECT `+dimension+` AS dimension_id,`+aggregate+` FROM measured GROUP BY `+dimension+`), summary AS (SELECT `+aggregate+` FROM measured), lineage AS (
  SELECT public_model,model AS recorded_model,upstream_model,model_mapping_chain,count(*) AS samples FROM measured GROUP BY public_model,model,upstream_model,model_mapping_chain
  ) SELECT jsonb_build_object('source','usage_logs.channel_id / persisted first_token_ms','attribution','current_operational_membership','latency_measurement','legacy_forward_stream_ttft','summary',(SELECT to_jsonb(s) FROM summary s),'total',(SELECT count(*) FROM buckets),'rows',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM (SELECT b.*,`+names+` AS name FROM buckets b ORDER BY b.requests DESC,b.dimension_id LIMIT $9 OFFSET $10)x),'[]'::jsonb),'lineage',COALESCE((SELECT jsonb_agg(to_jsonb(l)) FROM (SELECT * FROM lineage ORDER BY samples DESC,public_model,recorded_model,upstream_model,model_mapping_chain LIMIT 50)l),'[]'::jsonb),'lineage_total',(SELECT count(*) FROM lineage),'error_rate',NULL,'error_scope','no_complete_request_failure_denominator')`, args...)

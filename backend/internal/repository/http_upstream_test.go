@@ -1088,3 +1088,32 @@ func TestHTTPUpstreamPublicHostsOnlyValidatesEveryRedirectHop(t *testing.T) {
 	require.NoError(t, client.CheckRedirect(publicHop, via))
 	require.Error(t, client.CheckRedirect(publicHop, make([]*http.Request, 10)), "redirect chain stays capped")
 }
+
+type fakeOpenAIResponseHeaderTimeoutProvider struct {
+	seconds int
+	enabled bool
+}
+
+func (f fakeOpenAIResponseHeaderTimeoutProvider) GetOpenAIResponseHeaderTimeoutCached(context.Context) (int, bool) {
+	return f.seconds, f.enabled
+}
+
+func TestApplyProfilePoolSettingsUsesRuntimeOpenAIResponseHeaderTimeout(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Gateway.OpenAIResponseHeaderTimeout = 20
+
+	svc, ok := newHTTPUpstream(cfg, fakeOpenAIResponseHeaderTimeoutProvider{seconds: 30, enabled: true}).(*httpUpstreamService)
+	require.True(t, ok)
+	settings := svc.applyProfilePoolSettings(poolSettings{}, service.HTTPUpstreamProfileOpenAI)
+	require.Equal(t, 30*time.Second, settings.responseHeaderTimeout)
+
+	svc, ok = newHTTPUpstream(cfg, fakeOpenAIResponseHeaderTimeoutProvider{seconds: 30, enabled: false}).(*httpUpstreamService)
+	require.True(t, ok)
+	settings = svc.applyProfilePoolSettings(poolSettings{}, service.HTTPUpstreamProfileOpenAI)
+	require.Zero(t, settings.responseHeaderTimeout)
+
+	svc, ok = newHTTPUpstream(cfg, nil).(*httpUpstreamService)
+	require.True(t, ok)
+	settings = svc.applyProfilePoolSettings(poolSettings{}, service.HTTPUpstreamProfileOpenAI)
+	require.Equal(t, 20*time.Second, settings.responseHeaderTimeout)
+}

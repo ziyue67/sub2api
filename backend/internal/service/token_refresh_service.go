@@ -100,6 +100,9 @@ func NewTokenRefreshService(
 	tempUnschedCache TempUnschedCache,
 	grokOAuthServices ...*GrokOAuthService,
 ) *TokenRefreshService {
+	if source, ok := accountRepo.(LatestSchedulerAccountsRepository); ok && schedulerCache != nil {
+		schedulerCache = &codexOrderedSchedulerCache{SchedulerCache: schedulerCache, source: source}
+	}
 	refreshCfg := &config.TokenRefreshConfig{}
 	if cfg != nil {
 		refreshCfg = &cfg.TokenRefresh

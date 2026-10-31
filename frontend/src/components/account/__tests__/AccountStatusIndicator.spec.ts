@@ -51,6 +51,26 @@ function makeAccount(overrides: Partial<Account>): Account {
 }
 
 describe('AccountStatusIndicator', () => {
+  it('keeps quality cooldown visible after its deadline without a credits bypass', () => {
+    const wrapper = mount(AccountStatusIndicator, {
+      props: {
+        account: makeAccount({
+          extra: {
+            allow_overages: true,
+            model_rate_limits: {
+              'gpt-6.1-sol': { reason: 'quality_rule:7', rate_limited_at: '2020-01-01T00:00:00Z', rate_limit_reset_at: '2020-01-02T00:00:00Z' },
+              'expired-native': { reason: 'upstream_429', rate_limited_at: '2020-01-01T00:00:00Z', rate_limit_reset_at: '2020-01-02T00:00:00Z' }
+            }
+          }
+        })
+      },
+      global: { stubs: { Icon: true } }
+    })
+    expect(wrapper.text()).toContain('gpt-6.1-sol')
+    expect(wrapper.text()).toContain('qualityOps.waitingForRecovery')
+    expect(wrapper.text()).not.toContain('expired-native')
+    expect(wrapper.text()).not.toContain('⚡')
+  })
   it.each([
     [{}, 'active'],
     [{ status: 'error', error_message: 'Upstream unavailable' }, 'error'],

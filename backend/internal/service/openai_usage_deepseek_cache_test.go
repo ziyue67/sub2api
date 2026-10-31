@@ -26,3 +26,13 @@ func TestOpenAIUsageDeepSeekPromptCacheHitTokensCountAsCacheRead(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 30, usage.CacheReadInputTokens)
 }
+
+func TestOpenAIUsageDeepSeekPreservesAuthoritativeZeroCacheRead(t *testing.T) {
+	for _, nested := range []string{"prompt_tokens_details", "input_tokens_details"} {
+		value := gjson.Parse(`{"prompt_tokens":100,"prompt_cache_hit_tokens":80,"` + nested + `":{"cached_tokens":0}}`)
+		usage, ok := openAIUsageFromGJSON(value)
+		require.True(t, ok)
+		require.Zero(t, usage.CacheReadInputTokens)
+		require.Equal(t, 100, usage.InputTokens)
+	}
+}

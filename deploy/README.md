@@ -583,7 +583,7 @@ The independent **System Settings → Security → Registration account limit pe
 
 - Linux server (Ubuntu 20.04+, Debian 11+, CentOS 8+, etc.)
 - PostgreSQL 14+
-- Redis 6+
+- Redis 6.0+
 - systemd
 
 ### Directory Structure

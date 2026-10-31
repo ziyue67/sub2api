@@ -2,7 +2,6 @@ package requesttiming
 
 import (
 	"context"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 )
@@ -31,7 +30,7 @@ func StartRoute(ctx context.Context, accountID int64, phase string, route transp
 		return func(int, error) {}
 	}
 	i := len(c.data.Routes)
-	c.data.Routes = append(c.data.Routes, RouteObservation{Route: route, AccountID: accountID, Phase: phase, StartMS: c.offset(time.Now())})
+	c.data.Routes = append(c.data.Routes, RouteObservation{Route: route, AccountID: accountID, Phase: phase, StartMS: c.offset(c.now())})
 	c.mu.Unlock()
 	return func(status int, err error) {
 		c.mu.Lock()
@@ -39,7 +38,7 @@ func StartRoute(ctx context.Context, accountID int64, phase string, route transp
 		if c.finished || c.data.Routes[i].EndMS != nil {
 			return
 		}
-		v := c.offset(time.Now())
+		v := c.offset(c.now())
 		a := &c.data.Routes[i]
 		a.EndMS, a.Status = &v, status
 		if err != nil {

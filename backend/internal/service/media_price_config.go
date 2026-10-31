@@ -1,6 +1,6 @@
 package service
 
-// imageCountBillingEnabled 表示该分组强制按实际出图张数计费，即使渠道是 token 计费。
+// imageCountBillingEnabled 表示图片端点兜底按实际出图张数计费；显式分组/渠道 token 价仍优先。
 func imageCountBillingEnabled(apiKey *APIKey) bool {
 	return apiKey != nil && apiKey.Group != nil && apiKey.Group.ImageCountBilling
 }

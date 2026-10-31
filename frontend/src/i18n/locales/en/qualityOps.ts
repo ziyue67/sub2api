@@ -65,7 +65,7 @@ export default {
   "modelRestored": "Model restored",
   "modelUnchanged": "Current state retained",
 
-  "cooldownPerModelHint": "Each model is cooled or restored using its own test verdict. Passing peers stay available; untested or unsupported models receive no new cooldown. A 5xx lowers account concurrency first, then test verdicts determine model cooldowns.",
+  "cooldownPerModelHint": "Account state probes cool or restore all configured targets together. Other tests cool or restore each model using its own test verdict. Passing peers stay available; untested or unsupported models receive no new cooldown. A 5xx lowers account concurrency first, then test verdicts determine model cooldowns.",
 
   "skipped": "Skipped",
   "modelUnsupportedSkipped": "Unsupported model · skipped",
@@ -80,7 +80,7 @@ export default {
   "cooldownNotRecorded": "Not available in older records",
   "cooldownUnconfirmed": "Action result unconfirmed",
   "cooldownTargets": "Models eligible for cooldown",
-  "cooldownTargetsHint": "Only models with adverse test results are cooled. Untested and skipped models receive no new cooldown.",
+  "cooldownTargetsHint": "Account state probes apply their verdict to all configured targets. Other tests cool only models with adverse results; untested and skipped models receive no new cooldown.",
   "catalogUnavailable": "Model list unavailable · skipped",
 
   "tooManyModelSamples": "Select up to 50 models and 100 samples per round. Reduce the model count or samples per model.",
@@ -194,6 +194,8 @@ export default {
   "removeGroups": "Remove selected group memberships",
   "removeModels": "Keep scheduling, cool down selected models",
   "removeModelsInput": "Models to cool down (comma separated)",
+  "waitingForRecovery": "Awaiting quality recovery",
+  "cooldownRecoveryHint": "Quality cooldown remains until a later check explicitly passes with automatic recovery enabled, or an administrator clears it. The next check time, timeouts, rate limits and skipped checks do not release it.",
   "recoveryConcurrency": "OAuth recovery concurrency cap (default 5)",
   "invalidRecoveryConcurrency": "Recovery concurrency must be an integer from 1 to 10000",
   "selectModels": "Enter at least one model",

@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 import type { DashboardStats } from '@/types'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import DashboardView from '../DashboardView.vue'
 
 const { getSnapshotV2, getUserUsageTrend, getUserSpendingRanking } = vi.hoisted(() => ({
@@ -42,12 +43,44 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => key
+      t: (key: string) => key,
+      locale: { value: 'en' }
     })
   }
 })
 
-const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/
+const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
+
+const mountDashboard = () => mount(DashboardView, {
+  global: {
+    stubs: {
+      AppLayout: { template: '<div><slot /></div>' },
+      LoadingSpinner: true,
+      Icon: true,
+      Select: true,
+      ModelDistributionChart: true,
+      TokenUsageTrend: true,
+      Line: true
+    }
+  }
+})
+
+const expectDashboardRange = (startDate: string, endDate: string) => {
+  expect(getSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({
+    start_date: startDate,
+    end_date: endDate,
+    granularity: 'hour'
+  }))
+  expect(getUserUsageTrend).toHaveBeenCalledWith(expect.objectContaining({
+    start_date: startDate,
+    end_date: endDate,
+    granularity: 'hour'
+  }))
+  expect(getUserSpendingRanking).toHaveBeenCalledWith(expect.objectContaining({
+    start_date: startDate,
+    end_date: endDate
+  }))
+}
 
 const createDashboardStats = (): DashboardStats => ({
   total_users: 0,
@@ -114,6 +147,10 @@ describe('admin DashboardView', () => {
     })
   })
 
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('switches metrics and ignores a stale tokens response', async () => {
     let resolveTokens!: (value: any) => void
     getUserUsageTrend.mockImplementationOnce(() => new Promise(resolve => { resolveTokens = resolve }))
@@ -138,22 +175,12 @@ describe('admin DashboardView', () => {
     expect(chart.props('data').datasets[0].data).toEqual([5])
   })
 
-  it('uses last 24 hours as default dashboard range', async () => {
-    mount(DashboardView, {
-      global: {
-        stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
-          LoadingSpinner: true,
-          Icon: true,
-          DateRangePicker: true,
-          Select: true,
-          ModelDistributionChart: true,
-          TokenUsageTrend: true,
-          Line: true
-        }
-      }
-    })
+  it('requests an exact rolling 24-hour range initially and opts the picker into rolling ranges', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const now = new Date(2026, 9, 1, 0, 15, 30, 123)
+    vi.setSystemTime(now)
 
+    const wrapper = mountDashboard()
     await flushPromises()
 
     expect(getSnapshotV2).toHaveBeenCalledTimes(1)

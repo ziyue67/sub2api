@@ -1215,6 +1215,19 @@ export default {
         saved: 'Stream timeout settings saved',
         saveFailed: 'Failed to save stream timeout settings'
       },
+      openaiResponseHeaderTimeout: {
+        title: 'OpenAI response header timeout',
+        description:
+          'Limits the wait for OpenAI/Codex HTTP response headers after upload. On timeout the gateway fails over to the next account; the first attempt may already be billed, so a successful request adds one 1:1 surcharge. Body streams after headers and native WebSocket upstreams use their own limits.',
+        enabled: 'Enable response header timeout',
+        enabledHint: 'Disabled means no OpenAI-specific response header timeout (equivalent to 0)',
+        seconds: 'Timeout (seconds)',
+        secondsHint:
+          '1–600 seconds; default 20s. Slow nonstream responses and SSE headers can time out before the first token. Body streams after headers and native WebSocket upstreams use their own limits.',
+        saved: 'OpenAI response header timeout settings saved',
+        saveFailed: 'Failed to save OpenAI response header timeout settings',
+        loadFailed: 'Could not load the saved timeout. Reload before editing.'
+      },
       rectifier: {
         title: 'Request Rectifier',
         description: 'Automatically fix request parameters and retry when upstream returns specific errors',

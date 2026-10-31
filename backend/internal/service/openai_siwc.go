@@ -176,7 +176,7 @@ func (s *OpenAIOAuthReauthService) CompleteSIWCAuthorization(ctx context.Context
 		return err
 	}
 	session, ok := s.readSIWCSession(ctx, sessionID, false)
-	if !ok || session.SIWCAccountID != id {
+	if !ok || session.SIWCAccountID != id || session.ConnectionID != "" {
 		return infraerrors.BadRequest("OPENAI_SIWC_SESSION_INVALID", "SIWC session expired or belongs to another account")
 	}
 	if len(callback) > maxOpenAIOAuthReauthURL {
@@ -412,6 +412,10 @@ func validateSIWCGrant(account *Account, grant *siwcGrant) error {
 // A resource-server 401 invalidates only this access token. Keep the rotating
 // refresh token and both other OAuth grants; refresh on the next request.
 func (s *OpenAIOAuthReauthService) rejectSIWCAccessToken(ctx context.Context, account *Account, token string, cache OpenAITokenCache) {
+	if account != nil && account.AuthConnectionID != "" {
+		_ = s.FailAuthConnection(ctx, account, 401)
+		return
+	}
 	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	unlock, err := lockSIWCRefresh(markCtx, account.ID, cache)

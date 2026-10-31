@@ -16,10 +16,11 @@ func TestCacheCreationBillingPersistence(t *testing.T) {
 	prepared := prepareUsageLogInsert(&service.UsageLog{CacheCreationBilling: audit})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 	columns := strings.Split(usageLogSelectColumns, ", ")
-	require.Equal(t, "cache_creation_billing", columns[len(columns)-1])
-	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-1])
+	require.Equal(t, "cache_creation_billing", columns[len(columns)-2])
+	require.Equal(t, "queue_timing", columns[len(columns)-1])
+	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
 	var decoded service.CacheCreationBillingAudit
-	encoded, ok := prepared.args[len(prepared.args)-1].(string)
+	encoded, ok := prepared.args[len(prepared.args)-2].(string)
 	require.True(t, ok)
 	require.NoError(t, json.Unmarshal([]byte(encoded), &decoded))
 	require.Equal(t, *audit, decoded)
@@ -35,10 +36,11 @@ func TestCacheCreationBillingPersistence(t *testing.T) {
 type cacheBillingScanner struct{ encoded string }
 
 func (s cacheBillingScanner) Scan(dest ...any) error {
-	// Go zero values already satisfy every field; set only the trailing audit.
-	audit, ok := dest[len(dest)-1].(*sql.NullString)
+	// Go zero values already satisfy every field; set only cache_creation_billing
+	// (queue_timing 现在是最后一列，审计值在它前一位)。
+	audit, ok := dest[len(dest)-2].(*sql.NullString)
 	if !ok {
-		return fmt.Errorf("expected audit destination *sql.NullString, got %T", dest[len(dest)-1])
+		return fmt.Errorf("expected audit destination *sql.NullString, got %T", dest[len(dest)-2])
 	}
 	*audit = sql.NullString{Valid: true, String: s.encoded}
 	return nil

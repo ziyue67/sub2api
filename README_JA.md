@@ -220,7 +220,7 @@ Sub2API を拡張・統合するコミュニティプロジェクト:
 | バックエンド | Go 1.27.3, Gin, Ent |
 | フロントエンド | Vue 3.4+, Vite 5+, TailwindCSS |
 | データベース | PostgreSQL 15+ |
-| キャッシュ/キュー | Redis 7+ |
+| キャッシュ/キュー | Redis 6.0+ |
 
 ---
 
@@ -246,7 +246,7 @@ GitHub Releases からビルド済みバイナリをダウンロードするワ�
 
 - Linux サーバー（amd64 または arm64）
 - PostgreSQL 15+（インストール済みかつ稼働中）
-- Redis 7+（インストール済みかつ稼働中）
+- Redis 6.0+（インストール済みかつ稼働中）
 - root 権限
 
 #### インストール手順
@@ -499,7 +499,7 @@ cd sub2api/deploy
 - Go 1.21+
 - Node.js 18+
 - PostgreSQL 15+
-- Redis 7+
+- Redis 6.0+
 
 #### ビルド手順
 

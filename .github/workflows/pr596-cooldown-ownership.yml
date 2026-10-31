@@ -1,0 +1,103 @@
+name: PR596 cooldown ownership dedicated CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cooldown-ownership:
+    if: github.event.pull_request.number == 596 && github.head_ref == 'fix/quality-state-probe-targets-and-model-input'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Record exact source head
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD | tee evidence/head.txt
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: RED - unchanged new tests against original production files
+        shell: bash
+        run: |
+          set -euo pipefail
+          original=23b0dbae040e0d0b8c40f25ddb012ce2444feba3
+          sources=(backend/internal/repository/account_quality_isolation.go backend/internal/repository/account_quality_models.go backend/internal/repository/scheduled_test_repo.go)
+          mkdir -p "$RUNNER_TEMP/pr596-original"
+          for source in "${sources[@]}"; do cp "$source" "$RUNNER_TEMP/pr596-original/$(basename "$source")"; done
+          trap 'for source in "${sources[@]}"; do cp "$RUNNER_TEMP/pr596-original/$(basename "$source")" "$source"; done' EXIT
+          git fetch --no-tags --depth=1 origin "$original"
+          for source in "${sources[@]}"; do git show "$original:$source" > "$source"; done
+          set +e
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestQualityCooldown(ActionGuardRetainsAllOwnershipLayouts|OwnedScopeRejectsEdits|MappingChangeCannotStrandOwnedTarget|DeletePreservesOwnedState|DeleteChecksLiveMarkersWithoutSnapshot|DeleteAfterRecoveryPreservesExternalRestrictions)$' -count=1 -timeout=15m -json) > evidence/red.jsonl 2>&1
+          result=$?
+          set -e
+          cat evidence/red.jsonl
+          test "$result" -ne 0
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          raw = Path('evidence/red.jsonl').read_text()
+          events = []
+          for line in raw.splitlines():
+              try:
+                  events.append(json.loads(line))
+              except json.JSONDecodeError:
+                  pass
+          output = raw + ''.join(e.get('Output', '') for e in events)
+          for forbidden in ('[build failed]', '[setup failed]', 'undefined:', 'syntax error:', 'no tests to run', 'panic:', '--- SKIP:'):
+              assert forbidden not in output, forbidden
+          for name in ('TestQualityCooldownActionGuardRetainsAllOwnershipLayouts', 'TestQualityCooldownOwnedScopeRejectsEdits', 'TestQualityCooldownMappingChangeCannotStrandOwnedTarget', 'TestQualityCooldownDeletePreservesOwnedState', 'TestQualityCooldownDeleteChecksLiveMarkersWithoutSnapshot', 'TestQualityCooldownDeleteAfterRecoveryPreservesExternalRestrictions'):
+              assert any(e.get('Action') == 'fail' and e.get('Test') == name for e in events), name
+          assert 'owned cooldown edit must be rejected' in output
+          assert 'owned cooldown delete must be rejected' in output
+          assert 'cooldown ownership must block action changes' in output
+          assert 'Error Trace:' in output and 'An error is expected but got nil.' in output
+          PY
+      - name: GREEN - real repository transitions and retained ownership protection
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The repository integration TestMain starts PostgreSQL and Redis via
+          # testcontainers; CI=true makes missing Docker a failure, never a skip.
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestQuality(Cooldown|Model|PersistentIsolation|Isolation|Ownership|Observation)' -count=1 -timeout=20m -json) > evidence/green.jsonl 2>&1
+          cat evidence/green.jsonl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          events = [json.loads(line) for line in Path('evidence/green.jsonl').read_text().splitlines() if line.startswith('{')]
+          assert not any(e.get('Action') in ('fail', 'skip') for e in events)
+          top_level_passes = {e['Test'] for e in events if e.get('Action') == 'pass' and 'Test' in e and '/' not in e['Test']}
+          assert len(top_level_passes) == 39, sorted(top_level_passes)
+          for name in ('TestQualityCooldownOwnedScopeRejectsEdits', 'TestQualityCooldownOrdinaryEditRetainsOwnershipUntilPassingRecovery', 'TestQualityCooldownExternalOwnerSurvivesEditsAndRecovery', 'TestQualityCooldownMappingChangeCannotStrandOwnedTarget', 'TestQualityCooldownChangedActionOutcomeRetainsOwnership', 'TestQualityCooldownActionGuardRetainsAllOwnershipLayouts', 'TestQualityCooldownDeadlinePersistedRecovery', 'TestQualityCooldownDeletePreservesOwnedState', 'TestQualityCooldownDeleteChecksLiveMarkersWithoutSnapshot', 'TestQualityCooldownDeleteAfterRecoveryPreservesExternalRestrictions', 'TestQualityIsolationScopeAndDeleteGuard', 'TestQualityIsolationGroupsFollowIndependentModelRecovery'):
+              assert any(e.get('Action') == 'pass' and e.get('Test') == name for e in events), name
+          PY
+      - name: Verify Node and locked i18n toolchain contract
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          package = json.loads(Path('frontend/package.json').read_text())
+          assert package['engines']['node'] == '>=22'
+          assert package['dependencies']['vue-i18n'] == '^11.4.16'
+          lock = Path('frontend/pnpm-lock.yaml').read_text()
+          assert 'vue-i18n@11.4.16:' in lock
+          assert "engines: {node: '>= 22'}" in lock
+          PY
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pr596-cooldown-ownership-${{ github.event.pull_request.head.sha }}
+          path: evidence/

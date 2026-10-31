@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -77,12 +79,56 @@ func (s *OpenAIGatewayService) openAIUploadTimeout(account *Account) time.Durati
 	return time.Duration(seconds) * time.Second
 }
 
-type openAIHTTPPhaseTimeout struct{ phase string }
+type openAIHTTPPhaseTimeout struct {
+	phase string
+	cause error
+}
 
 func (e *openAIHTTPPhaseTimeout) Error() string {
+	if e.phase == "response_header_timeout" {
+		return "OpenAI upstream response header timeout; request may still complete upstream; automatic replay disabled"
+	}
 	return "OpenAI upstream " + e.phase + " deadline exceeded"
 }
-func (e *openAIHTTPPhaseTimeout) Unwrap() error { return context.DeadlineExceeded }
+func (e *openAIHTTPPhaseTimeout) Unwrap() error {
+	if e.cause != nil {
+		return e.cause
+	}
+	return context.DeadlineExceeded
+}
+
+// ResponseHeaderTimeout starts after upload. A timeout at that point cannot
+// prove upstream stopped executing. Track writes without adding another timer,
+// and reuse the terminal phase-error path across every HTTP gateway adapter.
+// The transport's explicit header-timeout diagnostic is also a veto when a
+// custom transport does not emit standard trace callbacks.
+func guardOpenAIResponseHeaderTimeout(req *http.Request, account *Account) (*http.Request, func(*http.Response, error) error) {
+	if account == nil || account.Platform != PlatformOpenAI {
+		return req, func(_ *http.Response, err error) error { return err }
+	}
+	var submitted atomic.Bool
+	trace := &httptrace.ClientTrace{
+		WroteHeaders: func() { submitted.Store(true) },
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				submitted.Store(true)
+			}
+		},
+	}
+	req = req.Clone(httptrace.WithClientTrace(req.Context(), trace))
+	return req, func(resp *http.Response, err error) error {
+		var phaseErr *openAIHTTPPhaseTimeout
+		if err == nil || resp != nil || errors.As(err, &phaseErr) || errors.Is(err, context.Canceled) {
+			return err
+		}
+		var timeout net.Error
+		if errors.As(err, &timeout) && timeout.Timeout() &&
+			(submitted.Load() || strings.Contains(err.Error(), "timeout awaiting response headers")) {
+			return &openAIHTTPPhaseTimeout{phase: "response_header_timeout", cause: err}
+		}
+		return err
+	}
+}
 
 type openAIHTTPPhaseGuard struct {
 	ctx        context.Context
@@ -253,8 +299,10 @@ func openAIHTTPPhaseError(resp *http.Response) error {
 	return nil
 }
 
-// These deadlines never authorize replay: upload may have partially reached
-// upstream, and metadata alone does not prove that an upstream did no work.
+// Upload/pre-output deadlines never authorize replay. A response-header timeout
+// after the request was written is replayable only because the caller explicitly
+// bills a 1:1 retry surcharge for the first attempt's possible upstream cost.
+// If the response is already committed, even that path stays terminal.
 func handleOpenAIHTTPPhaseError(c *gin.Context, account *Account, err error) error {
 	var phaseErr *openAIHTTPPhaseTimeout
 	if !errors.As(err, &phaseErr) {
@@ -267,6 +315,26 @@ func handleOpenAIHTTPPhaseError(c *gin.Context, account *Account, err error) err
 		return err
 	}
 	StopOpenAICompactSSEKeepaliveCommitted(c)
+	if phaseErr.phase == "response_header_timeout" && !IsResponseCommitted(c) {
+		written := c.Writer.Written()
+		if written {
+			MarkOpsStreamFailure(c, phaseErr.phase, phaseErr.phase, phaseErr.Error(), http.StatusGatewayTimeout)
+		}
+		// Replay is deliberately allowed here: the caller has chosen to pay the
+		// first attempt's possible upstream cost and charge it back 1:1.
+		const replayMessage = "OpenAI upstream response header timeout; retrying another account (first attempt may be billed)"
+		return &UpstreamFailoverError{
+			StatusCode:               http.StatusGatewayTimeout,
+			ResponseBody:             []byte(replayMessage),
+			Stage:                    GatewayFailureStageInference,
+			Scope:                    GatewayFailureScopeRequest,
+			NextAccountAction:        NextAccountRetry,
+			ClientStatusCode:         http.StatusGatewayTimeout,
+			ClientMessage:            replayMessage,
+			HeaderTimeoutSubmitted:   true,
+			SafeToFailoverAfterWrite: written,
+		}
+	}
 	if c.Writer.Written() {
 		MarkOpsStreamFailure(c, phaseErr.phase, phaseErr.phase, phaseErr.Error(), http.StatusGatewayTimeout)
 	}

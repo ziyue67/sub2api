@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/url"
 	"reflect"
 	"slices"
@@ -22,7 +23,9 @@ import (
 )
 
 type Account struct {
-	InitialAdmissionPlan *ScheduledTestPlan `json:"-"`
+	AuthConnectionID       string
+	AuthConnectionRevision int64
+	InitialAdmissionPlan   *ScheduledTestPlan `json:"-"`
 	// InitialQualityPlan is internal create-only state, never imported or exported.
 	InitialQualityPlan      *ScheduledTestPlan `json:"-"`
 	ID                      int64
@@ -246,6 +249,17 @@ func (a *Account) EffectiveLoadFactor() int {
 		return a.Concurrency
 	}
 	return 1
+}
+
+// accountLoadPreferenceRate preserves load_factor as a bounded soft preference
+// after capacity has been measured against real concurrency slots.
+func accountLoadPreferenceRate(account *Account, loadRate int) int {
+	if account == nil || account.Concurrency <= 0 || account.LoadFactor == nil || *account.LoadFactor <= 0 {
+		return loadRate
+	}
+	weight := float64(*account.LoadFactor) / float64(account.Concurrency)
+	weight = math.Max(0.5, math.Min(2, weight))
+	return int(math.Round(float64(max(0, loadRate)) / weight))
 }
 
 func (a *Account) IsSchedulable() bool {
@@ -2108,6 +2122,12 @@ func (a *Account) GetOpenAISessionID() string {
 }
 
 func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapability) bool {
+	if a.HasManagedOpenAIConnections() && a.AuthConnectionID == "" {
+		return a.managedConnectionSupports(string(capability))
+	}
+	if validateOpenAIConnectionKind(a) != nil {
+		return false
+	}
 	if a == nil {
 		return false
 	}
@@ -2310,6 +2330,9 @@ func (a *Account) openAIEndpointCapabilitySet() (map[string]bool, bool) {
 }
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
+	if a.HasManagedOpenAIConnections() && capability != "" {
+		return false
+	}
 	if capability == "" {
 		return true
 	}
@@ -2573,6 +2596,9 @@ func (a *Account) IsCopilotSDKEnabled() bool {
 // 1. 按账号类型读取分类型字段
 // 2. 分类型字段缺失时，回退兼容字段
 func (a *Account) IsOpenAIResponsesWebSocketV2Enabled() bool {
+	if a.HasManagedOpenAIConnections() {
+		return false
+	}
 	if a.IsSIWCEnabled() {
 		return false
 	}
@@ -2647,6 +2673,9 @@ func normalizeOpenAIWSIngressDefaultMode(mode string) string {
 // 3. 兼容 enabled 旧字段（bool）
 // 4. defaultMode（非法时回退 ctx_pool）
 func (a *Account) ResolveOpenAIResponsesWebSocketV2Mode(defaultMode string) string {
+	if a.HasManagedOpenAIConnections() {
+		return OpenAIWSIngressModeOff
+	}
 	if a.IsSIWCEnabled() {
 		return OpenAIWSIngressModeOff
 	}

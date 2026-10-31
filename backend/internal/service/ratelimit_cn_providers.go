@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -180,7 +183,7 @@ func cnProviderResponseIndicatesFrequencyLimit(body []byte) bool {
 }
 
 // cnProviderQuotaSnapshotNearExhausted 判断 Coding Plan 账号的滚动窗口用量快照
-// 是否已接近耗尽（任一窗口 >= percent）。快照完全缺失（额度探测还没跑过或
+// 是否已接近耗尽（任一窗口 >= percent）。快照缺失或数值无效（额度探测还没跑过或
 // 解析失败）时返回 true：此时无法证明 429 与额度无关，保守沿用窗口冷却。
 func cnProviderQuotaSnapshotNearExhausted(account *Account, percent float64) bool {
 	if account == nil || len(account.Extra) == 0 {
@@ -191,18 +194,20 @@ func cnProviderQuotaSnapshotNearExhausted(account *Account, percent float64) boo
 	if cnQuotaHasMonthlyWindow(provider) {
 		suffixes = append(suffixes, cnExtraSuffixMonthlyUsed)
 	}
-	seen := false
 	for _, suffix := range suffixes {
 		raw, ok := account.Extra[cnExtraKey(provider, suffix)]
 		if !ok {
-			continue
+			return true
 		}
-		seen = true
-		if schedulingPercentValue(raw) >= percent {
+		// The scheduling display helper maps malformed values to zero. Zero
+		// cannot prove quota headroom here: unknown/partial snapshots must keep
+		// the existing quota-window cooldown rather than permit rapid retries.
+		used, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprint(raw)), 64)
+		if err != nil || math.IsNaN(used) || math.IsInf(used, 0) || used < 0 || used >= percent {
 			return true
 		}
 	}
-	return !seen
+	return false
 }
 
 // handleCNProviderInsufficientBalance 把余额不足标记为可恢复的临时停调：

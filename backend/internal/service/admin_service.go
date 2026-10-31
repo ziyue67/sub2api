@@ -432,10 +432,10 @@ type UpdateGroupInput struct {
 }
 
 type CreateAccountInput struct {
+	ProxyMode            string             // 受限写入在验权后选择代理。
 	InitialOpenAITwoFA   bool               `json:"-"`
 	InitialAdmissionPlan *ScheduledTestPlan `json:"-"`
 	InitialQualityPlan   *ScheduledTestPlan `json:"-"`
-	ProxyMode            string             // 受限写入在验权后选择代理。
 	Name                 string
 	Notes                *string
 	Platform             string

@@ -278,6 +278,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 
+	h.usageService.EnrichContentTiming(c.Request.Context(), records)
 	if isObserverUsageRequest(c) {
 		out := make([]dto.AdminUsageLog, 0, len(records))
 		for i := range records {

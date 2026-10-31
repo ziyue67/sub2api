@@ -336,7 +336,7 @@ func (m *Manager) Bans(ctx context.Context) ([]Ban, error) {
 		if err := m.redis.ZRemRangeByScore(ctx, prefix+"bans", "-inf", fmt.Sprint(time.Now().Unix())).Err(); err != nil {
 			return nil, err
 		}
-		networks, err := m.redis.ZRangeArgs(ctx, redis.ZRangeArgs{Key: prefix + "bans", Start: 0, Stop: 499, Rev: true}).Result()
+		networks, err := m.redis.ZRevRange(ctx, prefix+"bans", 0, 499).Result() //nolint:staticcheck // Redis 6.0 compatibility; replacement options require Redis 6.2.
 		if err != nil {
 			return nil, err
 		}
@@ -472,7 +472,7 @@ func (m *Manager) EventsPage(ctx context.Context, ipFilter, reason, category str
 	if err := m.redis.ZRemRangeByScore(ctx, redisPrefix+"events", "-inf", fmt.Sprint(time.Now().Add(-time.Duration(c.EventRetentionHours)*time.Hour).UnixMicro())).Err(); err != nil {
 		return EventPage{}, err
 	}
-	values, err := m.redis.ZRangeArgs(ctx, redis.ZRangeArgs{Key: redisPrefix + "events", Start: 0, Stop: maxEvents - 1, Rev: true}).Result()
+	values, err := m.redis.ZRevRange(ctx, redisPrefix+"events", 0, maxEvents-1).Result() //nolint:staticcheck // Redis 6.0 compatibility; replacement options require Redis 6.2.
 	if err != nil {
 		return EventPage{}, err
 	}

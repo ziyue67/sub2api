@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func TestScopedAdminReviewGroupPriorityAndStatus(t *testing.T) {
 	originalTime := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
 	_, err = db.Exec(`UPDATE account_groups SET priority=73,created_at=$2 WHERE group_id=$1`, b.ID, originalTime)
 	require.NoError(t, err)
-	principal := &adminaccess.Principal{Policy: adminaccess.Policy{Rules: []adminaccess.Rule{{Permissions: []string{"accounts.groups", "accounts.status"}, GroupIDs: []int64{a.ID, c.ID}, AccountTypes: []string{"apikey"}}}}}
+	principal := &adminaccess.Principal{CreatorID: 9, Policy: adminaccess.Policy{Rules: []adminaccess.Rule{{Permissions: []string{"accounts.groups", "accounts.status"}, GroupIDs: []int64{a.ID, c.ID}, AccountTypes: []string{"apikey"}}}}}
 	ctx = adminaccess.WithPrincipal(ctx, principal)
 	t.Run("非法状态不得落库", func(t *testing.T) {
 		for _, raw := range []string{`"garbage"`, `""`, `null`, `12`, `" active "`} {
@@ -85,6 +86,40 @@ func TestScopedAdminReviewGroupPriorityAndStatus(t *testing.T) {
 			require.Equal(t, 73, priority, "未授权分组调度优先级不能变化")
 			require.True(t, originalTime.Equal(created), "未授权关联不应被重建")
 		}
+	})
+	t.Run("调度开关与定时任务取消在同一事务提交", func(t *testing.T) {
+		account, err := admin.CreateAccount(context.Background(), &service.CreateAccountInput{Name: "调度验收", Platform: "openai", Type: "apikey", Credentials: map[string]any{"api_key": "test"}, GroupIDs: []int64{a.ID}, Concurrency: 1, Priority: 1})
+		require.NoError(t, err)
+		migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "295_account_schedulable_timers.sql"))
+		require.NoError(t, err)
+		_, err = db.Exec(string(migration))
+		require.NoError(t, err)
+		_, err = db.Exec(`INSERT INTO account_schedulable_timers(account_id,action,version,execute_at,timezone,requested_by,status,next_attempt_at) VALUES($1,'close',1,NOW()+interval '1 hour','UTC',9,'pending',NOW()+interval '1 hour')`, account.ID)
+		require.NoError(t, err)
+		_, err = db.Exec(`CREATE FUNCTION reject_review_schedulable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION '模拟调度提交失败'; RETURN NULL; END $$;
+CREATE CONSTRAINT TRIGGER reject_review_schedulable AFTER UPDATE ON accounts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.schedulable=false) EXECUTE FUNCTION reject_review_schedulable();`)
+		require.NoError(t, err)
+		_, err = scoped.ScopedAdminWrite(ctx, account.ID, "", map[string]json.RawMessage{"schedulable": json.RawMessage(`false`)}, nil)
+		require.ErrorContains(t, err, "模拟调度提交失败")
+		var status string
+		var schedulable bool
+		var audits int
+		require.NoError(t, db.QueryRow(`SELECT status FROM account_schedulable_timers WHERE account_id=$1`, account.ID).Scan(&status))
+		require.Equal(t, "pending", status, "回滚不得取消待执行定时任务")
+		require.NoError(t, db.QueryRow(`SELECT schedulable FROM accounts WHERE id=$1`, account.ID).Scan(&schedulable))
+		require.True(t, schedulable)
+		require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM account_schedulable_timer_audit`).Scan(&audits))
+		require.Zero(t, audits)
+		_, err = db.Exec(`DROP TRIGGER reject_review_schedulable ON accounts`)
+		require.NoError(t, err)
+		_, err = scoped.ScopedAdminWrite(ctx, account.ID, "", map[string]json.RawMessage{"schedulable": json.RawMessage(`false`)}, nil)
+		require.NoError(t, err)
+		require.NoError(t, db.QueryRow(`SELECT status FROM account_schedulable_timers WHERE account_id=$1`, account.ID).Scan(&status))
+		require.Equal(t, "cancelled", status)
+		require.NoError(t, db.QueryRow(`SELECT schedulable FROM accounts WHERE id=$1`, account.ID).Scan(&schedulable))
+		require.False(t, schedulable)
+		require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM account_schedulable_timer_audit WHERE actor_id=9 AND reason='manual_override'`).Scan(&audits))
+		require.Equal(t, 1, audits)
 	})
 	t.Run("受限创建绑定与失败回滚", func(t *testing.T) {
 		createCtx := adminaccess.WithPrincipal(context.Background(), &adminaccess.Principal{Policy: adminaccess.Policy{Rules: []adminaccess.Rule{{Permissions: []string{"accounts.create", "accounts.credentials"}, GroupIDs: []int64{a.ID, 999999}, AccountTypes: []string{"apikey"}}}}})

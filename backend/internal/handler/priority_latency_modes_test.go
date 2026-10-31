@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	adminhandler "github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -45,6 +46,41 @@ func (r penaltyModeUsage) ReadPrioritySchedulingSignals(_ context.Context, q ser
 		out[id] = service.PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 16000, LatestBadLatencyAt: &bad}
 	}
 	return out, nil
+}
+
+func (penaltyModeUsage) ReadPriorityLatencySeries(context.Context, service.PriorityLatencySeriesQuery) ([]service.PriorityLatencyBucket, error) {
+	return nil, nil
+}
+
+func TestPriorityLatencySeriesHandlerUsesEmptyArrayForNoHistory(t *testing.T) {
+	cfg := service.DefaultPrioritySchedulingConfig()
+	cfg.Enabled = true
+	cfg.GroupIDs = []int64{11}
+	raw, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	settings := service.NewSettingService(&penaltyModeSettings{value: string(raw)}, nil)
+	require.NoError(t, settings.SavePrioritySchedulingConfig(context.Background(), cfg))
+	appCfg := &config.Config{RunMode: config.RunModeSimple}
+	account := service.Account{ID: 901, Name: "synthetic", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true, Concurrency: 2, GroupIDs: []int64{11}}
+	gateway := service.NewOpenAIGatewayService(openAIImagesFailoverAccountRepo{accounts: []service.Account{account}}, nil, penaltyModeUsage{}, nil, nil, nil, nil, nil, appCfg, nil, service.NewConcurrencyService(&penaltySlotCache{}), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, settings, nil)
+	t.Cleanup(func() { _ = gateway.CloseExcelBPSImages() })
+	group := int64(11)
+	ctx := service.WithPrioritySchedulingObservation(context.Background(), &group, "public-model", "/v1/responses")
+	selected, _, err := gateway.SelectAccountWithSchedulerForCapability(ctx, &group, "", "", "gpt-test", nil, service.OpenAIUpstreamTransportAny, service.OpenAIEndpointCapabilityChatCompletions, false, false, true, service.PlatformOpenAI)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+
+	admin := adminhandler.NewAccountHandler(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	admin.SetOpenAIGatewayService(gateway)
+	router := gin.New()
+	router.GET("/admin/priority-scheduling/latency", admin.PrioritySchedulingLatency)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/priority-scheduling/latency", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"buckets":[]`, "the endpoint contract must not emit null for an account without history")
+	if selected.ReleaseFunc != nil {
+		selected.ReleaseFunc()
+	}
 }
 
 type penaltySlotCache struct {

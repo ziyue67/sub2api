@@ -117,11 +117,13 @@
             >
               <Icon name="exclamationTriangle" size="xs" :stroke-width="2" />
               {{ formatScopeName(item.model) }}
-              <span class="text-[10px] opacity-70">{{ formatCountdown(item.reset_at) }}</span>
+              <span class="text-[10px] opacity-70">{{ item.kind === 'quality_hold' ? t('qualityOps.waitingForRecovery') : formatCountdown(item.reset_at) }}</span>
             </span>
           </template>
           {{
-            item.kind === 'credits_exhausted'
+            item.kind === 'quality_hold'
+              ? t('qualityOps.cooldownRecoveryHint')
+              : item.kind === 'credits_exhausted'
               ? t('admin.accounts.status.creditsExhaustedUntil', { time: formatDateTimeToMinute(item.reset_at) })
               : item.kind === 'credits_active'
                 ? t('admin.accounts.status.modelCreditOveragesUntil', { model: formatScopeName(item.model), time: formatDateTimeToMinute(item.reset_at) })
@@ -189,7 +191,7 @@ const isRateLimited = computed(() => {
 })
 
 type AccountModelStatusItem = {
-  kind: 'rate_limit' | 'credits_exhausted' | 'credits_active'
+  kind: 'rate_limit' | 'credits_exhausted' | 'credits_active' | 'quality_hold'
   model: string
   reset_at: string
 }
@@ -198,7 +200,7 @@ type AccountModelStatusItem = {
 const activeModelStatuses = computed<AccountModelStatusItem[]>(() => {
   const extra = props.account.extra as Record<string, unknown> | undefined
   const modelLimits = extra?.model_rate_limits as
-    | Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
+    | Record<string, { rate_limited_at: string; rate_limit_reset_at: string; reason?: string }>
     | undefined
   const now = new Date()
   const items: AccountModelStatusItem[] = []
@@ -211,6 +213,10 @@ const activeModelStatuses = computed<AccountModelStatusItem[]>(() => {
   const allowOverages = !!(extra?.allow_overages)
 
   for (const [model, info] of Object.entries(modelLimits)) {
+    if (/^quality_rule:[1-9]\d*$/.test(info.reason || '')) {
+      items.push({ kind: 'quality_hold', model, reset_at: info.rate_limit_reset_at })
+      continue
+    }
     if (new Date(info.rate_limit_reset_at) <= now) continue
 
     if (model === 'AICredits') {

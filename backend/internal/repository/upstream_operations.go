@@ -88,7 +88,8 @@ const upstreamOperationsBase = `WITH ` + upstreamOperationsCohort + `, scoped AS
  CASE WHEN duration_ms>0 AND (actual_cost>0 OR total_cost>0 OR account_stats_cost>0 OR input_tokens>0 OR output_tokens>0 OR cache_read_tokens>0 OR cache_creation_tokens>0) THEN duration_ms END AS measured_duration
  FROM scoped
 )`
-const upstreamOperationsAggregate = `count(*) AS requests,
+
+var upstreamOperationsAggregate = `count(*) AS requests,
  count(*) FILTER(WHERE attribution='current_config') AS attributed_requests,
  count(*) FILTER(WHERE attribution<>'current_config') AS unknown_upstream_requests,
  count(*) FILTER(WHERE billing_type=1) AS subscription_requests,
@@ -100,7 +101,7 @@ const upstreamOperationsAggregate = `count(*) AS requests,
  percentile_cont(.9) WITHIN GROUP(ORDER BY ttft) AS p90_ms,
  percentile_cont(.95) WITHIN GROUP(ORDER BY ttft) AS p95_ms,
  percentile_cont(.9) WITHIN GROUP(ORDER BY measured_duration) AS duration_p90_ms,
- max(created_at) AS latest_sample_at,min(config_updated_at) AS oldest_config_updated_at,max(config_updated_at) AS latest_config_updated_at`
+ max(created_at) AS latest_sample_at,min(config_updated_at) AS oldest_config_updated_at,max(config_updated_at) AS latest_config_updated_at` + queueInclusiveOperationsAggregate("measured_duration")
 
 func (r *channelRepository) ReadUpstreamOperations(ctx context.Context, f service.UpstreamOperationsFilter) (*service.UpstreamOperationsSnapshot, error) {
 	if err := service.ValidateUpstreamOperationsFilter(f); err != nil {

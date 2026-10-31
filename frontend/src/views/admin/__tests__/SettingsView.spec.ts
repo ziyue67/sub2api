@@ -22,6 +22,8 @@ beforeEach(() => {
   settingsRoute.query = {};
   settingsRoute.hash = '';
   Element.prototype.scrollIntoView = vi.fn();
+  getOpenAIResponseHeaderTimeoutSettings.mockReset().mockResolvedValue({ enabled: true, seconds: 20 });
+  updateOpenAIResponseHeaderTimeoutSettings.mockReset().mockImplementation(async (payload) => payload);
 });
 
 const {
@@ -36,6 +38,8 @@ const {
   getPanelRateLimitSettings,
   updatePanelRateLimitSettings,
   getStreamTimeoutSettings,
+  getOpenAIResponseHeaderTimeoutSettings,
+  updateOpenAIResponseHeaderTimeoutSettings,
   getRectifierSettings,
   getBetaPolicySettings,
   getUpstreamBillingProbeSettings,
@@ -70,6 +74,8 @@ const {
   }),
   updatePanelRateLimitSettings: vi.fn().mockImplementation(async (payload) => payload),
   getStreamTimeoutSettings: vi.fn(),
+  getOpenAIResponseHeaderTimeoutSettings: vi.fn(),
+  updateOpenAIResponseHeaderTimeoutSettings: vi.fn(),
   getRectifierSettings: vi.fn(),
   getBetaPolicySettings: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({
@@ -111,6 +117,8 @@ vi.mock("@/api", () => ({
       getPanelRateLimitSettings,
       updatePanelRateLimitSettings,
       getStreamTimeoutSettings,
+      getOpenAIResponseHeaderTimeoutSettings,
+      updateOpenAIResponseHeaderTimeoutSettings,
       getRectifierSettings,
       getBetaPolicySettings,
     },
@@ -1249,6 +1257,58 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ compact_home_enabled: true }),
     );
+  });
+
+  it("loads, disables, enables and saves the OpenAI header timeout with server readback", async () => {
+    getOpenAIResponseHeaderTimeoutSettings.mockResolvedValueOnce({ enabled: false, seconds: 45 });
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    expect(wrapper.find('[data-testid="openai-header-timeout-seconds"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="openai-header-timeout-enabled"]').setValue(true);
+    await wrapper.get('[data-testid="openai-header-timeout-seconds"]').setValue('60');
+    updateOpenAIResponseHeaderTimeoutSettings.mockResolvedValueOnce({ enabled: true, seconds: 61 });
+    await wrapper.get('[data-testid="openai-header-timeout-save"]').trigger('click');
+    await flushPromises();
+    expect(updateOpenAIResponseHeaderTimeoutSettings).toHaveBeenLastCalledWith({ enabled: true, seconds: 60 });
+    expect((wrapper.get('[data-testid="openai-header-timeout-seconds"]').element as HTMLInputElement).value).toBe('61');
+    expect(showSuccess).toHaveBeenCalledWith('admin.settings.openaiResponseHeaderTimeout.saved');
+    await wrapper.get('[data-testid="openai-header-timeout-enabled"]').setValue(false);
+    await wrapper.get('[data-testid="openai-header-timeout-save"]').trigger('click');
+    await flushPromises();
+    expect(updateOpenAIResponseHeaderTimeoutSettings).toHaveBeenLastCalledWith({ enabled: false, seconds: 61 });
+  });
+
+  it("keeps the edited timeout after a save error and allows retry", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    await wrapper.get('[data-testid="openai-header-timeout-seconds"]').setValue('42');
+    updateOpenAIResponseHeaderTimeoutSettings.mockRejectedValueOnce(new Error('synthetic save failure'));
+    await wrapper.get('[data-testid="openai-header-timeout-save"]').trigger('click');
+    await flushPromises();
+    expect(showError).toHaveBeenCalledWith('error');
+    expect((wrapper.get('[data-testid="openai-header-timeout-seconds"]').element as HTMLInputElement).value).toBe('42');
+    expect(wrapper.get('[data-testid="openai-header-timeout-save"]').attributes('disabled')).toBeUndefined();
+    await wrapper.get('[data-testid="openai-header-timeout-save"]').trigger('click');
+    await flushPromises();
+    expect(updateOpenAIResponseHeaderTimeoutSettings).toHaveBeenLastCalledWith({ enabled: true, seconds: 42 });
+  });
+
+  it("requires a successful reload after a timeout settings load failure", async () => {
+    getOpenAIResponseHeaderTimeoutSettings.mockRejectedValueOnce(new Error('synthetic load failure'));
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    const card = wrapper.get('#settings-section-openai-response-header-timeout').element.closest('.card')!;
+    expect(card.textContent).toContain('admin.settings.openaiResponseHeaderTimeout.loadFailed');
+    expect(wrapper.find('[data-testid="openai-header-timeout-save"]').exists()).toBe(false);
+    const retry = card.querySelector('button')!;
+    retry.click();
+    await flushPromises();
+    expect(getOpenAIResponseHeaderTimeoutSettings).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-testid="openai-header-timeout-save"]').exists()).toBe(true);
+    expect(updateOpenAIResponseHeaderTimeoutSettings).not.toHaveBeenCalled();
   });
 
   it("renders panel rate limit card and saves settings", async () => {

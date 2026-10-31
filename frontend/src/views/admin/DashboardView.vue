@@ -276,6 +276,7 @@
                 <DateRangePicker
                   v-model:start-date="startDate"
                   v-model:end-date="endDate"
+                  :rolling24-hours="true"
                   @change="onDateRangeChange"
                 />
               </div>
@@ -419,11 +420,21 @@ let usersTrendLoadSeq = 0
 let rankingLoadSeq = 0
 const rankingLimit = 12
 
+const getLast24HoursRangeDates = (): { start: string; end: string } => {
+  const end = new Date()
+  const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
+  return {
+    start: start.toISOString(),
+    end: end.toISOString()
+  }
+}
+
 // Date range
 const granularity = ref<'day' | 'hour'>('hour')
 const defaultRange = getLast24HourRange()
 const startDate = ref(defaultRange.start)
 const endDate = ref(defaultRange.end)
+const appliedPreset = ref<string | null>('last24Hours')
 
 // Granularity options for Select component
 const granularityOptions = computed(() => [
@@ -626,6 +637,8 @@ const onDateRangeChange = (range: {
   endDate: string
   preset: string | null
 }) => {
+  appliedPreset.value = range.preset
+
   // Auto-select granularity based on date range
   const start = new Date(range.startDate)
   const end = new Date(range.endDate)
@@ -739,6 +752,12 @@ const loadUserSpendingRanking = async () => {
 }
 
 const loadDashboardStats = async () => {
+  if (appliedPreset.value === 'last24Hours') {
+    const range = getLast24HoursRangeDates()
+    startDate.value = range.start
+    endDate.value = range.end
+  }
+
   await Promise.all([
     loadDashboardSnapshot(true),
     loadUsersTrend(),

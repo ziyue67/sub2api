@@ -72,6 +72,15 @@ func TestPassthroughIngressFollowUpCallsBeforeTurnAfterBeforeRequest(t *testing.
 	var callbacks []string
 	afterTurnCalls := 0
 	hooks := &OpenAIWSIngressHooks{
+		BeforeRequestWithClientPayload: func(turn int, payload, clientPayload []byte, _ string) error {
+			require.Equal(t, 2, turn)
+			require.JSONEq(t, `{"type":"response.create","model":"gpt-5.1"}`, string(clientPayload))
+			require.Equal(t, "response.create", gjson.GetBytes(payload, "type").String())
+			hooksMu.Lock()
+			callbacks = append(callbacks, "client_identity_admission")
+			hooksMu.Unlock()
+			return nil
+		},
 		BeforeRequest: func(int, []byte, string) error {
 			hooksMu.Lock()
 			callbacks = append(callbacks, "before_request")
@@ -122,7 +131,7 @@ func TestPassthroughIngressFollowUpCallsBeforeTurnAfterBeforeRequest(t *testing.
 	gotAfter := afterTurnCalls
 	hooksMu.Unlock()
 
-	require.Equal(t, []string{"before_request", "before_turn"}, gotCallbacks)
+	require.Equal(t, []string{"client_identity_admission", "before_request", "before_turn"}, gotCallbacks)
 	require.Equal(t, 2, gotAfter)
 }
 

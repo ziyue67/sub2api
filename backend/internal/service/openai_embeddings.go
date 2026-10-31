@@ -25,6 +25,23 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+	managed := account != nil && account.HasManagedOpenAIConnections()
+	if account != nil && account.Platform == PlatformOpenAI && s.excelOAuthReauth != nil {
+		if repo, ok := s.excelOAuthReauth.repo.(OpenAIAuthConnectionRepository); ok {
+			var err error
+			managed, err = repo.AuthConnectionsManaged(ctx, account.ID)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if managed {
+		latest, err := s.admitOpenAITurn(ctx, c, account, gjson.GetBytes(body, "model").String(), body)
+		if err != nil {
+			return nil, err
+		}
+		account = latest
+	}
 	startTime := time.Now()
 
 	originalModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
@@ -166,14 +183,15 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	writeOpenAIEmbeddingsUpstreamResponse(c, resp, respBody, s.responseHeaderFilter)
 
 	return &OpenAIForwardResult{
-		RequestID:       firstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id")),
-		UpstreamHeaders: resp.Header,
-		Usage:           extractOpenAIEmbeddingsUsage(respBody),
-		Model:           originalModel,
-		BillingModel:    billingModel,
-		UpstreamModel:   upstreamModel,
-		Stream:          false,
-		Duration:        time.Since(startTime),
+		AuthConnectionID: account.AuthConnectionID,
+		RequestID:        firstNonEmptyString(resp.Header.Get("x-request-id"), resp.Header.Get("request-id")),
+		UpstreamHeaders:  resp.Header,
+		Usage:            extractOpenAIEmbeddingsUsage(respBody),
+		Model:            originalModel,
+		BillingModel:     billingModel,
+		UpstreamModel:    upstreamModel,
+		Stream:           false,
+		Duration:         time.Since(startTime),
 	}, nil
 }
 

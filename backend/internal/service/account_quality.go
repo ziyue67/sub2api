@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -10,6 +11,24 @@ const QualityActionObserveOnly = "observe_only"
 const QualityActionRemoveModel = "remove_models"
 const QualityActionIsolateModels = "isolate_models"
 const QualityModelIsolationKey = "quality_model_isolation"
+
+// Quality cooldown deadlines schedule the next check, not permission to route
+// traffic. Recognize existing records too so upgrades do not reopen failed models.
+func IsQualityModelCooldown(entry any) bool {
+	value, _ := entry.(map[string]any)
+	reason, _ := value["reason"].(string)
+	if !strings.HasPrefix(reason, "quality_rule:") {
+		return false
+	}
+	owner := strings.TrimPrefix(reason, "quality_rule:")
+	id, err := strconv.ParseInt(owner, 10, 64)
+	return err == nil && id > 0 && strconv.FormatInt(id, 10) == owner
+}
+
+func (a *Account) hasQualityModelCooldown(model string) bool {
+	entries, _ := a.Extra["model_rate_limits"].(map[string]any)
+	return IsQualityModelCooldown(entries[model]) || IsQualityModelCooldown(entries[a.GetMappedModel(model)])
+}
 
 // QualityModels is the single source of truth for the models a policy manages.
 // Composite isolation always follows the tested models; legacy cooldown rules
@@ -146,6 +165,25 @@ func validateQualityPolicy(plan *ScheduledTestPlan) error {
 // One completed wrong answer quarantines; restoration requires every probe to pass.
 // Transport errors alone are inconclusive, never evidence of degradation.
 // Multi-model rules pass only when every selected model/sample passed.
+func qualityPlanModelOutcomes(plan *ScheduledTestPlan, results []*ScheduledTestResult) map[string]string {
+	targets := QualityModels(plan)
+	if plan.PelicanConfig.Quality.Action != QualityActionRemoveModel || !isOpenAICodexStateProbePlan(plan.PelicanConfig) {
+		return qualityModelOutcomes(results, targets)
+	}
+	// A state probe measures the account, not the individual probe model. Apply
+	// its verdict to every configured cooldown target without running concurrent
+	// state probes. Unknown/partial rounds cannot restore existing restrictions.
+	outcome := "skipped"
+	if qualityRoundHasResults(results) {
+		outcome = qualityOutcome(results)
+	}
+	outcomes := make(map[string]string, len(targets))
+	for _, model := range targets {
+		outcomes[model] = outcome
+	}
+	return outcomes
+}
+
 func qualityModelOutcomes(results []*ScheduledTestResult, targets []string) map[string]string {
 	outcomes := make(map[string]string, len(targets))
 	for _, model := range targets {
@@ -272,5 +310,5 @@ func (a *Account) IsQualityModelIsolated(model string) bool {
 // Only trusted internal account tests may probe through their own isolation.
 // Normal scheduler selection and every later WebSocket turn share this gate.
 func (a *Account) qualityModelBlocked(ctx context.Context, model string) bool {
-	return ctx.Value(qualityProbeContextKey{}) != true && a.IsQualityModelIsolated(model)
+	return ctx.Value(qualityProbeContextKey{}) != true && (a.IsQualityModelIsolated(model) || a.hasQualityModelCooldown(model))
 }

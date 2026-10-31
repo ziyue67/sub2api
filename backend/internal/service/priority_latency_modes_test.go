@@ -116,13 +116,9 @@ func TestPriorityLatencyModesPoolAndAllStopped(t *testing.T) {
 			require.Equal(t, int64(2), selected.Account.ID)
 			req.ExcludedIDs = map[int64]struct{}{2: {}}
 			selected, err = modeSelect(t, s, req)
-			if mode == PriorityLatencyStop {
-				require.Nil(t, selected)
-				require.ErrorIs(t, err, ErrPriorityLatencyUnavailable)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, int64(1), selected.Account.ID)
-			}
+			require.NoError(t, err)
+			require.Equal(t, int64(1), selected.Account.ID, "only otherwise eligible account is the authorized fallback")
+			require.NoError(t, svc.CheckPriorityLatencySelection(context.Background(), selected))
 			require.True(t, pool[0].account.Schedulable)
 			require.Equal(t, StatusActive, pool[0].account.Status)
 			_ = svc
@@ -132,8 +128,10 @@ func TestPriorityLatencyModesPoolAndAllStopped(t *testing.T) {
 		svc, s, req, _, _ := latencyModeFixture(t, PriorityLatencyStop)
 		setModeSignal(svc, req, 2, func(v *PrioritySchedulingSignal) { v.P90TTFTMs = 16000; bad := time.Now(); v.LatestBadLatencyAt = &bad })
 		selected, err := modeSelect(t, s, req)
-		require.Nil(t, selected)
-		require.ErrorIs(t, err, ErrPriorityLatencyUnavailable)
+		require.NoError(t, err)
+		require.NotNil(t, selected)
+		require.Contains(t, []int64{1, 2}, selected.Account.ID)
+		require.NoError(t, svc.CheckPriorityLatencySelection(context.Background(), selected))
 		snapshot := svc.PrioritySchedulingSnapshot()
 		require.NotNil(t, snapshot)
 		require.Len(t, snapshot.Candidates, 2)
@@ -166,10 +164,13 @@ func TestPriorityLatencyModesStickyFallbackAndWaitPlans(t *testing.T) {
 		require.NotNil(t, selected.WaitPlan)
 		require.Equal(t, int64(2), selected.WaitPlan.AccountID)
 		setModeSignal(svc, req, 2, func(v *PrioritySchedulingSignal) { v.P90TTFTMs = 16000; bad := time.Now(); v.LatestBadLatencyAt = &bad })
+		setModeSignal(svc, req, 1, func(v *PrioritySchedulingSignal) { v.P90TTFTMs = 500; v.LatestBadLatencyAt = nil })
 		require.ErrorIs(t, svc.CheckPriorityLatencySelection(context.Background(), selected), ErrPriorityLatencyUnavailable, "a queued selection must be rechecked after it gains its slot")
 		selected, err = modeSelect(t, s, req)
-		require.Nil(t, selected)
-		require.ErrorIs(t, err, ErrPriorityLatencyUnavailable)
+		require.NoError(t, err, "a new request uses the healthy peer")
+		require.NotNil(t, selected.WaitPlan)
+		require.Equal(t, int64(1), selected.WaitPlan.AccountID)
+		require.NoError(t, svc.CheckPriorityLatencySelection(context.Background(), selected))
 	})
 }
 func TestPriorityLatencyModesScopeColdStartAndExpiry(t *testing.T) {
@@ -204,10 +205,8 @@ func TestPriorityLatencyModesScopeColdStartAndExpiry(t *testing.T) {
 	cold := req
 	cold.HistoryModel = "not loaded"
 	err = svc.priorityLatencyAdmission(cold, pool[0].account)
-	require.ErrorIs(t, err, ErrPriorityLatencyUnavailable)
-	var denied *OpenAITurnAdmissionError
-	require.ErrorAs(t, err, &denied)
-	require.Equal(t, "latency_history_unavailable", denied.Reason)
+	require.NoError(t, err, "pending history must not fabricate a measured stop")
+	require.False(t, svc.cachedPriorityHistory(cold, svc.prioritySchedulingRuntimeConfig(), pool).ready())
 }
 func TestPriorityLatencyModesBoundOwnership(t *testing.T) {
 	svc, s, req, _, _ := latencyModeFixture(t, PriorityLatencyStop)

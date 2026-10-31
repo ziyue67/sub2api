@@ -186,12 +186,8 @@ func (c *userMsgQueueCache) ReconcileExpiredLockCandidates(ctx context.Context, 
 	if err != nil {
 		return 0, err
 	}
-	members, err := c.rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
-		Key:     umqLockIndexKey,
-		Start:   "-inf",
-		Stop:    strconv.FormatInt(nowMs, 10),
-		ByScore: true,
-		Count:   int64(maxCount),
+	members, err := c.rdb.ZRangeByScore(ctx, umqLockIndexKey, &redis.ZRangeBy{ //nolint:staticcheck // Redis 6.0 compatibility; replacement options require Redis 6.2.
+		Min: "-inf", Max: strconv.FormatInt(nowMs, 10), Count: int64(maxCount),
 	}).Result()
 	if err != nil {
 		return 0, fmt.Errorf("umq read lock index: %w", err)

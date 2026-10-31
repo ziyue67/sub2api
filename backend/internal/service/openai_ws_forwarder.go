@@ -253,6 +253,8 @@ type OpenAIWSIngressHooks struct {
 	InitialRequestModel string
 	// InitialTurnStartedAt freezes when the first response.create was accepted.
 	InitialTurnStartedAt time.Time
+	// InitialFrameArrivedAt precedes capture/preflight; separate from the legacy baseline.
+	InitialFrameArrivedAt time.Time
 	// MaxReasoningEffort limits explicit reasoning effort values for this WS session.
 	MaxReasoningEffort string
 	// MaxReasoningEffortOverLimit is the access control when an explicit effort
@@ -263,6 +265,11 @@ type OpenAIWSIngressHooks struct {
 	TurnStarted             func(turn int, startedAt time.Time)
 	BeforeTurn              func(turn int) error
 	BeforeRequest           func(turn int, payload []byte, originalModel string) error
+	// BeforeRequestWithClientPayload runs at the same admission boundary as
+	// BeforeRequest. clientPayload is the original client frame, before outbound
+	// normalization; use it only for local client identity validation. payload
+	// retains the processed request used by all other admission checks.
+	BeforeRequestWithClientPayload func(turn int, payload, clientPayload []byte, originalModel string) error
 	// BeforePayloadParse runs synchronously before parsing a follow-up client
 	// frame on the native/bridge path. Handlers run one bounded fresh
 	// authorization here and install the current frame's immutable permissions,
@@ -274,6 +281,23 @@ type OpenAIWSIngressHooks struct {
 	// that must be written into the upstream response.create frame.
 	MapRequestModel func(turn int, originalModel string) (string, error)
 	AfterTurn       func(turn int, result *OpenAIForwardResult, turnErr error)
+}
+
+// beforeRequest preserves both admission callbacks when an embedding installs
+// the original hook alongside the handler's client-aware admission hook.
+func (h *OpenAIWSIngressHooks) beforeRequest(turn int, payload, clientPayload []byte, originalModel string) error {
+	if h == nil {
+		return nil
+	}
+	if h.BeforeRequestWithClientPayload != nil {
+		if err := h.BeforeRequestWithClientPayload(turn, payload, clientPayload, originalModel); err != nil {
+			return err
+		}
+	}
+	if h.BeforeRequest != nil {
+		return h.BeforeRequest(turn, payload, originalModel)
+	}
+	return nil
 }
 
 func (s *OpenAIGatewayService) getOpenAIWSConnPool() *openAIWSConnPool {

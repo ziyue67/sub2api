@@ -1,0 +1,170 @@
+name: Issue 600 WS client identity
+on:
+  push:
+    branches: [fix/issue600-ws-client-identity]
+  pull_request:
+    branches: [production]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/issue-600-regression.yml'
+permissions:
+  contents: read
+jobs:
+  network:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      redis:
+        image: redis:8.4-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [RED, GREEN]
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      PHASE: ${{ matrix.phase }}
+      ISSUE600_REDIS_ADDR: '127.0.0.1:6379'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Prove source and run real handler network regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code HEAD
+          files=(backend/internal/handler/openai_gateway_handler.go backend/internal/service/openai_ws_forwarder.go backend/internal/service/openai_ws_forwarder_ingress.go backend/internal/service/openai_ws_v2_passthrough_adapter.go backend/internal/service/openai_codex_account_identity.go backend/internal/service/session_id.go)
+          if [ "$PHASE" = RED ]; then
+            for file in "${files[@]}"; do
+              git show "77455cf755fa0f119367b911704f11df88e7917e:$file" > "$file"
+            done
+          fi
+          {
+            echo "candidate=$EXPECTED_HEAD phase=$PHASE baseline=77455cf755fa0f119367b911704f11df88e7917e"
+            for file in "${files[@]}"; do
+              if [ "$PHASE" = RED ]; then
+                test "$(git hash-object "$file")" = "$(git rev-parse "77455cf755fa0f119367b911704f11df88e7917e:$file")"
+              else
+                test "$(git hash-object "$file")" = "$(git rev-parse "$EXPECTED_HEAD:$file")"
+              fi
+              echo "$file blob=$(git hash-object "$file") candidate=$(git rev-parse "$EXPECTED_HEAD:$file") baseline=$(git rev-parse "77455cf755fa0f119367b911704f11df88e7917e:$file")"
+            done
+          } | tee "$RUNNER_TEMP/issue600-source-$PHASE.log"
+          git hash-object backend/internal/handler/openai_ws_client_identity_test.go backend/internal/handler/openai_ws_nested_identity_test.go backend/internal/service/openai_nested_identity_test.go | tee "$RUNNER_TEMP/issue600-tests-$PHASE.log"
+          set +e
+          (cd backend && go test -tags=unit ./internal/handler -run '^TestIssue600' -count=1 -v -timeout=8m) > "$RUNNER_TEMP/issue600-$PHASE.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue600-$PHASE.log"
+          if grep -E 'build failed|no tests to run|--- SKIP:|panic:|unexpected fixture destination|failed to get access token' "$RUNNER_TEMP/issue600-$PHASE.log"; then
+            echo 'Invalid test evidence: compile, fixture, panic, skip or missing tests'
+            exit 1
+          fi
+          if [ "$PHASE" = RED ]; then
+            test "$result" -ne 0
+            grep -q -- '--- FAIL: TestIssue600ClientIdentityNetwork/' "$RUNNER_TEMP/issue600-$PHASE.log"
+            grep -q 'stable original client identity must admit turn 2' "$RUNNER_TEMP/issue600-$PHASE.log"
+            grep -q 'cyber_session_identity_conflict' "$RUNNER_TEMP/issue600-$PHASE.log"
+            grep -q 'nested outbound identity must be account isolated' "$RUNNER_TEMP/issue600-$PHASE.log"
+            grep -q 'rejected turn must have no response generation' "$RUNNER_TEMP/issue600-$PHASE.log"
+            for mode in ctx_pool http_bridge passthrough legacy; do
+              for strict in false true; do
+                for scenario in stable_header_body body_only; do
+                  grep -q -- "--- FAIL: TestIssue600ClientIdentityNetwork/$mode/strict=$strict/oauth/$scenario " "$RUNNER_TEMP/issue600-$PHASE.log"
+                done
+                for scenario in nested_header_body nested_body_only root_nested_consistent; do
+                  grep -q -- "--- FAIL: TestIssue600NestedIdentityNetwork/$mode/strict=$strict/oauth/$scenario " "$RUNNER_TEMP/issue600-$PHASE.log"
+                done
+                grep -q -- "--- FAIL: TestIssue600NestedIdentityNetwork/$mode/strict=$strict/none/conflicting_root_nested_thread " "$RUNNER_TEMP/issue600-$PHASE.log"
+              done
+            done
+          else
+            test "$result" -eq 0
+            grep -q -- '--- PASS: TestIssue600ClientIdentityNetwork ' "$RUNNER_TEMP/issue600-$PHASE.log"
+            for mode in ctx_pool http_bridge passthrough legacy; do
+              for strict in false true; do
+                for namespace in none oauth; do
+                  for scenario in stable_header_body body_only omitted_identity static_session_inheritance genuine_header_body_conflict true_body_identity_switch invalid_followup; do
+                    grep -q -- "--- PASS: TestIssue600ClientIdentityNetwork/$mode/strict=$strict/$namespace/$scenario " "$RUNNER_TEMP/issue600-$PHASE.log"
+                  done
+                done
+              done
+            done
+            for mode in ctx_pool http_bridge passthrough legacy; do
+              for strict in false true; do
+                for namespace in none oauth; do
+                  for scenario in nested_header_body nested_body_only root_nested_consistent omitted_nested_identity root_hidden_by_empty_envelope conflicting_root_nested_thread conflicting_root_nested_session invalid_nested_identity invalid_root_identity invalid_nested_metadata invalid_root_metadata nested_header_conflict true_nested_switch session_only_consistent session_only_switch; do
+                    grep -q -- "--- PASS: TestIssue600NestedIdentityNetwork/$mode/strict=$strict/$namespace/$scenario " "$RUNNER_TEMP/issue600-$PHASE.log"
+                  done
+                done
+                grep -q -- "--- PASS: TestIssue600NestedAccountSwitch/$mode/strict=$strict " "$RUNNER_TEMP/issue600-$PHASE.log"
+              done
+            done
+            git diff --exit-code HEAD
+          fi
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue600-${{ matrix.phase }}-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/issue600-*.log
+
+  preserved-contracts:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      redis:
+        image: redis:8.4-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      CI: 'true'
+      ISSUE600_REDIS_ADDR: '127.0.0.1:6379'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Exact-head race checked admission, billing, resources, tools and continuation
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code HEAD
+          go test -race -tags=unit ./internal/handler ./internal/service -run '^(TestIssue600|TestOpenAIWSRevalidation|TestOpenAIWS.*Pricing|TestOpenAIWS.*Key|TestOpenAIResponsesWebSocket_|TestRefreshOpenAIWSTurnBilling|TestBuildCyberSessionBlockedOpsEntry|TestOpenAIWSRateLimit|TestOpenAIAuth|TestIssue594|TestRegional.*WS|TestOpenAIWSNextAttempt|TestWSAPIKeySlot|TestWSUserSlot|TestWSHTTPBridge|TestPassthroughIngress|TestOpenAIRPMPassthrough|TestOpenAIResponsesWebSocketV2|TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient|TestProxyOpenAIWSHTTPBridge|TestOpenAIWSHTTPBridge|TestCodexRequestBodyIdentity|TestBuildOpenAIWSHeadersNamespaces|Test.*Codex.*Tool)' -count=1 -v -timeout=20m | tee "$RUNNER_TEMP/issue600-contracts.log"
+          if grep -E -- '--- SKIP:|no tests to run' "$RUNNER_TEMP/issue600-contracts.log"; then exit 1; fi
+          git diff --exit-code HEAD
+      - name: PostgreSQL and Redis persistence, queue and session fixtures
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          # Select relevant lifecycle methods; the legacy GetAccountsLoadBatch
+          # method is unconditionally skipped in the repository and is outside
+          # this regression. Every selected test must execute without skips.
+          go test -tags=integration ./internal/repository -run '^(TestUsageLog_SessionIDPersistence|TestUserMsgQueueCacheSuite|TestConcurrencyCacheSuite|TestSessionLimitCacheSuite)$/(TestOpenAIWSIngressAPIKeySlot|TestLiveLease_|TestAccountSlot_|TestUserSlot_|TestAPIKeySlot_|TestAccountActiveIndex_|TestUserActiveIndex_|TestAccountWaitQueue_|TestWaitQueue_|TestCleanup|TestUnregisterSession|TestAcquire|TestReconcile)' -count=1 -v -timeout=15m | tee "$RUNNER_TEMP/issue600-pg-redis.log"
+          for name in TestUsageLog_SessionIDPersistence TestUserMsgQueueCacheSuite TestConcurrencyCacheSuite TestSessionLimitCacheSuite; do
+            grep -q -- "--- PASS: $name " "$RUNNER_TEMP/issue600-pg-redis.log"
+          done
+          if grep -E -- '--- SKIP:|no tests to run' "$RUNNER_TEMP/issue600-pg-redis.log"; then exit 1; fi
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue600-contracts-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/issue600-*.log

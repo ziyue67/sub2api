@@ -297,9 +297,12 @@ gateway:
   # Timeout for waiting upstream response headers (seconds)
   # 等待上游响应头超时时间（秒）
   response_header_timeout: 600
-  # OpenAI/Codex upstream response header timeout (seconds, 0=disabled)
-  # OpenAI/Codex 等待上游响应头超时时间（秒，0=禁用本地响应头超时）
-  openai_response_header_timeout: 0
+  # OpenAI/Codex upstream response header timeout (seconds; default 20, 0=disabled)
+  # OpenAI/Codex 等待上游响应头超时时间（秒；默认 20，0=禁用本地响应头超时）
+  # Starts after upload; slow nonstream/SSE headers can time out. Submitted requests are not replayed.
+  # 已提交请求超时后终止，不表示上游停止执行或费用为零；已收到响应头的正文流不受此计时器影响。
+  # 0 disables this timer without inheriting the generic 600s timeout.
+  openai_response_header_timeout: 20
   # Grok text Responses first-byte timeout (seconds, 0=disabled; default 120)
   # Grok 文本 Responses 首字节超时时间（秒，0=禁用；默认 120）
   grok_response_header_timeout: 120
@@ -335,6 +338,10 @@ gateway:
   # Enable Gemini upstream response header debug logs (default: false)
   # 是否开启 Gemini 上游响应头调试日志（默认 false）
   gemini_debug_response_headers: false
+  # Gemini HTTP-error retries on the same account, excluding the initial request.
+  # 0 disables these retries; allowed 0..10, default 4. Transport errors still exit.
+  # Gemini 同账号重试次数（不含首次请求），0 关闭，默认 4，范围 0–10。
+  max_same_account_retries_gemini: 4
   # Maximum TTL (seconds) a Gemini explicit context cache may be created or extended to (default: 86400)
   # Gemini 显式上下文缓存单次可设置的最长有效期（秒，默认 86400）；存储费在创建/延长请求中一次性收取
   gemini_cached_content_max_ttl_seconds: 86400

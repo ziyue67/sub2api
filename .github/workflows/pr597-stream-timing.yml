@@ -1,0 +1,75 @@
+name: PR597 dedicated streaming timing regression
+
+on:
+  pull_request:
+    branches: [production]
+  push:
+    branches: [ci/pr597-stream-timing-evidence]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr597-stream-timing-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.number == 597 && github.head_ref == 'codex/stream-stage-timing') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == 'ranxi2001/sub2api' && github.head_ref == 'fix/pr597-stream-stage-timing-replacement') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/ci/pr597-stream-timing-evidence')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Record exact source and production baseline
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          PRODUCTION_BASE: ${{ github.event.pull_request.base.sha || '99f25942738ff12056ac82d97ee6b74cb07cd163' }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          printf 'exact_head=%s\nproduction_baseline=%s\nred_scanner_baseline=%s\n' "$SOURCE_HEAD" "$PRODUCTION_BASE" e7b6e505560fbe810c36c2bbd50b57b1f437ff49
+          git cat-file -p HEAD | sed -n 's/^parent /merge_parent=/p'
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Fetch the reviewed original head for RED
+        run: git fetch --no-tags --depth=1 origin e7b6e505560fbe810c36c2bbd50b57b1f437ff49
+      - name: RED - new tests against only the original scanner production file
+        run: python3 .github/scripts/pr597-stream-timing-red.py "$RUNNER_TEMP/pr597-red.jsonl"
+      - name: Verify production source restored before GREEN
+        run: git diff --exit-code -- backend/internal/service/openai_sse_json_documents.go backend/internal/service/openai_sse_timing_context_test.go
+      - name: GREEN - actual service scanner and native timing boundaries
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -tags=unit ./internal/service -run '^Test(OpenAISSEScannerTiming|OpenAINativeSSETiming|ToolConversionTiming|OpenAIVisibleOutputClassification|OpenAIResponsesTTFT|OpenAINativeMetadataAndKeepalive|OpenAINativeFirstOutput|OpenAIStreaming.*RepairsConcatenatedJSON|SplitOpenAIConcatenatedJSON)' -count=1 -timeout=10m -v 2>&1 | tee "$RUNNER_TEMP/pr597-service-green.log"
+      - name: GREEN - actual repository transport and timing persistence
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -tags=unit ./internal/repository -run '^Test(StreamDecompressionBeforeEOF|StreamTimingDoesNotLabelUndecodedBodyAsDecoded|TimingWriteJoinsBillingIdentityAndKeepsDistinctTraces|TimingBindingDoesNotWriteUntilRequestFinished)$' -count=1 -timeout=5m -v 2>&1 | tee "$RUNNER_TEMP/pr597-repository-green.log"
+      - name: GREEN - actual attempt timing and HTTP lifecycle package
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race ./internal/pkg/requesttiming -count=1 -timeout=5m -v 2>&1 | tee "$RUNNER_TEMP/pr597-timing-green.log"
+      - name: Preserve RED and GREEN evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pr597-stream-timing-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/pr597-red.jsonl
+            ${{ runner.temp }}/pr597-red.stderr.log
+            ${{ runner.temp }}/pr597-*-green.log
+          if-no-files-found: error
+          retention-days: 14

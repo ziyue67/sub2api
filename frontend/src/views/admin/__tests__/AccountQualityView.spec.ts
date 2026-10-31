@@ -48,6 +48,52 @@ describe('quality operations', () => {
     pelican_config: { question_kind: 'state_probe', test_channel: 'account', prompt: '', reasoning_effort: 'high', parallel_count: 1,
       quality: { action: 'observe_only', expected_answer: '', remove_group_ids: [], auto_restore: false } }, created_at: '', updated_at: '' })
 
+  it.each([',', '，'])('preserves typed %s delimiters and saves distinct cooldown targets', async separator => {
+    const plan = rules()[0]
+    plan.pelican_config!.quality!.action = 'remove_models'
+    plan.pelican_config!.quality!.remove_models = ['gpt-6.1-sol']
+    vi.mocked(listQualityPlans).mockResolvedValue([plan])
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-plan-id="1"] .rule-actions button:nth-child(2)').trigger('click'); await flushPromises()
+    const input = wrapper.get<HTMLInputElement>('[data-testid="quality-remove-models-input"]')
+    expect(input.element.value).toBe('gpt-6.1-sol')
+    const targets = ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6.1-terra', 'gpt-5.6-terra', 'gpt-6-luna', 'gpt-5.6-sol']
+    // Use the rendered value for each successive keystroke: the old handler
+    // erased a comma before the next model could be entered.
+    const suffix = separator + ' ' + targets.slice(1).join(separator + ' ')
+    let expected = input.element.value
+    for (const character of suffix) {
+      expected += character
+      await input.setValue(input.element.value + character)
+      expect(input.element.value).toBe(expected)
+    }
+    await input.setValue(expected + separator + ' gpt-6.1-sol' + separator)
+    expect(input.element.value.endsWith(separator)).toBe(true)
+    await input.setValue(input.element.value.replace('gpt-6-astra', ' gpt-6-astra '))
+    await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
+    expect(scheduledTests.update).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(scheduledTests.update).mock.calls[0][1].pelican_config!.quality!.remove_models).toEqual(targets)
+    wrapper.unmount()
+  })
+
+  it('tracks raw delimiter edits as unsaved and resets the input when reopening a rule', async () => {
+    const plan = rules()[0]
+    plan.pelican_config!.quality!.action = 'remove_models'
+    plan.pelican_config!.quality!.remove_models = ['gpt-6.1-sol', 'gpt-6-astra']
+    vi.mocked(listQualityPlans).mockResolvedValue([plan])
+    const wrapper = mountView(); await flushPromises()
+    const vm = wrapper.vm as any
+    vm.edit(plan); await flushPromises()
+    const input = wrapper.get<HTMLInputElement>('[data-testid="quality-remove-models-input"]')
+    await input.setValue(input.element.value + ',')
+    vm.closeForm(); await flushPromises()
+    expect(vm.discardPrompt).toBe(true)
+    vm.edit(plan); await flushPromises()
+    expect(vm.removeModelsInput).toBe('gpt-6.1-sol, gpt-6-astra')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="quality-remove-models-input"]').element.value).toBe('gpt-6.1-sol, gpt-6-astra')
+    wrapper.unmount()
+  })
+
   const reuseCases = (['new', 'edit', 'bulk'] as const).flatMap(mode => (['preset', 'account'] as const).map(origin => ({ mode, origin })))
   async function openReuseCase({ mode, origin }: typeof reuseCases[number]) {
     const targets = rules()

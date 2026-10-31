@@ -11,16 +11,17 @@ import (
 func (h *ChannelHandler) ProfitOperations(c *gin.Context) {
 	account, e1 := operationsInt(c, "account_id", 0)
 	group, e2 := operationsInt(c, "group_id", 0)
+	channel, e7 := operationsInt(c, "channel_id", 0)
 	page, e3 := operationsInt(c, "page", 1)
 	size, e4 := operationsInt(c, "page_size", 20)
 	from, e5 := time.Parse(time.RFC3339, c.Query("from"))
 	until, e6 := time.Parse(time.RFC3339, c.Query("until"))
-	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil || e6 != nil {
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil || e6 != nil || e7 != nil || channel < 0 {
 		response.ErrorFrom(c, service.ErrUpstreamOperationsValidation)
 		return
 	}
-	f := service.UpstreamOperationsFilter{From: from, Until: until, Upstream: c.Query("upstream"), AccountID: account, GroupID: group, Model: c.Query("model"), ModelScope: c.DefaultQuery("model_scope", "public"), Dimension: c.DefaultQuery("dimension", "upstream"), Sort: c.DefaultQuery("sort", "requests"), Direction: c.DefaultQuery("direction", "desc"), Page: int(page), PageSize: int(size)}
-	if err := service.ValidateProfitOperationsFilter(f); err != nil {
+	f := service.UpstreamOperationsFilter{From: from, Until: until, Upstream: c.Query("upstream"), ChannelID: channel, AccountID: account, GroupID: group, Model: c.Query("model"), ModelScope: c.DefaultQuery("model_scope", "public"), Dimension: c.DefaultQuery("dimension", "upstream"), Sort: c.DefaultQuery("sort", "requests"), Direction: c.DefaultQuery("direction", "desc"), Page: int(page), PageSize: int(size)}
+	if err := service.NormalizeProfitOperationsFilter(&f); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
