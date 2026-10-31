@@ -1135,10 +1135,12 @@ func (s *GatewayService) calculateRecordUsageCost(
 	// 图片生成：渠道定价为 token 计费时走 token 路径，否则走图片计费。
 	// 分组按张计费开关只对专用图片端点生效，混合请求仍按 token 计费。
 	if result.ImageCount > 0 {
-		// Explicit group/channel token cards own pricing in this fork. The new
-		// image switch controls image fallback, never overrides an operator card.
-		if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
-			return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+		// 分组按张计费开关命中专用图片端点时，按张计费优先于 token 卡；
+		// 其余情况仍由渠道/分组 token 定价决定，混合请求不因开关丢掉文本费用。
+		if !imageCountBillingApplies(apiKey, result.ImageEndpoint) {
+			if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
+				return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+			}
 		}
 		return s.calculateImageCost(ctx, result, apiKey, billingModel, imageMultiplier)
 	}

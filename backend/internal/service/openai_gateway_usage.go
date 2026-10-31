@@ -730,11 +730,13 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	}
 
 	if result != nil && result.ImageCount > 0 {
-		// Explicit group/channel token pricing keeps precedence, including when
-		// count billing is enabled for image fallback. Mixed requests also retain
-		// their token path; the switch cannot replace text usage with image fees.
-		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
-			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
+		// 按张计费只对专用图片端点生效；命中时图片价与 websearch/tool 附加费叠加，
+		// 混合请求（非图片端点）继续走 token 计费，不丢文本与检索费用。
+		if imageCountBillingApplies(apiKey, result.ImageEndpoint) {
+			return addToolSurchargeCost(
+				s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier),
+				toolSurchargeCost,
+			), nil
 		}
 		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
 			return addToolSurchargeCost(
