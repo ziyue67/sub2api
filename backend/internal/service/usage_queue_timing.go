@@ -65,15 +65,6 @@ func applyOpenAIQueueTiming(r *OpenAIForwardResult, arrival, forward, legacy tim
 
 type openAIWSQueueArrivalKey struct{}
 
-// withOpenAIWSQueueArrival 记录一帧被接受（进入准入/取连接之前）的时刻。
-// ctx_pool 与 http_bridge 两条链路的 queue timing 都以它为 arrival 基准。
-func withOpenAIWSQueueArrival(ctx context.Context, at time.Time) context.Context {
-	if ctx == nil || at.IsZero() {
-		return ctx
-	}
-	return context.WithValue(ctx, openAIWSQueueArrivalKey{}, at)
-}
-
 func openAIWSQueueArrival(ctx context.Context) time.Time {
 	t, _ := ctx.Value(openAIWSQueueArrivalKey{}).(time.Time)
 	return t
