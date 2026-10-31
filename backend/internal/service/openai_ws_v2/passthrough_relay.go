@@ -117,6 +117,7 @@ type RelayTraceEvent struct {
 
 type relayState struct {
 	turnUsageObserved       bool
+	turnWebSearch           webSearchCallCounter
 	usage                   Usage
 	turnUsage               Usage
 	turnWroteDownstream     atomic.Pointer[atomic.Bool]
@@ -146,6 +147,7 @@ type relayExitSignal struct {
 
 type observedUpstreamEvent struct {
 	usageObserved          bool
+	webSearchCalls         int
 	terminal               bool
 	eventType              string
 	responseID             string
@@ -423,6 +425,9 @@ func Relay(
 	readers.Wait()
 
 	emitTurnComplete(options.OnTurnComplete, state, finalizePendingBareError(state, nowFn()))
+	// transport 中断（read_upstream 等）但已确认过 web_search：合成 relay.interrupted
+	// 的 partial turn，避免计费丢失（fork 行为，与 finalizePendingBareError 互补）。
+	emitTurnComplete(options.OnTurnComplete, state, finalizeInterruptedRelayTurn(state, nowFn()))
 	result.UnfinishedTurn = snapshotUnfinishedRelayTurn(state, nowFn())
 	enrichResult(&result, state, nowFn().Sub(startAt))
 	result.ClientToUpstreamFrames = clientToUpstreamFrames.Load()
@@ -809,6 +814,8 @@ func observeUpstreamMessage(
 	if eventType == "" {
 		return observedUpstreamEvent{}
 	}
+	// fork: WS passthrough 也要按已完成的 web_search 计费。
+	state.turnWebSearch.Observe(message, eventType)
 	responseID := strings.TrimSpace(values[1].String())
 	if responseID == "" {
 		responseID = strings.TrimSpace(values[2].String())
@@ -949,12 +956,29 @@ func finalizePendingBareError(state *relayState, now time.Time) observedUpstream
 	return finalizeObservedRelayTerminal(state, observed, now)
 }
 
+// finalizeInterruptedRelayTurn 在 transport 中断时保留已完成的 web_search：
+// 上游已确认检索项但还没发 terminal 事件就断了，这部分钱不能丢。
+func finalizeInterruptedRelayTurn(state *relayState, now time.Time) observedUpstreamEvent {
+	if state == nil || state.turnWebSearch.Count() <= 0 {
+		return observedUpstreamEvent{}
+	}
+	responseID := openAIWSRelayActiveTurnID(state)
+	if responseID == "" {
+		return observedUpstreamEvent{}
+	}
+	return finalizeObservedRelayTerminal(state, observedUpstreamEvent{
+		eventType:  "relay.interrupted",
+		responseID: responseID,
+	}, now)
+}
+
 func finalizeObservedRelayTerminal(state *relayState, observed observedUpstreamEvent, now time.Time) observedUpstreamEvent {
 	if state == nil || strings.TrimSpace(observed.eventType) == "" {
 		return observedUpstreamEvent{}
 	}
 	observed.usageObserved = state.turnUsageObserved
 	state.turnUsageObserved = false
+	observed.webSearchCalls = state.turnWebSearch.Take()
 	observed.usage = finalizeRelayTurnUsage(state)
 	observed.terminal = true
 	responseID := strings.TrimSpace(observed.responseID)
@@ -1003,6 +1027,7 @@ func emitTurnComplete(
 	}
 	onTurnComplete(RelayTurnResult{
 		UsageObserved:          observed.usageObserved,
+		WebSearchCalls:         observed.webSearchCalls,
 		RequestModel:           requestModel,
 		ResponseModel:          observed.responseModel,
 		ResponseModelConflict:  observed.responseConflict,
