@@ -107,7 +107,6 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			createdAt,
 			nil, // cache_creation_billing
 
-			sqlmock.AnyArg(), // queue_timing
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
 
@@ -207,7 +206,6 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			createdAt,
 			nil, // cache_creation_billing
 
-			sqlmock.AnyArg(), // queue_timing
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
 
@@ -292,9 +290,6 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	require.Equal(t, true, prepared.args[len(prepared.args)-4])
 	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3])
 	require.Nil(t, prepared.args[len(prepared.args)-3])
-
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3])
-	require.Equal(t, true, prepared.args[len(prepared.args)-3])
 	require.Equal(t, int16(service.RequestTypeStream), prepared.args[30])
 	require.Equal(t, service.RequestTypeStream, log.RequestType)
 	require.True(t, log.Stream)
@@ -997,7 +992,6 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			sql.NullString{}, // cache_creation_billing
 
-			sql.NullString{}, // queue_timing
 		}})
 		require.NoError(t, err)
 		require.Equal(t, 2, log.ImageCount)
@@ -1085,7 +1079,6 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			sql.NullString{}, // cache_creation_billing
 
-			sql.NullString{}, // queue_timing
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -1153,7 +1146,6 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			sql.NullString{}, // cache_creation_billing
 
-			sql.NullString{}, // queue_timing
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -1222,7 +1214,6 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			now,
 			sql.NullString{}, // cache_creation_billing
 
-			sql.NullString{}, // queue_timing
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
