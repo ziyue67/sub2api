@@ -51,7 +51,7 @@ func RegisterUserRoutes(
 				user.GET("/mcp/authorize", h.MCPOAuth.Preview)
 				user.POST("/mcp/authorize", h.MCPOAuth.Decide)
 			}
-			user.PUT("/password", h.User.ChangePassword)
+			user.PUT("/password", panelRateLimiter.PasswordChangeGuard(), h.User.ChangePassword)
 			user.PUT("", h.User.UpdateProfile)
 			user.GET("/aff", h.User.GetAffiliate)
 			user.POST("/aff/transfer", h.User.TransferAffiliateQuota)

@@ -119,6 +119,20 @@ func (f *fakePanelAllower) Allow(_ context.Context, key string, limit int, windo
 	return result, nil
 }
 
+func (f *fakePanelAllower) Refund(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	if f.counts[key] <= 1 {
+		delete(f.counts, key)
+	} else {
+		f.counts[key]--
+	}
+	return nil
+}
+
 func newPanelRateLimitTestService(t *testing.T, settingsJSON string) *service.SettingService {
 	t.Helper()
 	repo := &panelRateLimitStubRepo{}
@@ -262,6 +276,59 @@ func TestPanelRateLimiterFailOpenOnRedisError(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		require.Equal(t, http.StatusOK, performPanelRequest(publicRouter, "203.0.113.9:1000").Code)
 	}
+}
+
+func TestTKSecurityPasswordChangeGuardCountsFailuresAndDoesNotExemptAdmin(t *testing.T) {
+	allower := &fakePanelAllower{}
+	p := &PanelRateLimiter{limiter: allower}
+	newRouter := func(userID int64, role string) *gin.Engine {
+		gin.SetMode(gin.TestMode)
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set(string(ContextKeyUser), AuthSubject{UserID: userID})
+			c.Set(string(ContextKeyUserRole), role)
+			c.Next()
+		})
+		router.PUT("/password", p.PasswordChangeGuard(), func(c *gin.Context) {
+			if c.GetHeader("X-Test-Success") == "1" {
+				c.Status(http.StatusOK)
+				return
+			}
+			c.Status(http.StatusBadRequest)
+		})
+		return router
+	}
+	request := func(router *gin.Engine, success bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/password", nil)
+		if success {
+			req.Header.Set("X-Test-Success", "1")
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	admin := newRouter(9, service.RoleAdmin)
+	for i := 0; i < 5; i++ {
+		require.Equal(t, http.StatusBadRequest, request(admin, false).Code)
+	}
+	require.Equal(t, http.StatusTooManyRequests, request(admin, false).Code)
+
+	otherUser := newRouter(10, service.RoleUser)
+	for i := 0; i < 3; i++ {
+		require.Equal(t, http.StatusOK, request(otherUser, true).Code)
+	}
+	allower.mu.Lock()
+	_, exists := allower.counts["password-change:user:10"]
+	allower.mu.Unlock()
+	require.False(t, exists, "successful password checks must refund their counter")
+	require.Equal(t, http.StatusBadRequest, request(otherUser, false).Code)
+}
+
+func TestTKSecurityPasswordChangeGuardFailsClosedWhenCounterUnavailable(t *testing.T) {
+	p := &PanelRateLimiter{limiter: &fakePanelAllower{err: errors.New("redis down")}}
+	router := newPanelTestRouter(p.PasswordChangeGuard(), &panelTestIdentity{userID: 5, role: service.RoleAdmin})
+	require.Equal(t, http.StatusServiceUnavailable, performPanelRequest(router, "127.0.0.1:1000").Code)
 }
 
 func TestPanelRateLimiterPublicIP(t *testing.T) {

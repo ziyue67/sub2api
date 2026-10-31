@@ -103,8 +103,31 @@ go test -tags integration ./...
 
 Windows 上 `internal/service` 整包仍不是全绿，失败集中在已有的文件权限/持久化交付测试，以及 `Issue578`、quality 调度用例；这些失败不涉及本批修改文件，也不能计作本批通过或在本文中宣称已修复。最终合并门槛仍以 GitHub Linux CI 全部必需检查通过为准。
 
+第三批已通过 PR #146 合并为 `11077b3c1`，并以镜像摘要 `sha256:ea60b46ea7e0e15fe79cdd4f38c66d315ddbc2b4db7482f0056b060df0a39dd3` 部署到 `tk.shour.bond`。发布验收包括健康、未认证边界、60 秒自然流量、容器重启数及 panic/fatal/迁移错误检查；没有使用生产用户会话执行画布或排行榜的登录态业务验收，不将 HTTP 边界探针写成业务路径已实测。
+
+## 第四批：账号登录与改密失败桶
+
+ARTEX #1296 和 #1307 指向两个相互独立的口令猜测入口：
+
+- `POST /api/v1/auth/login` 原有每 IP 20 次/分钟与 IP 风险桶，但轮换出口 IP 时同一邮箱没有统一失败上限。
+- `PUT /api/v1/user/password` 会校验当前口令，但原路由没有独立失败桶；全局面板限流又允许豁免管理员，不能代替口令校验保护。
+
+修改后，登录路由在原 IP 桶之外叠加每标准化邮箱 10 次/分钟的净失败桶。邮箱在进入 Redis key 前会 trim、小写化并取 SHA-256 前 8 字节，Redis 中不保存明文标识；中间件读取后恢复请求体，不影响真实登录 handler 再次解析。成功响应使用 Lua 原子退回本次计数且不延长 TTL；失败保留计数。登录限流总开关关闭时，IP 与账号两层同时跳过，保留现有设置语义。
+
+改密路由叠加每认证用户 5 次/10 分钟的净失败桶。该桶不受全局面板限流开关和管理员豁免影响；成功改密原子退回计数，Redis 计数不可用时返回 503，不在故障期继续校验当前口令。
+
+回归入口：
+
+- `TestTKSecurityAccountRateLimitCountsNetFailuresAcrossIPs`
+- `TestTKSecurityAccountRateLimitSkipsUnusableIdentityAndHonorsDisable`
+- `TestTKSecurityLoginAccountLimitSurvivesRotatingSourceIPs`
+- `TestTKSecurityPasswordChangeGuardCountsFailuresAndDoesNotExemptAdmin`
+- `TestTKSecurityPasswordChangeGuardFailsClosedWhenCounterUnavailable`
+
+本批定向、所改三包完整 unit 及上述用例 `-race` 在 Windows/Go 1.27.3 通过；生产发布与现网验收状态必须在 PR 合并后另行记录。
+
 ## 尚未纳入与发布状态
 
-账号维度登录/改密失败桶、DTO/原始错误体最小化、其他敏感管理路由仍需独立复现和修复。
+DTO/原始错误体最小化、密钥/代理凭据掩码、其他敏感管理路由仍需独立复现和修复。
 
 此文档描述修复分支及隔离验证，不能作为生产已部署、历史账单已修正、全部漏洞已清除或 CI 全绿的证明。生产仍需独立发布与验收。

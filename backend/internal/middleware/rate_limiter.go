@@ -1,12 +1,18 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 
 	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -45,6 +51,19 @@ end
 return {current, repaired}
 `)
 
+var rateLimitRefundScript = redis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+if not current then
+  return 0
+end
+current = tonumber(current)
+if current <= 1 then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+return redis.call('DECR', KEYS[1])
+`)
+
 // rateLimitRun 允许测试覆写脚本执行逻辑
 var rateLimitRun = func(ctx context.Context, client *redis.Client, key string, windowMillis int64) (int64, bool, error) {
 	values, err := rateLimitScript.Run(ctx, client, []string{key}, windowMillis).Slice()
@@ -63,6 +82,10 @@ var rateLimitRun = func(ctx context.Context, client *redis.Client, key string, w
 		return 0, false, err
 	}
 	return count, repaired == 1, nil
+}
+
+var rateLimitRefundRun = func(ctx context.Context, client *redis.Client, key string) error {
+	return rateLimitRefundScript.Run(ctx, client, []string{key}).Err()
 }
 
 // RateLimiter Redis 速率限制器
@@ -111,6 +134,12 @@ func (r *RateLimiter) Allow(ctx context.Context, key string, limit int, window t
 		}
 	}
 	return result, nil
+}
+
+// Refund removes one successful request from a fixed-window counter without
+// extending its TTL. This lets credential gates count net failures only.
+func (r *RateLimiter) Refund(ctx context.Context, key string) error {
+	return rateLimitRefundRun(ctx, r.redis, r.prefix+key)
 }
 
 // clientIPForRateLimit 返回 IP 维度限流使用的客户端地址。
@@ -181,6 +210,76 @@ func (r *RateLimiter) LimitWithOptions(key string, limit int, window time.Durati
 
 		c.Next()
 	}
+}
+
+// LimitByAccount applies a net-failure limit to a normalized JSON body field.
+// The identity is hashed before it enters Redis, and the request body is
+// restored so the downstream handler can bind it normally.
+func (r *RateLimiter) LimitByAccount(key, field string, limit int, window time.Duration, opts RateLimitOptions) gin.HandlerFunc {
+	failureMode := opts.FailureMode
+	if failureMode != RateLimitFailClose {
+		failureMode = RateLimitFailOpen
+	}
+
+	return func(c *gin.Context) {
+		if opts.Enabled != nil && !opts.Enabled(c) {
+			c.Next()
+			return
+		}
+		identity, ok := bodyFieldIdentity(c, field)
+		if !ok {
+			c.Next()
+			return
+		}
+		counterKey := key + ":account:" + identity
+		result, err := r.Allow(c.Request.Context(), counterKey, limit, window)
+		if err != nil {
+			log.Printf("[RateLimit] account redis error: key=%s mode=%s err=%v", r.prefix+key, failureModeLabel(failureMode), err)
+			if failureMode == RateLimitFailClose {
+				abortRateLimit(c, window)
+				return
+			}
+			c.Next()
+			return
+		}
+		if !result.Allowed {
+			abortRateLimit(c, result.RetryAfter)
+			return
+		}
+
+		c.Next()
+		if c.Writer.Status() < http.StatusBadRequest {
+			if err := r.Refund(c.Request.Context(), counterKey); err != nil {
+				log.Printf("[RateLimit] account refund error: key=%s err=%v", r.prefix+key, err)
+			}
+		}
+	}
+}
+
+func bodyFieldIdentity(c *gin.Context, field string) (string, bool) {
+	if c == nil || c.Request == nil || c.Request.Body == nil || strings.TrimSpace(field) == "" {
+		return "", false
+	}
+	const maxIdentityBodyBytes = 1 << 20
+	raw, err := io.ReadAll(io.LimitReader(c.Request.Body, maxIdentityBodyBytes+1))
+	c.Request.Body = io.NopCloser(bytes.NewReader(raw))
+	if err != nil || len(raw) == 0 || len(raw) > maxIdentityBodyBytes {
+		return "", false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", false
+	}
+	var value string
+	if err := json.Unmarshal(payload[field], &value); err != nil {
+		return "", false
+	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:8]), true
 }
 
 func windowTTLMillis(window time.Duration) int64 {

@@ -24,6 +24,7 @@ const panelHeavyRateLimitChecked = "panel_heavy_rate_limit_checked"
 // panelRateLimitAllower 抽象底层限流原语，便于单测注入。
 type panelRateLimitAllower interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (middleware.AllowResult, error)
+	Refund(ctx context.Context, key string) error
 }
 
 // PanelRateLimiter 面板（管理面 /api/v1）API 限流器。
@@ -64,6 +65,44 @@ func (p *PanelRateLimiter) MCPTransport() gin.HandlerFunc {
 // 与 Global 叠加计数：一次重查询同时消耗两档额度。
 func (p *PanelRateLimiter) Heavy() gin.HandlerFunc {
 	return p.userScoped("heavy", func(s service.PanelRateLimitSettings) int { return s.HeavyRPM })
+}
+
+// PasswordChangeGuard limits current-password guesses per authenticated user.
+// It intentionally ignores the general panel toggle and admin exemption.
+func (p *PanelRateLimiter) PasswordChangeGuard() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if p == nil || p.limiter == nil {
+			c.Next()
+			return
+		}
+		subject, ok := GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			c.Next()
+			return
+		}
+		const (
+			limit  = 5
+			window = 10 * time.Minute
+		)
+		key := "password-change:user:" + strconv.FormatInt(subject.UserID, 10)
+		result, err := p.limiter.Allow(c.Request.Context(), key, limit, window)
+		if err != nil {
+			slog.Error("password change rate limit unavailable", "error", err)
+			AbortWithError(c, http.StatusServiceUnavailable, "RATE_LIMIT_UNAVAILABLE", "Password verification is temporarily unavailable")
+			return
+		}
+		if !result.Allowed {
+			abortPanelRateLimited(c, result.RetryAfter)
+			return
+		}
+
+		c.Next()
+		if c.Writer.Status() < http.StatusBadRequest {
+			if err := p.limiter.Refund(c.Request.Context(), key); err != nil {
+				slog.Warn("password change rate limit refund failed", "error", err)
+			}
+		}
+	}
 }
 
 func (p *PanelRateLimiter) userScoped(scope string, limitOf func(service.PanelRateLimitSettings) int) gin.HandlerFunc {

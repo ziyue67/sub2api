@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,4 +109,30 @@ func TestAuthRoutesDisabledLoginLimitDoesNotRecordFailures(t *testing.T) {
 	require.Empty(t, mr.Keys(), "disabled failures must not consume the minute or ban budget")
 	repo.value = "true"
 	require.Equal(t, http.StatusBadRequest, loginLimitRequest(router, "login").Code, "no ban was created while disabled")
+}
+
+func TestTKSecurityLoginAccountLimitSurvivesRotatingSourceIPs(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+	t.Cleanup(func() { _ = rdb.Close() })
+	repo := &loginRateLimitRouteRepo{value: "true"}
+	settings := service.NewSettingService(repo, &config.Config{})
+	router := newAuthRoutesTestRouterWithSettings(rdb, settings, newAuthCredentialFixture(t))
+	require.NoError(t, router.SetTrustedProxies(nil))
+
+	request := func(index int) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"email":"victim@example.com","password":"incorrect"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "192.0.2." + strconv.Itoa(index+1) + ":1234"
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for i := 0; i < 10; i++ {
+		require.Equal(t, http.StatusUnauthorized, request(i).Code)
+	}
+	blocked := request(10)
+	require.Equal(t, http.StatusTooManyRequests, blocked.Code)
+	require.NotEmpty(t, blocked.Header().Get("Retry-After"))
 }

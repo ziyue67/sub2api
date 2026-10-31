@@ -54,10 +54,17 @@ func RegisterAuthRoutes(
 		auth.POST("/register", rateLimiter.LimitWithOptions("auth-register", 5, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 		}), h.Auth.Register)
-		auth.POST("/login", rateLimiter.LimitWithOptions("auth-login", 20, time.Minute, middleware.RateLimitOptions{
-			FailureMode: middleware.RateLimitFailClose,
-			Enabled:     loginRateLimitEnabled,
-		}), h.Auth.Login)
+		auth.POST("/login",
+			rateLimiter.LimitWithOptions("auth-login", 20, time.Minute, middleware.RateLimitOptions{
+				FailureMode: middleware.RateLimitFailClose,
+				Enabled:     loginRateLimitEnabled,
+			}),
+			rateLimiter.LimitByAccount("auth-login", "email", 10, time.Minute, middleware.RateLimitOptions{
+				FailureMode: middleware.RateLimitFailClose,
+				Enabled:     loginRateLimitEnabled,
+			}),
+			h.Auth.Login,
+		)
 		auth.POST("/login/2fa", rateLimiter.LimitWithOptions("auth-login-2fa", 20, time.Minute, middleware.RateLimitOptions{
 			FailureMode: middleware.RateLimitFailClose,
 			Enabled:     loginRateLimitEnabled,
