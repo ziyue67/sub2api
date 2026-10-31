@@ -60,18 +60,23 @@ func (c *apiKeyCache) IncrementCreateAttemptCount(ctx context.Context, userID in
 	return err
 }
 
-// IncrementCreateCount 在固定窗口内累加创建次数并返回累加后的值。
-// ExpireNX 只在首次创建计数键时设置过期，后续创建不会延长窗口；
-// MULTI 保证 INCR 与 EXPIRE 同时生效，避免计数键丢失 TTL 后永久封禁。
+// IncrementCreateCount atomically increments a fixed-window counter. Only a
+// missing TTL is repaired; later increments must not extend the window. Lua
+// preserves the INCR/expiry boundary without Redis 7's EXPIRE NX option.
+var incrementAPIKeyCreateCountScript = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+if redis.call('TTL', KEYS[1]) == -1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return count
+`)
+
 func (c *apiKeyCache) IncrementCreateCount(ctx context.Context, userID int64, window time.Duration) (int64, error) {
-	key := apiKeyCreateCountKey(userID)
-	pipe := c.rdb.TxPipeline()
-	incr := pipe.Incr(ctx, key)
-	pipe.ExpireNX(ctx, key, window)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, err
+	seconds := int64(window / time.Second)
+	if window > 0 && seconds == 0 {
+		seconds = 1
 	}
-	return incr.Val(), nil
+	return incrementAPIKeyCreateCountScript.Run(ctx, c.rdb, []string{apiKeyCreateCountKey(userID)}, seconds).Int64()
 }
 
 func (c *apiKeyCache) IncrementDailyUsage(ctx context.Context, apiKey string) error {

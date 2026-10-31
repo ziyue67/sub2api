@@ -22,6 +22,8 @@ func TestIsImageGenerationModel_GeminiFlashImage(t *testing.T) {
 }
 
 // TestIsImageGenerationModel_GeminiFlashLiteImage 测试 gemini-3.1-flash-lite-image 识别
+
+// Remaining classifier behavior from upstream 31564b2e.
 func TestIsImageGenerationModel_GeminiFlashLiteImage(t *testing.T) {
 	require.True(t, isImageGenerationModel("gemini-3.1-flash-lite-image"))
 	require.True(t, isImageGenerationModel("models/gemini-3.1-flash-lite-image"))

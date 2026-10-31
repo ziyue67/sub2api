@@ -619,6 +619,8 @@ func TestAPIContracts(t *testing.T) {
 							"stream": true,
 							"duration_ms": 100,
 							"first_token_ms": 50,
+							"queue_wait_ms": null,
+							"queue_timing": null,
 							"image_count": 0,
 							"image_size": null,
 							"image_input_size": null,

@@ -1,10 +1,13 @@
 package admin
 
 import (
+	"net/http"
+	"strconv"
+	"strings"
+
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
-	"net/http"
 )
 
 func (h *SettingHandler) GetPriorityScheduling(c *gin.Context) {
@@ -105,4 +108,40 @@ func (h *SettingHandler) SavePriorityScheduling(c *gin.Context) {
 }
 func (h *AccountHandler) PrioritySchedulingSnapshot(c *gin.Context) {
 	response.Success(c, gin.H{"snapshot": h.openAIGatewayService.PrioritySchedulingSnapshot()})
+}
+
+func (h *AccountHandler) PrioritySchedulingLatency(c *gin.Context) {
+	minutes := 60
+	if raw := strings.TrimSpace(c.Query("minutes")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 5 || value > 1440 {
+			response.BadRequest(c, "minutes must be between 5 and 1440")
+			return
+		}
+		minutes = value
+	}
+	bucketMinutes := 5
+	if raw := strings.TrimSpace(c.Query("bucket_minutes")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 60 {
+			response.BadRequest(c, "bucket_minutes must be between 1 and 60")
+			return
+		}
+		bucketMinutes = value
+	}
+	series, err := h.openAIGatewayService.PriorityLatencySeries(c.Request.Context(), minutes, bucketMinutes)
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "Priority latency series unavailable")
+		return
+	}
+	response.Success(c, series)
+}
+
+func (h *AccountHandler) RecomputePriorityScheduling(c *gin.Context) {
+	result, err := h.openAIGatewayService.RecomputePriorityScheduling(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, "Priority scheduling recompute unavailable")
+		return
+	}
+	response.Success(c, result)
 }

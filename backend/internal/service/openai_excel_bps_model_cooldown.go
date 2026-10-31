@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,12 @@ func isExcelBPSModelPermissionError(status int, code string) bool {
 // Codex requests and the account's other BPS models remain eligible.
 func (s *OpenAIGatewayService) coolDownExcelBPSModel(account *Account, upstreamModel string) {
 	if s == nil || account == nil || strings.TrimSpace(upstreamModel) == "" {
+		return
+	}
+	if account.AuthConnectionID != "" && s.excelOAuthReauth != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = s.excelOAuthReauth.FailAuthConnection(ctx, account, 403)
 		return
 	}
 	cache := &s.excelBPSModelCooldowns

@@ -386,6 +386,10 @@ func (s *OpenAIOAuthReauthService) readExcelGrant(ctx context.Context, account *
 var errExcelLegacyCredentials = errors.New("legacy Excel credentials")
 
 func (s *OpenAIGatewayService) getExcelBPSAccessToken(ctx context.Context, account *Account) (string, error) {
+	if account != nil && account.AuthConnectionID != "" {
+		token, _, err := s.GetAccessToken(ctx, account)
+		return token, err
+	}
 	if s.excelOAuthReauth == nil {
 		// Pure gateway embedders retain the pre-existing explicitly supplied path.
 		token, _, err := s.GetAccessToken(ctx, account)

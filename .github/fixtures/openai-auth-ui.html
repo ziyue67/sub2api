@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="UTF-8"><title>Isolated connection UI fixture</title></head><body><div id="app"></div>
+<script type="module">
+import {createApp} from 'vue'
+import {createI18n} from 'vue-i18n'
+import Component from '/src/components/account/OpenAIAuthConnections.vue'
+import {apiClient} from '/src/api/client.ts'
+import en from '/src/i18n/locales/en/openaiAuth.ts'
+import zh from '/src/i18n/locales/zh/openaiAuth.ts'
+import '/src/style.css'
+const locale=new URLSearchParams(location.search).get('locale')||'en'
+apiClient.defaults.adapter=async config=>({config,status:200,statusText:'OK',headers:{},data:{code:0,message:'',data:[
+{id:'fixture-codex-a',account_id:42,kind:'codex',label:'Codex A',legacy:false,status:'active',client_id:'synthetic-client-A',identity_verified:true,capabilities:['responses','chat_completions'],scopes:['openid'],preferred:true,revision:1},
+{id:'fixture-siwc-b',account_id:42,kind:'siwc',label:'SIWC B',legacy:false,status:'active',client_id:'synthetic-client-B',identity_verified:true,capabilities:[],scopes:['openid'],preferred:false,revision:1},
+{id:'fixture-bps-c',account_id:42,kind:'bps',label:'BPS C',legacy:false,status:'disabled',client_id:'synthetic-client-C',identity_verified:true,capabilities:['responses'],scopes:[],preferred:false,revision:1}
+]}})
+const app=createApp(Component,{accountId:42,active:true});app.use(createI18n({legacy:false,locale,messages:{en:{openaiAuth:en},zh:{openaiAuth:zh}}}));app.mount('#app')
+</script></body></html>

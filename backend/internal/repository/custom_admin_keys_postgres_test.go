@@ -38,6 +38,8 @@ func scopedAdminKeyTestDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(`CREATE TABLE users(id BIGINT PRIMARY KEY); INSERT INTO users(id) VALUES(9)`)
 	require.NoError(t, err)
 	migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "247_scoped_admin_api_keys.sql"))
+
+	migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "310_scoped_admin_api_keys.sql"))
 	require.NoError(t, err)
 	_, err = db.Exec(string(migration))
 	require.NoError(t, err)

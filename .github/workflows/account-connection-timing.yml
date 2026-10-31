@@ -1,0 +1,162 @@
+name: Account connection timing synthetic regression
+
+on:
+  pull_request:
+    branches: [production]
+    paths:
+      - 'backend/internal/**'
+      - 'frontend/src/**'
+      - '.github/workflows/account-connection-timing.yml'
+      - '.github/scripts/account-connection-timing*'
+      - 'docs/account-connection-timing.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: account-connection-timing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    if: github.head_ref == 'feat/account-connection-timing'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASELINE: 77455cf755fa0f119367b911704f11df88e7917e
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Exact source identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --exit-code HEAD
+          mkdir -p "$RUNNER_TEMP/timing-proof"
+          printf 'exact_head=%s\nbaseline=%s\n' "$EXPECTED_HEAD" "$BASELINE" | tee "$RUNNER_TEMP/timing-proof/source.txt"
+      - name: RED in an isolated baseline directory, without modifying delivery checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/timing-baseline"
+          git archive "$BASELINE" | tar -x -C "$RUNNER_TEMP/timing-baseline"
+          cp backend/internal/service/account_connection_timing_test.go "$RUNNER_TEMP/timing-baseline/backend/internal/service/"
+          set +e
+          (cd "$RUNNER_TEMP/timing-baseline/backend" && go test -tags=unit ./internal/service -run '^TestAccountConnectionTimingLifecycle$' -count=1 -json -timeout=15m) > "$RUNNER_TEMP/timing-proof/red.jsonl" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/timing-proof/red.jsonl"
+          test "$result" -ne 0
+          python3 - "$RUNNER_TEMP/timing-proof/red.jsonl" <<'PY'
+          import json, sys
+          events = [json.loads(s) for s in open(sys.argv[1]) if s.startswith('{')]
+          assert any(e.get('Action') == 'fail' and e.get('Test', '').startswith('TestAccountConnectionTimingLifecycle/') for e in events), 'RED must be an executed assertion failure'
+          assert any('one start and one final timing event' in e.get('Output', '') for e in events), 'expected timing assertion missing'
+          PY
+          git diff --exit-code HEAD
+      - name: GREEN actual service, handler and collector packages with race detection
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ACCOUNT_TIMING_FIXTURES_DIR="$RUNNER_TEMP/timing-proof/fixtures"
+          go test -race -tags=unit ./internal/service ./internal/handler/admin ./internal/integration/accountconnectiontiming -run 'TestAccountConnectionTiming|TestAccountTest|TestProcessGeminiStream|TestTypeSafeAccountTest|TestExcelBPS.*(Test|Probe)|TestOpenAIConnectionManagementRejectsAPIKey|TestOpenAIConnectionCreationRejectsMixedCredentials|TestOpenAIConnectionHandlerAccountType' -count=1 -v -timeout=20m 2>&1 | tee "$RUNNER_TEMP/timing-proof/green.log"
+          go test -race ./internal/pkg/requesttiming -count=1 -v -timeout=5m 2>&1 | tee "$RUNNER_TEMP/timing-proof/collector.log"
+          go test ./internal/service ./internal/handler/admin -run '^$' -timeout=10m 2>&1 | tee "$RUNNER_TEMP/timing-proof/normal-packages.log"
+          test -f "$ACCOUNT_TIMING_FIXTURES_DIR/apikey-responses.sse"
+          test -f "$ACCOUNT_TIMING_FIXTURES_DIR/oauth-responses.sse"
+          git diff --exit-code HEAD
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: account-timing-backend-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/timing-proof
+          if-no-files-found: error
+
+  frontend:
+    needs: backend
+    if: github.head_ref == 'feat/account-connection-timing'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASELINE: 77455cf755fa0f119367b911704f11df88e7917e
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: account-timing-backend-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/handler-proof
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: RED real modal consumers in a separate baseline directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ui-proof" "$RUNNER_TEMP/timing-ui-baseline"
+          git archive "$BASELINE" frontend | tar -x -C "$RUNNER_TEMP/timing-ui-baseline"
+          ln -s "$GITHUB_WORKSPACE/frontend/node_modules" "$RUNNER_TEMP/timing-ui-baseline/frontend/node_modules"
+          cp frontend/src/components/account/__tests__/AccountConnectionTiming.spec.ts "$RUNNER_TEMP/timing-ui-baseline/frontend/src/components/account/__tests__/"
+          set +e
+          env -u ACCOUNT_TIMING_FIXTURES_DIR pnpm --dir "$RUNNER_TEMP/timing-ui-baseline/frontend" exec vitest run src/components/account/__tests__/AccountConnectionTiming.spec.ts -t 'keeps legacy success' --maxWorkers=1 --minWorkers=1 --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/ui-proof/red.json" > "$RUNNER_TEMP/ui-proof/red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/ui-proof/red.log"
+          test "$result" -ne 0
+          python3 - "$RUNNER_TEMP/ui-proof/red.json" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1]))
+          assert report['numFailedTests'] == 2, 'Both actual modals must fail the intended assertion'
+          failed = [t for f in report['testResults'] for t in f['assertionResults'] if t['status'] == 'failed']
+          assert len(failed) == 2 and all('account-test-timing' in '\n'.join(t['failureMessages']) for t in failed)
+          PY
+          git diff --exit-code HEAD
+      - name: Exact source, real components and captured handler events
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ACCOUNT_TIMING_FIXTURES_DIR="$RUNNER_TEMP/handler-proof/fixtures"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          mkdir -p "$RUNNER_TEMP/ui-proof"
+          printf 'exact_head=%s\n' "$EXPECTED_HEAD" | tee "$RUNNER_TEMP/ui-proof/source.txt"
+          test -f "$ACCOUNT_TIMING_FIXTURES_DIR/apikey-responses.sse"
+          pnpm --dir frontend exec vitest run src/components/account/__tests__/AccountConnectionTiming.spec.ts src/components/account/__tests__/AccountTestModal.spec.ts src/components/admin/account/__tests__/AccountTestModal.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts --maxWorkers=1 --minWorkers=1 --reporter=verbose 2>&1 | tee "$RUNNER_TEMP/ui-proof/tests.log"
+          pnpm --dir frontend exec vue-tsc --noEmit 2>&1 | tee "$RUNNER_TEMP/ui-proof/types.log"
+          pnpm --dir frontend exec eslint src/components/account/AccountTestModal.vue src/components/admin/account/AccountTestModal.vue src/components/account/AccountTestTiming.vue src/composables/useAccountTestTiming.ts src/utils/accountTestStream.ts src/components/account/__tests__/AccountConnectionTiming.spec.ts 2>&1 | tee "$RUNNER_TEMP/ui-proof/lint.log"
+          git diff --exit-code HEAD
+      - name: Install isolated pinned browser tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/account-timing-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/account-timing-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Real desktop and mobile modals in both languages
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/account-timing-browser/node_modules/playwright
+          ACCOUNT_TIMING_FIXTURES_DIR: ${{ runner.temp }}/handler-proof/fixtures
+          ACCOUNT_TIMING_SCREENSHOT_DIR: ${{ runner.temp }}/ui-proof/screenshots
+        run: node .github/scripts/account-connection-timing-browser.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: account-timing-ui-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/ui-proof
+          if-no-files-found: error

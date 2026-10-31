@@ -74,7 +74,7 @@ func TestListSchedulableAccountLoadsMatchesListSchedulable(t *testing.T) {
 	wantByID := make(map[int64]int, len(accounts))
 	for i := range accounts {
 		accountIDs = append(accountIDs, accounts[i].ID)
-		wantByID[accounts[i].ID] = accounts[i].EffectiveLoadFactor()
+		wantByID[accounts[i].ID] = accounts[i].Concurrency
 	}
 
 	loadIDs := make([]int64, 0, len(loads))
@@ -95,9 +95,9 @@ func TestListSchedulableAccountLoadsMatchesListSchedulable(t *testing.T) {
 	}
 	require.Equal(t, []int64{concurrencyFallback.ID, zeroFallback.ID, positiveLoad.ID}, targetOrder)
 	require.Equal(t, wantByID, byID)
-	require.Equal(t, 9, byID[positiveLoad.ID])
+	require.Equal(t, 2, byID[positiveLoad.ID])
 	require.Equal(t, 4, byID[concurrencyFallback.ID])
-	require.Equal(t, 1, byID[zeroFallback.ID])
+	require.Equal(t, 0, byID[zeroFallback.ID])
 	for _, included := range []*service.Account{expiredAllowed, overloadCleared, rateLimitCleared, tempCleared} {
 		require.Contains(t, byID, included.ID)
 	}

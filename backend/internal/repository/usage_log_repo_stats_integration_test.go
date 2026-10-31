@@ -60,6 +60,23 @@ func TestUsageLog_UpstreamModelMismatchFilterAndPartialIndex(t *testing.T) {
 	require.Len(t, trend, 1)
 	require.Equal(t, int64(1), trend[0].Requests)
 
+	// With only the two matching rows, PostgreSQL can legitimately prefer the
+	// older created_at index plus incremental sort. Give the expression indexes
+	// a selective model predicate and current statistics so this checks the
+	// intended access paths rather than a tiny-table cost tie. All fixture rows
+	// remain in this test's rollback-only transaction; index assertions stay exact.
+	seeded, err := tx.ExecContext(ctx, `
+INSERT INTO usage_logs (user_id, api_key_id, account_id, model, requested_model, upstream_model, created_at)
+SELECT $1, $2, $3, 'index-fixture-other', 'index-fixture-other', 'index-fixture-other',
+       $4::timestamptz - (g % 3600) * INTERVAL '1 second'
+FROM generate_series(1, 10000) AS g`, user.ID, apiKey.ID, account.ID, now)
+	require.NoError(t, err)
+	seedCount, err := seeded.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 10000, seedCount)
+	_, err = tx.ExecContext(ctx, "ANALYZE usage_logs")
+	require.NoError(t, err)
+
 	_, err = tx.ExecContext(ctx, "SET LOCAL enable_seqscan = off")
 	require.NoError(t, err)
 	assertPlanUsesIndex := func(query, indexName string, args ...any) {

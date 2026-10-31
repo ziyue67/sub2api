@@ -111,7 +111,10 @@ func TestObserverOwnUsageFiltersAndTiming(t *testing.T) {
 	require.Equal(t, 404, w.Code)
 	require.Zero(t, r.timingCalls)
 	r.record.UserID = 42
-	require.Equal(t, 200, usageGET(router, "/usage/1/timing").Code)
+	w = usageGET(router, "/usage/1/timing")
+	require.Equal(t, 200, w.Code)
+	require.Contains(t, w.Body.String(), `"end_to_end_ms":null`)
+	require.Contains(t, w.Body.String(), `"end_to_end_source":"none"`)
 	require.Equal(t, 1, r.timingCalls)
 	require.Equal(t, 200, usageGET(router, "/usage/filter-options?kind=account&user_id=999&include_errors=true").Code)
 	require.Equal(t, int64(42), r.optionUserID)

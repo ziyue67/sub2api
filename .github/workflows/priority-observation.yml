@@ -27,6 +27,38 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  availability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Exact head availability handler and transport regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/priority-availability-logs"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/priority-availability-logs/head.txt"
+          test "$(git rev-parse HEAD)" = '${{ github.event.pull_request.head.sha || github.sha }}'
+          (cd backend && go test -tags=unit ./internal/service ./internal/handler -run '^TestPriorityLatencyAvailability' -count=1 -v -timeout=5m) 2>&1 | tee "$RUNNER_TEMP/priority-availability-logs/green.log"
+          grep -q -- '--- PASS: TestPriorityLatencyAvailabilityPoolBoundaries' "$RUNNER_TEMP/priority-availability-logs/green.log"
+          grep -q -- '--- PASS: TestPriorityLatencyAvailabilityHTTPAndChatTransport' "$RUNNER_TEMP/priority-availability-logs/green.log"
+          grep -q -- '--- PASS: TestPriorityLatencyAvailabilityNativeFallback' "$RUNNER_TEMP/priority-availability-logs/green.log"
+          grep -q -- '--- PASS: TestPriorityLatencyAvailabilityHandlerSlots' "$RUNNER_TEMP/priority-availability-logs/green.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: priority-availability-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/priority-availability-logs
+          if-no-files-found: error
   seams:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -42,6 +74,26 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - name: Availability regressions must fail on exact 9620 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/priority-logs"
+          old="$RUNNER_TEMP/latency-availability-old"
+          git worktree add --detach "$old" 9620d315f72a7dbf04fa10fca02970e1e410805e
+          trap 'git worktree remove --force "$old"' EXIT
+          cp backend/internal/service/priority_latency_availability_test.go "$old/backend/internal/service/"
+          cp backend/internal/handler/priority_latency_availability_test.go "$old/backend/internal/handler/"
+          set +e
+          (cd "$old/backend" && go test -tags=unit ./internal/service ./internal/handler -run '^TestPriorityLatencyAvailability' -count=1 -v -timeout=5m) > "$RUNNER_TEMP/priority-logs/availability-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/priority-logs/availability-red.log"
+          test "$result" -ne 0
+          ! grep -Eq 'build failed|undefined:|no tests to run|panic:' "$RUNNER_TEMP/priority-logs/availability-red.log"
+          for name in PoolBoundaries HistoryDegrades BoundContinuation EligibilityAndScope; do
+            grep -q -- "--- FAIL: TestPriorityLatencyAvailability$name" "$RUNNER_TEMP/priority-logs/availability-red.log"
+          done
       - name: Complete old production checkout must fail behavioral regressions
         shell: bash
         run: |
@@ -104,7 +156,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          (cd backend && go test -race -tags=unit ./internal/service -run '^(TestPriorityObservation|TestPriorityLatencyModes|TestPriorityPenaltyReview|TestPriorityHistory|TestPrioritySignalRefresh)' -count=1 -v -timeout=8m) 2>&1 | tee "$RUNNER_TEMP/priority-logs/race.log"
+          (cd backend && go test -race -tags=unit ./internal/service -run '^(TestPriorityObservation|TestPriorityLatencyModes|TestPriorityLatencyAvailability|TestPriorityPenaltyReview|TestPriorityHistory|TestPrioritySignalRefresh)' -count=1 -v -timeout=8m) 2>&1 | tee "$RUNNER_TEMP/priority-logs/race.log"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -150,7 +202,7 @@ jobs:
           version: 9
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm --dir frontend install --frozen-lockfile

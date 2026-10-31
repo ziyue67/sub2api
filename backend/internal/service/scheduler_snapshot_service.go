@@ -156,6 +156,9 @@ func NewSchedulerSnapshotService(
 	groupRepo GroupRepository,
 	cfg *config.Config,
 ) *SchedulerSnapshotService {
+	if source, ok := accountRepo.(LatestSchedulerAccountsRepository); ok && cache != nil {
+		cache = &codexOrderedSchedulerCache{SchedulerCache: cache, source: source}
+	}
 	maxQPS := 0
 	if cfg != nil {
 		maxQPS = cfg.Gateway.Scheduling.DbFallbackMaxQPS

@@ -1,0 +1,339 @@
+name: PR598 repair regression
+
+on:
+  push:
+    branches: [feat/priority-scheduling-latency-sticky]
+  pull_request:
+    paths:
+      - 'backend/internal/service/priority*'
+      - 'backend/internal/repository/priority*'
+      - 'frontend/src/views/admin/PrioritySchedulingView.vue'
+      - 'frontend/src/views/admin/__tests__/PrioritySchedulingView.spec.ts'
+      - 'frontend/src/api/admin/priorityScheduling.ts'
+      - 'frontend/src/i18n/locales/*/priorityScheduling.ts'
+      - 'backend/internal/handler/priority_latency_modes_test.go'
+      - '.github/scripts/pr598-priority-scheduling-screenshot.mjs'
+      - '.github/scripts/pr598-source-proof.sh'
+      - '.github/workflows/pr598-repair-regression.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  service-green:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prove clean exact-head production sources
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code HEAD
+          mkdir -p "$RUNNER_TEMP/pr598-source-proof"
+          bash .github/scripts/pr598-source-proof.sh "$GITHUB_WORKSPACE" "$EXPECTED_HEAD" \
+            backend/internal/service/priority_scheduling_history.go \
+            backend/internal/service/priority_scheduling_recompute.go \
+            backend/internal/service/priority_scheduling_snapshot.go \
+            backend/internal/service/priority_scheduling.go \
+            backend/internal/service/priority_latency_series.go \
+            backend/internal/repository/priority_latency_series.go \
+            backend/internal/repository/priority_scheduling.go \
+            backend/internal/handler/admin/priority_scheduling_handler.go \
+            backend/internal/handler/admin/priority_scheduling_sticky.go \
+            frontend/src/views/admin/PrioritySchedulingView.vue \
+            frontend/src/api/admin/priorityScheduling.ts | tee "$RUNNER_TEMP/pr598-source-proof/production.txt"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Service, handler and recompute regressions must pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pr598-red"
+          (cd backend && go test -race -tags=unit ./internal/service ./internal/handler -run '^TestPriority(LatencySeriesNoHistorySerializesEmptyBuckets|LatencySeriesUsesSnapshotMeasurementAndPercentile|RecomputeDoesNotTreatHistoryErrorAsSuccess|RecomputeKeepsCapturedScopeAcrossNewSelection|RecomputeRefreshFailurePreservesCachedRiskForScheduler|RecomputeWaitsForFreshReadAfterInflightReader|RecomputeIncompleteReadPreservesWholeObservation|LatencySeriesHandlerUsesEmptyArrayForNoHistory)$' -count=1 -v -timeout=5m) 2>&1 | tee "$RUNNER_TEMP/pr598-red/service.log"
+          for name in PriorityLatencySeriesNoHistorySerializesEmptyBuckets PriorityLatencySeriesUsesSnapshotMeasurementAndPercentile PriorityRecomputeDoesNotTreatHistoryErrorAsSuccess PriorityRecomputeKeepsCapturedScopeAcrossNewSelection PriorityRecomputeRefreshFailurePreservesCachedRiskForScheduler PriorityRecomputeWaitsForFreshReadAfterInflightReader PriorityRecomputeIncompleteReadPreservesWholeObservation PriorityLatencySeriesHandlerUsesEmptyArrayForNoHistory; do
+            grep -q -- "PASS: Test$name" "$RUNNER_TEMP/pr598-red/service.log"
+          done
+      - name: Repeat reader barriers under the race detector
+        run: |
+          set -euo pipefail
+          (cd backend && go test -race -tags=unit ./internal/service -run '^TestPriorityRecompute(RefreshFailurePreservesCachedRiskForScheduler|WaitsForFreshReadAfterInflightReader|IncompleteReadPreservesWholeObservation)$' -count=20 -v -timeout=2m) 2>&1 | tee "$RUNNER_TEMP/pr598-red/reader-race.log"
+      - name: Prove production sources remain unchanged after execution
+        run: git diff --exit-code HEAD
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr598-red-service-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/pr598-red/service.log
+            ${{ runner.temp }}/pr598-red/reader-race.log
+            ${{ runner.temp }}/pr598-source-proof/production.txt
+          if-no-files-found: error
+
+  queued-service-red:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Overlay only the queued regression on exact defective c0c production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin c0c7533badd6e4696e58d709f59eb7e10bf4b5f0
+          baseline="$RUNNER_TEMP/pr598-c0c-service"
+          git worktree add --detach "$baseline" c0c7533badd6e4696e58d709f59eb7e10bf4b5f0
+          trap 'git worktree remove --force "$baseline"' EXIT
+          mkdir -p "$baseline/backend/internal/service"
+          cp backend/internal/service/priority_scheduling_recompute_epoch_regression_test.go "$baseline/backend/internal/service/"
+          mkdir -p "$RUNNER_TEMP/pr598-c0c-red"
+          bash .github/scripts/pr598-source-proof.sh "$baseline" c0c7533badd6e4696e58d709f59eb7e10bf4b5f0 \
+            backend/internal/service/priority_scheduling_history.go \
+            backend/internal/service/priority_scheduling_recompute.go \
+            backend/internal/service/priority_scheduling_snapshot.go \
+            backend/internal/service/priority_scheduling.go | tee "$RUNNER_TEMP/pr598-c0c-red/production.txt"
+          test "$(git hash-object backend/internal/service/priority_scheduling_recompute_epoch_regression_test.go)" = "$(git -C "$baseline" hash-object backend/internal/service/priority_scheduling_recompute_epoch_regression_test.go)"
+          set +e
+          (cd "$baseline/backend" && go test -tags=unit ./internal/service -run '^TestPriorityRecompute(RefreshFailurePreservesCachedRiskForScheduler|WaitsForFreshReadAfterInflightReader)$' -count=1 -v -timeout=10s) > "$RUNNER_TEMP/pr598-c0c-red/service.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/pr598-c0c-red/service.log"
+          test "$result" -ne 0
+          grep -q -- 'FAIL: TestPriorityRecomputeRefreshFailurePreservesCachedRiskForScheduler' "$RUNNER_TEMP/pr598-c0c-red/service.log"
+          grep -q -- 'FAIL: TestPriorityRecomputeWaitsForFreshReadAfterInflightReader' "$RUNNER_TEMP/pr598-c0c-red/service.log"
+          grep -q -- 'online scheduling must retain its last successful latency evidence' "$RUNNER_TEMP/pr598-c0c-red/service.log"
+          grep -q -- 'recompute finished before a post-request history read' "$RUNNER_TEMP/pr598-c0c-red/service.log"
+          ! grep -Eq 'build failed|undefined:|no tests to run|panic:|recompute must reach its force-refresh boundary' "$RUNNER_TEMP/pr598-c0c-red/service.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr598-c0c-service-red-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/pr598-c0c-red
+          if-no-files-found: error
+
+  queued-ui-red:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Overlay only the queued UI regressions on exact defective c0c component
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin c0c7533badd6e4696e58d709f59eb7e10bf4b5f0
+          baseline="$RUNNER_TEMP/pr598-c0c-ui"
+          git worktree add --detach "$baseline" c0c7533badd6e4696e58d709f59eb7e10bf4b5f0
+          trap 'git worktree remove --force "$baseline"' EXIT
+          cp frontend/src/views/admin/__tests__/PrioritySchedulingView.spec.ts "$baseline/frontend/src/views/admin/__tests__/PrioritySchedulingView.spec.ts"
+          ln -s "$GITHUB_WORKSPACE/frontend/node_modules" "$baseline/frontend/node_modules"
+          mkdir -p "$RUNNER_TEMP/pr598-queued-red"
+          bash .github/scripts/pr598-source-proof.sh "$baseline" c0c7533badd6e4696e58d709f59eb7e10bf4b5f0 \
+            frontend/src/views/admin/PrioritySchedulingView.vue \
+            frontend/src/api/admin/priorityScheduling.ts | tee "$RUNNER_TEMP/pr598-queued-red/production.txt"
+          test "$(git hash-object frontend/src/views/admin/__tests__/PrioritySchedulingView.spec.ts)" = "$(git -C "$baseline" hash-object frontend/src/views/admin/__tests__/PrioritySchedulingView.spec.ts)"
+          set +e
+          pnpm --dir "$baseline/frontend" exec vitest run src/views/admin/__tests__/PrioritySchedulingView.spec.ts -t 'reads back the recomputed group after automatically switching the sticky scope|supersedes an in-flight old latency window with the selected window' --maxWorkers=1 --minWorkers=1 --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/pr598-queued-red/ui.json" > "$RUNNER_TEMP/pr598-queued-red/ui.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/pr598-queued-red/ui.log"
+          test "$result" -ne 0
+          grep -q -- 'reads back the recomputed group after automatically switching the sticky scope' "$RUNNER_TEMP/pr598-queued-red/ui.log"
+          grep -q -- 'supersedes an in-flight old latency window with the selected window' "$RUNNER_TEMP/pr598-queued-red/ui.log"
+          ! grep -Eq 'Failed to resolve|SyntaxError|No test files found' "$RUNNER_TEMP/pr598-queued-red/ui.log"
+          node --input-type=module - "$RUNNER_TEMP/pr598-queued-red/ui.json" <<'JS'
+          import fs from 'node:fs'
+          const result = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))
+          const cases = result.testResults.flatMap(file => file.assertionResults)
+          for (const title of ['reads back the recomputed group after automatically switching the sticky scope', 'supersedes an in-flight old latency window with the selected window']) {
+            if (!cases.some(test => test.title === title && test.status === 'failed')) throw new Error(`Missing behavior RED: ${title}`)
+          }
+          JS
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr598-queued-red-ui-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/pr598-queued-red
+          if-no-files-found: error
+
+  repository-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prove clean exact-head production sources
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code HEAD
+          mkdir -p "$RUNNER_TEMP/pr598-source-proof"
+          bash .github/scripts/pr598-source-proof.sh "$GITHUB_WORKSPACE" "$EXPECTED_HEAD" \
+            backend/internal/service/priority_scheduling_history.go \
+            backend/internal/service/priority_scheduling_recompute.go \
+            backend/internal/service/priority_scheduling_snapshot.go \
+            backend/internal/service/priority_scheduling.go \
+            backend/internal/service/priority_latency_series.go \
+            backend/internal/repository/priority_latency_series.go \
+            backend/internal/repository/priority_scheduling.go \
+            backend/internal/handler/admin/priority_scheduling_handler.go \
+            backend/internal/handler/admin/priority_scheduling_sticky.go \
+            frontend/src/views/admin/PrioritySchedulingView.vue \
+            frontend/src/api/admin/priorityScheduling.ts | tee "$RUNNER_TEMP/pr598-source-proof/production.txt"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Isolated PostgreSQL latency series regressions must pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pr598-red"
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestPriorityLatencySeries(ErrorsOnlyBucket|UsesConfiguredMeasurementAndPercentile)$' -count=1 -v -timeout=15m) 2>&1 | tee "$RUNNER_TEMP/pr598-red/repository.log"
+          grep -q -- 'PASS: TestPriorityLatencySeriesErrorsOnlyBucket' "$RUNNER_TEMP/pr598-red/repository.log"
+          grep -q -- 'PASS: TestPriorityLatencySeriesUsesConfiguredMeasurementAndPercentile' "$RUNNER_TEMP/pr598-red/repository.log"
+          ! grep -Eq 'no tests to run|--- SKIP:' "$RUNNER_TEMP/pr598-red/repository.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr598-red-repository-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/pr598-red/repository.log
+            ${{ runner.temp }}/pr598-source-proof/production.txt
+          if-no-files-found: error
+
+  ui-green:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prove clean exact-head production sources
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code HEAD
+          mkdir -p "$RUNNER_TEMP/pr598-source-proof"
+          bash .github/scripts/pr598-source-proof.sh "$GITHUB_WORKSPACE" "$EXPECTED_HEAD" \
+            backend/internal/service/priority_scheduling_history.go \
+            backend/internal/service/priority_scheduling_recompute.go \
+            backend/internal/service/priority_scheduling_snapshot.go \
+            backend/internal/service/priority_scheduling.go \
+            backend/internal/service/priority_latency_series.go \
+            backend/internal/repository/priority_latency_series.go \
+            backend/internal/repository/priority_scheduling.go \
+            backend/internal/handler/admin/priority_scheduling_handler.go \
+            backend/internal/handler/admin/priority_scheduling_sticky.go \
+            frontend/src/views/admin/PrioritySchedulingView.vue \
+            frontend/src/api/admin/priorityScheduling.ts | tee "$RUNNER_TEMP/pr598-source-proof/production.txt"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Real priority scheduling Vue component regressions must pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pr598-red"
+          pnpm --dir frontend exec vitest run src/views/admin/__tests__/PrioritySchedulingView.spec.ts --maxWorkers=1 --minWorkers=1 2>&1 | tee "$RUNNER_TEMP/pr598-red/ui.log"
+          ! grep -Eq 'no tests to run|No test files found|skipped' "$RUNNER_TEMP/pr598-red/ui.log"
+          pnpm --dir frontend run build
+          git diff --exit-code HEAD
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr598-red-ui-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/pr598-red/ui.log
+            ${{ runner.temp }}/pr598-source-proof/production.txt
+          if-no-files-found: error
+
+  actual-ui-screenshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prove clean exact-head production sources
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code HEAD
+          mkdir -p "$RUNNER_TEMP/pr598-source-proof"
+          bash .github/scripts/pr598-source-proof.sh "$GITHUB_WORKSPACE" "$EXPECTED_HEAD" \
+            backend/internal/service/priority_scheduling_history.go \
+            backend/internal/service/priority_scheduling_recompute.go \
+            backend/internal/service/priority_scheduling_snapshot.go \
+            backend/internal/service/priority_scheduling.go \
+            backend/internal/service/priority_latency_series.go \
+            backend/internal/repository/priority_latency_series.go \
+            backend/internal/repository/priority_scheduling.go \
+            backend/internal/handler/admin/priority_scheduling_handler.go \
+            backend/internal/handler/admin/priority_scheduling_sticky.go \
+            frontend/src/views/admin/PrioritySchedulingView.vue \
+            frontend/src/api/admin/priorityScheduling.ts | tee "$RUNNER_TEMP/pr598-source-proof/production.txt"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Install isolated browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pr598-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/pr598-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Render the actual priority scheduling component with offline synthetic data
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/pr598-browser/node_modules/playwright
+          PR598_SCREENSHOT_DIR: ${{ runner.temp }}/pr598-screenshots
+        run: node .github/scripts/pr598-priority-scheduling-screenshot.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr598-priority-scheduling-ui-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/pr598-screenshots
+            ${{ runner.temp }}/pr598-source-proof/production.txt
+          if-no-files-found: error

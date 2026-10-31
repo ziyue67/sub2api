@@ -101,6 +101,8 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 	// the proxy password is already handed out via ResolveOutboundIdentity's URL).
 	safeToExpose := map[string]struct{}{
 		"ID": {}, "Name": {}, "Notes": {}, "Platform": {}, "Type": {}, "Extra": {},
+		// Stable non-secret grant attribution is safe plugin metadata.
+		"AuthConnectionID": {}, "AuthConnectionRevision": {},
 		"Proxy": {}, "ProxyID": {}, "ProxyFallbackOriginID": {}, "ProxyFallbackOriginName": {},
 		"Concurrency": {}, "Priority": {}, "RateMultiplier": {}, "LoadFactor": {},
 		"GroupRateMultiplier": {},

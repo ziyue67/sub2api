@@ -18,10 +18,10 @@ func (c *Collector) WrapBody(body io.ReadCloser) io.ReadCloser {
 	return &inboundBody{ReadCloser: body, c: c}
 }
 func (b *inboundBody) Read(p []byte) (int, error) {
-	start := time.Now()
+	start := b.c.now()
 	n, err := b.ReadCloser.Read(p)
-	end := time.Now()
 	c := b.c
+	end := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.finished {
@@ -50,7 +50,7 @@ func (c *Collector) Written(start time.Time, n int, err error, flush bool) {
 	if c.finished {
 		return
 	}
-	end := time.Now()
+	end := c.now()
 	c.data.DownstreamWriteMS += float64(end.Sub(start)) / float64(time.Millisecond)
 	c.data.DownstreamBytes += int64(n)
 	if n > 0 {
@@ -83,7 +83,7 @@ func OutputFlushed(ctx context.Context) {
 	} else if _, seen := c.data.Events["first_semantic"]; !seen {
 		return
 	}
-	c.event("first_output_flush", time.Now())
+	c.event("first_output_flush", c.now())
 }
 
 // TerminalFlushed records successful local write/flush completion, not receipt
@@ -99,5 +99,5 @@ func TerminalFlushed(ctx context.Context, terminal string) {
 		return
 	}
 	c.data.TerminalFlushed = terminal
-	c.event("terminal_output_flush", time.Now())
+	c.event("terminal_output_flush", c.now())
 }

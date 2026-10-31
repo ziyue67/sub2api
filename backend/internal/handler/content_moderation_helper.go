@@ -34,8 +34,11 @@ func clientRequestedModel(c *gin.Context, fallback string) string {
 	return fallback
 }
 
-func bindOpenAIPriorityObservation(c *gin.Context, group *int64, model string) {
+func bindOpenAIPriorityObservation(c *gin.Context, group *int64, model string, body ...[]byte) {
 	c.Request = c.Request.WithContext(service.WithPrioritySchedulingObservation(c.Request.Context(), group, clientRequestedModel(c, model), GetInboundEndpoint(c)))
+	if len(body) > 0 {
+		c.Request = c.Request.WithContext(service.WithObservationRequestEffort(c.Request.Context(), body[0]))
+	}
 }
 
 func clientRequestedUsageFields(c *gin.Context, mapping service.ChannelMappingResult, fallbackModel, upstreamModel string) service.ChannelUsageFields {

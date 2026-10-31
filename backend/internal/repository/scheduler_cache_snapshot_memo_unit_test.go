@@ -563,7 +563,7 @@ func TestSchedulerCacheSnapshotMemoWriteAccountIDsAdvancesRevision(t *testing.T)
 		require.Len(t, batches, 2, "one execution per chunk")
 		require.Equal(t, []string{
 			"set " + schedulerAccountKey("133"),
-			"set " + schedulerAccountMetaKey("133"),
+			"getset " + schedulerAccountMetaKey("133"),
 			"set " + memoAnthropicRevisionKey,
 			"set " + geminiRevisionKey,
 		}, batches[1])
@@ -593,9 +593,9 @@ func TestSchedulerCacheSnapshotMemoWriteAccountIDsAdvancesRevision(t *testing.T)
 		require.Len(t, batches, 2, "no extra execution for the revision")
 		require.Equal(t, []string{
 			"set " + schedulerAccountKey("143"),
-			"set " + schedulerAccountMetaKey("143"),
+			"getset " + schedulerAccountMetaKey("143"),
 			"set " + schedulerAccountKey("144"),
-			"set " + schedulerAccountMetaKey("144"),
+			"getset " + schedulerAccountMetaKey("144"),
 			"set " + memoAnthropicRevisionKey,
 		}, batches[1])
 		require.Len(t, recorder.recorded(), 9, "every command travels inside the two pipelines")
@@ -966,7 +966,7 @@ func TestSchedulerCacheSnapshotMemoNilBeforeRealPipelineError(t *testing.T) {
 		memoTestAccount(261, "fresh"),
 		memoTestAccount(262, "wrong-type"),
 	})
-	require.Error(t, err, "a WRONGTYPE reply after a nil SET ... GET reply must fail the write")
+	require.Error(t, err, "a WRONGTYPE reply after a nil GETSET reply must fail the write")
 	require.Eventually(t, func() bool {
 		return memoRevisionValue(cache, schedulerAccountMetaRevisionKey) != ""
 	}, 2*time.Second, 5*time.Millisecond, "the global revision is advanced in the background")

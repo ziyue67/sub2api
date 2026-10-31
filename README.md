@@ -284,7 +284,7 @@ gateway:
 | 后端 | Go 1.27.3, Gin, Ent |
 | 前端 | Vue 3.4+, Vite 5+, TailwindCSS |
 | 数据库 | PostgreSQL 15+ |
-| 缓存/队列 | Redis 7+ |
+| 缓存/队列 | Redis 6.0+ |
 | API 协议 | OpenAI Responses / Chat Completions、Anthropic Messages、Gemini、SSE、WebSocket |
 | 调度与可靠性 | 粘性会话、并发控制、限流、故障转移、模型隔离与冷却 |
 | 观测与运维 | 结构化日志、请求分段耗时、健康检查、Mihomo 出口与 systemd |

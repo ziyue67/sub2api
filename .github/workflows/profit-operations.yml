@@ -7,7 +7,7 @@ on:
       - '**/UpstreamChannelOperations*'
       - '**/ProfitAnalytics*'
       - '.github/workflows/profit-operations.yml'
-      - '.github/scripts/upstream-profit-operations-screenshot.mjs'
+      - '.github/scripts/upstream-channel-entities-screenshot.mjs'
       - 'frontend/src/api/admin/profitOperations.ts'
       - 'frontend/src/i18n/locales/*/profitOps.ts'
   workflow_dispatch:
@@ -67,7 +67,7 @@ jobs:
           version: 9
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm --dir frontend install --frozen-lockfile
@@ -82,7 +82,7 @@ jobs:
         env:
           PLAYWRIGHT_ROOT: ${{ runner.temp }}/upstream-browser/node_modules/playwright
           UPSTREAM_SCREENSHOT_DIR: ${{ runner.temp }}/upstream-screenshots
-        run: node .github/scripts/upstream-profit-operations-screenshot.mjs
+        run: node .github/scripts/upstream-channel-entities-screenshot.mjs
       - uses: actions/upload-artifact@v7
         if: always()
         with:

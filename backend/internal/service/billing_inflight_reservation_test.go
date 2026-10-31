@@ -450,6 +450,11 @@ func attachInflightSnapshot(svc *GatewayService, snap *inflightSnapshotCacheStub
 
 // 已定价模型永不查账号映射；随机未定价模型名不直接查库、不产生按模型名的缓存（内存有界）。
 func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
+	// HeapAlloc belongs to the entire process. Run the unchanged workload and
+	// 8 MiB assertion in a fresh test process, excluding other suites' workers.
+	if runInflightMemoryInSubprocess(t) {
+		return
+	}
 	groupID := int64(40)
 	svc := newInflightEstimateGateway(t, nil)
 	snap := &inflightSnapshotCacheStub{byBucket: map[string][]Account{inflightBucketKey(groupID, PlatformAnthropic): {
@@ -468,13 +473,27 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
+	goroutinesBefore := runtime.NumGoroutine()
+	// Test-only negative controls validate attribution and guard sensitivity.
+	unrelatedHeap := inflightMemoryUnrelatedHeapControl()
 	const n = 20000
 	for i := 0; i < n; i++ {
-		_, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: fmt.Sprintf("rand-%d-%d", i, time.Now().UnixNano()), BodyBytes: 4000, MaxTokens: 1000})
+		model := fmt.Sprintf("rand-%d-%d", i, time.Now().UnixNano())
+		_, priced := svc.EstimateInflightReservation(ctx, apiKey, InflightEstimateRequest{Model: model, BodyBytes: 4000, MaxTokens: 1000})
 		require.False(t, priced)
+		if inflightMemoryControl() == "retained_model_cache" {
+			svc.billingService.fallbackWarnSeen.Store(model, make([]byte, 1024))
+		}
 	}
 	runtime.GC()
 	runtime.ReadMemStats(&after)
+	// Keep the service alive through measurement so retained per-model state
+	// cannot disappear merely because the last request has finished.
+	runtime.KeepAlive(svc)
+	runtime.KeepAlive(unrelatedHeap)
+	retainedWarnings := 0
+	svc.billingService.fallbackWarnSeen.Range(func(_, _ any) bool { retainedWarnings++; return true })
+	t.Logf("inflight_heap_probe control=%q requests=%d heap_before=%d heap_after=%d delta=%d gc_before=%d gc_after=%d goroutines_before=%d goroutines_after=%d retained_warning_keys=%d snapshot_buckets=%d", inflightMemoryControl(), n, before.HeapAlloc, after.HeapAlloc, int64(after.HeapAlloc)-int64(before.HeapAlloc), before.NumGC, after.NumGC, goroutinesBefore, runtime.NumGoroutine(), retainedWarnings, len(snap.byBucket))
 	require.Zero(t, repo.dbCalls.Load(), "no direct DB query on the request path")
 	require.Equal(t, int64(n), snap.reads.Load(), "unpriced lookups read the scheduler snapshot only")
 	require.Less(t, int64(after.HeapAlloc)-int64(before.HeapAlloc), int64(8<<20), "no per-model cache growth")

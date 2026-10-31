@@ -239,7 +239,7 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 	saveCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stop()
 	if plan.PelicanConfig.Quality != nil && plan.PelicanConfig.Quality.UsesModelResults() {
-		plan.QualityModelOutcomes = qualityModelOutcomes(results, QualityModels(plan))
+		plan.QualityModelOutcomes = qualityPlanModelOutcomes(plan, results)
 	}
 	qualityAction := ""
 	if plan.PelicanConfig.Quality != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/rediscompat"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -137,7 +138,7 @@ func (s *Store) Take(ctx context.Context, id string, dest any) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	raw, err := s.rdb.GetDel(ctx, s.dataKey(id)).Bytes()
+	raw, err := rediscompat.GetDel(ctx, s.rdb, s.dataKey(id))
 	if errors.Is(err, redis.Nil) {
 		return false, nil
 	}

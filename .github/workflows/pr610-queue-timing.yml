@@ -1,0 +1,178 @@
+name: PR610 queue timing acceptance
+on:
+  pull_request:
+    branches: [production]
+permissions:
+  contents: read
+concurrency:
+  group: pr610-queue-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+jobs:
+  generated:
+    if: github.head_ref == 'fix/queue-wait-ttft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Exact head and generated Ent verification
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          echo "exact_head=$SOURCE_HEAD"
+          (cd backend && go generate ./ent)
+          git diff --binary -- backend/ent > "$RUNNER_TEMP/ent-generated.patch"
+          git diff --exit-code -- backend/ent
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr610-ent-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/ent-generated.patch
+
+  behavior:
+    if: github.head_ref == 'fix/queue-wait-ttft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASELINE: 705550f610f1f12666b8efd351a13e612b3956bf
+      SUB2API_TEST_POSTGRES_IMAGE: postgres:15-alpine
+      SUB2API_TEST_REDIS_IMAGE: redis:7-alpine
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: GREEN clean exact candidate, authenticated synthetic network and clock barriers
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          test -z "$(git status --porcelain)"
+          echo "green_exact_head=$SOURCE_HEAD"
+          (cd backend && go test -tags=unit ./internal/handler ./internal/service -run '^TestPR610' -count=1 -v -timeout=8m) 2>&1 | tee "$RUNNER_TEMP/pr610-green.log"
+          ! grep -E -- '--- SKIP:|no tests to run' "$RUNNER_TEMP/pr610-green.log"
+          grep -F -- '--- PASS: TestPR610AuthenticatedTurnsCountWaitOnce' "$RUNNER_TEMP/pr610-green.log"
+          grep -F -- '--- PASS: TestPR610BridgeRejectedFieldRetryKeepsLegacyDenominator' "$RUNNER_TEMP/pr610-green.log"
+      - name: PostgreSQL measured cohorts, full migration runner and joint upgrade
+        run: |
+          set -euo pipefail
+          (cd backend && go test -tags=integration ./internal/repository -run '^TestPR610' -count=1 -v -timeout=8m) 2>&1 | tee "$RUNNER_TEMP/pr610-postgres.log"
+          ! grep -E -- '--- SKIP:|no tests to run' "$RUNNER_TEMP/pr610-postgres.log"
+          grep -F -- '--- PASS: TestPR610MeasuredCohortPreservesLegacyOperations' "$RUNNER_TEMP/pr610-postgres.log"
+          grep -F -- '--- PASS: TestPR610Migrations320321322JointUpgradeIdempotencyAndLegacyRead' "$RUNNER_TEMP/pr610-postgres.log"
+      - name: RED frozen defective production blobs in disposable checkout, wall-clock behavioral assertions
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/pr610-red"
+          git worktree add --detach "$old" "$SOURCE_HEAD"
+          trap 'git worktree remove --force "$old"' EXIT
+          files=(backend/internal/handler/openai_gateway_handler.go backend/internal/service/openai_ws_forwarder_ingress.go backend/internal/service/openai_ws_http_bridge.go backend/internal/service/openai_ws_v2_passthrough_adapter.go backend/internal/repository/upstream_operations.go backend/internal/repository/profit_operations.go backend/internal/repository/channel_operations_stats.go)
+          git -C "$old" restore --source="$BASELINE" -- "${files[@]}"
+          for file in "${files[@]}"; do
+            test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "$BASELINE:$file")"
+            echo "red_blob=$BASELINE:$file $(git -C "$old" hash-object "$file")"
+          done
+          for testname in TestPR610RealWaitNativeIngress TestPR610RealBridgeRetryDenominator TestPR610RealCtxPoolRetryKeepsFinalAttemptScope; do
+            set +e
+            (cd "$old/backend" && go test -tags=unit ./internal/handler -run "^$testname$" -count=1 -v -timeout=5m) > "$RUNNER_TEMP/pr610-red-$testname.log" 2>&1
+            result=$?
+            set -e
+            cat "$RUNNER_TEMP/pr610-red-$testname.log"
+            test "$result" -ne 0
+            ! grep -E -- 'build failed|undefined:|no tests to run|panic:|setup failed|--- SKIP:' "$RUNNER_TEMP/pr610-red-$testname.log"
+            grep -F -- "--- FAIL: $testname" "$RUNNER_TEMP/pr610-red-$testname.log"
+          done
+          set +e
+          (cd "$old/backend" && go test -tags=integration ./internal/repository -run '^TestPR610MeasuredCohortPreservesLegacyOperations$' -count=1 -v -timeout=8m) > "$RUNNER_TEMP/pr610-red-operations.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/pr610-red-operations.log"
+          test "$result" -ne 0
+          ! grep -E -- 'build failed|undefined:|no tests to run|panic:|setup failed|--- SKIP:' "$RUNNER_TEMP/pr610-red-operations.log"
+          grep -F -- '--- FAIL: TestPR610MeasuredCohortPreservesLegacyOperations' "$RUNNER_TEMP/pr610-red-operations.log"
+          grep -F 'legacy operations TTFT must retain its original population and values' "$RUNNER_TEMP/pr610-red-operations.log"
+          grep -F 'accepted frame must count real blocked acquisition before forward' "$RUNNER_TEMP/pr610-red-TestPR610RealWaitNativeIngress.log"
+          grep -F 'rejected-field network time must stay in legacy TPS denominator' "$RUNNER_TEMP/pr610-red-TestPR610RealBridgeRetryDenominator.log"
+          grep -F 'ctx_pool retry retains accepted frame and pre-final-forward scope' "$RUNNER_TEMP/pr610-red-TestPR610RealCtxPoolRetryKeepsFinalAttemptScope.log"
+          for file in "${files[@]}"; do test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "$BASELINE:$file")"; done
+          test -z "$(git status --porcelain)"
+      - name: Race check for actual turn boundary lifetimes
+        run: |
+          set -euo pipefail
+          (cd backend && go test -race -tags=unit ./internal/handler -run '^TestPR610' -count=1 -v -timeout=8m) 2>&1 | tee "$RUNNER_TEMP/pr610-race.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr610-behavior-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/pr610-*.log
+
+  ui:
+    if: github.head_ref == 'fix/queue-wait-ttft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASELINE: 705550f610f1f12666b8efd351a13e612b3956bf
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - name: Actual timing components and production typecheck/build
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          (cd frontend && pnpm test:run src/components/admin/usage/__tests__/UsageTable.spec.ts src/components/admin/usage/__tests__/UsageTimingDialog.spec.ts && pnpm build) 2>&1 | tee "$RUNNER_TEMP/pr610-ui.log"
+      - name: Isolated synthetic browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pr610-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/pr610-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Bilingual before/after table and dialog, desktop/mobile interactions
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/pr610-browser/node_modules/playwright
+          SCREENSHOT_DIR: ${{ runner.temp }}/pr610-screenshots
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/pr610-before-browser"
+          git worktree add --detach "$old" "$BASELINE"
+          trap 'git worktree remove --force "$old"' EXIT
+          ln -s "$GITHUB_WORKSPACE/frontend/node_modules" "$old/frontend/node_modules"
+          VIEW_ROOT="$old" SCREENSHOT_MODE=before node .github/scripts/pr610-screenshots.mjs
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --exit-code
+          SCREENSHOT_MODE=after node .github/scripts/pr610-screenshots.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr610-ui-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/pr610-ui.log
+            ${{ runner.temp }}/pr610-screenshots

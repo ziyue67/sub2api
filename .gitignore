@@ -138,6 +138,7 @@ vite.config.js
 user-traffic-pending/
 docs/*
 !docs/image-request-archive.md
+!docs/stream-timing.md
 !docs/user-traffic.md
 !docs/typesafe-content-audit.md
 !docs/multi-host-session-owner.md
@@ -147,6 +148,7 @@ docs/*
 !docs/anonymous-api-guard.md
 !docs/registration-email-alias-block.md
 !docs/openai-ws-sse-acceleration.md
+!docs/openai-ws-mode.md
 !docs/openai-outbound-identity.md
 !docs/openai-2fa-dual-oauth.md
 !docs/openai-siwc.md

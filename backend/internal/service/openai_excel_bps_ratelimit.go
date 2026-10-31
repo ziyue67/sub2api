@@ -51,6 +51,10 @@ func (s *OpenAIGatewayService) coolDownExcelBPS(ctx context.Context, account *Ac
 	if s == nil || account == nil {
 		return
 	}
+	if account.AuthConnectionID != "" {
+		s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, http.Header{"Retry-After": []string{retryAfter}}, nil)
+		return
+	}
 	cooldown, ok := excelBPSRetryAfter(retryAfter, time.Now())
 	if !ok {
 		if cooldown, ok = s.excelBPS429FallbackCooldown(ctx, account); !ok {

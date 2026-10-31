@@ -1,0 +1,103 @@
+name: Upstream v0.2.19 regressions
+on:
+  push:
+    branches: [cherry/upstream-v0.2.19]
+  pull_request:
+    branches: [production]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/upstream-v0219-regression.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    if: github.head_ref == 'cherry/upstream-v0.2.19' || github.ref_name == 'cherry/upstream-v0.2.19'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: scoped_ci
+          POSTGRES_PASSWORD: scoped_ci_only
+          POSTGRES_DB: scoped_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U scoped_ci -d scoped_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SCOPED_ADMIN_TEST_DSN: 'host=127.0.0.1 port=5432 user=scoped_ci password=scoped_ci_only dbname=scoped_ci sslmode=disable'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Isolated inflight memory bound and negative controls
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          go test -tags=unit ./internal/service -run '^TestInflightEstimate_AccountMappingNoDBAndBoundedMemory$' -count=30 -v | tee "$RUNNER_TEMP/inflight-memory-isolated.log"
+          go test -tags=unit ./internal/service -run '^TestInflightEstimate_MemoryMeasurementControls$' -count=1 -v | tee "$RUNNER_TEMP/inflight-memory-controls.log"
+      - name: Pagination behavior RED against production baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          targets=(backend/internal/pkg/pagination/pagination.go backend/internal/pkg/response/response.go)
+          trap 'git restore --source=HEAD -- "${targets[@]}"' EXIT
+          for target in "${targets[@]}"; do
+            git show e6b30da8f75b382a20b56b712a209e9f7d8c72fb:"$target" > "$target"
+          done
+          set +e
+          (cd backend && go test -tags=unit ./internal/pkg/pagination ./internal/pkg/response -run 'TestPaginationParamsOffsetDoesNotOverflow|TestParsePaginationBoundariesAndResponse' -count=1 -v) > "$RUNNER_TEMP/upstream-v0219-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/upstream-v0219-red.log"
+          test "$result" -ne 0
+          ! grep -q '\[build failed\]' "$RUNNER_TEMP/upstream-v0219-red.log"
+          grep -q -- '--- FAIL: TestPaginationParamsOffsetDoesNotOverflow' "$RUNNER_TEMP/upstream-v0219-red.log"
+          grep -q -- '--- FAIL: TestParsePaginationBoundariesAndResponse' "$RUNNER_TEMP/upstream-v0219-red.log"
+      - name: Compatibility and scoped authorization behavior RED
+        shell: bash
+        run: python3 .github/scripts/upstream-v0219-red.py
+      - name: Exact head GREEN
+        working-directory: backend
+        run: |
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          git rev-parse HEAD
+          set -euo pipefail
+          go test -tags=unit ./internal/config ./internal/pkg/pagination ./internal/pkg/response ./internal/pkg/antigravity ./internal/pkg/gemini ./internal/pkg/geminicli ./internal/pkg/adminaccess ./internal/repository ./internal/securityaudit ./internal/handler ./internal/handler/admin ./internal/server/middleware ./internal/server/routes ./internal/service -run 'Test(Pagination|ParsePagination|_parseInt|Paginate|MergeBalanceHistoryCodesLargePage|ParseOpsOpenAITokenStatsFilter|PromptAdminRejects|HandleUpstreamError_Zhipu|CNProviderResponseIndicatesFrequencyLimit|CNProviderQuotaSnapshotNearExhausted|AdminService_UpdateUser_AdminGuards|AdminService_DeleteUser_AdminGuard|ParseOpenAIImagesRequest_Multipart|ParseGrokMediaRequest_Multipart|MalformedFunctionCallTransform|AntigravityMalformedFunctionCall|ForwardAsChatCompletions_StrictDeveloperRole|NormalizeStrictChatDeveloperRoles|ClaudeCodeFingerprint|SyncBillingHeaderVersion|BuildOAuthRequest_Billing|MergeWebSearchEmulation|ChannelService_ApplyUpdateInput|OpenAIModelsSingleflight|LoadGeminiSameAccountRetries|Gemini.*(Retry|Retries|BoundCache|Declared|NativeModels|DefaultTestModel)|GatewayModels_Gemini|DefaultModels|Scoped|Custom|LegacyAdmin|AdminAccess|PanelRate|OpenAIStreamReplayBoundary|GeminiCachedContentMutationRecovery|.*Models.*Admission|APIKeyAdmissionModels|FetchCodexModelsManifestAPIKeySharedRefreshSurvivesCallerCancellation|Observer|EnforceStepUp)' -count=1 -v | tee "$RUNNER_TEMP/upstream-v0219-green.log"
+          ! grep -E -- '--- SKIP: TestScoped|--- SKIP: TestCustom' "$RUNNER_TEMP/upstream-v0219-green.log"
+      - name: Fixed-tag pricing and Grok behavior RED
+        run: python3 .github/scripts/upstream-v0219-remaining-red.py
+      - name: Fixed-tag pricing and usage regressions
+        working-directory: backend
+        run: go test -tags=unit ./internal/pkg/openai ./internal/pkg/apicompat ./internal/service -run 'Test.*(Deepseek|DeepSeek|GPT61Terra|GeminiImage|Gemini.*Image|CountGemini|ModelPricingCatalog|ModelPlaza|PlazaGroups|IsImageGenerationModel|Image.*Pricing|Pricing.*Image|ImageCountBilling|BillableImage|CountOpenAIImage|ChannelPerRequestContextTier|ExplicitTokenCardsAcrossGateways|AuthoritativeZeroCacheRead)' -count=1 -v
+      - name: Grok catalog audit and ownership regressions
+        working-directory: backend
+        run: |
+          go test -tags=unit ./internal/service ./internal/repository ./internal/handler/admin ./internal/handler/dto ./internal/server -run 'Test.*(Grok|ImageCountBilling|ImageCount|AvailableGroups|Group.*Duplicate|AuthCache.*|LockAndMergeAccountProbeExtra)' -count=1 -v
+          go test -tags=integration ./internal/repository -run '^TestGrok' -count=1 -v
+      - name: Preserve exact model-index plans across repeated integration fixtures
+        working-directory: backend
+        run: go test -tags=integration ./internal/repository -run '^TestUsageLog_UpstreamModelMismatchFilterAndPartialIndex$' -count=10 -v
+      - name: Ownership and cancellation race regressions
+        working-directory: backend
+        run: go test -race -tags=unit ./internal/service ./internal/server/middleware -run 'TestOpenAIModelsSingleflight|TestScopedAdmin|TestPanelRate|TestAPIKeyAdmissionModels|TestFetchCodexModelsManifestAPIKeySharedRefreshSurvivesCallerCancellation|TestGrokCatalogPersistConcurrentWritersAreRaceSafe|ImageCountBillingPreservesExplicitTokenCardsAcrossGateways|GrokCatalog' -count=1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - name: Targeted admin and model frontend tests
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec vitest run src/components/admin/settings/__tests__/AdminAccessKeysSettings.spec.ts src/views/admin/__tests__/ChannelsView.webSearchEmulation.spec.ts src/composables/__tests__/useModelWhitelist.spec.ts src/api/__tests__/admin.accounts.grokModelDiagnostics.spec.ts src/components/account/__tests__/GrokModelDiagnosticsPanel.spec.ts src/components/account/__tests__/EditAccountModal.grokUpstream.spec.ts src/components/account/__tests__/ModelWhitelistSelector.spec.ts src/components/keys/__tests__/UseKeyModal.spec.ts

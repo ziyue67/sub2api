@@ -19,6 +19,9 @@ func (s *OpenAIGatewayService) boundCodexTicket(req *http.Request, account *Acco
 }
 
 func (s *OpenAIGatewayService) boundCodexTicketFromHeader(ctx context.Context, h http.Header, account *Account) *openAICodexTicket {
+	if account != nil && (account.AuthConnectionID != "" || account.HasManagedOpenAIConnections()) {
+		return nil
+	}
 	if s == nil || h == nil || account == nil || !s.openAICodexTicketEnabledContext(ctx) {
 		return nil
 	}

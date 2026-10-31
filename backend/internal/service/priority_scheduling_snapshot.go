@@ -19,6 +19,8 @@ type prioritySnapshotInput struct {
 
 func newPrioritySnapshotInput(req OpenAIAccountScheduleRequest, c PrioritySchedulingConfig, pool []openAIAccountCandidateScore, at time.Time) *prioritySnapshotInput {
 	input := &prioritySnapshotInput{limited: len(pool) > priorityHistoryMaxAccounts, at: at, request: OpenAIAccountScheduleRequest{RequestedModel: req.RequestedModel, HistoryModel: req.HistoryModel, InboundEndpoint: req.InboundEndpoint, RequiredCapability: req.RequiredCapability, RequireCompact: req.RequireCompact}, config: c, quota: make(map[int64]float64)}
+	input.request.ObservationEffort = req.ObservationEffort
+	input.request.ObservationEffortScoped = req.ObservationEffortScoped
 	if req.GroupID != nil {
 		id := *req.GroupID
 		input.request.GroupID = &id
@@ -56,6 +58,18 @@ func (s *OpenAIGatewayService) PrioritySchedulingSnapshot() *PrioritySchedulingS
 	state.mu.Unlock()
 	if input == nil {
 		return nil
+	}
+	return s.prioritySchedulingSnapshot(input)
+}
+
+func (s *OpenAIGatewayService) prioritySchedulingSnapshot(input *prioritySnapshotInput) *PrioritySchedulingSnapshot {
+	snapshot, _ := s.prioritySchedulingSnapshotWithHistory(input)
+	return snapshot
+}
+
+func (s *OpenAIGatewayService) prioritySchedulingSnapshotWithHistory(input *prioritySnapshotInput) (*PrioritySchedulingSnapshot, priorityHistoryResult) {
+	if s == nil || input == nil {
+		return nil, priorityHistoryResult{}
 	}
 	h := priorityHistoryResult{status: "limited"}
 	if !input.limited {
@@ -95,7 +109,7 @@ func (s *OpenAIGatewayService) PrioritySchedulingSnapshot() *PrioritySchedulingS
 	}
 	slices.SortStableFunc(snapshot.Candidates, comparePrioritySnapshotScores)
 	snapshot.Candidates = snapshot.Candidates[:min(len(snapshot.Candidates), 100)]
-	return snapshot
+	return snapshot, h
 }
 
 func comparePrioritySnapshotScores(a, b PrioritySchedulingScore) int {

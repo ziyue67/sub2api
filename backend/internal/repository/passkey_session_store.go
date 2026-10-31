@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/rediscompat"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/redis/go-redis/v9"
 )
@@ -54,7 +55,7 @@ func (s *passkeySessionStore) Consume(
 	if token == "" || len(token) > 128 {
 		return nil, service.ErrPasskeySession
 	}
-	payload, err := s.redis.GetDel(ctx, passkeySessionPrefix+token).Bytes()
+	payload, err := rediscompat.GetDel(ctx, s.redis, passkeySessionPrefix+token)
 	if err == redis.Nil {
 		return nil, service.ErrPasskeySession
 	}

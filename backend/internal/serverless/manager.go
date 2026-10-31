@@ -174,7 +174,7 @@ func (m *Manager) Pods(ctx context.Context) ([]Pod, error) {
 	if m.redis == nil {
 		return []Pod{}, nil
 	}
-	ids, err := m.redis.ZRangeArgs(ctx, redis.ZRangeArgs{Key: prefix + "pods", Start: 0, Stop: 127, Rev: true}).Result()
+	ids, err := m.redis.ZRevRange(ctx, prefix+"pods", 0, 127).Result() //nolint:staticcheck // Redis 6.0 compatibility; replacement options require Redis 6.2.
 	if err != nil {
 		return nil, err
 	}

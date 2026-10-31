@@ -1,0 +1,174 @@
+name: Upstream channel entities regression
+on:
+  push:
+    branches: [feat/profit-url-channel-remarks]
+  pull_request:
+    paths:
+      - '**/upstream_channels*'
+      - '**/UpstreamChannel*'
+      - '**/AccountUpstreamChannel*'
+      - 'frontend/src/components/account/*AccountModal.vue'
+      - 'backend/migrations/312_upstream_channel_entities.sql'
+      - 'backend/migrations/313_upstream_channel_binding_delete_revision.sql'
+      - '**/profit_operations*'
+      - '**/ProfitOperations*'
+      - '**/ProfitAnalytics*'
+      - 'backend/internal/server/routes/admin.go'
+      - 'backend/internal/server/middleware/audit_log.go'
+      - 'frontend/src/api/admin/profitOperations.ts'
+      - 'frontend/src/i18n/locales/*/profitOps.ts'
+      - '.github/workflows/upstream-channel-entities-regression.yml'
+      - '.github/scripts/upstream-channel-entities-screenshot.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: git rev-parse HEAD
+      - name: Mixed-cohort P1 RED on exact reviewed head and GREEN on current head
+        working-directory: backend
+        shell: bash
+        env:
+          PROFIT_COHORT_OLD_HEAD: ec820522203515e67823c267badb7b01be4b8b23
+          PROFIT_COHORT_NEW_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PROFIT_COHORT_NEW_HEAD"
+          git fetch --no-tags --depth=1 origin "$PROFIT_COHORT_OLD_HEAD"
+          old_tree="$RUNNER_TEMP/profit-cohort-old"
+          mkdir "$old_tree"
+          git -C .. archive "$PROFIT_COHORT_OLD_HEAD" | tar -x -C "$old_tree"
+          regression=internal/repository/profit_operations_cohort_integration_test.go
+          test ! -e "$old_tree/backend/$regression"
+          cp "$regression" "$old_tree/backend/$regression"
+          python3 - <<'PYPROVENANCE'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          test=Path('internal/repository/profit_operations_cohort_integration_test.go')
+          out={k:os.environ[k] for k in ['PROFIT_COHORT_OLD_HEAD','PROFIT_COHORT_NEW_HEAD','GITHUB_EVENT_NAME','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_JOB']}
+          out['old_tree_overlay']='Only the new regression test is copied into the exact old git archive; no implementation overlay.'
+          out['regression_sha256']=hashlib.sha256(test.read_bytes()).hexdigest()
+          out['old_repository_blob']=subprocess.check_output(['git','rev-parse',os.environ['PROFIT_COHORT_OLD_HEAD']+':backend/internal/repository/profit_operations.go'],text=True).strip()
+          Path(os.environ['RUNNER_TEMP'],'entity-cohort-provenance.json').write_text(json.dumps(out,indent=2)+'\n')
+          PYPROVENANCE
+          cat "$RUNNER_TEMP/entity-cohort-provenance.json"
+          set +e
+          (cd "$old_tree/backend" && go test -tags=integration ./internal/repository -run '^TestProfitOperationsMixedCohortMissingAccountDrilldown$' -count=1 -v) > "$RUNNER_TEMP/entity-cohort-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/entity-cohort-red.log"
+          test "$result" -ne 0
+          if grep -Eq '\[build failed\]|\[setup failed\]|no tests to run|panic:|--- SKIP:' "$RUNNER_TEMP/entity-cohort-red.log"; then exit 1; fi
+          grep -q 'missing-account drill-down must exclude configured accounts outside the selected cohort' "$RUNNER_TEMP/entity-cohort-red.log"
+          grep -q 'FAIL: TestProfitOperationsMixedCohortMissingAccountDrilldown' "$RUNNER_TEMP/entity-cohort-red.log"
+          go test -tags=integration ./internal/repository -run '^TestProfitOperationsMixedCohortMissingAccountDrilldown$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/entity-cohort-green.log"
+          grep -q '^--- PASS: TestProfitOperationsMixedCohortMissingAccountDrilldown' "$RUNNER_TEMP/entity-cohort-green.log"
+          if grep -Eq 'no tests to run|--- SKIP:' "$RUNNER_TEMP/entity-cohort-green.log"; then exit 1; fi
+      - name: DTO, URL identity and actual admin route authorization
+        working-directory: backend
+        run: go test -tags=unit ./internal/service ./internal/handler/admin ./internal/server/routes -run '^Test(UpstreamChannel|ProfitOperations|ExplicitChannelProfitFilter)' -count=1 -v
+      - name: Explicit ownership regression RED against discarded binding
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=internal/repository/upstream_channels.go
+          cp "$target" "$RUNNER_TEMP/entity-current.go"
+          trap 'cp "$RUNNER_TEMP/entity-current.go" "$target"' EXIT
+          python3 - <<'PYRED'
+          from pathlib import Path
+          p=Path('internal/repository/upstream_channels.go')
+          s=p.read_text()
+          assert 'b.AccountID, m.ChannelID)' in s
+          p.write_text(s.replace('b.AccountID, m.ChannelID)', 'b.AccountID, 0)'))
+          PYRED
+          set +e
+          go test -tags=integration ./internal/repository -run '^TestUpstreamChannelEntityHTTPAccountProfitPersistence$' -count=1 -v > "$RUNNER_TEMP/entity-bind-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/entity-bind-red.log"
+          test "$result" -ne 0
+          grep -q 'explicit binding must persist independently of URL eligibility' "$RUNNER_TEMP/entity-bind-red.log"
+          grep -q 'FAIL: TestUpstreamChannelEntityHTTPAccountProfitPersistence' "$RUNNER_TEMP/entity-bind-red.log"
+      - name: Soft deletion ownership regression RED against implicit detachment
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=internal/repository/account_repo.go
+          cp "$target" "$RUNNER_TEMP/entity-account-current.go"
+          trap 'cp "$RUNNER_TEMP/entity-account-current.go" "$target"' EXIT
+          python3 - <<'PYRED'
+          from pathlib import Path
+          p=Path('internal/repository/account_repo.go')
+          s=p.read_text()
+          marker='func (r *accountRepository) Delete(ctx context.Context, id int64) error {'
+          assert s.count(marker)==1
+          mutation='\n if _,err:=r.sql.ExecContext(ctx,`DELETE FROM upstream_channel_bindings WHERE account_id=$1`,id);err!=nil{return err}\n'
+          p.write_text(s.replace(marker,marker+mutation))
+          PYRED
+          set +e
+          go test -tags=integration ./internal/repository -run '^TestUpstreamChannelEntitySoftDeleteRetainsOwnership$' -count=1 -v > "$RUNNER_TEMP/entity-soft-delete-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/entity-soft-delete-red.log"
+          test "$result" -ne 0
+          grep -q 'soft-deleted accounts must retain explicit analytics ownership' "$RUNNER_TEMP/entity-soft-delete-red.log"
+          grep -q 'FAIL: TestUpstreamChannelEntitySoftDeleteRetainsOwnership' "$RUNNER_TEMP/entity-soft-delete-red.log"
+      - name: Real API to private migrated PostgreSQL to GET; existing profit and upstream URL-attribution regressions
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -tags=integration ./internal/repository -run '^Test(UpstreamChannelEntity|ProfitOperations|UpstreamOperations)' -count=1 -v | tee "$RUNNER_TEMP/entity-green.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: upstream-channel-postgres-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/entity-*.log
+            ${{ runner.temp }}/entity-cohort-provenance.json
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Actual account, channel entity and profit components
+        working-directory: frontend
+        run: pnpm exec vitest run src/views/admin/__tests__/ProfitOperationsView.spec.ts src/views/admin/__tests__/UpstreamChannelEntities.spec.ts src/components/account/__tests__/UpstreamChannelBinding.spec.ts src/components/admin/operations/__tests__/UpstreamChannelManager.spec.ts src/components/account/__tests__/CreateAccountModal.spec.ts src/components/account/__tests__/EditAccountModal.spec.ts src/components/account/__tests__/BulkEditAccountModal.spec.ts --maxWorkers=1 --minWorkers=1 --no-file-parallelism
+      - run: pnpm --dir frontend run build
+      - name: Install isolated browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/upstream-channel-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/upstream-channel-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Exact profit page browser with synthetic data
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/upstream-channel-browser/node_modules/playwright
+          UPSTREAM_SCREENSHOT_DIR: ${{ runner.temp }}/upstream-channel-screenshots
+        run: node .github/scripts/upstream-channel-entities-screenshot.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: upstream-channel-ui-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/upstream-channel-screenshots

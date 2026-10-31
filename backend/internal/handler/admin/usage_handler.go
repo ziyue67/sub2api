@@ -219,6 +219,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		return
 	}
 
+	h.usageService.EnrichContentTiming(c.Request.Context(), records)
 	response.Paginated(c, adminUsageLogResponses(c, records), result.Total, page, pageSize)
 }
 
@@ -668,5 +669,5 @@ func (h *UsageHandler) Timing(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, gin.H{"traces": traces, "retention_days": 30})
+	response.Success(c, gin.H{"traces": traces, "retention_days": 30, "end_to_end_ms": nil, "end_to_end_status": "not_collected", "end_to_end_source": "none", "client_upload_ms": nil, "client_upload_status": "not_collected"})
 }

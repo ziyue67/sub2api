@@ -218,28 +218,33 @@ func (s *OpenAIGatewayService) prioritySchedulingRuntimeConfig() PrioritySchedul
 
 type PrioritySchedulingSignal struct {
 	SelectedTTFTMs         *float64   `json:"selected_ttft_ms"`
+	LatestBadLatencyAt     *time.Time `json:"latest_bad_latency_at,omitempty"`
+	LatestLatencyAt        *time.Time `json:"latest_latency_at,omitempty"`
+	LatestQualityPassed    *bool      `json:"latest_quality_passed,omitempty"`
 	P50TTFTMs              float64    `json:"p50_ttft_ms"`
 	P70TTFTMs              float64    `json:"p70_ttft_ms"`
+	P90TTFTMs              float64    `json:"p90_ttft_ms"`
 	P95TTFTMs              float64    `json:"p95_ttft_ms"`
+	P99TTFTMs              float64    `json:"p99_ttft_ms"`
+	ExperienceP90Ms        float64    `json:"experience_p90_ms"`
+	Revenue                float64    `json:"revenue"`
+	BaseCost               float64    `json:"-"`
 	LatencyPercentile      int        `json:"latency_percentile"`
 	LatencyMeasurement     string     `json:"latency_measurement"`
 	LatencyEvidenceVersion int        `json:"latency_evidence_version"`
 	LatencyUnknownSamples  int        `json:"latency_unknown_samples"`
 	ExperienceSamples      int        `json:"experience_samples"`
-	ExperienceP90Ms        float64    `json:"experience_p90_ms"`
-	LatestBadLatencyAt     *time.Time `json:"latest_bad_latency_at,omitempty"`
-	LatestLatencyAt        *time.Time `json:"latest_latency_at,omitempty"`
-	LatestQualityPassed    *bool      `json:"latest_quality_passed,omitempty"`
-	Revenue                float64    `json:"revenue"`
-	BaseCost               float64    `json:"-"`
 	ProfitSamples          int        `json:"profit_samples"`
 	Samples                int        `json:"samples"`
-	P90TTFTMs              float64    `json:"p90_ttft_ms"`
+	SlowSamples            int        `json:"slow_samples"`
+	ErrorSamples           int        `json:"error_samples"`
+	UpstreamErrorRate      float64    `json:"upstream_error_rate"`
 	QualityPassed          int        `json:"quality_passed"`
 	QualitySamples         int        `json:"quality_samples"`
 }
 
 type PrioritySchedulingQuery struct {
+	ObservationEffort  *string
 	LatencyPercentile  int
 	LatencyMeasurement string
 	TargetTTFTMs       int

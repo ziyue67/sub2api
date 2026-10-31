@@ -1,0 +1,257 @@
+name: OpenAI multi-connection contract
+
+on:
+  push:
+    branches: [feat/openai-multi-auth-connections]
+  pull_request:
+    branches: [production]
+    paths: ['backend/**', 'frontend/**', '.github/workflows/openai-multi-auth.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    if: github.head_ref == 'feat/openai-multi-auth-connections' || github.ref_name == 'feat/openai-multi-auth-connections'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Original production dispatch must fail the regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp backend/internal/service/openai_auth_connections_regression_test.go "$RUNNER_TEMP/issue594-regression_test.go"
+          mkdir "$RUNNER_TEMP/issue594-baseline"
+          git archive 12a49ef4ef6a2f116389701ac8f1fe620f27bbf5 | tar -x -C "$RUNNER_TEMP/issue594-baseline"
+          cp "$RUNNER_TEMP/issue594-regression_test.go" "$RUNNER_TEMP/issue594-baseline/backend/internal/service/"
+          cd "$RUNNER_TEMP/issue594-baseline/backend"
+          set +e
+          go test -tags=unit ./internal/service -run '^TestIssue594UnknownConnectionCannotFallBackToCodex$' -count=1 -v > "$RUNNER_TEMP/issue594-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue594-red.log"
+          test "$result" -ne 0
+          grep -q -- '--- FAIL: TestIssue594UnknownConnectionCannotFallBackToCodex' "$RUNNER_TEMP/issue594-red.log"
+          grep -q 'unknown or identity-only connections must never inherit Codex authorization' "$RUNNER_TEMP/issue594-red.log"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue594-red-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/issue594-red.log
+  review-red:
+    if: github.head_ref == 'feat/openai-multi-auth-connections' || github.ref_name == 'feat/openai-multi-auth-connections'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Review regression RED on writer checkpoint
+        env:
+          CI: 'true'
+        run: |
+          set -euo pipefail
+          red_tree="$RUNNER_TEMP/issue594-review-baseline"
+          mkdir "$red_tree"
+          git archive 19b4e6730351b48f208391b7a411117bfce1538b | tar -x -C "$red_tree"
+          cp backend/internal/repository/openai_auth_connections_review_regression_test.go "$red_tree/backend/internal/repository/"
+          cp backend/internal/service/openai_auth_connections_review_regression_test.go "$red_tree/backend/internal/service/"
+          set +e
+          (cd "$red_tree/backend" && go test -race -tags=unit ./internal/service -run '^TestIssue594Review' -count=1 -v) > "$RUNNER_TEMP/issue594-review-unit-red.log" 2>&1
+          unit_result=$?
+          (cd "$red_tree/backend" && go test -race -tags=integration ./internal/repository -run '^TestIssue594Review' -count=1 -v) > "$RUNNER_TEMP/issue594-review-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue594-review-red.log"
+          test "$result" -ne 0
+          cat "$RUNNER_TEMP/issue594-review-unit-red.log"
+          test "$unit_result" -ne 0
+          grep -F -- "--- FAIL: TestIssue594ReviewManagedCodexRejectsUnboundLegacyTicket" "$RUNNER_TEMP/issue594-review-unit-red.log"
+          grep -F -- "--- FAIL: TestIssue594ReviewManagedCodexIdentityChangesWithClientAndRevision" "$RUNNER_TEMP/issue594-review-unit-red.log"
+          grep -F -- "--- FAIL: TestIssue594ReviewBPSCannotAdvertiseBrokenBridges" "$RUNNER_TEMP/issue594-review-unit-red.log"
+          ! grep -E 'build failed|setup failed|undefined:|syntax error:|no tests to run|panic:' "$RUNNER_TEMP/issue594-review-red.log"
+          grep -F -- '--- FAIL: TestIssue594ReviewUncertainRefreshNeverReplaysOldGrant' "$RUNNER_TEMP/issue594-review-red.log"
+          grep -F -- '--- FAIL: TestIssue594ReviewExpiredLeaseCannotCommitOldCredentials' "$RUNNER_TEMP/issue594-review-red.log"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue594-review-red-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/issue594-review*-red.log
+
+  lease-proof-red:
+    if: github.head_ref == 'feat/openai-multi-auth-connections' || github.ref_name == 'feat/openai-multi-auth-connections'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Lease takeover service RED on dd0a7fb5a
+        env:
+          CI: 'true'
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/issue594-lease-baseline"
+          mkdir "$baseline"
+          git archive dd0a7fb5a44bf1db881bd13f45a22a1238849384 | tar -x -C "$baseline"
+          cp backend/internal/repository/openai_auth_connections_lease_takeover_integration_test.go "$baseline/backend/internal/repository/"
+          cp backend/internal/service/openai_auth_connection_egress_export_test.go backend/internal/service/openai_auth_connection_siwc_boundary_integration_test.go "$baseline/backend/internal/service/"
+
+          set +e
+          (cd "$baseline/backend" && go test -race -tags=integration ./internal/repository -run '^TestIssue594LeaseTakeoverCannotAdoptAnotherOwnersProof$' -count=1 -v) > "$RUNNER_TEMP/issue594-lease-proof-red.log" 2>&1
+          result=$?
+          (cd "$baseline/backend" && go test -race -tags=integration ./internal/service -run '^TestIssue594SIWCFinalEgress' -count=1 -v) > "$RUNNER_TEMP/issue594-siwc-boundary-red.log" 2>&1
+          siwc_result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue594-siwc-boundary-red.log"
+          test "$siwc_result" -ne 0
+          ! grep -E 'build failed|setup failed|undefined:|syntax error:|no tests to run|panic:' "$RUNNER_TEMP/issue594-siwc-boundary-red.log"
+          grep -F -- '--- FAIL: TestIssue594SIWCFinalEgress' "$RUNNER_TEMP/issue594-siwc-boundary-red.log"
+          cat "$RUNNER_TEMP/issue594-lease-proof-red.log"
+          test "$result" -ne 0
+          ! grep -E 'build failed|setup failed|undefined:|syntax error:|no tests to run|panic:' "$RUNNER_TEMP/issue594-lease-proof-red.log"
+          grep -F -- '--- FAIL: TestIssue594LeaseTakeoverCannotAdoptAnotherOwnersProof' "$RUNNER_TEMP/issue594-lease-proof-red.log"
+          ! grep -E 'Messages:.*must exercise A lease' "$RUNNER_TEMP/issue594-lease-proof-red.log"
+          grep -F 'a stolen lease snapshot cannot authorize an OAuth network operation' "$RUNNER_TEMP/issue594-lease-proof-red.log"
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue594-lease-proof-red-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/issue594-lease-proof-red.log
+            ${{ runner.temp }}/issue594-siwc-boundary-red.log
+
+  green:
+    needs: [red, review-red, lease-proof-red]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Compile production adapters and run exact-head connection regressions
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          go test -race -tags=unit ./internal/service ./internal/repository ./internal/handler/admin ./internal/pkg/openai -run '^TestIssue594|^TestSIWC' -count=1 -v | tee "$RUNNER_TEMP/issue594-green.log"
+      - name: Actual HTTP service repository PostgreSQL connection lifecycle
+        working-directory: backend
+        env:
+          CI: 'true'
+        run: |
+          set -euo pipefail
+          go test -race -tags=integration ./internal/repository -run '^TestIssue594' -count=1 -v | tee "$RUNNER_TEMP/issue594-integration.log"
+          ! grep -E -- '--- SKIP: TestIssue594|no tests to run' "$RUNNER_TEMP/issue594-integration.log"
+      - name: Actual SIWC final send boundary with isolated PostgreSQL
+        working-directory: backend
+        env:
+          CI: 'true'
+        run: |
+          set -euo pipefail
+          go test -race -tags=integration ./internal/service -run '^TestIssue594SIWCFinalEgress' -count=1 -v | tee "$RUNNER_TEMP/issue594-siwc-final-egress.log"
+          ! grep -E -- '--- SKIP: TestIssue594|no tests to run' "$RUNNER_TEMP/issue594-siwc-final-egress.log"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue594-green-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/issue594-*.log
+  ui:
+    needs: red
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Connection components and both locales
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+          pnpm exec vitest run src/components/account/__tests__/OpenAIAuthConnections.spec.ts src/components/account/__tests__/SIWCAccountSettings.spec.ts src/i18n/__tests__/localeKeyCompleteness.spec.ts | tee "$RUNNER_TEMP/issue594-ui-tests.log"
+          pnpm exec eslint src/components/account/OpenAIAuthConnections.vue src/api/admin/openaiAuthConnections.ts src/components/account/__tests__/OpenAIAuthConnections.spec.ts
+          pnpm run typecheck
+      - name: Sanitized screenshots of actual component and styles
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/issue594-browser" --no-package-lock playwright
+          "$RUNNER_TEMP/issue594-browser/node_modules/.bin/playwright" install --with-deps chromium
+          cp .github/fixtures/openai-auth-ui.html frontend/.issue594-ui.html
+          pnpm --dir frontend exec vite --host 127.0.0.1 --port 4179 > "$RUNNER_TEMP/issue594-vite.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" || true; rm -f frontend/.issue594-ui.html' EXIT
+          ISSUE594_PLAYWRIGHT="$RUNNER_TEMP/issue594-browser/node_modules/playwright" node .github/scripts/openai-auth-screenshots.cjs
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue594-ui-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/issue594-*.png
+            ${{ runner.temp }}/issue594-*.log
+  i18n-lock-candidate:
+    if: github.head_ref == 'feat/openai-multi-auth-connections' || github.ref_name == 'feat/openai-multi-auth-connections'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Generate reviewable patched i18n lock in isolation
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/issue594-i18n-candidate"
+          cp frontend/package.json frontend/pnpm-lock.yaml "$RUNNER_TEMP/issue594-i18n-candidate/"
+          node - <<'JS'
+          const fs = require('fs'); const p = `${process.env.RUNNER_TEMP}/issue594-i18n-candidate/package.json`
+          const data = JSON.parse(fs.readFileSync(p)); data.pnpm.overrides['decode-uri-component@<0.5.1'] = '0.5.1'; fs.writeFileSync(p, JSON.stringify(data, null, 2) + '\n')
+          JS
+          pnpm --dir "$RUNNER_TEMP/issue594-i18n-candidate" install --lockfile-only --ignore-scripts
+      - uses: actions/upload-artifact@v6
+        with:
+          name: issue594-i18n-candidate-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/issue594-i18n-candidate/package.json
+            ${{ runner.temp }}/issue594-i18n-candidate/pnpm-lock.yaml

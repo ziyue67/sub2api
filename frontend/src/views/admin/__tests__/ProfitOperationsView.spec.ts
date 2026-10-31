@@ -1,3 +1,4 @@
+vi.mock('@/api/admin/upstreamChannels', () => ({ listUpstreamChannels: vi.fn(), getUpstreamChannel: vi.fn(), saveUpstreamChannel: vi.fn(), deleteUpstreamChannel: vi.fn(), getChannelMembers: vi.fn(), bindChannelAccounts: vi.fn(), readChannelBindings: vi.fn() }))
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, describe, it, expect, vi } from 'vitest'
 import ProfitOperationsView from '../ProfitOperationsView.vue'

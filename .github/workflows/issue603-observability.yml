@@ -1,0 +1,275 @@
+name: Issue 603 complete observability acceptance
+on:
+  pull_request:
+    branches: [production]
+permissions:
+  contents: read
+concurrency:
+  group: issue603-observability-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+jobs:
+  backend:
+    if: github.head_ref == 'feat/issue603-latency-observability'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+      BASELINE: ec007920de042797299fc7cf2c034ad24c136462
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+      SUB2API_TEST_POSTGRES_IMAGE: postgres:15-alpine
+      SUB2API_TEST_REDIS_IMAGE: redis:7-alpine
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Immutable source proof
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git merge-base --is-ancestor "$BASELINE" HEAD
+          printf 'exact_head=%s\nbaseline=%s\n' "$SOURCE_HEAD" "$BASELINE" | tee "$RUNNER_TEMP/issue603-source.log"
+      - name: RED - original collector must fail the derived JSON behavior assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/issue603-timing-red"
+          git worktree add --detach "$old" "$SOURCE_HEAD"
+          trap 'git worktree remove --force "$old"' EXIT
+          cp backend/internal/pkg/requesttiming/latency.go "$old/backend/internal/pkg/requesttiming/latency.go"
+          cp backend/internal/pkg/requesttiming/latency_test.go "$old/backend/internal/pkg/requesttiming/latency_test.go"
+          git -C "$old" restore --source="$BASELINE" -- backend/internal/pkg/requesttiming
+          cp backend/internal/pkg/requesttiming/latency.go "$old/backend/internal/pkg/requesttiming/latency.go"
+          cp backend/internal/pkg/requesttiming/latency_test.go "$old/backend/internal/pkg/requesttiming/latency_test.go"
+          test "$(git -C "$old" hash-object backend/internal/pkg/requesttiming/collector.go)" = "$(git rev-parse "$BASELINE:backend/internal/pkg/requesttiming/collector.go")"
+          set +e
+          (cd "$old/backend" && go test ./internal/pkg/requesttiming -run '^TestIssue603CollectorPublishesAttemptMetrics$' -count=1 -v) > "$RUNNER_TEMP/issue603-timing-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue603-timing-red.log"
+          test "$result" -ne 0
+          ! grep -Eq 'build failed|undefined:|no tests to run|panic:|setup failed' "$RUNNER_TEMP/issue603-timing-red.log"
+          grep -F -- '--- FAIL: TestIssue603CollectorPublishesAttemptMetrics' "$RUNNER_TEMP/issue603-timing-red.log"
+          grep -F 'finished collector must publish attempt-derived observations' "$RUNNER_TEMP/issue603-timing-red.log"
+      - name: RED - original default selection must fail scoped feedback behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/issue603-feedback-red"
+          git worktree add --detach "$old" "$SOURCE_HEAD"
+          trap 'git worktree remove --force "$old"' EXIT
+          file=backend/internal/service/openai_gateway_scheduling.go
+          git -C "$old" restore --source="$BASELINE" -- "$file"
+          test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "$BASELINE:$file")"
+          set +e
+          (cd "$old/backend" && go test -tags=unit ./internal/service -run '^TestIssue603DefaultSchedulerUsesScopedFeedback$' -count=1 -v -timeout=5m) > "$RUNNER_TEMP/issue603-feedback-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue603-feedback-red.log"
+          test "$result" -ne 0
+          ! grep -Eq 'build failed|undefined:|no tests to run|panic:|setup failed' "$RUNNER_TEMP/issue603-feedback-red.log"
+          grep -F -- '--- FAIL: TestIssue603DefaultSchedulerUsesScopedFeedback' "$RUNNER_TEMP/issue603-feedback-red.log"
+          grep -F 'default path must prefer a healthy eligible peer' "$RUNNER_TEMP/issue603-feedback-red.log"
+          test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "$BASELINE:$file")"
+      - name: RED - original route registration must not silently omit network observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/issue603-routes-red"
+          git worktree add --detach "$old" "$SOURCE_HEAD"
+          trap 'git worktree remove --force "$old"' EXIT
+          file=backend/internal/server/routes/admin.go
+          git -C "$old" restore --source="$BASELINE" -- "$file"
+          test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "$BASELINE:$file")"
+          set +e
+          (cd "$old/backend" && go test -tags=unit ./internal/server/routes -run '^TestIssue603RegisteredOpsNetworkRouteAndGlobalPermission$' -count=1 -v -timeout=5m) > "$RUNNER_TEMP/issue603-network-routes-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue603-network-routes-red.log"
+          test "$result" -ne 0
+          ! grep -Eq 'build failed|undefined:|no tests to run|panic:|setup failed' "$RUNNER_TEMP/issue603-network-routes-red.log"
+          grep -F -- '--- FAIL: TestIssue603RegisteredOpsNetworkRouteAndGlobalPermission' "$RUNNER_TEMP/issue603-network-routes-red.log"
+          grep -F 'registered ops network route must reach its real handler' "$RUNNER_TEMP/issue603-network-routes-red.log"
+          test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "$BASELINE:$file")"
+      - name: RED - original mixed SSE scanner must omit typed reasoning observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/issue605-content-red"
+          git worktree add --detach "$old" "$SOURCE_HEAD"
+          trap 'git worktree remove --force "$old"' EXIT
+          file=backend/internal/service/openai_sse_json_documents.go
+          git -C "$old" restore --source="$BASELINE" -- "$file"
+          test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "$BASELINE:$file")"
+          set +e
+          (cd "$old/backend" && go test -tags=unit ./internal/service -run '^TestIssue605MixedSSERecordsTypedBoundaries$' -count=1 -v -timeout=5m) > "$RUNNER_TEMP/issue605-content-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue605-content-red.log"
+          test "$result" -ne 0
+          ! grep -Eq 'build failed|undefined:|no tests to run|panic:|setup failed' "$RUNNER_TEMP/issue605-content-red.log"
+          grep -F -- '--- FAIL: TestIssue605MixedSSERecordsTypedBoundaries' "$RUNNER_TEMP/issue605-content-red.log"
+          grep -F 'typed mixed SSE must observe reasoning' "$RUNNER_TEMP/issue605-content-red.log"
+      - name: RED - previous default feedback must mix distinct effort populations
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/issue605-effort-red"
+          git worktree add --detach "$old" "$SOURCE_HEAD"
+          trap 'git worktree remove --force "$old"' EXIT
+          file=backend/internal/service/default_scheduler_feedback.go
+          git -C "$old" restore --source=fb70cc126105f984a63c24f8db65fe0412dd856a -- "$file"
+          test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "fb70cc126105f984a63c24f8db65fe0412dd856a:$file")"
+          set +e
+          (cd "$old/backend" && go test -tags=unit ./internal/service -run '^TestIssue605DefaultAndAdvancedFeedbackEffortIsolation$' -count=1 -v -timeout=5m) > "$RUNNER_TEMP/issue605-effort-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue605-effort-red.log"
+          test "$result" -ne 0
+          ! grep -Eq 'build failed|undefined:|no tests to run|panic:|setup failed' "$RUNNER_TEMP/issue605-effort-red.log"
+          grep -F -- '--- FAIL: TestIssue605DefaultAndAdvancedFeedbackEffortIsolation' "$RUNNER_TEMP/issue605-effort-red.log"
+          grep -F 'default feedback must isolate effort populations' "$RUNNER_TEMP/issue605-effort-red.log"
+      - name: RED - old transport EOF bound must lose buffered parser observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/issue605-eof-red"
+          git worktree add --detach "$old" "$SOURCE_HEAD"
+          trap 'git worktree remove --force "$old"' EXIT
+          file=backend/internal/pkg/requesttiming/content.go
+          git -C "$old" restore --source=b45cd37e3ccaa71c1fcfa2a3791ff9b9524bd9e8 -- "$file"
+          test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "b45cd37e3ccaa71c1fcfa2a3791ff9b9524bd9e8:$file")"
+          set +e
+          (cd "$old/backend" && go test ./internal/pkg/requesttiming -run '^TestIssue605ContentAfterTransportEOFKeepsParserObservation$' -count=1 -v) > "$RUNNER_TEMP/issue605-eof-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue605-eof-red.log"
+          test "$result" -ne 0
+          ! grep -Eq 'build failed|undefined:|no tests to run|panic:|setup failed' "$RUNNER_TEMP/issue605-eof-red.log"
+          grep -F -- '--- FAIL: TestIssue605ContentAfterTransportEOFKeepsParserObservation' "$RUNNER_TEMP/issue605-eof-red.log"
+          grep -F 'buffered SSE may be parsed after transport EOF' "$RUNNER_TEMP/issue605-eof-red.log"
+      - name: GREEN - clean candidate real collector, scheduler, handlers, repository packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          (cd backend && go test -race -tags=unit ./internal/pkg/requesttiming ./internal/pkg/adminaccess ./internal/service ./internal/handler/admin ./internal/repository ./internal/server/routes -run '^TestIssue60[35]' -count=1 -v -timeout=12m) 2>&1 | tee "$RUNNER_TEMP/issue603-behavior-green.log"
+          grep -F -- '--- PASS: TestIssue603RealUsageAndOpsHandlers' "$RUNNER_TEMP/issue603-behavior-green.log"
+          grep -F -- '--- PASS: TestIssue603DefaultSchedulerUsesScopedFeedback' "$RUNNER_TEMP/issue603-behavior-green.log"
+          grep -F -- '--- PASS: TestIssue603CollectorNetworkFixturesAndUnknownBoundaries' "$RUNNER_TEMP/issue603-behavior-green.log"
+          grep -F -- '--- PASS: TestIssue603RegisteredOpsNetworkRouteAndGlobalPermission' "$RUNNER_TEMP/issue603-behavior-green.log"
+          (cd backend && go test -race ./internal/pkg/requesttiming -count=1 -v -timeout=5m) 2>&1 | tee "$RUNNER_TEMP/issue603-http-timing-green.log"
+      - name: GREEN - isolated PostgreSQL and Redis real SQL and adapters
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd backend && go test -tags=integration ./internal/repository -run '^(TestIssue60[35]|TestListSchedulableAccountLoadsMatchesListSchedulable)' -count=1 -v -timeout=12m) 2>&1 | tee "$RUNNER_TEMP/issue603-sql-green.log"
+          grep -F -- '--- PASS: TestIssue603RealLatencyAggregationSQL' "$RUNNER_TEMP/issue603-sql-green.log"
+          grep -F -- '--- PASS: TestIssue603NetworkMinuteStorageAndBodySQL' "$RUNNER_TEMP/issue603-sql-green.log"
+          grep -F -- '--- PASS: TestIssue605UsageContentBatchAndLayeredSQL' "$RUNNER_TEMP/issue603-sql-green.log"
+      - name: GREEN - normal production packages and server
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd backend && go build ./internal/pkg/requesttiming ./internal/service ./internal/repository ./internal/handler/... ./internal/server/... && go build -trimpath -o "$RUNNER_TEMP/issue603-server" ./cmd/server) 2>&1 | tee "$RUNNER_TEMP/issue603-production-build.log"
+          sha256sum "$RUNNER_TEMP/issue603-server" | tee -a "$RUNNER_TEMP/issue603-production-build.log"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue603-backend-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/issue603-*.log
+            ${{ runner.temp }}/issue605-*.log
+          if-no-files-found: error
+          retention-days: 14
+  ui:
+    if: github.head_ref == 'feat/issue603-latency-observability'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASELINE: ec007920de042797299fc7cf2c034ad24c136462
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - name: RED - original real usage page and labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/issue603-ui-red"
+          git worktree add --detach "$old" "$SOURCE_HEAD"
+          trap 'git worktree remove --force "$old"' EXIT
+          for file in frontend/src/views/admin/UsageView.vue frontend/src/components/admin/usage/UsageTable.vue frontend/src/i18n/locales/en/dashboard.ts frontend/src/i18n/locales/zh/dashboard.ts; do
+            git -C "$old" restore --source="$BASELINE" -- "$file"
+            test "$(git -C "$old" hash-object "$file")" = "$(git rev-parse "$BASELINE:$file")"
+          done
+          ln -s "$GITHUB_WORKSPACE/frontend/node_modules" "$old/frontend/node_modules"
+          set +e
+          (cd "$old/frontend" && pnpm test:run src/views/admin/__tests__/UsageView.spec.ts src/components/admin/usage/__tests__/UsageTable.spec.ts -t 'Issue60[35]') > "$RUNNER_TEMP/issue603-ui-red.log" 2>&1
+          result=$?
+          set -e
+          cat "$RUNNER_TEMP/issue603-ui-red.log"
+          test "$result" -ne 0
+          ! grep -Eq 'Failed to resolve|Cannot find|No test files found|SyntaxError|TypeError|ReferenceError' "$RUNNER_TEMP/issue603-ui-red.log"
+          grep -F 'Issue603 embeds latency observations in the real admin usage page' "$RUNNER_TEMP/issue603-ui-red.log"
+          grep -F 'Issue603 labels real usage table server timing explicitly' "$RUNNER_TEMP/issue603-ui-red.log"
+      - name: GREEN - actual page and component regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          (cd frontend && pnpm test:run src/views/admin/__tests__/UsageView.spec.ts src/components/admin/usage/__tests__/UsageTable.spec.ts src/components/admin/usage/__tests__/UsageTimingDialog.spec.ts src/components/admin/usage/__tests__/LatencyObservabilityPanel.spec.ts src/views/admin/ops/components/__tests__/OpsNetworkChart.spec.ts) 2>&1 | tee "$RUNNER_TEMP/issue603-ui-green.log"
+      - name: GREEN - frontend production typecheck and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd frontend && pnpm build) 2>&1 | tee "$RUNNER_TEMP/issue603-ui-build.log"
+      - name: Install isolated browser for actual usage page screenshots
+        run: |
+          npm install --prefix "$RUNNER_TEMP/issue603-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/issue603-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Render exact baseline and head with offline synthetic data
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/issue603-browser/node_modules/playwright
+          SCREENSHOT_DIR: ${{ runner.temp }}/issue603-screenshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/issue603-before-browser"
+          git worktree add --detach "$old" "$BASELINE"
+          trap 'git worktree remove --force "$old"' EXIT
+          ln -s "$GITHUB_WORKSPACE/frontend/node_modules" "$old/frontend/node_modules"
+          VIEW_ROOT="$old" SCREENSHOT_MODE=before node .github/scripts/issue603-screenshots.mjs
+          test "$(git -C "$old" hash-object frontend/src/views/admin/UsageView.vue)" = "$(git rev-parse "$BASELINE:frontend/src/views/admin/UsageView.vue")"
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          SCREENSHOT_MODE=after node .github/scripts/issue603-screenshots.mjs
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: issue603-ui-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/issue603-*.log
+            ${{ runner.temp }}/issue603-screenshots
+          if-no-files-found: error
+          retention-days: 14

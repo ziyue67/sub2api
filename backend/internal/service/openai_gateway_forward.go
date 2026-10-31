@@ -91,6 +91,12 @@ func prismBrowserResponsesURL(baseURL string) string {
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, resultErr error) {
+	defer func() {
+		if result != nil && c != nil {
+			result.AuthConnectionID = c.GetString("openai_auth_connection_id")
+			s.attributeRegionalConnectionResult(ctx, c, account, result)
+		}
+	}()
 	admittedCtx, admissionErr := s.beginPriorityLatencyTurn(ctx, c, account, gjson.GetBytes(body, "model").String())
 	if admissionErr != nil {
 		return nil, admissionErr
@@ -100,6 +106,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if IsOpenAIResponsesCompactPath(c) {
 		endpoint += "/compact"
 	}
+	ctx = WithObservationRequestEffort(ctx, body)
 	ctx, errorScope := withPriorityAttemptScope(ctx, gjson.GetBytes(body, "model").String(), endpoint)
 	defer func() { errorScope.finish(result) }()
 	ctx = s.withOpenAIHTTPBudget(ctx, c)
@@ -162,7 +169,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
 		return nil, err
 	}
-	startTime := time.Now()
+	startTime := requesttiming.Now(ctx)
+	// Record the pre-forward wait for the usage log without changing the
+	// forward-scope Duration/FirstTokenMs used by scheduling and ops.
+	defer func() {
+		if result != nil {
+			applyOpenAIQueueTiming(result, openAIIngressStart(ctx), startTime, startTime, "http_ingress_responses", "pre_final_forward")
+		}
+	}()
 	// 固定渠道映射后的请求级 canonical body；账号 normalize/strip 不得改写跨 failover hint。
 	canonicalImageIntentBody := body
 
@@ -1527,7 +1541,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 				maxLineSize = s.cfg.Gateway.MaxLineSize
 			}
-			resp.Body = newResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize)
+			resp.Body = newResponsesClientToolStreamBody(resp.Body, mapping, maxLineSize, requesttiming.ResponseContext(ctx, resp))
 		}
 
 		serviceTier := extractOpenAIServiceTierFromBody(body)

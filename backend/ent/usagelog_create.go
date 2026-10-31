@@ -477,6 +477,20 @@ func (_c *UsageLogCreate) SetNillableFirstTokenMs(v *int) *UsageLogCreate {
 	return _c
 }
 
+// SetQueueWaitMs sets the "queue_wait_ms" field.
+func (_c *UsageLogCreate) SetQueueWaitMs(v int) *UsageLogCreate {
+	_c.mutation.SetQueueWaitMs(v)
+	return _c
+}
+
+// SetNillableQueueWaitMs sets the "queue_wait_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableQueueWaitMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetQueueWaitMs(*v)
+	}
+	return _c
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_c *UsageLogCreate) SetUserAgent(v string) *UsageLogCreate {
 	_c.mutation.SetUserAgent(v)
@@ -634,6 +648,12 @@ func (_c *UsageLogCreate) SetNillableCacheTTLOverridden(v *bool) *UsageLogCreate
 	if v != nil {
 		_c.SetCacheTTLOverridden(*v)
 	}
+	return _c
+}
+
+// SetQueueTiming sets the "queue_timing" field.
+func (_c *UsageLogCreate) SetQueueTiming(v map[string]interface{}) *UsageLogCreate {
+	_c.mutation.SetQueueTiming(v)
 	return _c
 }
 
@@ -1108,6 +1128,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldFirstTokenMs, field.TypeInt, value)
 		_node.FirstTokenMs = &value
 	}
+	if value, ok := _c.mutation.QueueWaitMs(); ok {
+		_spec.SetField(usagelog.FieldQueueWaitMs, field.TypeInt, value)
+		_node.QueueWaitMs = &value
+	}
 	if value, ok := _c.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
 		_node.UserAgent = &value
@@ -1155,6 +1179,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CacheTTLOverridden(); ok {
 		_spec.SetField(usagelog.FieldCacheTTLOverridden, field.TypeBool, value)
 		_node.CacheTTLOverridden = value
+	}
+	if value, ok := _c.mutation.QueueTiming(); ok {
+		_spec.SetField(usagelog.FieldQueueTiming, field.TypeJSON, value)
+		_node.QueueTiming = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)
@@ -1909,6 +1937,30 @@ func (u *UsageLogUpsert) ClearFirstTokenMs() *UsageLogUpsert {
 	return u
 }
 
+// SetQueueWaitMs sets the "queue_wait_ms" field.
+func (u *UsageLogUpsert) SetQueueWaitMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldQueueWaitMs, v)
+	return u
+}
+
+// UpdateQueueWaitMs sets the "queue_wait_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateQueueWaitMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldQueueWaitMs)
+	return u
+}
+
+// AddQueueWaitMs adds v to the "queue_wait_ms" field.
+func (u *UsageLogUpsert) AddQueueWaitMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldQueueWaitMs, v)
+	return u
+}
+
+// ClearQueueWaitMs clears the value of the "queue_wait_ms" field.
+func (u *UsageLogUpsert) ClearQueueWaitMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldQueueWaitMs)
+	return u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (u *UsageLogUpsert) SetUserAgent(v string) *UsageLogUpsert {
 	u.Set(usagelog.FieldUserAgent, v)
@@ -2122,6 +2174,24 @@ func (u *UsageLogUpsert) SetCacheTTLOverridden(v bool) *UsageLogUpsert {
 // UpdateCacheTTLOverridden sets the "cache_ttl_overridden" field to the value that was provided on create.
 func (u *UsageLogUpsert) UpdateCacheTTLOverridden() *UsageLogUpsert {
 	u.SetExcluded(usagelog.FieldCacheTTLOverridden)
+	return u
+}
+
+// SetQueueTiming sets the "queue_timing" field.
+func (u *UsageLogUpsert) SetQueueTiming(v map[string]interface{}) *UsageLogUpsert {
+	u.Set(usagelog.FieldQueueTiming, v)
+	return u
+}
+
+// UpdateQueueTiming sets the "queue_timing" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateQueueTiming() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldQueueTiming)
+	return u
+}
+
+// ClearQueueTiming clears the value of the "queue_timing" field.
+func (u *UsageLogUpsert) ClearQueueTiming() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldQueueTiming)
 	return u
 }
 
@@ -2884,6 +2954,34 @@ func (u *UsageLogUpsertOne) ClearFirstTokenMs() *UsageLogUpsertOne {
 	})
 }
 
+// SetQueueWaitMs sets the "queue_wait_ms" field.
+func (u *UsageLogUpsertOne) SetQueueWaitMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetQueueWaitMs(v)
+	})
+}
+
+// AddQueueWaitMs adds v to the "queue_wait_ms" field.
+func (u *UsageLogUpsertOne) AddQueueWaitMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddQueueWaitMs(v)
+	})
+}
+
+// UpdateQueueWaitMs sets the "queue_wait_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateQueueWaitMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateQueueWaitMs()
+	})
+}
+
+// ClearQueueWaitMs clears the value of the "queue_wait_ms" field.
+func (u *UsageLogUpsertOne) ClearQueueWaitMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearQueueWaitMs()
+	})
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (u *UsageLogUpsertOne) SetUserAgent(v string) *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
@@ -3133,6 +3231,27 @@ func (u *UsageLogUpsertOne) SetCacheTTLOverridden(v bool) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateCacheTTLOverridden() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheTTLOverridden()
+	})
+}
+
+// SetQueueTiming sets the "queue_timing" field.
+func (u *UsageLogUpsertOne) SetQueueTiming(v map[string]interface{}) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetQueueTiming(v)
+	})
+}
+
+// UpdateQueueTiming sets the "queue_timing" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateQueueTiming() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateQueueTiming()
+	})
+}
+
+// ClearQueueTiming clears the value of the "queue_timing" field.
+func (u *UsageLogUpsertOne) ClearQueueTiming() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearQueueTiming()
 	})
 }
 
@@ -4061,6 +4180,34 @@ func (u *UsageLogUpsertBulk) ClearFirstTokenMs() *UsageLogUpsertBulk {
 	})
 }
 
+// SetQueueWaitMs sets the "queue_wait_ms" field.
+func (u *UsageLogUpsertBulk) SetQueueWaitMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetQueueWaitMs(v)
+	})
+}
+
+// AddQueueWaitMs adds v to the "queue_wait_ms" field.
+func (u *UsageLogUpsertBulk) AddQueueWaitMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddQueueWaitMs(v)
+	})
+}
+
+// UpdateQueueWaitMs sets the "queue_wait_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateQueueWaitMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateQueueWaitMs()
+	})
+}
+
+// ClearQueueWaitMs clears the value of the "queue_wait_ms" field.
+func (u *UsageLogUpsertBulk) ClearQueueWaitMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearQueueWaitMs()
+	})
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (u *UsageLogUpsertBulk) SetUserAgent(v string) *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
@@ -4310,6 +4457,27 @@ func (u *UsageLogUpsertBulk) SetCacheTTLOverridden(v bool) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateCacheTTLOverridden() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheTTLOverridden()
+	})
+}
+
+// SetQueueTiming sets the "queue_timing" field.
+func (u *UsageLogUpsertBulk) SetQueueTiming(v map[string]interface{}) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetQueueTiming(v)
+	})
+}
+
+// UpdateQueueTiming sets the "queue_timing" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateQueueTiming() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateQueueTiming()
+	})
+}
+
+// ClearQueueTiming clears the value of the "queue_timing" field.
+func (u *UsageLogUpsertBulk) ClearQueueTiming() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearQueueTiming()
 	})
 }
 

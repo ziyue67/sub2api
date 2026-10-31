@@ -25,10 +25,10 @@ export default {
   latencyMeasurement: "Measurement",
   latencyPercentile: "Latency percentile",
   latency_penalty_minutes: 'Latency penalty (minutes)',
-  latencyPenaltyHint: "Defaults to 10 minutes; 0 minutes retains an ongoing penalty: demotion in soft mode, admission stop in stop mode. Only new above-target samples renew the penalty. Fast traffic and refreshes do not extend it. Recovery exploration defaults to 0%; when enabled (up to 10%), passing quality, a passing latest test and no error, loss or congestion risk are required. Unknown-quality exploration and new high-risk policies are deferred.",
+  latencyPenaltyHint: "Defaults to 10 minutes; 0 minutes retains an ongoing penalty: demotion in soft mode, restricted admission with bounded availability fallback in stop mode. Only new above-target samples renew the penalty. Fast traffic and refreshes do not extend it. Recovery exploration defaults to 0%; when enabled (up to 10%), passing quality, a passing latest test and no error, loss or congestion risk are required. Unknown-quality exploration and new high-risk policies are deferred.",
   latencyPenaltyMode: 'Latency penalty action',
   latencyPenaltyModes: { deprioritize: 'Prefer lower latency', stop: 'Stop scheduling' },
-  latencyPenaltyModeHint: 'Prefer lower latency keeps slow accounts as overflow. Stop scheduling rejects new requests for the matching account, model and group during an active measured penalty. Bound continuations are temporarily unavailable; existing output continues. The configured minutes and measured trigger are unchanged.',
+  latencyPenaltyModeHint: 'Prefer lower latency keeps slow accounts as overflow. Stop scheduling prefers healthy accounts in the same model and group. If all otherwise eligible accounts are stopped, open 2–5 accounts from the lowest measured latency band (use the actual count below 2; never exceed 5). Pending or unavailable history uses bounded degraded admission; unknown ranks after valid measurements, without zero samples or changed penalty deadlines. Bound continuations proceed only if their original owner meets the same admission rule; otherwise they are temporarily unavailable. Existing output completes. Measured triggers are unchanged.',
   latencyPenaltyUntil: 'Latency penalty ends',
 
   oauthQuotaPriority: 'Consume OAuth quota first; move trailing API keys to standby',
@@ -65,5 +65,23 @@ export default {
   snapshotHint: 'Shows this instance’s latest pool, up to 100 accounts. Refresh asynchronously reads history and re-evaluates scores; candidates, configuration and load remain those observed at selection time. Re-evaluated scores do not describe the original routing decision. Rows are ordered by risk, projected utilization band and preference. Similar-capacity peers use weighted selection; selection weight is not a global probability; row order is not a fixed allocation. Live candidates remain visible while history is loading.',
   model: 'Model', group: 'Group', account: 'Account', score: 'Score', tier: 'Status', latency: "Selected first token", load: 'Concurrency', rate: 'Cost rate', quality: 'Quality passed', samples: 'samples', unknown: 'Unknown',
   tiers: { eligible: 'Targets met', insufficient: 'Insufficient data', degraded: 'Targets missed' },
-  reasons: { latency_recovery: 'Latency penalty expired; awaiting recovery samples', quality_below_target: 'Quality below target', quality_unknown: 'No fresh quality result', latency_above_target: 'Latency above target', latency_insufficient: 'Insufficient latency samples', busy: 'High concurrency or queueing', load_unknown: 'Concurrency unknown', cost_unknown: 'Cost unknown', recent_errors: 'Elevated recent errors', historical_loss: 'Recent charges below theoretical cost', profit_insufficient: 'Insufficient profit samples' }
+  reasons: { latency_recovery: 'Latency penalty expired; awaiting recovery samples', quality_below_target: 'Quality below target', quality_unknown: 'No fresh quality result', latency_above_target: 'Latency above target', latency_insufficient: 'Insufficient latency samples', busy: 'High concurrency or queueing', load_unknown: 'Concurrency unknown', cost_unknown: 'Cost unknown', recent_errors: 'Elevated recent errors', historical_loss: 'Recent charges below theoretical cost', profit_insufficient: 'Insufficient profit samples' },
+  latencyPanel: {
+    title: 'Latency analysis', refresh: 'Refresh', hint: 'Uses the last observed candidate pool. P50/P90/P99 are first-token milliseconds; errors are deduplicated upstream error events; slow requests exceed the target first-token threshold. Summary uses the priority history window; heat cells use the selected window above, in 5-minute buckets.',
+    account: 'Account', samples: 'Samples', p50: 'P50 first token', p90: 'P90 first token', p99: 'P99 first token', errors: 'Errors', slow: 'Slow', errorRate: 'Error rate',
+    empty: 'No latency samples', error: 'Could not load latency analysis. Please retry.', window: 'Window'
+  },
+  recompute: {
+    action: 'Recompute diff', running: 'Recomputing…', title: 'Recompute diff (no account write-back)',
+    hint: 'Forces a fresh history read and compares the latest candidate pool by rank, score and selection weight. Pool and concurrency remain those observed at the last selection; clear the affected accounts’ sticky sessions to apply the new ranking.',
+    clearChanged: 'Clear changed accounts’ sticky sessions', timedOut: 'History refresh timed out; showing the current available result.', noChange: 'Recomputed with no rank or score changes.', error: 'Recompute failed. Please retry.', scope: 'Recompute scope: model {model}, group {group}, changed accounts {accounts}.',
+    account: 'Account', rank: 'Rank', score: 'Score', weight: 'Selection weight', tier: 'Status', p90: 'P90 first token', errors: 'Errors'
+  },
+  sticky: {
+    title: 'Session stickiness', group: 'Group', refresh: 'Count', clearAll: 'Clear all', clear: 'Clear', count: 'Bindings',
+    total: '{count} session bindings', empty: 'No session bindings in this group', loadHint: 'Choose a group and click Count to load session bindings.',
+    hint: 'Deletes session-hash bindings only; response continuation and owner bindings are preserved. Sessions will re-select accounts and may incur one upstream cache cold start.',
+    confirmAll: 'Clear all {count} session bindings in group {group}?', confirmAccount: 'Clear {count} session bindings for account {account} in group {group}?', confirmSome: 'Clear session bindings for the {count} changed accounts in group {group}?',
+    cleared: 'Cleared {count} session bindings.', error: 'Could not read session bindings.', clearError: 'Could not clear session bindings.', invalidGroup: 'Group ID must be a positive integer.', scopeAccount: 'Sticky scope: group {group}; accounts {accounts}.'
+  }
 }

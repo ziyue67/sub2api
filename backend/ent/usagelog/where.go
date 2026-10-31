@@ -230,6 +230,11 @@ func FirstTokenMs(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldFirstTokenMs, v))
 }
 
+// QueueWaitMs applies equality check predicate on the "queue_wait_ms" field. It's identical to QueueWaitMsEQ.
+func QueueWaitMs(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldQueueWaitMs, v))
+}
+
 // UserAgent applies equality check predicate on the "user_agent" field. It's identical to UserAgentEQ.
 func UserAgent(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldUserAgent, v))
@@ -1830,6 +1835,56 @@ func FirstTokenMsNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldFirstTokenMs))
 }
 
+// QueueWaitMsEQ applies the EQ predicate on the "queue_wait_ms" field.
+func QueueWaitMsEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldQueueWaitMs, v))
+}
+
+// QueueWaitMsNEQ applies the NEQ predicate on the "queue_wait_ms" field.
+func QueueWaitMsNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldQueueWaitMs, v))
+}
+
+// QueueWaitMsIn applies the In predicate on the "queue_wait_ms" field.
+func QueueWaitMsIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldQueueWaitMs, vs...))
+}
+
+// QueueWaitMsNotIn applies the NotIn predicate on the "queue_wait_ms" field.
+func QueueWaitMsNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldQueueWaitMs, vs...))
+}
+
+// QueueWaitMsGT applies the GT predicate on the "queue_wait_ms" field.
+func QueueWaitMsGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldQueueWaitMs, v))
+}
+
+// QueueWaitMsGTE applies the GTE predicate on the "queue_wait_ms" field.
+func QueueWaitMsGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldQueueWaitMs, v))
+}
+
+// QueueWaitMsLT applies the LT predicate on the "queue_wait_ms" field.
+func QueueWaitMsLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldQueueWaitMs, v))
+}
+
+// QueueWaitMsLTE applies the LTE predicate on the "queue_wait_ms" field.
+func QueueWaitMsLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldQueueWaitMs, v))
+}
+
+// QueueWaitMsIsNil applies the IsNil predicate on the "queue_wait_ms" field.
+func QueueWaitMsIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldQueueWaitMs))
+}
+
+// QueueWaitMsNotNil applies the NotNil predicate on the "queue_wait_ms" field.
+func QueueWaitMsNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldQueueWaitMs))
+}
+
 // UserAgentEQ applies the EQ predicate on the "user_agent" field.
 func UserAgentEQ(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldUserAgent, v))
@@ -2503,6 +2558,16 @@ func CacheTTLOverriddenEQ(v bool) predicate.UsageLog {
 // CacheTTLOverriddenNEQ applies the NEQ predicate on the "cache_ttl_overridden" field.
 func CacheTTLOverriddenNEQ(v bool) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNEQ(FieldCacheTTLOverridden, v))
+}
+
+// QueueTimingIsNil applies the IsNil predicate on the "queue_timing" field.
+func QueueTimingIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldQueueTiming))
+}
+
+// QueueTimingNotNil applies the NotNil predicate on the "queue_timing" field.
+func QueueTimingNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldQueueTiming))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

@@ -151,13 +151,18 @@ func resolveOpenAIClientSessionIdentity(c *gin.Context, body []byte) openAIClien
 		return missingOpenAIClientSessionIdentity()
 	}
 
-	view := openAIRequestPayloadView(body)
-	bodyThread, invalidBodyThread := openAIClientMetadataIdentity(view, "client_metadata.thread_id")
-	bodySession, invalidBodySession := openAIClientMetadataIdentity(view, "client_metadata.session_id")
+	root := parseRawJSONView(body)
+	bodyThreadIdentity := openAIClientMetadataIdentityAcrossEnvelope(root, "thread_id")
+	bodySessionIdentity := openAIClientMetadataIdentityAcrossEnvelope(root, "session_id")
+	bodyThread, invalidBodyThread := bodyThreadIdentity.value, bodyThreadIdentity.status == OpenAIClientSessionIdentityInvalid
+	bodySession, invalidBodySession := bodySessionIdentity.value, bodySessionIdentity.status == OpenAIClientSessionIdentityInvalid
 
 	headerThread := openAIIdentityHeader(c, openAIThreadIdentityHeaders)
 	if headerThread.status == OpenAIClientSessionIdentityInvalid || invalidBodyThread {
 		return rejectedOpenAIClientSessionIdentity(OpenAIClientSessionIdentityInvalid, openAIClientSessionKindThread, identityFailureSource(headerThread, invalidBodyThread))
+	}
+	if bodyThreadIdentity.status == OpenAIClientSessionIdentityConflict {
+		return rejectedOpenAIClientSessionIdentity(OpenAIClientSessionIdentityConflict, openAIClientSessionKindThread, OpenAIClientSessionIdentitySourceBody)
 	}
 	if headerThread.status == OpenAIClientSessionIdentityConflict || openAIIdentityValuesConflict(headerThread.value, bodyThread) {
 		return rejectedOpenAIClientSessionIdentity(OpenAIClientSessionIdentityConflict, openAIClientSessionKindThread, identityConflictSource(headerThread, bodyThread))
@@ -176,6 +181,9 @@ func resolveOpenAIClientSessionIdentity(c *gin.Context, body []byte) openAIClien
 	headerSession := openAIIdentityHeader(c, openAISessionIdentityHeaders)
 	if headerSession.status == OpenAIClientSessionIdentityInvalid || invalidBodySession {
 		return rejectedOpenAIClientSessionIdentity(OpenAIClientSessionIdentityInvalid, openAIClientSessionKindSession, identityFailureSource(headerSession, invalidBodySession))
+	}
+	if bodySessionIdentity.status == OpenAIClientSessionIdentityConflict {
+		return rejectedOpenAIClientSessionIdentity(OpenAIClientSessionIdentityConflict, openAIClientSessionKindSession, OpenAIClientSessionIdentitySourceBody)
 	}
 	if headerSession.status == OpenAIClientSessionIdentityConflict || openAIIdentityValuesConflict(headerSession.value, bodySession) {
 		return rejectedOpenAIClientSessionIdentity(OpenAIClientSessionIdentityConflict, openAIClientSessionKindSession, identityConflictSource(headerSession, bodySession))
@@ -259,6 +267,39 @@ func openAIIdentityHeader(c *gin.Context, headers []string) openAIIdentityValue 
 		return openAIIdentityValue{status: OpenAIClientSessionIdentityMissing}
 	}
 	return openAIIdentityValue{value: resolved, status: OpenAIClientSessionIdentityResolved}
+}
+
+// Identity validation must inspect both accepted locations. The generic payload
+// view intentionally prefers an envelope for routing, but that precedence must
+// not hide a conflicting or invalid identity in the other location. Merge each
+// kind separately so the existing thread-before-session policy stays intact.
+func openAIClientMetadataIdentityAcrossEnvelope(root gjson.Result, field string) openAIIdentityValue {
+	views := []gjson.Result{root}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(root.Get("type").String())), "response.") {
+		if response := root.Get("response"); response.IsObject() {
+			views = append(views, response)
+		}
+	}
+	resolved := openAIIdentityValue{status: OpenAIClientSessionIdentityMissing}
+	for _, view := range views {
+		if metadata := view.Get("client_metadata"); metadata.Exists() && !metadata.IsObject() {
+			return openAIIdentityValue{status: OpenAIClientSessionIdentityInvalid}
+		}
+		value, invalid := openAIClientMetadataIdentity(view, "client_metadata."+field)
+		if invalid {
+			return openAIIdentityValue{status: OpenAIClientSessionIdentityInvalid}
+		}
+		if value == "" {
+			continue
+		}
+		if resolved.value != "" && resolved.value != value {
+			resolved.status = OpenAIClientSessionIdentityConflict
+		} else {
+			resolved.value = value
+			resolved.status = OpenAIClientSessionIdentityResolved
+		}
+	}
+	return resolved
 }
 
 func openAIClientMetadataIdentity(view gjson.Result, path string) (string, bool) {

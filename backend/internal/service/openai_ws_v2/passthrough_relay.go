@@ -72,6 +72,7 @@ type RelayExit struct {
 }
 
 type RelayOptions struct {
+	BeforeUpstreamWrite             func(msgType coderws.MessageType, payload []byte)
 	WriteTimeout                    time.Duration
 	IdleTimeout                     time.Duration
 	UpstreamDrainTimeout            time.Duration
@@ -229,6 +230,9 @@ func Relay(
 			// still be returning after the client has received its terminal.
 			turnWroteDownstream = &atomic.Bool{}
 			state.turnWroteDownstream.Store(turnWroteDownstream)
+		}
+		if options.BeforeUpstreamWrite != nil {
+			options.BeforeUpstreamWrite(msgType, payload)
 		}
 		err := writeUpstream(msgType, payload)
 		if err != nil && isResponseCreate {

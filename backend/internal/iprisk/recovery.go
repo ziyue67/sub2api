@@ -230,7 +230,7 @@ func (m *Manager) AuditPage(ctx context.Context, q AuditQuery) (AuditPage, error
 	case "ip_history":
 		rows := []AuditEntry{}
 		err := m.riskRedis(ctx, func(budget context.Context) error {
-			values, e := m.redis.ZRangeArgs(budget, redis.ZRangeArgs{Key: redisPrefix + "events", Start: 0, Stop: maxEvents - 1, Rev: true}).Result()
+			values, e := m.redis.ZRevRange(budget, redisPrefix+"events", 0, maxEvents-1).Result() //nolint:staticcheck // Redis 6.0 compatibility; replacement options require Redis 6.2.
 			if e != nil {
 				return e
 			}
@@ -304,13 +304,14 @@ func (m *Manager) auditIndexed(ctx context.Context, p *policy, q AuditQuery) (Au
 		// At most 500 candidates per request, even for sparse filters. The cursor
 		// advances over examined candidates; an empty filtered page may have more.
 		for scanned := 0; scanned < 500 && int64(page.NextCursor) < total && len(page.Items) < q.Limit; {
-			args := redis.ZRangeArgs{Key: index, Start: lower, Stop: "+inf", ByScore: true, Offset: int64(page.NextCursor), Count: 100}
-			if q.Sort != "expires_asc" {
-				args.Start = "+inf"
-				args.Stop = lower
-				args.Rev = true
+			args := &redis.ZRangeBy{Min: lower, Max: "+inf", Offset: int64(page.NextCursor), Count: 100}
+			var networks []string
+			var e error
+			if q.Sort == "expires_asc" {
+				networks, e = m.redis.ZRangeByScore(budget, index, args).Result() //nolint:staticcheck // Redis 6.0 compatibility; replacement options require Redis 6.2.
+			} else {
+				networks, e = m.redis.ZRevRangeByScore(budget, index, args).Result() //nolint:staticcheck // Redis 6.0 compatibility; replacement options require Redis 6.2.
 			}
-			networks, e := m.redis.ZRangeArgs(budget, args).Result()
 			if e != nil {
 				return e
 			}

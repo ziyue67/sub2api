@@ -623,6 +623,9 @@ const (
 	SettingKeyOpenAIImagesOAuthUnavailableCooldownSettings = "openai_images_oauth_unavailable_cooldown_settings"
 	// SettingKeyOpenAIAPIKeyHealthBreakerSettings stores the opt-in OpenAI pool API-key breaker config.
 	SettingKeyOpenAIAPIKeyHealthBreakerSettings = "openai_apikey_health_breaker_settings"
+	// SettingKeyOpenAIResponseHeaderTimeoutSettings stores the admin-configurable
+	// OpenAI/Codex response-header timeout and enable toggle.
+	SettingKeyOpenAIResponseHeaderTimeoutSettings = "openai_response_header_timeout_settings"
 
 	// =========================
 	// Stream Timeout Handling
