@@ -129,9 +129,9 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
+	// 本 fork 的尾部列序：session_id, native_compaction_v2, tool_surcharges,
+	// created_at, cache_creation_billing（upstream_request_id 在其前）。
 	idx := len(prepared.args) - 6
-
-	idx := len(prepared.args) - 5
 	arg, ok := prepared.args[idx].(sql.NullString)
 	require.True(t, ok, "upstream_request_id arg should be sql.NullString, got %T", prepared.args[idx])
 	require.True(t, arg.Valid)

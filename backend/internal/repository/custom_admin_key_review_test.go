@@ -59,8 +59,6 @@ func TestScopedAdminReviewGroupPriorityAndStatus(t *testing.T) {
 	originalTime := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
 	_, err = db.Exec(`UPDATE account_groups SET priority=73,created_at=$2 WHERE group_id=$1`, b.ID, originalTime)
 	require.NoError(t, err)
-	principal := &adminaccess.Principal{Policy: adminaccess.Policy{Rules: []adminaccess.Rule{{Permissions: []string{"accounts.groups", "accounts.status"}, GroupIDs: []int64{a.ID, c.ID}, AccountTypes: []string{"apikey"}}}}}
-
 	principal := &adminaccess.Principal{CreatorID: 9, Policy: adminaccess.Policy{Rules: []adminaccess.Rule{{Permissions: []string{"accounts.groups", "accounts.status"}, GroupIDs: []int64{a.ID, c.ID}, AccountTypes: []string{"apikey"}}}}}
 	ctx = adminaccess.WithPrincipal(ctx, principal)
 	t.Run("非法状态不得落库", func(t *testing.T) {

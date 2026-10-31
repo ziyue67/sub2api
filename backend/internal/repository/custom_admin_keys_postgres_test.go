@@ -37,8 +37,8 @@ func scopedAdminKeyTestDB(t *testing.T) *sql.DB {
 	})
 	_, err = db.Exec(`CREATE TABLE users(id BIGINT PRIMARY KEY); INSERT INTO users(id) VALUES(9)`)
 	require.NoError(t, err)
-	migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "247_scoped_admin_api_keys.sql"))
-
+	// 247 与 310 是同名迁移的两套编号（内容一致、均为 IF NOT EXISTS），
+	// 这里跟随上游编号读取 310。
 	migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "310_scoped_admin_api_keys.sql"))
 	require.NoError(t, err)
 	_, err = db.Exec(string(migration))
