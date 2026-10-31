@@ -21,7 +21,8 @@ permissions:
 
 jobs:
   service-green:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
@@ -75,7 +76,8 @@ jobs:
           if-no-files-found: error
 
   queued-service-red:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
@@ -121,7 +123,8 @@ jobs:
           if-no-files-found: error
 
   queued-ui-red:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
@@ -178,7 +181,8 @@ jobs:
           if-no-files-found: error
 
   repository-green:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       CI: 'true'
@@ -230,7 +234,8 @@ jobs:
           if-no-files-found: error
 
   ui-green:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
@@ -284,7 +289,8 @@ jobs:
           if-no-files-found: error
 
   actual-ui-screenshot:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

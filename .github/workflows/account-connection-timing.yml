@@ -20,7 +20,8 @@ concurrency:
 jobs:
   backend:
     if: github.head_ref == 'feat/account-connection-timing'
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       GOMAXPROCS: '2'
@@ -85,7 +86,8 @@ jobs:
   frontend:
     needs: backend
     if: github.head_ref == 'feat/account-connection-timing'
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}

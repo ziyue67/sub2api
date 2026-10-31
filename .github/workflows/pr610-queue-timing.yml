@@ -10,7 +10,8 @@ concurrency:
 jobs:
   generated:
     if: github.head_ref == 'fix/queue-wait-ttft'
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GOMAXPROCS: '2'
@@ -41,7 +42,8 @@ jobs:
 
   behavior:
     if: github.head_ref == 'fix/queue-wait-ttft'
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
       GOMAXPROCS: '2'
@@ -125,7 +127,8 @@ jobs:
 
   ui:
     if: github.head_ref == 'fix/queue-wait-ttft'
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
