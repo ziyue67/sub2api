@@ -230,6 +230,65 @@ func TestDashboardLeaderboardKeepsActualCostForAdminsWhenDisabled(t *testing.T) 
 	require.Contains(t, rec.Body.String(), `"actual_cost":0.1`)
 }
 
+func TestDashboardLeaderboardHidesAccountCostAndSortOracleForOrdinaryUsers(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:      42,
+			Email:       "user@example.com",
+			AccountCost: 9.75,
+		}},
+	}
+	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleUser)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?sort_by=account_cost", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "tokens", repo.leaderboardQuery.SortBy)
+	require.Contains(t, rec.Body.String(), `"sort_by":"tokens"`)
+	require.NotContains(t, rec.Body.String(), `"account_cost"`)
+}
+
+func TestDashboardLeaderboardHidesAccountCostAndSortOracleForObservers(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:      42,
+			Email:       "observer@example.com",
+			AccountCost: 9.75,
+		}},
+	}
+	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleObserver)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?sort_by=account_cost", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "tokens", repo.leaderboardQuery.SortBy)
+	require.NotContains(t, rec.Body.String(), `"account_cost"`)
+}
+
+func TestDashboardLeaderboardKeepsAccountCostAndSortForAdmins(t *testing.T) {
+	repo := &userUsageRepoCapture{
+		leaderboardRows: []usagestats.TokenLeaderboardRow{{
+			UserID:      42,
+			Email:       "admin@example.com",
+			AccountCost: 9.75,
+		}},
+	}
+	router := newUserUsageRequestTypeTestRouterWithRole(repo, service.RoleAdmin)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage/dashboard/leaderboard?sort_by=account_cost", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "account_cost", repo.leaderboardQuery.SortBy)
+	require.Contains(t, rec.Body.String(), `"sort_by":"account_cost"`)
+	require.Contains(t, rec.Body.String(), `"account_cost":9.75`)
+}
+
 func TestDashboardLeaderboardKeepsActualCostForOrdinaryUsersWhenSettingMissing(t *testing.T) {
 	repo := &userUsageRepoCapture{
 		leaderboardRows: []usagestats.TokenLeaderboardRow{{

@@ -664,6 +664,9 @@ func (h *UsageHandler) DashboardLeaderboard(c *gin.Context) {
 	if !showActualCost && sortBy == "actual_cost" {
 		sortBy = "tokens"
 	}
+	if !isAdmin && sortBy == "account_cost" {
+		sortBy = "tokens"
+	}
 
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
 	if billingMode != "" && !service.BillingMode(billingMode).IsValidUsageFilter() {
@@ -755,6 +758,11 @@ func (h *UsageHandler) DashboardLeaderboard(c *gin.Context) {
 			value := row.ActualCost
 			actualCost = &value
 		}
+		var accountCost *float64
+		if isAdmin {
+			value := row.AccountCost
+			accountCost = &value
+		}
 		items = append(items, usagestats.TokenLeaderboardItem{
 			Rank:              i + 1,
 			UserID:            0, // never expose raw user id to regular users
@@ -767,7 +775,7 @@ func (h *UsageHandler) DashboardLeaderboard(c *gin.Context) {
 			ImageOutputTokens: row.ImageOutputTokens,
 			Cost:              row.Cost,
 			ActualCost:        actualCost,
-			AccountCost:       row.AccountCost,
+			AccountCost:       accountCost,
 			LastActiveAt:      lastActive,
 			IsMe:              isMe,
 		})
