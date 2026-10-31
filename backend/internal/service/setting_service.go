@@ -196,7 +196,7 @@ type SettingService struct {
 	openAIAPIKeyHealthBreakerCache    atomic.Value // *cachedOpenAIAPIKeyHealthBreakerSettings
 
 	// studioBridgeDefaultGroupReader 用于验证 studio bridge 兜底分组是否存在且活跃。
-	studioBridgeDefaultGroupReader   StudioBridgeGroupReader
+	studioBridgeDefaultGroupReader StudioBridgeGroupReader
 	// openAIResponseHeaderTimeoutCache lets the HTTP upstream client read the
 	// admin-configurable OpenAI response-header timeout without a DB hit per
 	// request. SetOpenAIResponseHeaderTimeoutSettings refreshes it immediately.
