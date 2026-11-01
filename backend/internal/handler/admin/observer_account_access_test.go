@@ -40,7 +40,10 @@ func TestObserverGuardRejectsWholeUnauthorizedBatch(t *testing.T) {
 		grants                          []int64
 		status                          int
 	}{
-		{"session_export", "POST", "/accounts/:id/export-session", "/accounts/1/export-session", `{}`, []int64{10}, 204},
+		// Credential exports are forbidden even for accounts inside the grant.
+		{"session_export", "POST", "/accounts/:id/export-session", "/accounts/1/export-session", `{}`, []int64{10}, 403},
+		{"session_download", "GET", "/accounts/:id/export-session/:task_id", "/accounts/1/export-session/task", "", []int64{10}, 403},
+		{"credential_batch", "POST", "/accounts/batch-update-credentials", "/accounts/batch-update-credentials", `{"account_ids":[1,3]}`, []int64{10}, 403},
 		{"session_export_hidden", "POST", "/accounts/:id/export-session", "/accounts/2/export-session", `{}`, []int64{10}, 403},
 		{"single", "GET", "/accounts/:id", "/accounts/1", "", []int64{10}, 204},
 		{"shared", "DELETE", "/accounts/:id", "/accounts/3", "", []int64{10}, 204},
@@ -50,7 +53,7 @@ func TestObserverGuardRejectsWholeUnauthorizedBatch(t *testing.T) {
 		{"mixed_delete", "POST", "/accounts/batch-delete", "/accounts/batch-delete", `{"account_ids":[1,2]}`, []int64{10}, 403},
 		{"mixed_read", "POST", "/accounts/usage/batch", "/accounts/usage/batch", `{"account_ids":[1,2]}`, []int64{10}, 403},
 		{"allowed_batch", "POST", "/accounts/batch-refresh", "/accounts/batch-refresh", `{"account_ids":[1,3]}`, []int64{10}, 204},
-		{"export", "GET", "/accounts/data", "/accounts/data?ids=1,3", "", []int64{10}, 204},
+		{"export", "GET", "/accounts/data", "/accounts/data?ids=1,3", "", []int64{10}, 403},
 		{"mixed_export", "GET", "/accounts/data", "/accounts/data?ids=1&ids=2", "", []int64{10}, 403},
 		{"escape_group", "PUT", "/accounts/:id", "/accounts/1", `{"group_ids":[20]}`, []int64{10}, 403},
 		{"remove_all", "PUT", "/accounts/:id", "/accounts/1", `{"group_ids":[]}`, []int64{10}, 403},

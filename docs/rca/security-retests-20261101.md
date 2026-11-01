@@ -85,7 +85,7 @@ batch-update-credentials。管理员权限不变；普通账号管理/测试及�
 - 服务端构建通过，git diff --check 无错误。
 - 没有发起真实付费模型请求；临时 PostgreSQL 容器和 SSH 隧道已清理。
 - 生产容器仍为 sub2api-pr149-adfef7f-production，running/healthy，未部署本分支。
-- 尚未推送分支、创建 PR 或触发 GitHub CI；不能称为远端 CI 全绿。
+- 已提交 PR #150。首轮 Linux CI 发现两条旧 Observer 测试仍期望授权分组内可导出凭据；已改为 403，并补充会话下载、批量凭据路径断言，保留普通操作的分组隔离与合法操作断言。安全工作流同时纳入 handler/admin。远端最终状态以 PR 最新提交的检查结果为准。
 
 本地日志（忽略文件，不作为生产日志）：`.security-target-verified.log`、
 `.security-race-final.log`、`.security-business-regression.log`、
