@@ -26,6 +26,7 @@ func TestForwardResponses_ChatFallbackPreservesProvidedStartTime(t *testing.T) {
 			body := []byte(fmt.Sprintf(`{"model":"gpt-5.4","input":"hello","stream":%t}`, stream))
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
+			c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 			responseBody := `{"id":"chatcmpl_timing","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
 			contentType := "application/json"
@@ -54,6 +55,7 @@ func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletion
 	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":false,"service_tier":"priority"}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -96,6 +98,7 @@ func TestForwardResponses_ForceChatCompletionsOmitsNoneReasoningEffort(t *testin
 	body := []byte(`{"model":"company-coding-model","input":"hello","reasoning":{"effort":"none"},"stream":false}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -128,6 +131,7 @@ func TestForwardResponses_PassthroughFlagWithUnsupportedResponsesUsesAccountMapp
 			body := []byte(`{"model":"gpt-5.4-channel","input":"hello","stream":false}`)
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
+			c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 			c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 			c.Request.Header.Set("Content-Type", "application/json")
 
@@ -169,6 +173,7 @@ func TestForwardResponses_ForceChatCompletionsRoutesStreamingToChatCompletions(t
 	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":true}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -218,6 +223,7 @@ func TestForwardResponses_ChatFallbackRejectsInvalidToolArgumentsAtOutputLimit(t
 	body := []byte(`{"model":"deepseek-v4-flash","input":"run the command","stream":true}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -255,6 +261,7 @@ func TestForwardResponses_DeepSeekReasoningOnlyStreamFailsWithoutVisibleText(t *
 	body := []byte(`{"model":"deepseek-reasoner","input":"hello","stream":true}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -295,6 +302,7 @@ func TestForwardResponses_AutoSupportedAccountStillUsesResponsesEndpoint(t *test
 	body := []byte(`{"model":"gpt-5.4","input":"hello","stream":false}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -375,6 +383,7 @@ func TestForwardResponses_ChatFallbackCachesStreamedReasoning(t *testing.T) {
 	body := []byte(`{"model":"deepseek-reasoner","input":"hello","stream":true}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -436,6 +445,7 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 	}`)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
+	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 
@@ -447,7 +457,7 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 		)),
 	}}
 	cache := &reasoningRecordingCache{
-		getResp: map[string]string{"item_enc1": "cached thinking"},
+		getResp: map[string]string{"v2:1:item_enc1": "cached thinking"},
 	}
 	svc := &OpenAIGatewayService{
 		cfg:          rawChatCompletionsTestConfig(),
@@ -469,5 +479,5 @@ func TestForwardResponses_ChatFallbackRestoresReasoningFromCache(t *testing.T) {
 	require.Equal(t, "tool", gjson.GetBytes(upstream.lastBody, "messages.3.role").String())
 
 	// 明文 summary 的 item 被回写进缓存（自愈）。
-	require.Equal(t, "plain thinking", cache.snapshotSets()["item_plain"])
+	require.Equal(t, "plain thinking", cache.snapshotSets()["v2:1:item_plain"])
 }

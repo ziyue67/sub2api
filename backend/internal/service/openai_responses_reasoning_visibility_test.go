@@ -62,6 +62,7 @@ func TestChatFallbackReasoningVisibilityAndUsage(t *testing.T) {
 					svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream, cache: cache}
 					recorder := httptest.NewRecorder()
 					c, _ := gin.CreateTestContext(recorder)
+					c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 					c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 					result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
 					require.NoError(t, err, "do not trigger account failover or replay after output")
@@ -111,7 +112,7 @@ func TestChatFallbackReasoningVisibilityAndUsage(t *testing.T) {
 					var history []json.RawMessage
 					for _, item := range response.Output {
 						if item.Type == "reasoning" {
-							require.Equal(t, reasoning, sets[item.ID], "final item ID must match cached and streamed ID")
+							require.Equal(t, reasoning, sets[reasoningCacheItemID(1, item.ID)], "final item ID must match cached and streamed ID")
 							if summary != "auto" {
 								require.Empty(t, item.Summary)
 							}
@@ -132,7 +133,7 @@ func TestChatFallbackReasoningVisibilityAndUsage(t *testing.T) {
 						history = append(history, json.RawMessage(`{"type":"function_call_output","call_id":"call_lookup","output":"done"}`))
 						input, err := json.Marshal(history)
 						require.NoError(t, err)
-						next, err := apicompat.ResponsesToChatCompletionsRequestWithOptions(&apicompat.ResponsesRequest{Input: input}, &apicompat.ResponsesToChatOptions{ReasoningContentByID: func(id string) string { return sets[id] }})
+						next, err := apicompat.ResponsesToChatCompletionsRequestWithOptions(&apicompat.ResponsesRequest{Input: input}, &apicompat.ResponsesToChatOptions{ReasoningContentByID: func(id string) string { return sets[reasoningCacheItemID(1, id)] }})
 						require.NoError(t, err)
 						var restored bool
 						for _, msg := range next.Messages {

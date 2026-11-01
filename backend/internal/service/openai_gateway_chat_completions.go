@@ -180,7 +180,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		return s.forwardChatCompletionsViaNativeAnthropic(ctx, c, account, body, defaultMappedModel)
 	case APIProtocolChatCompletions:
 		if convertResponsesShape {
-			chatBody, err := s.convertResponsesShapedChatBody(body)
+			chatBody, err := s.convertResponsesShapedChatBody(body, reasoningUserID(c))
 			if err != nil {
 				return nil, err
 			}
