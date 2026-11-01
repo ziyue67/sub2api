@@ -90,3 +90,46 @@ func TestTKSecurityAccountRateLimitSkipsUnusableIdentityAndHonorsDisable(t *test
 	}
 	require.Empty(t, mr.Keys())
 }
+
+func TestLimitByBodyFieldCountsSuccessfulRequestsAcrossIPs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	router := gin.New()
+	limiter := NewRateLimiter(rdb)
+	router.POST("/send", limiter.LimitByBodyField(
+		"auth-send-verify-code",
+		"email",
+		2,
+		time.Minute,
+		RateLimitOptions{FailureMode: RateLimitFailClose},
+	), func(c *gin.Context) {
+		_, err := io.ReadAll(c.Request.Body)
+		require.NoError(t, err)
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	request := func(email, remote string) int {
+		body := `{"email":"` + email + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	require.Equal(t, http.StatusOK, request(" Victim@Example.com ", "192.0.2.1:1"))
+	require.Equal(t, http.StatusOK, request("victim@example.com", "198.51.100.2:2"))
+	require.Equal(t, http.StatusTooManyRequests, request("VICTIM@example.com", "203.0.113.3:3"))
+	require.Equal(t, http.StatusOK, request("other@example.com", "203.0.113.3:3"))
+
+	keys := mr.Keys()
+	require.Len(t, keys, 2)
+	for _, key := range keys {
+		require.NotContains(t, key, "victim@example.com")
+		require.NotContains(t, key, "other@example.com")
+	}
+}
