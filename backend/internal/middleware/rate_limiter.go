@@ -256,6 +256,45 @@ func (r *RateLimiter) LimitByAccount(key, field string, limit int, window time.D
 	}
 }
 
+// LimitByBodyField applies an absolute request budget to a normalized JSON body
+// field. Unlike LimitByAccount, successful requests are not refunded. It is
+// intended for side-effecting endpoints such as verification email delivery.
+func (r *RateLimiter) LimitByBodyField(key, field string, limit int, window time.Duration, opts RateLimitOptions) gin.HandlerFunc {
+	failureMode := opts.FailureMode
+	if failureMode != RateLimitFailClose {
+		failureMode = RateLimitFailOpen
+	}
+
+	return func(c *gin.Context) {
+		if opts.Enabled != nil && !opts.Enabled(c) {
+			c.Next()
+			return
+		}
+		identity, ok := bodyFieldIdentity(c, field)
+		if !ok {
+			c.Next()
+			return
+		}
+		counterKey := key + ":body:" + identity
+		result, err := r.Allow(c.Request.Context(), counterKey, limit, window)
+		if err != nil {
+			log.Printf("[RateLimit] body field redis error: key=%s mode=%s err=%v", r.prefix+key, failureModeLabel(failureMode), err)
+			if failureMode == RateLimitFailClose {
+				abortRateLimit(c, window)
+				return
+			}
+			c.Next()
+			return
+		}
+		if !result.Allowed {
+			abortRateLimit(c, result.RetryAfter)
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func bodyFieldIdentity(c *gin.Context, field string) (string, bool) {
 	if c == nil || c.Request == nil || c.Request.Body == nil || strings.TrimSpace(field) == "" {
 		return "", false

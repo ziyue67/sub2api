@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -319,14 +320,18 @@ func (h *AuthHandler) SendVerifyCode(c *gin.Context) {
 	}
 
 	result, err := h.authService.SendVerifyCodeAsync(c.Request.Context(), req.Email, c.GetHeader("Accept-Language"))
-	if err != nil {
+	if err != nil && !errors.Is(err, service.ErrEmailExists) {
 		response.ErrorFrom(c, err)
 		return
 	}
 
+	countdown := 60
+	if result != nil {
+		countdown = result.Countdown
+	}
 	response.Success(c, SendVerifyCodeResponse{
-		Message:   "Verification code sent successfully",
-		Countdown: result.Countdown,
+		Message:   "If this email can be registered, a verification code will be sent shortly.",
+		Countdown: countdown,
 	})
 }
 
