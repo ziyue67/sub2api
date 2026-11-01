@@ -33,6 +33,10 @@ func TestObserverAdminAuthCapabilitiesAndRevocation(t *testing.T) {
 	router.POST("/api/v1/admin/system/update", handler)
 	router.POST("/api/v1/admin/system/rollback", handler)
 	router.PUT("/api/v1/admin/accounts/codex-harvest-controls", handler)
+	router.GET("/api/v1/admin/accounts/data", handler)
+	router.POST("/api/v1/admin/accounts/:id/export-session", handler)
+	router.GET("/api/v1/admin/accounts/:id/export-session/:task_id", handler)
+	router.POST("/api/v1/admin/accounts/batch-update-credentials", handler)
 	call := func(method, path string) int {
 		req := httptest.NewRequest(method, path, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -46,6 +50,10 @@ func TestObserverAdminAuthCapabilitiesAndRevocation(t *testing.T) {
 		{"GET", "/api/v1/admin/settings"}, {"GET", "/api/v1/admin/users"},
 		{"POST", "/api/v1/admin/system/update"}, {"POST", "/api/v1/admin/system/rollback"},
 		{"PUT", "/api/v1/admin/accounts/codex-harvest-controls"},
+		{"GET", "/api/v1/admin/accounts/data"},
+		{"POST", "/api/v1/admin/accounts/1/export-session"},
+		{"GET", "/api/v1/admin/accounts/1/export-session/task"},
+		{"POST", "/api/v1/admin/accounts/batch-update-credentials"},
 	} {
 		require.Equal(t, http.StatusForbidden, call(tc.method, tc.path), tc.path)
 	}
@@ -57,6 +65,10 @@ func TestObserverAdminAuthCapabilitiesAndRevocation(t *testing.T) {
 	require.Equal(t, 403, call("GET", "/api/v1/admin/accounts"))
 	user.Role = service.RoleAdmin
 	require.Equal(t, 204, call("POST", "/api/v1/admin/system/update"))
+	require.Equal(t, 204, call("GET", "/api/v1/admin/accounts/data"))
+	require.Equal(t, 204, call("POST", "/api/v1/admin/accounts/1/export-session"))
+	require.Equal(t, 204, call("GET", "/api/v1/admin/accounts/1/export-session/task"))
+	require.Equal(t, 204, call("POST", "/api/v1/admin/accounts/batch-update-credentials"))
 	user.Status = service.StatusDisabled
 	require.Equal(t, 401, call("GET", "/api/v1/admin/accounts"))
 }
@@ -73,7 +85,7 @@ func TestObserverRoutesDenyNewAndGlobalEndpoints(t *testing.T) {
 		}
 		require.False(t, ObserverAccountRouteAllowed(method, path), route)
 	}
-	require.True(t, ObserverAccountRouteAllowed("GET", "/api/v1/admin/accounts/data"))
+	require.False(t, ObserverAccountRouteAllowed("GET", "/api/v1/admin/accounts/data"))
 	require.True(t, ObserverAccountRouteAllowed("POST", "/api/v1/admin/accounts/:id/test"))
 	require.True(t, ObserverAccountRouteAllowed("POST", "/api/v1/admin/accounts/bulk-update"))
 }
