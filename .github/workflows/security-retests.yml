@@ -1,0 +1,48 @@
+name: Security retests tenant isolation and affiliate refunds
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/security-retests.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: lab
+          POSTGRES_PASSWORD: isolated-ci-only
+          POSTGRES_DB: lab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lab -d lab"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Tenant ownership and authorization with race detection
+        run: go test -race -tags=unit ./internal/service ./internal/handler ./internal/server/middleware -run 'TestReasoningCacheTenant|TestReasoningUserID|TestV1Monitor|TestObserver|TestRefundReverses|TestAffiliateReversal|TestRefundAffiliateReversal|TestPendingRefund|TestRefundDoesNotGuess|TestRefundedOrderCannot' -count=1 -timeout=10m
+      - name: PostgreSQL atomic refund and transfer locking
+        env:
+          REFUND_TEST_POSTGRES_DSN: postgres://lab:isolated-ci-only@localhost:5432/lab?sslmode=disable
+        run: go test -race -tags=unit ./internal/service ./internal/repository -run 'TestRefundReverses|TestPendingRefundReverses|TestAffiliateReversalIsProportional|TestPostgresRefundWaits|TestPostgresAffiliateRefundFrozenThaw|TestRefundDoesNotGuess|TestRefundedOrderCannot' -count=1 -timeout=10m -v
+      - name: Billing and protocol compatibility regressions
+        run: go test -tags=unit ./internal/service ./internal/repository -run 'Test.*(Refund|Payment|Affiliate|Fulfillment|Reasoning|DeepSeek|Billing|CacheBilling|CacheTTL|CacheTtl)|TestForwardResponses_ChatFallback' -count=1 -timeout=10m
+      - name: Server build
+        run: go build -o "$RUNNER_TEMP/sub2api-security" ./cmd/server
