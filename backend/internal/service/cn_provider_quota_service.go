@@ -188,6 +188,7 @@ func (s *CNProviderQuotaService) queryUsageForAccount(ctx context.Context, accou
 
 	proxyURL := s.resolveProxyURL(ctx, account)
 	callCtx, cancel := context.WithTimeout(ctx, cnQuotaUpstreamTimeout)
+	callCtx = cnProbeRequestContext(callCtx, s.cfg)
 	defer cancel()
 	req, err := http.NewRequestWithContext(callCtx, http.MethodGet, targetURL, nil)
 	if err != nil {

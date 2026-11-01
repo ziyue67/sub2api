@@ -149,6 +149,7 @@ func (s *CNProviderBalanceService) queryBalanceForAccount(ctx context.Context, a
 	targetURL = validatedURL
 	proxyURL := s.resolveProxyURL(ctx, account)
 	callCtx, cancel := context.WithTimeout(ctx, cnBalanceUpstreamTimeout)
+	callCtx = cnProbeRequestContext(callCtx, s.cfg)
 	defer cancel()
 	req, err := http.NewRequestWithContext(callCtx, http.MethodGet, targetURL, nil)
 	if err != nil {

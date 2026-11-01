@@ -9,6 +9,7 @@ package service
 // 探测发起前必须过同一套运营者策略。
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,31 +19,39 @@ import (
 )
 
 // cnValidateProbeURL 按全局出站 URL 安全策略校验探测端点，返回规范化 URL。
-// 白名单开启时强制 UpstreamHosts（阻断私网与未列名主机）；关闭时仅做格式
-// 校验（HTTP 允许与否跟随配置）；cfg 为 nil 时退化为纯格式校验。
+// 白名单开启时强制 UpstreamHosts；关闭或 cfg 为空时仍默认拒绝私网目标。
+// 只有显式启用白名单并允许私网时，探测端点才可落在私网地址。
 func cnValidateProbeURL(cfg *config.Config, raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", errors.New("probe url is required")
 	}
-	if cfg != nil && cfg.Security.URLAllowlist.Enabled {
-		normalized, err := urlvalidator.ValidateHTTPSURL(trimmed, urlvalidator.ValidationOptions{
-			AllowedHosts:     cfg.Security.URLAllowlist.UpstreamHosts,
-			RequireAllowlist: true,
-			AllowPrivate:     cfg.Security.URLAllowlist.AllowPrivateHosts,
-		})
-		if err != nil {
-			return "", fmt.Errorf("probe target rejected by URL security policy: %w", err)
-		}
-		return normalized, nil
-	}
+
+	opts := urlvalidator.ValidationOptions{}
 	var allowInsecureHTTP bool
 	if cfg != nil {
-		allowInsecureHTTP = cfg.Security.URLAllowlist.AllowInsecureHTTP
+		policy := cfg.Security.URLAllowlist
+		allowInsecureHTTP = policy.AllowInsecureHTTP
+		if policy.Enabled {
+			opts.AllowedHosts = policy.UpstreamHosts
+			opts.RequireAllowlist = true
+			opts.AllowPrivate = policy.AllowPrivateHosts
+		}
 	}
-	normalized, err := urlvalidator.ValidateURLFormat(trimmed, allowInsecureHTTP)
+	normalized, err := urlvalidator.ValidateHTTPURL(trimmed, allowInsecureHTTP, opts)
 	if err != nil {
 		return "", fmt.Errorf("probe target rejected by URL security policy: %w", err)
 	}
 	return normalized, nil
+}
+
+func cnProbeRequestContext(ctx context.Context, cfg *config.Config) context.Context {
+	ctx = WithHTTPUpstreamRedirectsDisabled(ctx)
+	allowPrivate := cfg != nil &&
+		cfg.Security.URLAllowlist.Enabled &&
+		cfg.Security.URLAllowlist.AllowPrivateHosts
+	if !allowPrivate {
+		ctx = WithHTTPUpstreamPublicHostsOnly(ctx)
+	}
+	return ctx
 }

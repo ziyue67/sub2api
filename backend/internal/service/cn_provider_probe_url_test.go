@@ -44,12 +44,39 @@ func TestCNValidateProbeURL_AllowlistPolicy(t *testing.T) {
 	_, err = cnValidateProbeURL(cfg, "http://169.254.169.254/latest/meta-data")
 	require.Error(t, err)
 
-	// 白名单关闭：仅格式校验，任意 https 主机放行。
-	formatOnly, err := cnValidateProbeURL(&config.Config{
+	// 白名单关闭：兼容任意公共 https 主机，但仍拒绝私网目标。
+	disabledPolicy := &config.Config{
 		Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}},
-	}, "https://relay.attacker.example/v1/usages")
+	}
+	publicURL, err := cnValidateProbeURL(disabledPolicy, "https://relay.example/v1/usages")
 	require.NoError(t, err)
-	require.Equal(t, "https://relay.attacker.example/v1/usages", formatOnly)
+	require.Equal(t, "https://relay.example/v1/usages", publicURL)
+	_, err = cnValidateProbeURL(disabledPolicy, "https://127.0.0.1/internal")
+	require.Error(t, err)
+	_, err = cnValidateProbeURL(nil, "https://169.254.169.254/latest/meta-data")
+	require.Error(t, err)
+
+	// 私网探测必须由管理员同时显式启用 allowlist 与 AllowPrivateHosts。
+	privatePolicy := &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
+		Enabled: true, AllowPrivateHosts: true, UpstreamHosts: []string{"127.0.0.1"},
+	}}}
+	privateURL, err := cnValidateProbeURL(privatePolicy, "https://127.0.0.1/internal")
+	require.NoError(t, err)
+	require.Equal(t, "https://127.0.0.1/internal", privateURL)
+}
+
+func TestCNProbeRequestContext(t *testing.T) {
+	safeDefault := cnProbeRequestContext(context.Background(), nil)
+	require.True(t, HTTPUpstreamRedirectsDisabled(safeDefault))
+	require.True(t, HTTPUpstreamPublicHostsOnly(safeDefault))
+
+	explicitPrivate := cnProbeRequestContext(context.Background(), &config.Config{
+		Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{
+			Enabled: true, AllowPrivateHosts: true,
+		}},
+	})
+	require.True(t, HTTPUpstreamRedirectsDisabled(explicitPrivate))
+	require.False(t, HTTPUpstreamPublicHostsOnly(explicitPrivate))
 }
 
 // recordingHTTPUpstream 断言探测被策略拒绝时没有任何上游请求发出。
@@ -160,6 +187,8 @@ func TestCNProviderQuotaService_KimiOfficialHosts(t *testing.T) {
 				require.Equal(t, http.MethodGet, upstream.request.Method)
 				require.Equal(t, "https://"+host+"/coding/v1/usages", upstream.request.URL.String())
 				require.Equal(t, "Bearer test-only-placeholder", upstream.request.Header.Get("Authorization"))
+				require.True(t, HTTPUpstreamPublicHostsOnly(upstream.request.Context()))
+				require.True(t, HTTPUpstreamRedirectsDisabled(upstream.request.Context()))
 			})
 		}
 	}

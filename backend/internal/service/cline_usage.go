@@ -72,6 +72,7 @@ func (c *clineAccountClient) get(ctx context.Context, path string) (gjson.Result
 		return gjson.Result{}, infraerrors.New(http.StatusForbidden, c.errPrefix+"_URL_REJECTED", err.Error())
 	}
 	callCtx, cancel := context.WithTimeout(ctx, cnQuotaUpstreamTimeout)
+	callCtx = cnProbeRequestContext(callCtx, c.cfg)
 	defer cancel()
 	req, err := http.NewRequestWithContext(callCtx, http.MethodGet, validatedURL, nil)
 	if err != nil {

@@ -175,6 +175,7 @@ func (c *commandCodeUsageClient) get(ctx context.Context, path string, query url
 		return infraerrors.New(http.StatusForbidden, "CN_QUOTA_URL_REJECTED", err.Error())
 	}
 	callCtx, cancel := context.WithTimeout(ctx, cnQuotaUpstreamTimeout)
+	callCtx = cnProbeRequestContext(callCtx, c.cfg)
 	defer cancel()
 	req, err := http.NewRequestWithContext(callCtx, http.MethodGet, validatedURL, nil)
 	if err != nil {
