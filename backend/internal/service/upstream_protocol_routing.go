@@ -144,14 +144,14 @@ func upstreamRoutingModel(account *Account, body []byte, defaultMappedModel stri
 
 // convertResponsesShapedChatBody 把发到 /v1/chat/completions 的 Responses 形状
 // 请求体（Cursor 兼容）转换为 Chat Completions 请求体。
-func (s *OpenAIGatewayService) convertResponsesShapedChatBody(body []byte, userID int64) ([]byte, error) {
+func (s *OpenAIGatewayService) convertResponsesShapedChatBody(body []byte) ([]byte, error) {
 	var responsesReq apicompat.ResponsesRequest
 	if err := json.Unmarshal(body, &responsesReq); err != nil {
 		return nil, fmt.Errorf("parse responses-shaped chat completions request: %w", err)
 	}
 	chatReq, err := apicompat.ResponsesToChatCompletionsRequestWithOptions(
 		&responsesReq,
-		&apicompat.ResponsesToChatOptions{ReasoningContentByID: func(id string) string { return s.reasoningContentByID(userID, id) }},
+		&apicompat.ResponsesToChatOptions{ReasoningContentByID: s.reasoningContentByID},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("convert responses-shaped chat completions request: %w", err)

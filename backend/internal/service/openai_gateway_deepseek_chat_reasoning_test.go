@@ -234,7 +234,6 @@ func newDeepSeekChatFallbackContext(t *testing.T, body []byte) *gin.Context {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
-	c.Set("api_key", &APIKey{ID: 11, UserID: 1})
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
 	return c
@@ -274,7 +273,7 @@ func TestForwardResponses_DeepSeekChatFallbackKeepsCachedReasoningContent(t *tes
 	svc := &OpenAIGatewayService{
 		cfg:          deepSeekChatFallbackTestConfig(),
 		httpUpstream: upstream,
-		cache:        &reasoningHitCache{values: map[string]string{"v2:1:item_enc1": "cached thinking"}},
+		cache:        &reasoningHitCache{values: map[string]string{"item_enc1": "cached thinking"}},
 	}
 
 	result, err := svc.Forward(context.Background(), c, openaiPlatformDeepSeekAccount(), body)
