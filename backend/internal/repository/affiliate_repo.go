@@ -44,7 +44,7 @@ LEFT JOIN (
 LEFT JOIN (
     SELECT user_id, COALESCE(SUM(amount), 0)::double precision AS matured_frozen_quota
     FROM user_affiliate_ledger
-    WHERE action = 'accrue' AND frozen_until IS NOT NULL AND frozen_until <= NOW()
+    WHERE action IN ('accrue', 'refund_reversal') AND frozen_until IS NOT NULL AND frozen_until <= NOW()
     GROUP BY user_id
 ) matured ON matured.user_id = ua.user_id
 WHERE ua.user_id = $1
@@ -192,6 +192,10 @@ func (r *affiliateRepository) ThawFrozenQuota(ctx context.Context, userID int64)
 
 // thawFrozenQuotaTx moves matured frozen quota to available quota within an existing tx.
 func thawFrozenQuotaTx(txCtx context.Context, txClient *dbent.Client, userID int64) (float64, error) {
+	// Serialize thaw/transfer/withdraw with refund reversal before locking ledger rows.
+	if _, err := txClient.ExecContext(txCtx, `UPDATE user_affiliates SET updated_at=updated_at WHERE user_id=$1`, userID); err != nil {
+		return 0, err
+	}
 	rows, err := txClient.QueryContext(txCtx, `
 WITH matured AS (
     UPDATE user_affiliate_ledger

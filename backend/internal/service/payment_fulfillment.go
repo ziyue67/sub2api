@@ -742,6 +742,19 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 	defer func() { _ = tx.Rollback() }()
 
 	txCtx := dbent.NewTxContext(ctx, tx)
+	// Serialize delayed rebate accrual with refund state transitions. Keep the
+	// fulfillment lease timestamp untouched; refunded orders cannot accrue again.
+	lock, err := tx.Client().ExecContext(txCtx, `UPDATE payment_orders SET status=status WHERE id=$1 AND status IN ($2,$3)`, o.ID, OrderStatusRecharging, OrderStatusCompleted)
+	if err != nil {
+		return fmt.Errorf("lock affiliate order: %w", err)
+	}
+	eligible, err := lock.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if eligible == 0 {
+		return nil
+	}
 	claimed, err := s.tryClaimAffiliateRebateAudit(txCtx, tx.Client(), o.ID, baseAmount)
 	if err != nil {
 		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
