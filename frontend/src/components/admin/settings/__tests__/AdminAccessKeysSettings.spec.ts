@@ -7,7 +7,7 @@ const mountSettings = () => mount(AdminAccessKeysSettings)
 vi.mock('vue-i18n', () => ({ useI18n: () => ({
   t: (key: string, values: Record<string, unknown> = {}) => {
     const message = zh[key.replace('adminAccessKeys.', '') as keyof typeof zh]
-    if (!message) throw new Error(`缺少翻译：${key}`)
+    if (typeof message !== 'string') throw new Error(`缺少翻译：${key}`)
     return message.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name]))
   }
 }) }))

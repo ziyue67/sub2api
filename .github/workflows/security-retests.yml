@@ -44,5 +44,7 @@ jobs:
         run: go test -race -tags=unit ./internal/service ./internal/repository -run 'TestRefundReverses|TestPendingRefundReverses|TestAffiliateReversalIsProportional|TestPostgresRefundWaits|TestPostgresAffiliateRefundFrozenThaw|TestRefundDoesNotGuess|TestRefundedOrderCannot' -count=1 -timeout=10m -v
       - name: Billing and protocol compatibility regressions
         run: go test -tags=unit ./internal/service ./internal/repository -run 'Test.*(Refund|Payment|Affiliate|Fulfillment|Reasoning|DeepSeek|Billing|CacheBilling|CacheTTL|CacheTtl)|TestForwardResponses_ChatFallback' -count=1 -timeout=10m
+      - name: Legacy admin key IP policy regression with race detection
+        run: go test -race -tags=unit ./internal/service ./internal/handler/admin ./internal/server/middleware -run 'TestLegacyAdminKeyIP' -count=1 -timeout=5m
       - name: Server build
         run: go build -o "$RUNNER_TEMP/sub2api-security" ./cmd/server

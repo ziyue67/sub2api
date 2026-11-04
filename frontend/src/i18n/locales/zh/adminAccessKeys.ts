@@ -1,4 +1,19 @@
 export default {
+  legacyIP: {
+  "title": "旧版管理密钥来源 IP",
+  "scope": "仅限制旧版全局管理密钥，不影响管理员网页登录、受限密钥和模型 API。",
+  "proxyHint": "填写调用服务器实际出口 IP，每行一条；支持 IPv4、IPv6 和 CIDR，最多 100 条，不允许全网段。通过代理访问时，先确认真实 IP 识别配置。",
+  "currentIP": "当前请求来源 IP：{ip}（仅供参考，不会自动加入）",
+  "savedMode": "已保存模式：{mode}，共 {count} 条",
+  "on": "限制来源",
+  "off": "不限制",
+  "enable": "限制来源 IP",
+  "entries": "允许的 IP / CIDR",
+  "unsaved": "有未保存的修改，当前仍按已保存策略生效。",
+  "saved": "已保存，新请求立即生效。",
+  "failed": "读取或保存失败，请重试。策略异常时可通过管理员 JWT 接口修复。",
+  "invalid": "最多 100 条，开启时至少填写一条有效 IP 或 CIDR。"
+},
   "title": "管理员访问密钥",
   "authorizationHint": "按操作和资源范围授权；未勾选操作不生效。",
   "sharedAccountWarning": "共享账户操作会影响所有关联分组；全站权限不受分组限制。",

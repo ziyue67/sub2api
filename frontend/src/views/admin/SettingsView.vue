@@ -127,6 +127,8 @@
                   </div>
                 </div>
 
+                <LegacyAdminKeyIPSettings />
+
                 <!-- Newly Generated Key Display -->
                 <div
                   v-if="newAdminApiKey"
@@ -9609,6 +9611,7 @@ import {
   stepUpBlockReason,
 } from "@/composables/useStepUp";
 import AdminAccessKeysSettings from "@/components/admin/settings/AdminAccessKeysSettings.vue";
+import LegacyAdminKeyIPSettings from "@/components/admin/settings/LegacyAdminKeyIPSettings.vue";
 import TotpStepUpDialog from "@/components/auth/TotpStepUpDialog.vue";
 import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSimpleUser } from "@/api/admin/affiliates";
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";

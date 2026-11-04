@@ -752,6 +752,8 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpA
 		adminSettings.GET("/email-templates/:event/:locale", h.Admin.Setting.GetEmailTemplate)
 		adminSettings.PUT("/email-templates/:event/:locale", h.Admin.Setting.UpdateEmailTemplate)
 		adminSettings.POST("/email-templates/:event/:locale/restore-official", h.Admin.Setting.RestoreOfficialEmailTemplate)
+		adminSettings.GET("/admin-api-key/ip-policy", h.Admin.Setting.GetLegacyAdminKeyIPPolicy)
+		adminSettings.PUT("/admin-api-key/ip-policy", gin.HandlerFunc(stepUpAuth), h.Admin.Setting.UpdateLegacyAdminKeyIPPolicy)
 		// Admin API Key 管理
 		adminSettings.GET("/admin-api-key", h.Admin.Setting.GetAdminAPIKey)
 		adminSettings.POST("/admin-api-key/regenerate", gin.HandlerFunc(stepUpAuth), h.Admin.Setting.RegenerateAdminAPIKey)

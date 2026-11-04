@@ -154,6 +154,10 @@ func validateAdminAPIKey(
 		return false
 	}
 
+	if !enforceLegacyAdminKeyIP(c, settingService) {
+		return false
+	}
+
 	c.Set(string(ContextKeyUser), AuthSubject{
 		UserID:      admin.ID,
 		Concurrency: admin.Concurrency,
