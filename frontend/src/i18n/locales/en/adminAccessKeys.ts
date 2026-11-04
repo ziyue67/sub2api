@@ -1,4 +1,19 @@
 export default {
+  legacyIP: {
+  "title": "Legacy admin key source IPs",
+  "scope": "Only restricts the legacy global admin key. Administrator web sessions, scoped keys and model APIs are unaffected.",
+  "proxyHint": "Enter actual caller egress IPs, one per line. IPv4, IPv6 and CIDR are supported, up to 100 entries. Entire address families are not allowed. Verify trusted proxy settings first.",
+  "currentIP": "Current request source IP: {ip} (reference only; never added automatically)",
+  "savedMode": "Saved mode: {mode}, {count} entries",
+  "on": "Restricted",
+  "off": "Unrestricted",
+  "enable": "Restrict source IP",
+  "entries": "Allowed IPs / CIDRs",
+  "unsaved": "Unsaved changes. The saved policy is still in effect.",
+  "saved": "Saved. Takes effect on new requests immediately.",
+  "failed": "Unable to load or save. Retry, or repair a corrupt policy using the administrator JWT API.",
+  "invalid": "Up to 100 entries. At least one valid IP or CIDR is required when enabled."
+},
   "title": "Admin access keys",
   "authorizationHint": "Grant operations within resource scopes. Unselected operations are denied.",
   "sharedAccountWarning": "Shared account changes affect every associated group. Global permissions apply independently of group scopes.",
