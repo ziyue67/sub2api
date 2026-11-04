@@ -131,6 +131,7 @@ vi.mock("@/api", () => ({
       updateAccountPerformanceSettings,
       getRectifierSettings,
       getBetaPolicySettings,
+      getRegistrationEmailBlacklist: vi.fn().mockResolvedValue({ emails: [], max: 20000 }),
     },
     accounts: {
       getUpstreamBillingProbeSettings,

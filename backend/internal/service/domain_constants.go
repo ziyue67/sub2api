@@ -230,6 +230,7 @@ const (
 	// 白名单非空时，是否放行非白名单域名按主域名限量注册（每域名 1 个账户）。
 	// 默认 false：非白名单域名直接拒绝（白名单严格模式）。
 	SettingKeyRegistrationEmailDomainQuotaEnabled = "registration_email_domain_quota_enabled"
+	SettingKeyRegistrationEmailBlacklist          = "registration_email_blacklist"     // 注册邮箱精确黑名单（JSON 数组，按收件箱身份匹配；不进 SystemSettings，由专用接口读写）
 	SettingKeyPromoCodeEnabled                    = "promo_code_enabled"                    // 是否启用优惠码功能
 	SettingKeyPasswordResetEnabled                = "password_reset_enabled"                // 是否启用忘记密码功能（需要先开启邮件验证）
 	SettingKeyFrontendURL                         = "frontend_url"                          // 前端基础URL，用于生成邮件中的重置密码链接
@@ -253,7 +254,6 @@ const (
 	SettingKeyLoginAgreementMode                  = "login_agreement_mode"                  // 条款确认展示模式：modal / checkbox
 	SettingKeyLoginAgreementUpdatedAt             = "login_agreement_updated_at"            // 条款更新日期（展示用）
 	SettingKeyLoginAgreementDocuments             = "login_agreement_documents"             // 条款文档列表（JSON，Markdown 内容）
-
 	// 邮件服务设置
 	SettingKeySMTPHost     = "smtp_host"      // SMTP服务器地址
 	SettingKeySMTPPort     = "smtp_port"      // SMTP端口
