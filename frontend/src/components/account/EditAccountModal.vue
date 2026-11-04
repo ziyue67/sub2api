@@ -2880,9 +2880,6 @@
         </div>
       </div>
 
-        </div>
-      </div>
-
       <div
         v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"

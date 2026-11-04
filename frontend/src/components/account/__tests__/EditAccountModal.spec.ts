@@ -3407,3 +3407,4 @@ describe('OpenAI connection account type boundary in the actual editor', () => {
     expect(wrapper.get('[data-testid="anthropic-mimic-claude-code-toggle"]').classes()).not.toContain('bg-primary-600')
   })
 })
+})

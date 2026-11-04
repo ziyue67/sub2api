@@ -978,3 +978,4 @@ describe('admin UsageView rolling 24 hour requests', () => {
     expect(wrapper.findComponent(DateRangePicker).get('.date-picker-trigger').text()).not.toContain('dates.last24Hours')
   })
 })
+})

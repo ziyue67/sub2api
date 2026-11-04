@@ -3646,9 +3646,6 @@
         </div>
       </div>
 
-        </div>
-      </div>
-
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
