@@ -233,7 +233,7 @@ func TestOpenAIQuotaRecoveryProbeResponse(t *testing.T) {
 			resp.Header.Set("x-codex-primary-window-minutes", "300")
 			resp.Header.Set("x-codex-secondary-used-percent", "0")
 			resp.Header.Set("x-codex-secondary-window-minutes", "10080")
-			_, err := svc.persistOpenAICodexProbeResponse(123, resp, observeOpenAIQuotaRecovery(&repo.account, time.Now()))
+			_, err := svc.persistOpenAICodexProbeResponse(context.Background(), 123, resp, observeOpenAIQuotaRecovery(&repo.account, time.Now()))
 			require.NoError(t, err)
 			require.Eventually(t, func() bool {
 				repo.mu.Lock()
