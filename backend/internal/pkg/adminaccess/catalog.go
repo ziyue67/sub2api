@@ -32,6 +32,8 @@ var definitions = []permissionDefinition{
 	{Permission{"groups.list.read", "读取所选分组基本信息（名称、平台、状态）", "分组", "group"}, []string{"GET /groups", "GET /groups/all", "GET /groups/:id"}},
 	{Permission{"groups.capacity.read", "读取所选分组容量（整个分组，不按账户类型过滤）", "分组", "group"}, []string{"GET /groups/capacity-summary"}},
 	{Permission{"openai.tokens.refresh", "刷新调用方提供的 OpenAI 令牌（返回令牌，可使用所选代理）", "OAuth", "global"}, []string{"POST /openai/refresh-token"}},
+	{Permission{"lottery.read", "读取抽奖奖池与记录", "财务", "global"}, []string{"GET /lottery/settings", "GET /lottery/pools", "GET /lottery/records", "GET /lottery/ledger"}},
+	{Permission{"lottery.write", "管理抽奖奖池与奖品", "财务", "global"}, []string{"PUT /lottery/settings", "POST /lottery/pools", "PUT /lottery/pools/:id", "DELETE /lottery/pools/:id", "POST /lottery/pools/:id/prizes", "PUT /lottery/pools/:id/prizes/:prize_id", "DELETE /lottery/pools/:id/prizes/:prize_id"}},
 	{Permission{"accounts.read", "查看账户（脱敏）", "账户", "account"}, []string{"GET /accounts", "GET /accounts/:id", "GET /accounts/:id/models"}},
 	{Permission{"accounts.create", "创建账户", "账户", "account"}, []string{"POST /accounts", "POST /accounts/import/codex-session"}},
 	{Permission{"accounts.update", "编辑名称与备注", "账户", "account"}, []string{"PUT /accounts/:id"}},

@@ -33,6 +33,14 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/idempotencyrecord"
 	"github.com/Wei-Shaw/sub2api/ent/identityadoptiondecision"
+	"github.com/Wei-Shaw/sub2api/ent/lotteryaccount"
+	"github.com/Wei-Shaw/sub2api/ent/lotterycontribution"
+	"github.com/Wei-Shaw/sub2api/ent/lotterydraw"
+	"github.com/Wei-Shaw/sub2api/ent/lotteryinvitation"
+	"github.com/Wei-Shaw/sub2api/ent/lotteryinvitelink"
+	"github.com/Wei-Shaw/sub2api/ent/lotteryledger"
+	"github.com/Wei-Shaw/sub2api/ent/lotterypool"
+	"github.com/Wei-Shaw/sub2api/ent/lotteryprize"
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
@@ -87,6 +95,14 @@ const (
 	TypeGroup                         = "Group"
 	TypeIdempotencyRecord             = "IdempotencyRecord"
 	TypeIdentityAdoptionDecision      = "IdentityAdoptionDecision"
+	TypeLotteryAccount                = "LotteryAccount"
+	TypeLotteryContribution           = "LotteryContribution"
+	TypeLotteryDraw                   = "LotteryDraw"
+	TypeLotteryInvitation             = "LotteryInvitation"
+	TypeLotteryInviteLink             = "LotteryInviteLink"
+	TypeLotteryLedger                 = "LotteryLedger"
+	TypeLotteryPool                   = "LotteryPool"
+	TypeLotteryPrize                  = "LotteryPrize"
 	TypePaymentAuditLog               = "PaymentAuditLog"
 	TypePaymentOrder                  = "PaymentOrder"
 	TypePaymentProviderInstance       = "PaymentProviderInstance"
@@ -33031,6 +33047,7328 @@ func (m *IdentityAdoptionDecisionMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown IdentityAdoptionDecision edge %s", name)
+}
+
+// LotteryAccountMutation represents an operation that mutates the LotteryAccount nodes in the graph.
+type LotteryAccountMutation struct {
+	config
+	op             Op
+	typ            string
+	id             *int64
+	pool_id        *int64
+	addpool_id     *int64
+	user_id        *int64
+	adduser_id     *int64
+	total_units    *int64
+	addtotal_units *int64
+	earned         *int64
+	addearned      *int64
+	used           *int64
+	addused        *int64
+	updated_at     *time.Time
+	clearedFields  map[string]struct{}
+	done           bool
+	oldValue       func(context.Context) (*LotteryAccount, error)
+	predicates     []predicate.LotteryAccount
+}
+
+var _ ent.Mutation = (*LotteryAccountMutation)(nil)
+
+// lotteryaccountOption allows management of the mutation configuration using functional options.
+type lotteryaccountOption func(*LotteryAccountMutation)
+
+// newLotteryAccountMutation creates new mutation for the LotteryAccount entity.
+func newLotteryAccountMutation(c config, op Op, opts ...lotteryaccountOption) *LotteryAccountMutation {
+	m := &LotteryAccountMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeLotteryAccount,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withLotteryAccountID sets the ID field of the mutation.
+func withLotteryAccountID(id int64) lotteryaccountOption {
+	return func(m *LotteryAccountMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *LotteryAccount
+		)
+		m.oldValue = func(ctx context.Context) (*LotteryAccount, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().LotteryAccount.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withLotteryAccount sets the old LotteryAccount of the mutation.
+func withLotteryAccount(node *LotteryAccount) lotteryaccountOption {
+	return func(m *LotteryAccountMutation) {
+		m.oldValue = func(context.Context) (*LotteryAccount, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m LotteryAccountMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m LotteryAccountMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *LotteryAccountMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *LotteryAccountMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().LotteryAccount.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPoolID sets the "pool_id" field.
+func (m *LotteryAccountMutation) SetPoolID(i int64) {
+	m.pool_id = &i
+	m.addpool_id = nil
+}
+
+// PoolID returns the value of the "pool_id" field in the mutation.
+func (m *LotteryAccountMutation) PoolID() (r int64, exists bool) {
+	v := m.pool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPoolID returns the old "pool_id" field's value of the LotteryAccount entity.
+// If the LotteryAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryAccountMutation) OldPoolID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPoolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPoolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPoolID: %w", err)
+	}
+	return oldValue.PoolID, nil
+}
+
+// AddPoolID adds i to the "pool_id" field.
+func (m *LotteryAccountMutation) AddPoolID(i int64) {
+	if m.addpool_id != nil {
+		*m.addpool_id += i
+	} else {
+		m.addpool_id = &i
+	}
+}
+
+// AddedPoolID returns the value that was added to the "pool_id" field in this mutation.
+func (m *LotteryAccountMutation) AddedPoolID() (r int64, exists bool) {
+	v := m.addpool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPoolID resets all changes to the "pool_id" field.
+func (m *LotteryAccountMutation) ResetPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *LotteryAccountMutation) SetUserID(i int64) {
+	m.user_id = &i
+	m.adduser_id = nil
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *LotteryAccountMutation) UserID() (r int64, exists bool) {
+	v := m.user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the LotteryAccount entity.
+// If the LotteryAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryAccountMutation) OldUserID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// AddUserID adds i to the "user_id" field.
+func (m *LotteryAccountMutation) AddUserID(i int64) {
+	if m.adduser_id != nil {
+		*m.adduser_id += i
+	} else {
+		m.adduser_id = &i
+	}
+}
+
+// AddedUserID returns the value that was added to the "user_id" field in this mutation.
+func (m *LotteryAccountMutation) AddedUserID() (r int64, exists bool) {
+	v := m.adduser_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *LotteryAccountMutation) ResetUserID() {
+	m.user_id = nil
+	m.adduser_id = nil
+}
+
+// SetTotalUnits sets the "total_units" field.
+func (m *LotteryAccountMutation) SetTotalUnits(i int64) {
+	m.total_units = &i
+	m.addtotal_units = nil
+}
+
+// TotalUnits returns the value of the "total_units" field in the mutation.
+func (m *LotteryAccountMutation) TotalUnits() (r int64, exists bool) {
+	v := m.total_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTotalUnits returns the old "total_units" field's value of the LotteryAccount entity.
+// If the LotteryAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryAccountMutation) OldTotalUnits(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTotalUnits is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTotalUnits requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTotalUnits: %w", err)
+	}
+	return oldValue.TotalUnits, nil
+}
+
+// AddTotalUnits adds i to the "total_units" field.
+func (m *LotteryAccountMutation) AddTotalUnits(i int64) {
+	if m.addtotal_units != nil {
+		*m.addtotal_units += i
+	} else {
+		m.addtotal_units = &i
+	}
+}
+
+// AddedTotalUnits returns the value that was added to the "total_units" field in this mutation.
+func (m *LotteryAccountMutation) AddedTotalUnits() (r int64, exists bool) {
+	v := m.addtotal_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTotalUnits resets all changes to the "total_units" field.
+func (m *LotteryAccountMutation) ResetTotalUnits() {
+	m.total_units = nil
+	m.addtotal_units = nil
+}
+
+// SetEarned sets the "earned" field.
+func (m *LotteryAccountMutation) SetEarned(i int64) {
+	m.earned = &i
+	m.addearned = nil
+}
+
+// Earned returns the value of the "earned" field in the mutation.
+func (m *LotteryAccountMutation) Earned() (r int64, exists bool) {
+	v := m.earned
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEarned returns the old "earned" field's value of the LotteryAccount entity.
+// If the LotteryAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryAccountMutation) OldEarned(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEarned is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEarned requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEarned: %w", err)
+	}
+	return oldValue.Earned, nil
+}
+
+// AddEarned adds i to the "earned" field.
+func (m *LotteryAccountMutation) AddEarned(i int64) {
+	if m.addearned != nil {
+		*m.addearned += i
+	} else {
+		m.addearned = &i
+	}
+}
+
+// AddedEarned returns the value that was added to the "earned" field in this mutation.
+func (m *LotteryAccountMutation) AddedEarned() (r int64, exists bool) {
+	v := m.addearned
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetEarned resets all changes to the "earned" field.
+func (m *LotteryAccountMutation) ResetEarned() {
+	m.earned = nil
+	m.addearned = nil
+}
+
+// SetUsed sets the "used" field.
+func (m *LotteryAccountMutation) SetUsed(i int64) {
+	m.used = &i
+	m.addused = nil
+}
+
+// Used returns the value of the "used" field in the mutation.
+func (m *LotteryAccountMutation) Used() (r int64, exists bool) {
+	v := m.used
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUsed returns the old "used" field's value of the LotteryAccount entity.
+// If the LotteryAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryAccountMutation) OldUsed(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUsed is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUsed requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUsed: %w", err)
+	}
+	return oldValue.Used, nil
+}
+
+// AddUsed adds i to the "used" field.
+func (m *LotteryAccountMutation) AddUsed(i int64) {
+	if m.addused != nil {
+		*m.addused += i
+	} else {
+		m.addused = &i
+	}
+}
+
+// AddedUsed returns the value that was added to the "used" field in this mutation.
+func (m *LotteryAccountMutation) AddedUsed() (r int64, exists bool) {
+	v := m.addused
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUsed resets all changes to the "used" field.
+func (m *LotteryAccountMutation) ResetUsed() {
+	m.used = nil
+	m.addused = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *LotteryAccountMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *LotteryAccountMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the LotteryAccount entity.
+// If the LotteryAccount object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryAccountMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *LotteryAccountMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the LotteryAccountMutation builder.
+func (m *LotteryAccountMutation) Where(ps ...predicate.LotteryAccount) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the LotteryAccountMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *LotteryAccountMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.LotteryAccount, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *LotteryAccountMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *LotteryAccountMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (LotteryAccount).
+func (m *LotteryAccountMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *LotteryAccountMutation) Fields() []string {
+	fields := make([]string, 0, 6)
+	if m.pool_id != nil {
+		fields = append(fields, lotteryaccount.FieldPoolID)
+	}
+	if m.user_id != nil {
+		fields = append(fields, lotteryaccount.FieldUserID)
+	}
+	if m.total_units != nil {
+		fields = append(fields, lotteryaccount.FieldTotalUnits)
+	}
+	if m.earned != nil {
+		fields = append(fields, lotteryaccount.FieldEarned)
+	}
+	if m.used != nil {
+		fields = append(fields, lotteryaccount.FieldUsed)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, lotteryaccount.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *LotteryAccountMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryaccount.FieldPoolID:
+		return m.PoolID()
+	case lotteryaccount.FieldUserID:
+		return m.UserID()
+	case lotteryaccount.FieldTotalUnits:
+		return m.TotalUnits()
+	case lotteryaccount.FieldEarned:
+		return m.Earned()
+	case lotteryaccount.FieldUsed:
+		return m.Used()
+	case lotteryaccount.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *LotteryAccountMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case lotteryaccount.FieldPoolID:
+		return m.OldPoolID(ctx)
+	case lotteryaccount.FieldUserID:
+		return m.OldUserID(ctx)
+	case lotteryaccount.FieldTotalUnits:
+		return m.OldTotalUnits(ctx)
+	case lotteryaccount.FieldEarned:
+		return m.OldEarned(ctx)
+	case lotteryaccount.FieldUsed:
+		return m.OldUsed(ctx)
+	case lotteryaccount.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown LotteryAccount field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryAccountMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case lotteryaccount.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPoolID(v)
+		return nil
+	case lotteryaccount.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case lotteryaccount.FieldTotalUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTotalUnits(v)
+		return nil
+	case lotteryaccount.FieldEarned:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEarned(v)
+		return nil
+	case lotteryaccount.FieldUsed:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUsed(v)
+		return nil
+	case lotteryaccount.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryAccount field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *LotteryAccountMutation) AddedFields() []string {
+	var fields []string
+	if m.addpool_id != nil {
+		fields = append(fields, lotteryaccount.FieldPoolID)
+	}
+	if m.adduser_id != nil {
+		fields = append(fields, lotteryaccount.FieldUserID)
+	}
+	if m.addtotal_units != nil {
+		fields = append(fields, lotteryaccount.FieldTotalUnits)
+	}
+	if m.addearned != nil {
+		fields = append(fields, lotteryaccount.FieldEarned)
+	}
+	if m.addused != nil {
+		fields = append(fields, lotteryaccount.FieldUsed)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *LotteryAccountMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryaccount.FieldPoolID:
+		return m.AddedPoolID()
+	case lotteryaccount.FieldUserID:
+		return m.AddedUserID()
+	case lotteryaccount.FieldTotalUnits:
+		return m.AddedTotalUnits()
+	case lotteryaccount.FieldEarned:
+		return m.AddedEarned()
+	case lotteryaccount.FieldUsed:
+		return m.AddedUsed()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryAccountMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case lotteryaccount.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPoolID(v)
+		return nil
+	case lotteryaccount.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUserID(v)
+		return nil
+	case lotteryaccount.FieldTotalUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTotalUnits(v)
+		return nil
+	case lotteryaccount.FieldEarned:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddEarned(v)
+		return nil
+	case lotteryaccount.FieldUsed:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUsed(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryAccount numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *LotteryAccountMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *LotteryAccountMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *LotteryAccountMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown LotteryAccount nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *LotteryAccountMutation) ResetField(name string) error {
+	switch name {
+	case lotteryaccount.FieldPoolID:
+		m.ResetPoolID()
+		return nil
+	case lotteryaccount.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case lotteryaccount.FieldTotalUnits:
+		m.ResetTotalUnits()
+		return nil
+	case lotteryaccount.FieldEarned:
+		m.ResetEarned()
+		return nil
+	case lotteryaccount.FieldUsed:
+		m.ResetUsed()
+		return nil
+	case lotteryaccount.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryAccount field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *LotteryAccountMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *LotteryAccountMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *LotteryAccountMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *LotteryAccountMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *LotteryAccountMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *LotteryAccountMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *LotteryAccountMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown LotteryAccount unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *LotteryAccountMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown LotteryAccount edge %s", name)
+}
+
+// LotteryContributionMutation represents an operation that mutates the LotteryContribution nodes in the graph.
+type LotteryContributionMutation struct {
+	config
+	op              Op
+	typ             string
+	id              *int64
+	pool_id         *int64
+	addpool_id      *int64
+	user_id         *int64
+	adduser_id      *int64
+	source_type     *string
+	source_id       *string
+	amount_units    *int64
+	addamount_units *int64
+	net_units       *int64
+	addnet_units    *int64
+	created_at      *time.Time
+	updated_at      *time.Time
+	clearedFields   map[string]struct{}
+	done            bool
+	oldValue        func(context.Context) (*LotteryContribution, error)
+	predicates      []predicate.LotteryContribution
+}
+
+var _ ent.Mutation = (*LotteryContributionMutation)(nil)
+
+// lotterycontributionOption allows management of the mutation configuration using functional options.
+type lotterycontributionOption func(*LotteryContributionMutation)
+
+// newLotteryContributionMutation creates new mutation for the LotteryContribution entity.
+func newLotteryContributionMutation(c config, op Op, opts ...lotterycontributionOption) *LotteryContributionMutation {
+	m := &LotteryContributionMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeLotteryContribution,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withLotteryContributionID sets the ID field of the mutation.
+func withLotteryContributionID(id int64) lotterycontributionOption {
+	return func(m *LotteryContributionMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *LotteryContribution
+		)
+		m.oldValue = func(ctx context.Context) (*LotteryContribution, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().LotteryContribution.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withLotteryContribution sets the old LotteryContribution of the mutation.
+func withLotteryContribution(node *LotteryContribution) lotterycontributionOption {
+	return func(m *LotteryContributionMutation) {
+		m.oldValue = func(context.Context) (*LotteryContribution, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m LotteryContributionMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m LotteryContributionMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *LotteryContributionMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *LotteryContributionMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().LotteryContribution.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPoolID sets the "pool_id" field.
+func (m *LotteryContributionMutation) SetPoolID(i int64) {
+	m.pool_id = &i
+	m.addpool_id = nil
+}
+
+// PoolID returns the value of the "pool_id" field in the mutation.
+func (m *LotteryContributionMutation) PoolID() (r int64, exists bool) {
+	v := m.pool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPoolID returns the old "pool_id" field's value of the LotteryContribution entity.
+// If the LotteryContribution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryContributionMutation) OldPoolID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPoolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPoolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPoolID: %w", err)
+	}
+	return oldValue.PoolID, nil
+}
+
+// AddPoolID adds i to the "pool_id" field.
+func (m *LotteryContributionMutation) AddPoolID(i int64) {
+	if m.addpool_id != nil {
+		*m.addpool_id += i
+	} else {
+		m.addpool_id = &i
+	}
+}
+
+// AddedPoolID returns the value that was added to the "pool_id" field in this mutation.
+func (m *LotteryContributionMutation) AddedPoolID() (r int64, exists bool) {
+	v := m.addpool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPoolID resets all changes to the "pool_id" field.
+func (m *LotteryContributionMutation) ResetPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *LotteryContributionMutation) SetUserID(i int64) {
+	m.user_id = &i
+	m.adduser_id = nil
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *LotteryContributionMutation) UserID() (r int64, exists bool) {
+	v := m.user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the LotteryContribution entity.
+// If the LotteryContribution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryContributionMutation) OldUserID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// AddUserID adds i to the "user_id" field.
+func (m *LotteryContributionMutation) AddUserID(i int64) {
+	if m.adduser_id != nil {
+		*m.adduser_id += i
+	} else {
+		m.adduser_id = &i
+	}
+}
+
+// AddedUserID returns the value that was added to the "user_id" field in this mutation.
+func (m *LotteryContributionMutation) AddedUserID() (r int64, exists bool) {
+	v := m.adduser_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *LotteryContributionMutation) ResetUserID() {
+	m.user_id = nil
+	m.adduser_id = nil
+}
+
+// SetSourceType sets the "source_type" field.
+func (m *LotteryContributionMutation) SetSourceType(s string) {
+	m.source_type = &s
+}
+
+// SourceType returns the value of the "source_type" field in the mutation.
+func (m *LotteryContributionMutation) SourceType() (r string, exists bool) {
+	v := m.source_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceType returns the old "source_type" field's value of the LotteryContribution entity.
+// If the LotteryContribution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryContributionMutation) OldSourceType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceType: %w", err)
+	}
+	return oldValue.SourceType, nil
+}
+
+// ResetSourceType resets all changes to the "source_type" field.
+func (m *LotteryContributionMutation) ResetSourceType() {
+	m.source_type = nil
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *LotteryContributionMutation) SetSourceID(s string) {
+	m.source_id = &s
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *LotteryContributionMutation) SourceID() (r string, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the LotteryContribution entity.
+// If the LotteryContribution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryContributionMutation) OldSourceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *LotteryContributionMutation) ResetSourceID() {
+	m.source_id = nil
+}
+
+// SetAmountUnits sets the "amount_units" field.
+func (m *LotteryContributionMutation) SetAmountUnits(i int64) {
+	m.amount_units = &i
+	m.addamount_units = nil
+}
+
+// AmountUnits returns the value of the "amount_units" field in the mutation.
+func (m *LotteryContributionMutation) AmountUnits() (r int64, exists bool) {
+	v := m.amount_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAmountUnits returns the old "amount_units" field's value of the LotteryContribution entity.
+// If the LotteryContribution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryContributionMutation) OldAmountUnits(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAmountUnits is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAmountUnits requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAmountUnits: %w", err)
+	}
+	return oldValue.AmountUnits, nil
+}
+
+// AddAmountUnits adds i to the "amount_units" field.
+func (m *LotteryContributionMutation) AddAmountUnits(i int64) {
+	if m.addamount_units != nil {
+		*m.addamount_units += i
+	} else {
+		m.addamount_units = &i
+	}
+}
+
+// AddedAmountUnits returns the value that was added to the "amount_units" field in this mutation.
+func (m *LotteryContributionMutation) AddedAmountUnits() (r int64, exists bool) {
+	v := m.addamount_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountUnits resets all changes to the "amount_units" field.
+func (m *LotteryContributionMutation) ResetAmountUnits() {
+	m.amount_units = nil
+	m.addamount_units = nil
+}
+
+// SetNetUnits sets the "net_units" field.
+func (m *LotteryContributionMutation) SetNetUnits(i int64) {
+	m.net_units = &i
+	m.addnet_units = nil
+}
+
+// NetUnits returns the value of the "net_units" field in the mutation.
+func (m *LotteryContributionMutation) NetUnits() (r int64, exists bool) {
+	v := m.net_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNetUnits returns the old "net_units" field's value of the LotteryContribution entity.
+// If the LotteryContribution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryContributionMutation) OldNetUnits(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNetUnits is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNetUnits requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNetUnits: %w", err)
+	}
+	return oldValue.NetUnits, nil
+}
+
+// AddNetUnits adds i to the "net_units" field.
+func (m *LotteryContributionMutation) AddNetUnits(i int64) {
+	if m.addnet_units != nil {
+		*m.addnet_units += i
+	} else {
+		m.addnet_units = &i
+	}
+}
+
+// AddedNetUnits returns the value that was added to the "net_units" field in this mutation.
+func (m *LotteryContributionMutation) AddedNetUnits() (r int64, exists bool) {
+	v := m.addnet_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetNetUnits resets all changes to the "net_units" field.
+func (m *LotteryContributionMutation) ResetNetUnits() {
+	m.net_units = nil
+	m.addnet_units = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *LotteryContributionMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *LotteryContributionMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the LotteryContribution entity.
+// If the LotteryContribution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryContributionMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *LotteryContributionMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *LotteryContributionMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *LotteryContributionMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the LotteryContribution entity.
+// If the LotteryContribution object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryContributionMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *LotteryContributionMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the LotteryContributionMutation builder.
+func (m *LotteryContributionMutation) Where(ps ...predicate.LotteryContribution) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the LotteryContributionMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *LotteryContributionMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.LotteryContribution, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *LotteryContributionMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *LotteryContributionMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (LotteryContribution).
+func (m *LotteryContributionMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *LotteryContributionMutation) Fields() []string {
+	fields := make([]string, 0, 8)
+	if m.pool_id != nil {
+		fields = append(fields, lotterycontribution.FieldPoolID)
+	}
+	if m.user_id != nil {
+		fields = append(fields, lotterycontribution.FieldUserID)
+	}
+	if m.source_type != nil {
+		fields = append(fields, lotterycontribution.FieldSourceType)
+	}
+	if m.source_id != nil {
+		fields = append(fields, lotterycontribution.FieldSourceID)
+	}
+	if m.amount_units != nil {
+		fields = append(fields, lotterycontribution.FieldAmountUnits)
+	}
+	if m.net_units != nil {
+		fields = append(fields, lotterycontribution.FieldNetUnits)
+	}
+	if m.created_at != nil {
+		fields = append(fields, lotterycontribution.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, lotterycontribution.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *LotteryContributionMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case lotterycontribution.FieldPoolID:
+		return m.PoolID()
+	case lotterycontribution.FieldUserID:
+		return m.UserID()
+	case lotterycontribution.FieldSourceType:
+		return m.SourceType()
+	case lotterycontribution.FieldSourceID:
+		return m.SourceID()
+	case lotterycontribution.FieldAmountUnits:
+		return m.AmountUnits()
+	case lotterycontribution.FieldNetUnits:
+		return m.NetUnits()
+	case lotterycontribution.FieldCreatedAt:
+		return m.CreatedAt()
+	case lotterycontribution.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *LotteryContributionMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case lotterycontribution.FieldPoolID:
+		return m.OldPoolID(ctx)
+	case lotterycontribution.FieldUserID:
+		return m.OldUserID(ctx)
+	case lotterycontribution.FieldSourceType:
+		return m.OldSourceType(ctx)
+	case lotterycontribution.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case lotterycontribution.FieldAmountUnits:
+		return m.OldAmountUnits(ctx)
+	case lotterycontribution.FieldNetUnits:
+		return m.OldNetUnits(ctx)
+	case lotterycontribution.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case lotterycontribution.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown LotteryContribution field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryContributionMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case lotterycontribution.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPoolID(v)
+		return nil
+	case lotterycontribution.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case lotterycontribution.FieldSourceType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceType(v)
+		return nil
+	case lotterycontribution.FieldSourceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case lotterycontribution.FieldAmountUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountUnits(v)
+		return nil
+	case lotterycontribution.FieldNetUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNetUnits(v)
+		return nil
+	case lotterycontribution.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case lotterycontribution.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryContribution field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *LotteryContributionMutation) AddedFields() []string {
+	var fields []string
+	if m.addpool_id != nil {
+		fields = append(fields, lotterycontribution.FieldPoolID)
+	}
+	if m.adduser_id != nil {
+		fields = append(fields, lotterycontribution.FieldUserID)
+	}
+	if m.addamount_units != nil {
+		fields = append(fields, lotterycontribution.FieldAmountUnits)
+	}
+	if m.addnet_units != nil {
+		fields = append(fields, lotterycontribution.FieldNetUnits)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *LotteryContributionMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case lotterycontribution.FieldPoolID:
+		return m.AddedPoolID()
+	case lotterycontribution.FieldUserID:
+		return m.AddedUserID()
+	case lotterycontribution.FieldAmountUnits:
+		return m.AddedAmountUnits()
+	case lotterycontribution.FieldNetUnits:
+		return m.AddedNetUnits()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryContributionMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case lotterycontribution.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPoolID(v)
+		return nil
+	case lotterycontribution.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUserID(v)
+		return nil
+	case lotterycontribution.FieldAmountUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAmountUnits(v)
+		return nil
+	case lotterycontribution.FieldNetUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddNetUnits(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryContribution numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *LotteryContributionMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *LotteryContributionMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *LotteryContributionMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown LotteryContribution nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *LotteryContributionMutation) ResetField(name string) error {
+	switch name {
+	case lotterycontribution.FieldPoolID:
+		m.ResetPoolID()
+		return nil
+	case lotterycontribution.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case lotterycontribution.FieldSourceType:
+		m.ResetSourceType()
+		return nil
+	case lotterycontribution.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case lotterycontribution.FieldAmountUnits:
+		m.ResetAmountUnits()
+		return nil
+	case lotterycontribution.FieldNetUnits:
+		m.ResetNetUnits()
+		return nil
+	case lotterycontribution.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case lotterycontribution.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryContribution field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *LotteryContributionMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *LotteryContributionMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *LotteryContributionMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *LotteryContributionMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *LotteryContributionMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *LotteryContributionMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *LotteryContributionMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown LotteryContribution unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *LotteryContributionMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown LotteryContribution edge %s", name)
+}
+
+// LotteryDrawMutation represents an operation that mutates the LotteryDraw nodes in the graph.
+type LotteryDrawMutation struct {
+	config
+	op             Op
+	typ            string
+	id             *int64
+	pool_id        *int64
+	addpool_id     *int64
+	user_id        *int64
+	adduser_id     *int64
+	prize_id       *int64
+	addprize_id    *int64
+	request_key    *string
+	prize_snapshot *map[string]interface{}
+	created_at     *time.Time
+	clearedFields  map[string]struct{}
+	done           bool
+	oldValue       func(context.Context) (*LotteryDraw, error)
+	predicates     []predicate.LotteryDraw
+}
+
+var _ ent.Mutation = (*LotteryDrawMutation)(nil)
+
+// lotterydrawOption allows management of the mutation configuration using functional options.
+type lotterydrawOption func(*LotteryDrawMutation)
+
+// newLotteryDrawMutation creates new mutation for the LotteryDraw entity.
+func newLotteryDrawMutation(c config, op Op, opts ...lotterydrawOption) *LotteryDrawMutation {
+	m := &LotteryDrawMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeLotteryDraw,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withLotteryDrawID sets the ID field of the mutation.
+func withLotteryDrawID(id int64) lotterydrawOption {
+	return func(m *LotteryDrawMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *LotteryDraw
+		)
+		m.oldValue = func(ctx context.Context) (*LotteryDraw, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().LotteryDraw.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withLotteryDraw sets the old LotteryDraw of the mutation.
+func withLotteryDraw(node *LotteryDraw) lotterydrawOption {
+	return func(m *LotteryDrawMutation) {
+		m.oldValue = func(context.Context) (*LotteryDraw, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m LotteryDrawMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m LotteryDrawMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *LotteryDrawMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *LotteryDrawMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().LotteryDraw.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPoolID sets the "pool_id" field.
+func (m *LotteryDrawMutation) SetPoolID(i int64) {
+	m.pool_id = &i
+	m.addpool_id = nil
+}
+
+// PoolID returns the value of the "pool_id" field in the mutation.
+func (m *LotteryDrawMutation) PoolID() (r int64, exists bool) {
+	v := m.pool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPoolID returns the old "pool_id" field's value of the LotteryDraw entity.
+// If the LotteryDraw object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryDrawMutation) OldPoolID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPoolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPoolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPoolID: %w", err)
+	}
+	return oldValue.PoolID, nil
+}
+
+// AddPoolID adds i to the "pool_id" field.
+func (m *LotteryDrawMutation) AddPoolID(i int64) {
+	if m.addpool_id != nil {
+		*m.addpool_id += i
+	} else {
+		m.addpool_id = &i
+	}
+}
+
+// AddedPoolID returns the value that was added to the "pool_id" field in this mutation.
+func (m *LotteryDrawMutation) AddedPoolID() (r int64, exists bool) {
+	v := m.addpool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPoolID resets all changes to the "pool_id" field.
+func (m *LotteryDrawMutation) ResetPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *LotteryDrawMutation) SetUserID(i int64) {
+	m.user_id = &i
+	m.adduser_id = nil
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *LotteryDrawMutation) UserID() (r int64, exists bool) {
+	v := m.user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the LotteryDraw entity.
+// If the LotteryDraw object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryDrawMutation) OldUserID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// AddUserID adds i to the "user_id" field.
+func (m *LotteryDrawMutation) AddUserID(i int64) {
+	if m.adduser_id != nil {
+		*m.adduser_id += i
+	} else {
+		m.adduser_id = &i
+	}
+}
+
+// AddedUserID returns the value that was added to the "user_id" field in this mutation.
+func (m *LotteryDrawMutation) AddedUserID() (r int64, exists bool) {
+	v := m.adduser_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *LotteryDrawMutation) ResetUserID() {
+	m.user_id = nil
+	m.adduser_id = nil
+}
+
+// SetPrizeID sets the "prize_id" field.
+func (m *LotteryDrawMutation) SetPrizeID(i int64) {
+	m.prize_id = &i
+	m.addprize_id = nil
+}
+
+// PrizeID returns the value of the "prize_id" field in the mutation.
+func (m *LotteryDrawMutation) PrizeID() (r int64, exists bool) {
+	v := m.prize_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPrizeID returns the old "prize_id" field's value of the LotteryDraw entity.
+// If the LotteryDraw object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryDrawMutation) OldPrizeID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPrizeID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPrizeID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPrizeID: %w", err)
+	}
+	return oldValue.PrizeID, nil
+}
+
+// AddPrizeID adds i to the "prize_id" field.
+func (m *LotteryDrawMutation) AddPrizeID(i int64) {
+	if m.addprize_id != nil {
+		*m.addprize_id += i
+	} else {
+		m.addprize_id = &i
+	}
+}
+
+// AddedPrizeID returns the value that was added to the "prize_id" field in this mutation.
+func (m *LotteryDrawMutation) AddedPrizeID() (r int64, exists bool) {
+	v := m.addprize_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPrizeID resets all changes to the "prize_id" field.
+func (m *LotteryDrawMutation) ResetPrizeID() {
+	m.prize_id = nil
+	m.addprize_id = nil
+}
+
+// SetRequestKey sets the "request_key" field.
+func (m *LotteryDrawMutation) SetRequestKey(s string) {
+	m.request_key = &s
+}
+
+// RequestKey returns the value of the "request_key" field in the mutation.
+func (m *LotteryDrawMutation) RequestKey() (r string, exists bool) {
+	v := m.request_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestKey returns the old "request_key" field's value of the LotteryDraw entity.
+// If the LotteryDraw object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryDrawMutation) OldRequestKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestKey: %w", err)
+	}
+	return oldValue.RequestKey, nil
+}
+
+// ResetRequestKey resets all changes to the "request_key" field.
+func (m *LotteryDrawMutation) ResetRequestKey() {
+	m.request_key = nil
+}
+
+// SetPrizeSnapshot sets the "prize_snapshot" field.
+func (m *LotteryDrawMutation) SetPrizeSnapshot(value map[string]interface{}) {
+	m.prize_snapshot = &value
+}
+
+// PrizeSnapshot returns the value of the "prize_snapshot" field in the mutation.
+func (m *LotteryDrawMutation) PrizeSnapshot() (r map[string]interface{}, exists bool) {
+	v := m.prize_snapshot
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPrizeSnapshot returns the old "prize_snapshot" field's value of the LotteryDraw entity.
+// If the LotteryDraw object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryDrawMutation) OldPrizeSnapshot(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPrizeSnapshot is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPrizeSnapshot requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPrizeSnapshot: %w", err)
+	}
+	return oldValue.PrizeSnapshot, nil
+}
+
+// ResetPrizeSnapshot resets all changes to the "prize_snapshot" field.
+func (m *LotteryDrawMutation) ResetPrizeSnapshot() {
+	m.prize_snapshot = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *LotteryDrawMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *LotteryDrawMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the LotteryDraw entity.
+// If the LotteryDraw object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryDrawMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *LotteryDrawMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the LotteryDrawMutation builder.
+func (m *LotteryDrawMutation) Where(ps ...predicate.LotteryDraw) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the LotteryDrawMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *LotteryDrawMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.LotteryDraw, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *LotteryDrawMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *LotteryDrawMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (LotteryDraw).
+func (m *LotteryDrawMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *LotteryDrawMutation) Fields() []string {
+	fields := make([]string, 0, 6)
+	if m.pool_id != nil {
+		fields = append(fields, lotterydraw.FieldPoolID)
+	}
+	if m.user_id != nil {
+		fields = append(fields, lotterydraw.FieldUserID)
+	}
+	if m.prize_id != nil {
+		fields = append(fields, lotterydraw.FieldPrizeID)
+	}
+	if m.request_key != nil {
+		fields = append(fields, lotterydraw.FieldRequestKey)
+	}
+	if m.prize_snapshot != nil {
+		fields = append(fields, lotterydraw.FieldPrizeSnapshot)
+	}
+	if m.created_at != nil {
+		fields = append(fields, lotterydraw.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *LotteryDrawMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case lotterydraw.FieldPoolID:
+		return m.PoolID()
+	case lotterydraw.FieldUserID:
+		return m.UserID()
+	case lotterydraw.FieldPrizeID:
+		return m.PrizeID()
+	case lotterydraw.FieldRequestKey:
+		return m.RequestKey()
+	case lotterydraw.FieldPrizeSnapshot:
+		return m.PrizeSnapshot()
+	case lotterydraw.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *LotteryDrawMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case lotterydraw.FieldPoolID:
+		return m.OldPoolID(ctx)
+	case lotterydraw.FieldUserID:
+		return m.OldUserID(ctx)
+	case lotterydraw.FieldPrizeID:
+		return m.OldPrizeID(ctx)
+	case lotterydraw.FieldRequestKey:
+		return m.OldRequestKey(ctx)
+	case lotterydraw.FieldPrizeSnapshot:
+		return m.OldPrizeSnapshot(ctx)
+	case lotterydraw.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown LotteryDraw field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryDrawMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case lotterydraw.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPoolID(v)
+		return nil
+	case lotterydraw.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case lotterydraw.FieldPrizeID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPrizeID(v)
+		return nil
+	case lotterydraw.FieldRequestKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestKey(v)
+		return nil
+	case lotterydraw.FieldPrizeSnapshot:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPrizeSnapshot(v)
+		return nil
+	case lotterydraw.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryDraw field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *LotteryDrawMutation) AddedFields() []string {
+	var fields []string
+	if m.addpool_id != nil {
+		fields = append(fields, lotterydraw.FieldPoolID)
+	}
+	if m.adduser_id != nil {
+		fields = append(fields, lotterydraw.FieldUserID)
+	}
+	if m.addprize_id != nil {
+		fields = append(fields, lotterydraw.FieldPrizeID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *LotteryDrawMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case lotterydraw.FieldPoolID:
+		return m.AddedPoolID()
+	case lotterydraw.FieldUserID:
+		return m.AddedUserID()
+	case lotterydraw.FieldPrizeID:
+		return m.AddedPrizeID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryDrawMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case lotterydraw.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPoolID(v)
+		return nil
+	case lotterydraw.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUserID(v)
+		return nil
+	case lotterydraw.FieldPrizeID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPrizeID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryDraw numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *LotteryDrawMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *LotteryDrawMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *LotteryDrawMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown LotteryDraw nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *LotteryDrawMutation) ResetField(name string) error {
+	switch name {
+	case lotterydraw.FieldPoolID:
+		m.ResetPoolID()
+		return nil
+	case lotterydraw.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case lotterydraw.FieldPrizeID:
+		m.ResetPrizeID()
+		return nil
+	case lotterydraw.FieldRequestKey:
+		m.ResetRequestKey()
+		return nil
+	case lotterydraw.FieldPrizeSnapshot:
+		m.ResetPrizeSnapshot()
+		return nil
+	case lotterydraw.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryDraw field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *LotteryDrawMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *LotteryDrawMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *LotteryDrawMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *LotteryDrawMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *LotteryDrawMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *LotteryDrawMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *LotteryDrawMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown LotteryDraw unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *LotteryDrawMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown LotteryDraw edge %s", name)
+}
+
+// LotteryInvitationMutation represents an operation that mutates the LotteryInvitation nodes in the graph.
+type LotteryInvitationMutation struct {
+	config
+	op              Op
+	typ             string
+	id              *int64
+	pool_id         *int64
+	addpool_id      *int64
+	inviter_id      *int64
+	addinviter_id   *int64
+	invitee_id      *int64
+	addinvitee_id   *int64
+	visitor_key     *string
+	ip_address      *string
+	country         *string
+	net_units       *int64
+	addnet_units    *int64
+	qualified       *bool
+	inviter_awarded *bool
+	invitee_awarded *bool
+	registered_at   *time.Time
+	created_at      *time.Time
+	updated_at      *time.Time
+	clearedFields   map[string]struct{}
+	done            bool
+	oldValue        func(context.Context) (*LotteryInvitation, error)
+	predicates      []predicate.LotteryInvitation
+}
+
+var _ ent.Mutation = (*LotteryInvitationMutation)(nil)
+
+// lotteryinvitationOption allows management of the mutation configuration using functional options.
+type lotteryinvitationOption func(*LotteryInvitationMutation)
+
+// newLotteryInvitationMutation creates new mutation for the LotteryInvitation entity.
+func newLotteryInvitationMutation(c config, op Op, opts ...lotteryinvitationOption) *LotteryInvitationMutation {
+	m := &LotteryInvitationMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeLotteryInvitation,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withLotteryInvitationID sets the ID field of the mutation.
+func withLotteryInvitationID(id int64) lotteryinvitationOption {
+	return func(m *LotteryInvitationMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *LotteryInvitation
+		)
+		m.oldValue = func(ctx context.Context) (*LotteryInvitation, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().LotteryInvitation.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withLotteryInvitation sets the old LotteryInvitation of the mutation.
+func withLotteryInvitation(node *LotteryInvitation) lotteryinvitationOption {
+	return func(m *LotteryInvitationMutation) {
+		m.oldValue = func(context.Context) (*LotteryInvitation, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m LotteryInvitationMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m LotteryInvitationMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *LotteryInvitationMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *LotteryInvitationMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().LotteryInvitation.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPoolID sets the "pool_id" field.
+func (m *LotteryInvitationMutation) SetPoolID(i int64) {
+	m.pool_id = &i
+	m.addpool_id = nil
+}
+
+// PoolID returns the value of the "pool_id" field in the mutation.
+func (m *LotteryInvitationMutation) PoolID() (r int64, exists bool) {
+	v := m.pool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPoolID returns the old "pool_id" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldPoolID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPoolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPoolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPoolID: %w", err)
+	}
+	return oldValue.PoolID, nil
+}
+
+// AddPoolID adds i to the "pool_id" field.
+func (m *LotteryInvitationMutation) AddPoolID(i int64) {
+	if m.addpool_id != nil {
+		*m.addpool_id += i
+	} else {
+		m.addpool_id = &i
+	}
+}
+
+// AddedPoolID returns the value that was added to the "pool_id" field in this mutation.
+func (m *LotteryInvitationMutation) AddedPoolID() (r int64, exists bool) {
+	v := m.addpool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPoolID resets all changes to the "pool_id" field.
+func (m *LotteryInvitationMutation) ResetPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+}
+
+// SetInviterID sets the "inviter_id" field.
+func (m *LotteryInvitationMutation) SetInviterID(i int64) {
+	m.inviter_id = &i
+	m.addinviter_id = nil
+}
+
+// InviterID returns the value of the "inviter_id" field in the mutation.
+func (m *LotteryInvitationMutation) InviterID() (r int64, exists bool) {
+	v := m.inviter_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInviterID returns the old "inviter_id" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldInviterID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInviterID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInviterID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInviterID: %w", err)
+	}
+	return oldValue.InviterID, nil
+}
+
+// AddInviterID adds i to the "inviter_id" field.
+func (m *LotteryInvitationMutation) AddInviterID(i int64) {
+	if m.addinviter_id != nil {
+		*m.addinviter_id += i
+	} else {
+		m.addinviter_id = &i
+	}
+}
+
+// AddedInviterID returns the value that was added to the "inviter_id" field in this mutation.
+func (m *LotteryInvitationMutation) AddedInviterID() (r int64, exists bool) {
+	v := m.addinviter_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetInviterID resets all changes to the "inviter_id" field.
+func (m *LotteryInvitationMutation) ResetInviterID() {
+	m.inviter_id = nil
+	m.addinviter_id = nil
+}
+
+// SetInviteeID sets the "invitee_id" field.
+func (m *LotteryInvitationMutation) SetInviteeID(i int64) {
+	m.invitee_id = &i
+	m.addinvitee_id = nil
+}
+
+// InviteeID returns the value of the "invitee_id" field in the mutation.
+func (m *LotteryInvitationMutation) InviteeID() (r int64, exists bool) {
+	v := m.invitee_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInviteeID returns the old "invitee_id" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldInviteeID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInviteeID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInviteeID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInviteeID: %w", err)
+	}
+	return oldValue.InviteeID, nil
+}
+
+// AddInviteeID adds i to the "invitee_id" field.
+func (m *LotteryInvitationMutation) AddInviteeID(i int64) {
+	if m.addinvitee_id != nil {
+		*m.addinvitee_id += i
+	} else {
+		m.addinvitee_id = &i
+	}
+}
+
+// AddedInviteeID returns the value that was added to the "invitee_id" field in this mutation.
+func (m *LotteryInvitationMutation) AddedInviteeID() (r int64, exists bool) {
+	v := m.addinvitee_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearInviteeID clears the value of the "invitee_id" field.
+func (m *LotteryInvitationMutation) ClearInviteeID() {
+	m.invitee_id = nil
+	m.addinvitee_id = nil
+	m.clearedFields[lotteryinvitation.FieldInviteeID] = struct{}{}
+}
+
+// InviteeIDCleared returns if the "invitee_id" field was cleared in this mutation.
+func (m *LotteryInvitationMutation) InviteeIDCleared() bool {
+	_, ok := m.clearedFields[lotteryinvitation.FieldInviteeID]
+	return ok
+}
+
+// ResetInviteeID resets all changes to the "invitee_id" field.
+func (m *LotteryInvitationMutation) ResetInviteeID() {
+	m.invitee_id = nil
+	m.addinvitee_id = nil
+	delete(m.clearedFields, lotteryinvitation.FieldInviteeID)
+}
+
+// SetVisitorKey sets the "visitor_key" field.
+func (m *LotteryInvitationMutation) SetVisitorKey(s string) {
+	m.visitor_key = &s
+}
+
+// VisitorKey returns the value of the "visitor_key" field in the mutation.
+func (m *LotteryInvitationMutation) VisitorKey() (r string, exists bool) {
+	v := m.visitor_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVisitorKey returns the old "visitor_key" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldVisitorKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVisitorKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVisitorKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVisitorKey: %w", err)
+	}
+	return oldValue.VisitorKey, nil
+}
+
+// ResetVisitorKey resets all changes to the "visitor_key" field.
+func (m *LotteryInvitationMutation) ResetVisitorKey() {
+	m.visitor_key = nil
+}
+
+// SetIPAddress sets the "ip_address" field.
+func (m *LotteryInvitationMutation) SetIPAddress(s string) {
+	m.ip_address = &s
+}
+
+// IPAddress returns the value of the "ip_address" field in the mutation.
+func (m *LotteryInvitationMutation) IPAddress() (r string, exists bool) {
+	v := m.ip_address
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIPAddress returns the old "ip_address" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldIPAddress(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIPAddress is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIPAddress requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIPAddress: %w", err)
+	}
+	return oldValue.IPAddress, nil
+}
+
+// ResetIPAddress resets all changes to the "ip_address" field.
+func (m *LotteryInvitationMutation) ResetIPAddress() {
+	m.ip_address = nil
+}
+
+// SetCountry sets the "country" field.
+func (m *LotteryInvitationMutation) SetCountry(s string) {
+	m.country = &s
+}
+
+// Country returns the value of the "country" field in the mutation.
+func (m *LotteryInvitationMutation) Country() (r string, exists bool) {
+	v := m.country
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCountry returns the old "country" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldCountry(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCountry is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCountry requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCountry: %w", err)
+	}
+	return oldValue.Country, nil
+}
+
+// ResetCountry resets all changes to the "country" field.
+func (m *LotteryInvitationMutation) ResetCountry() {
+	m.country = nil
+}
+
+// SetNetUnits sets the "net_units" field.
+func (m *LotteryInvitationMutation) SetNetUnits(i int64) {
+	m.net_units = &i
+	m.addnet_units = nil
+}
+
+// NetUnits returns the value of the "net_units" field in the mutation.
+func (m *LotteryInvitationMutation) NetUnits() (r int64, exists bool) {
+	v := m.net_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNetUnits returns the old "net_units" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldNetUnits(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNetUnits is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNetUnits requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNetUnits: %w", err)
+	}
+	return oldValue.NetUnits, nil
+}
+
+// AddNetUnits adds i to the "net_units" field.
+func (m *LotteryInvitationMutation) AddNetUnits(i int64) {
+	if m.addnet_units != nil {
+		*m.addnet_units += i
+	} else {
+		m.addnet_units = &i
+	}
+}
+
+// AddedNetUnits returns the value that was added to the "net_units" field in this mutation.
+func (m *LotteryInvitationMutation) AddedNetUnits() (r int64, exists bool) {
+	v := m.addnet_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetNetUnits resets all changes to the "net_units" field.
+func (m *LotteryInvitationMutation) ResetNetUnits() {
+	m.net_units = nil
+	m.addnet_units = nil
+}
+
+// SetQualified sets the "qualified" field.
+func (m *LotteryInvitationMutation) SetQualified(b bool) {
+	m.qualified = &b
+}
+
+// Qualified returns the value of the "qualified" field in the mutation.
+func (m *LotteryInvitationMutation) Qualified() (r bool, exists bool) {
+	v := m.qualified
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldQualified returns the old "qualified" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldQualified(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldQualified is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldQualified requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldQualified: %w", err)
+	}
+	return oldValue.Qualified, nil
+}
+
+// ResetQualified resets all changes to the "qualified" field.
+func (m *LotteryInvitationMutation) ResetQualified() {
+	m.qualified = nil
+}
+
+// SetInviterAwarded sets the "inviter_awarded" field.
+func (m *LotteryInvitationMutation) SetInviterAwarded(b bool) {
+	m.inviter_awarded = &b
+}
+
+// InviterAwarded returns the value of the "inviter_awarded" field in the mutation.
+func (m *LotteryInvitationMutation) InviterAwarded() (r bool, exists bool) {
+	v := m.inviter_awarded
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInviterAwarded returns the old "inviter_awarded" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldInviterAwarded(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInviterAwarded is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInviterAwarded requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInviterAwarded: %w", err)
+	}
+	return oldValue.InviterAwarded, nil
+}
+
+// ResetInviterAwarded resets all changes to the "inviter_awarded" field.
+func (m *LotteryInvitationMutation) ResetInviterAwarded() {
+	m.inviter_awarded = nil
+}
+
+// SetInviteeAwarded sets the "invitee_awarded" field.
+func (m *LotteryInvitationMutation) SetInviteeAwarded(b bool) {
+	m.invitee_awarded = &b
+}
+
+// InviteeAwarded returns the value of the "invitee_awarded" field in the mutation.
+func (m *LotteryInvitationMutation) InviteeAwarded() (r bool, exists bool) {
+	v := m.invitee_awarded
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInviteeAwarded returns the old "invitee_awarded" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldInviteeAwarded(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInviteeAwarded is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInviteeAwarded requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInviteeAwarded: %w", err)
+	}
+	return oldValue.InviteeAwarded, nil
+}
+
+// ResetInviteeAwarded resets all changes to the "invitee_awarded" field.
+func (m *LotteryInvitationMutation) ResetInviteeAwarded() {
+	m.invitee_awarded = nil
+}
+
+// SetRegisteredAt sets the "registered_at" field.
+func (m *LotteryInvitationMutation) SetRegisteredAt(t time.Time) {
+	m.registered_at = &t
+}
+
+// RegisteredAt returns the value of the "registered_at" field in the mutation.
+func (m *LotteryInvitationMutation) RegisteredAt() (r time.Time, exists bool) {
+	v := m.registered_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRegisteredAt returns the old "registered_at" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldRegisteredAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRegisteredAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRegisteredAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRegisteredAt: %w", err)
+	}
+	return oldValue.RegisteredAt, nil
+}
+
+// ClearRegisteredAt clears the value of the "registered_at" field.
+func (m *LotteryInvitationMutation) ClearRegisteredAt() {
+	m.registered_at = nil
+	m.clearedFields[lotteryinvitation.FieldRegisteredAt] = struct{}{}
+}
+
+// RegisteredAtCleared returns if the "registered_at" field was cleared in this mutation.
+func (m *LotteryInvitationMutation) RegisteredAtCleared() bool {
+	_, ok := m.clearedFields[lotteryinvitation.FieldRegisteredAt]
+	return ok
+}
+
+// ResetRegisteredAt resets all changes to the "registered_at" field.
+func (m *LotteryInvitationMutation) ResetRegisteredAt() {
+	m.registered_at = nil
+	delete(m.clearedFields, lotteryinvitation.FieldRegisteredAt)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *LotteryInvitationMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *LotteryInvitationMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *LotteryInvitationMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *LotteryInvitationMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *LotteryInvitationMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the LotteryInvitation entity.
+// If the LotteryInvitation object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInvitationMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *LotteryInvitationMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the LotteryInvitationMutation builder.
+func (m *LotteryInvitationMutation) Where(ps ...predicate.LotteryInvitation) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the LotteryInvitationMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *LotteryInvitationMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.LotteryInvitation, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *LotteryInvitationMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *LotteryInvitationMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (LotteryInvitation).
+func (m *LotteryInvitationMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *LotteryInvitationMutation) Fields() []string {
+	fields := make([]string, 0, 13)
+	if m.pool_id != nil {
+		fields = append(fields, lotteryinvitation.FieldPoolID)
+	}
+	if m.inviter_id != nil {
+		fields = append(fields, lotteryinvitation.FieldInviterID)
+	}
+	if m.invitee_id != nil {
+		fields = append(fields, lotteryinvitation.FieldInviteeID)
+	}
+	if m.visitor_key != nil {
+		fields = append(fields, lotteryinvitation.FieldVisitorKey)
+	}
+	if m.ip_address != nil {
+		fields = append(fields, lotteryinvitation.FieldIPAddress)
+	}
+	if m.country != nil {
+		fields = append(fields, lotteryinvitation.FieldCountry)
+	}
+	if m.net_units != nil {
+		fields = append(fields, lotteryinvitation.FieldNetUnits)
+	}
+	if m.qualified != nil {
+		fields = append(fields, lotteryinvitation.FieldQualified)
+	}
+	if m.inviter_awarded != nil {
+		fields = append(fields, lotteryinvitation.FieldInviterAwarded)
+	}
+	if m.invitee_awarded != nil {
+		fields = append(fields, lotteryinvitation.FieldInviteeAwarded)
+	}
+	if m.registered_at != nil {
+		fields = append(fields, lotteryinvitation.FieldRegisteredAt)
+	}
+	if m.created_at != nil {
+		fields = append(fields, lotteryinvitation.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, lotteryinvitation.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *LotteryInvitationMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryinvitation.FieldPoolID:
+		return m.PoolID()
+	case lotteryinvitation.FieldInviterID:
+		return m.InviterID()
+	case lotteryinvitation.FieldInviteeID:
+		return m.InviteeID()
+	case lotteryinvitation.FieldVisitorKey:
+		return m.VisitorKey()
+	case lotteryinvitation.FieldIPAddress:
+		return m.IPAddress()
+	case lotteryinvitation.FieldCountry:
+		return m.Country()
+	case lotteryinvitation.FieldNetUnits:
+		return m.NetUnits()
+	case lotteryinvitation.FieldQualified:
+		return m.Qualified()
+	case lotteryinvitation.FieldInviterAwarded:
+		return m.InviterAwarded()
+	case lotteryinvitation.FieldInviteeAwarded:
+		return m.InviteeAwarded()
+	case lotteryinvitation.FieldRegisteredAt:
+		return m.RegisteredAt()
+	case lotteryinvitation.FieldCreatedAt:
+		return m.CreatedAt()
+	case lotteryinvitation.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *LotteryInvitationMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case lotteryinvitation.FieldPoolID:
+		return m.OldPoolID(ctx)
+	case lotteryinvitation.FieldInviterID:
+		return m.OldInviterID(ctx)
+	case lotteryinvitation.FieldInviteeID:
+		return m.OldInviteeID(ctx)
+	case lotteryinvitation.FieldVisitorKey:
+		return m.OldVisitorKey(ctx)
+	case lotteryinvitation.FieldIPAddress:
+		return m.OldIPAddress(ctx)
+	case lotteryinvitation.FieldCountry:
+		return m.OldCountry(ctx)
+	case lotteryinvitation.FieldNetUnits:
+		return m.OldNetUnits(ctx)
+	case lotteryinvitation.FieldQualified:
+		return m.OldQualified(ctx)
+	case lotteryinvitation.FieldInviterAwarded:
+		return m.OldInviterAwarded(ctx)
+	case lotteryinvitation.FieldInviteeAwarded:
+		return m.OldInviteeAwarded(ctx)
+	case lotteryinvitation.FieldRegisteredAt:
+		return m.OldRegisteredAt(ctx)
+	case lotteryinvitation.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case lotteryinvitation.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown LotteryInvitation field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryInvitationMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case lotteryinvitation.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPoolID(v)
+		return nil
+	case lotteryinvitation.FieldInviterID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInviterID(v)
+		return nil
+	case lotteryinvitation.FieldInviteeID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInviteeID(v)
+		return nil
+	case lotteryinvitation.FieldVisitorKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVisitorKey(v)
+		return nil
+	case lotteryinvitation.FieldIPAddress:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIPAddress(v)
+		return nil
+	case lotteryinvitation.FieldCountry:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCountry(v)
+		return nil
+	case lotteryinvitation.FieldNetUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNetUnits(v)
+		return nil
+	case lotteryinvitation.FieldQualified:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetQualified(v)
+		return nil
+	case lotteryinvitation.FieldInviterAwarded:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInviterAwarded(v)
+		return nil
+	case lotteryinvitation.FieldInviteeAwarded:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInviteeAwarded(v)
+		return nil
+	case lotteryinvitation.FieldRegisteredAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRegisteredAt(v)
+		return nil
+	case lotteryinvitation.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case lotteryinvitation.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryInvitation field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *LotteryInvitationMutation) AddedFields() []string {
+	var fields []string
+	if m.addpool_id != nil {
+		fields = append(fields, lotteryinvitation.FieldPoolID)
+	}
+	if m.addinviter_id != nil {
+		fields = append(fields, lotteryinvitation.FieldInviterID)
+	}
+	if m.addinvitee_id != nil {
+		fields = append(fields, lotteryinvitation.FieldInviteeID)
+	}
+	if m.addnet_units != nil {
+		fields = append(fields, lotteryinvitation.FieldNetUnits)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *LotteryInvitationMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryinvitation.FieldPoolID:
+		return m.AddedPoolID()
+	case lotteryinvitation.FieldInviterID:
+		return m.AddedInviterID()
+	case lotteryinvitation.FieldInviteeID:
+		return m.AddedInviteeID()
+	case lotteryinvitation.FieldNetUnits:
+		return m.AddedNetUnits()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryInvitationMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case lotteryinvitation.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPoolID(v)
+		return nil
+	case lotteryinvitation.FieldInviterID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddInviterID(v)
+		return nil
+	case lotteryinvitation.FieldInviteeID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddInviteeID(v)
+		return nil
+	case lotteryinvitation.FieldNetUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddNetUnits(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryInvitation numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *LotteryInvitationMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(lotteryinvitation.FieldInviteeID) {
+		fields = append(fields, lotteryinvitation.FieldInviteeID)
+	}
+	if m.FieldCleared(lotteryinvitation.FieldRegisteredAt) {
+		fields = append(fields, lotteryinvitation.FieldRegisteredAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *LotteryInvitationMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *LotteryInvitationMutation) ClearField(name string) error {
+	switch name {
+	case lotteryinvitation.FieldInviteeID:
+		m.ClearInviteeID()
+		return nil
+	case lotteryinvitation.FieldRegisteredAt:
+		m.ClearRegisteredAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryInvitation nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *LotteryInvitationMutation) ResetField(name string) error {
+	switch name {
+	case lotteryinvitation.FieldPoolID:
+		m.ResetPoolID()
+		return nil
+	case lotteryinvitation.FieldInviterID:
+		m.ResetInviterID()
+		return nil
+	case lotteryinvitation.FieldInviteeID:
+		m.ResetInviteeID()
+		return nil
+	case lotteryinvitation.FieldVisitorKey:
+		m.ResetVisitorKey()
+		return nil
+	case lotteryinvitation.FieldIPAddress:
+		m.ResetIPAddress()
+		return nil
+	case lotteryinvitation.FieldCountry:
+		m.ResetCountry()
+		return nil
+	case lotteryinvitation.FieldNetUnits:
+		m.ResetNetUnits()
+		return nil
+	case lotteryinvitation.FieldQualified:
+		m.ResetQualified()
+		return nil
+	case lotteryinvitation.FieldInviterAwarded:
+		m.ResetInviterAwarded()
+		return nil
+	case lotteryinvitation.FieldInviteeAwarded:
+		m.ResetInviteeAwarded()
+		return nil
+	case lotteryinvitation.FieldRegisteredAt:
+		m.ResetRegisteredAt()
+		return nil
+	case lotteryinvitation.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case lotteryinvitation.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryInvitation field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *LotteryInvitationMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *LotteryInvitationMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *LotteryInvitationMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *LotteryInvitationMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *LotteryInvitationMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *LotteryInvitationMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *LotteryInvitationMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown LotteryInvitation unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *LotteryInvitationMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown LotteryInvitation edge %s", name)
+}
+
+// LotteryInviteLinkMutation represents an operation that mutates the LotteryInviteLink nodes in the graph.
+type LotteryInviteLinkMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *int64
+	pool_id       *int64
+	addpool_id    *int64
+	user_id       *int64
+	adduser_id    *int64
+	code          *string
+	created_at    *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*LotteryInviteLink, error)
+	predicates    []predicate.LotteryInviteLink
+}
+
+var _ ent.Mutation = (*LotteryInviteLinkMutation)(nil)
+
+// lotteryinvitelinkOption allows management of the mutation configuration using functional options.
+type lotteryinvitelinkOption func(*LotteryInviteLinkMutation)
+
+// newLotteryInviteLinkMutation creates new mutation for the LotteryInviteLink entity.
+func newLotteryInviteLinkMutation(c config, op Op, opts ...lotteryinvitelinkOption) *LotteryInviteLinkMutation {
+	m := &LotteryInviteLinkMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeLotteryInviteLink,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withLotteryInviteLinkID sets the ID field of the mutation.
+func withLotteryInviteLinkID(id int64) lotteryinvitelinkOption {
+	return func(m *LotteryInviteLinkMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *LotteryInviteLink
+		)
+		m.oldValue = func(ctx context.Context) (*LotteryInviteLink, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().LotteryInviteLink.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withLotteryInviteLink sets the old LotteryInviteLink of the mutation.
+func withLotteryInviteLink(node *LotteryInviteLink) lotteryinvitelinkOption {
+	return func(m *LotteryInviteLinkMutation) {
+		m.oldValue = func(context.Context) (*LotteryInviteLink, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m LotteryInviteLinkMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m LotteryInviteLinkMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *LotteryInviteLinkMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *LotteryInviteLinkMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().LotteryInviteLink.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPoolID sets the "pool_id" field.
+func (m *LotteryInviteLinkMutation) SetPoolID(i int64) {
+	m.pool_id = &i
+	m.addpool_id = nil
+}
+
+// PoolID returns the value of the "pool_id" field in the mutation.
+func (m *LotteryInviteLinkMutation) PoolID() (r int64, exists bool) {
+	v := m.pool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPoolID returns the old "pool_id" field's value of the LotteryInviteLink entity.
+// If the LotteryInviteLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInviteLinkMutation) OldPoolID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPoolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPoolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPoolID: %w", err)
+	}
+	return oldValue.PoolID, nil
+}
+
+// AddPoolID adds i to the "pool_id" field.
+func (m *LotteryInviteLinkMutation) AddPoolID(i int64) {
+	if m.addpool_id != nil {
+		*m.addpool_id += i
+	} else {
+		m.addpool_id = &i
+	}
+}
+
+// AddedPoolID returns the value that was added to the "pool_id" field in this mutation.
+func (m *LotteryInviteLinkMutation) AddedPoolID() (r int64, exists bool) {
+	v := m.addpool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPoolID resets all changes to the "pool_id" field.
+func (m *LotteryInviteLinkMutation) ResetPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *LotteryInviteLinkMutation) SetUserID(i int64) {
+	m.user_id = &i
+	m.adduser_id = nil
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *LotteryInviteLinkMutation) UserID() (r int64, exists bool) {
+	v := m.user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the LotteryInviteLink entity.
+// If the LotteryInviteLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInviteLinkMutation) OldUserID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// AddUserID adds i to the "user_id" field.
+func (m *LotteryInviteLinkMutation) AddUserID(i int64) {
+	if m.adduser_id != nil {
+		*m.adduser_id += i
+	} else {
+		m.adduser_id = &i
+	}
+}
+
+// AddedUserID returns the value that was added to the "user_id" field in this mutation.
+func (m *LotteryInviteLinkMutation) AddedUserID() (r int64, exists bool) {
+	v := m.adduser_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *LotteryInviteLinkMutation) ResetUserID() {
+	m.user_id = nil
+	m.adduser_id = nil
+}
+
+// SetCode sets the "code" field.
+func (m *LotteryInviteLinkMutation) SetCode(s string) {
+	m.code = &s
+}
+
+// Code returns the value of the "code" field in the mutation.
+func (m *LotteryInviteLinkMutation) Code() (r string, exists bool) {
+	v := m.code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCode returns the old "code" field's value of the LotteryInviteLink entity.
+// If the LotteryInviteLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInviteLinkMutation) OldCode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCode: %w", err)
+	}
+	return oldValue.Code, nil
+}
+
+// ResetCode resets all changes to the "code" field.
+func (m *LotteryInviteLinkMutation) ResetCode() {
+	m.code = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *LotteryInviteLinkMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *LotteryInviteLinkMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the LotteryInviteLink entity.
+// If the LotteryInviteLink object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryInviteLinkMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *LotteryInviteLinkMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the LotteryInviteLinkMutation builder.
+func (m *LotteryInviteLinkMutation) Where(ps ...predicate.LotteryInviteLink) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the LotteryInviteLinkMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *LotteryInviteLinkMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.LotteryInviteLink, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *LotteryInviteLinkMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *LotteryInviteLinkMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (LotteryInviteLink).
+func (m *LotteryInviteLinkMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *LotteryInviteLinkMutation) Fields() []string {
+	fields := make([]string, 0, 4)
+	if m.pool_id != nil {
+		fields = append(fields, lotteryinvitelink.FieldPoolID)
+	}
+	if m.user_id != nil {
+		fields = append(fields, lotteryinvitelink.FieldUserID)
+	}
+	if m.code != nil {
+		fields = append(fields, lotteryinvitelink.FieldCode)
+	}
+	if m.created_at != nil {
+		fields = append(fields, lotteryinvitelink.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *LotteryInviteLinkMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryinvitelink.FieldPoolID:
+		return m.PoolID()
+	case lotteryinvitelink.FieldUserID:
+		return m.UserID()
+	case lotteryinvitelink.FieldCode:
+		return m.Code()
+	case lotteryinvitelink.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *LotteryInviteLinkMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case lotteryinvitelink.FieldPoolID:
+		return m.OldPoolID(ctx)
+	case lotteryinvitelink.FieldUserID:
+		return m.OldUserID(ctx)
+	case lotteryinvitelink.FieldCode:
+		return m.OldCode(ctx)
+	case lotteryinvitelink.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown LotteryInviteLink field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryInviteLinkMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case lotteryinvitelink.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPoolID(v)
+		return nil
+	case lotteryinvitelink.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case lotteryinvitelink.FieldCode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCode(v)
+		return nil
+	case lotteryinvitelink.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryInviteLink field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *LotteryInviteLinkMutation) AddedFields() []string {
+	var fields []string
+	if m.addpool_id != nil {
+		fields = append(fields, lotteryinvitelink.FieldPoolID)
+	}
+	if m.adduser_id != nil {
+		fields = append(fields, lotteryinvitelink.FieldUserID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *LotteryInviteLinkMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryinvitelink.FieldPoolID:
+		return m.AddedPoolID()
+	case lotteryinvitelink.FieldUserID:
+		return m.AddedUserID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryInviteLinkMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case lotteryinvitelink.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPoolID(v)
+		return nil
+	case lotteryinvitelink.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUserID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryInviteLink numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *LotteryInviteLinkMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *LotteryInviteLinkMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *LotteryInviteLinkMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown LotteryInviteLink nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *LotteryInviteLinkMutation) ResetField(name string) error {
+	switch name {
+	case lotteryinvitelink.FieldPoolID:
+		m.ResetPoolID()
+		return nil
+	case lotteryinvitelink.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case lotteryinvitelink.FieldCode:
+		m.ResetCode()
+		return nil
+	case lotteryinvitelink.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryInviteLink field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *LotteryInviteLinkMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *LotteryInviteLinkMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *LotteryInviteLinkMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *LotteryInviteLinkMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *LotteryInviteLinkMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *LotteryInviteLinkMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *LotteryInviteLinkMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown LotteryInviteLink unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *LotteryInviteLinkMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown LotteryInviteLink edge %s", name)
+}
+
+// LotteryLedgerMutation represents an operation that mutates the LotteryLedger nodes in the graph.
+type LotteryLedgerMutation struct {
+	config
+	op              Op
+	typ             string
+	id              *int64
+	pool_id         *int64
+	addpool_id      *int64
+	user_id         *int64
+	adduser_id      *int64
+	action          *string
+	source_type     *string
+	source_id       *string
+	amount_units    *int64
+	addamount_units *int64
+	ticket_delta    *int64
+	addticket_delta *int64
+	created_at      *time.Time
+	clearedFields   map[string]struct{}
+	done            bool
+	oldValue        func(context.Context) (*LotteryLedger, error)
+	predicates      []predicate.LotteryLedger
+}
+
+var _ ent.Mutation = (*LotteryLedgerMutation)(nil)
+
+// lotteryledgerOption allows management of the mutation configuration using functional options.
+type lotteryledgerOption func(*LotteryLedgerMutation)
+
+// newLotteryLedgerMutation creates new mutation for the LotteryLedger entity.
+func newLotteryLedgerMutation(c config, op Op, opts ...lotteryledgerOption) *LotteryLedgerMutation {
+	m := &LotteryLedgerMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeLotteryLedger,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withLotteryLedgerID sets the ID field of the mutation.
+func withLotteryLedgerID(id int64) lotteryledgerOption {
+	return func(m *LotteryLedgerMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *LotteryLedger
+		)
+		m.oldValue = func(ctx context.Context) (*LotteryLedger, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().LotteryLedger.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withLotteryLedger sets the old LotteryLedger of the mutation.
+func withLotteryLedger(node *LotteryLedger) lotteryledgerOption {
+	return func(m *LotteryLedgerMutation) {
+		m.oldValue = func(context.Context) (*LotteryLedger, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m LotteryLedgerMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m LotteryLedgerMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *LotteryLedgerMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *LotteryLedgerMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().LotteryLedger.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPoolID sets the "pool_id" field.
+func (m *LotteryLedgerMutation) SetPoolID(i int64) {
+	m.pool_id = &i
+	m.addpool_id = nil
+}
+
+// PoolID returns the value of the "pool_id" field in the mutation.
+func (m *LotteryLedgerMutation) PoolID() (r int64, exists bool) {
+	v := m.pool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPoolID returns the old "pool_id" field's value of the LotteryLedger entity.
+// If the LotteryLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryLedgerMutation) OldPoolID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPoolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPoolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPoolID: %w", err)
+	}
+	return oldValue.PoolID, nil
+}
+
+// AddPoolID adds i to the "pool_id" field.
+func (m *LotteryLedgerMutation) AddPoolID(i int64) {
+	if m.addpool_id != nil {
+		*m.addpool_id += i
+	} else {
+		m.addpool_id = &i
+	}
+}
+
+// AddedPoolID returns the value that was added to the "pool_id" field in this mutation.
+func (m *LotteryLedgerMutation) AddedPoolID() (r int64, exists bool) {
+	v := m.addpool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPoolID resets all changes to the "pool_id" field.
+func (m *LotteryLedgerMutation) ResetPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+}
+
+// SetUserID sets the "user_id" field.
+func (m *LotteryLedgerMutation) SetUserID(i int64) {
+	m.user_id = &i
+	m.adduser_id = nil
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *LotteryLedgerMutation) UserID() (r int64, exists bool) {
+	v := m.user_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the LotteryLedger entity.
+// If the LotteryLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryLedgerMutation) OldUserID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// AddUserID adds i to the "user_id" field.
+func (m *LotteryLedgerMutation) AddUserID(i int64) {
+	if m.adduser_id != nil {
+		*m.adduser_id += i
+	} else {
+		m.adduser_id = &i
+	}
+}
+
+// AddedUserID returns the value that was added to the "user_id" field in this mutation.
+func (m *LotteryLedgerMutation) AddedUserID() (r int64, exists bool) {
+	v := m.adduser_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *LotteryLedgerMutation) ResetUserID() {
+	m.user_id = nil
+	m.adduser_id = nil
+}
+
+// SetAction sets the "action" field.
+func (m *LotteryLedgerMutation) SetAction(s string) {
+	m.action = &s
+}
+
+// Action returns the value of the "action" field in the mutation.
+func (m *LotteryLedgerMutation) Action() (r string, exists bool) {
+	v := m.action
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAction returns the old "action" field's value of the LotteryLedger entity.
+// If the LotteryLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryLedgerMutation) OldAction(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAction is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAction requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAction: %w", err)
+	}
+	return oldValue.Action, nil
+}
+
+// ResetAction resets all changes to the "action" field.
+func (m *LotteryLedgerMutation) ResetAction() {
+	m.action = nil
+}
+
+// SetSourceType sets the "source_type" field.
+func (m *LotteryLedgerMutation) SetSourceType(s string) {
+	m.source_type = &s
+}
+
+// SourceType returns the value of the "source_type" field in the mutation.
+func (m *LotteryLedgerMutation) SourceType() (r string, exists bool) {
+	v := m.source_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceType returns the old "source_type" field's value of the LotteryLedger entity.
+// If the LotteryLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryLedgerMutation) OldSourceType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceType: %w", err)
+	}
+	return oldValue.SourceType, nil
+}
+
+// ResetSourceType resets all changes to the "source_type" field.
+func (m *LotteryLedgerMutation) ResetSourceType() {
+	m.source_type = nil
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *LotteryLedgerMutation) SetSourceID(s string) {
+	m.source_id = &s
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *LotteryLedgerMutation) SourceID() (r string, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the LotteryLedger entity.
+// If the LotteryLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryLedgerMutation) OldSourceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *LotteryLedgerMutation) ResetSourceID() {
+	m.source_id = nil
+}
+
+// SetAmountUnits sets the "amount_units" field.
+func (m *LotteryLedgerMutation) SetAmountUnits(i int64) {
+	m.amount_units = &i
+	m.addamount_units = nil
+}
+
+// AmountUnits returns the value of the "amount_units" field in the mutation.
+func (m *LotteryLedgerMutation) AmountUnits() (r int64, exists bool) {
+	v := m.amount_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAmountUnits returns the old "amount_units" field's value of the LotteryLedger entity.
+// If the LotteryLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryLedgerMutation) OldAmountUnits(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAmountUnits is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAmountUnits requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAmountUnits: %w", err)
+	}
+	return oldValue.AmountUnits, nil
+}
+
+// AddAmountUnits adds i to the "amount_units" field.
+func (m *LotteryLedgerMutation) AddAmountUnits(i int64) {
+	if m.addamount_units != nil {
+		*m.addamount_units += i
+	} else {
+		m.addamount_units = &i
+	}
+}
+
+// AddedAmountUnits returns the value that was added to the "amount_units" field in this mutation.
+func (m *LotteryLedgerMutation) AddedAmountUnits() (r int64, exists bool) {
+	v := m.addamount_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountUnits resets all changes to the "amount_units" field.
+func (m *LotteryLedgerMutation) ResetAmountUnits() {
+	m.amount_units = nil
+	m.addamount_units = nil
+}
+
+// SetTicketDelta sets the "ticket_delta" field.
+func (m *LotteryLedgerMutation) SetTicketDelta(i int64) {
+	m.ticket_delta = &i
+	m.addticket_delta = nil
+}
+
+// TicketDelta returns the value of the "ticket_delta" field in the mutation.
+func (m *LotteryLedgerMutation) TicketDelta() (r int64, exists bool) {
+	v := m.ticket_delta
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldTicketDelta returns the old "ticket_delta" field's value of the LotteryLedger entity.
+// If the LotteryLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryLedgerMutation) OldTicketDelta(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldTicketDelta is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldTicketDelta requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldTicketDelta: %w", err)
+	}
+	return oldValue.TicketDelta, nil
+}
+
+// AddTicketDelta adds i to the "ticket_delta" field.
+func (m *LotteryLedgerMutation) AddTicketDelta(i int64) {
+	if m.addticket_delta != nil {
+		*m.addticket_delta += i
+	} else {
+		m.addticket_delta = &i
+	}
+}
+
+// AddedTicketDelta returns the value that was added to the "ticket_delta" field in this mutation.
+func (m *LotteryLedgerMutation) AddedTicketDelta() (r int64, exists bool) {
+	v := m.addticket_delta
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetTicketDelta resets all changes to the "ticket_delta" field.
+func (m *LotteryLedgerMutation) ResetTicketDelta() {
+	m.ticket_delta = nil
+	m.addticket_delta = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *LotteryLedgerMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *LotteryLedgerMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the LotteryLedger entity.
+// If the LotteryLedger object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryLedgerMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *LotteryLedgerMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the LotteryLedgerMutation builder.
+func (m *LotteryLedgerMutation) Where(ps ...predicate.LotteryLedger) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the LotteryLedgerMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *LotteryLedgerMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.LotteryLedger, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *LotteryLedgerMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *LotteryLedgerMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (LotteryLedger).
+func (m *LotteryLedgerMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *LotteryLedgerMutation) Fields() []string {
+	fields := make([]string, 0, 8)
+	if m.pool_id != nil {
+		fields = append(fields, lotteryledger.FieldPoolID)
+	}
+	if m.user_id != nil {
+		fields = append(fields, lotteryledger.FieldUserID)
+	}
+	if m.action != nil {
+		fields = append(fields, lotteryledger.FieldAction)
+	}
+	if m.source_type != nil {
+		fields = append(fields, lotteryledger.FieldSourceType)
+	}
+	if m.source_id != nil {
+		fields = append(fields, lotteryledger.FieldSourceID)
+	}
+	if m.amount_units != nil {
+		fields = append(fields, lotteryledger.FieldAmountUnits)
+	}
+	if m.ticket_delta != nil {
+		fields = append(fields, lotteryledger.FieldTicketDelta)
+	}
+	if m.created_at != nil {
+		fields = append(fields, lotteryledger.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *LotteryLedgerMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryledger.FieldPoolID:
+		return m.PoolID()
+	case lotteryledger.FieldUserID:
+		return m.UserID()
+	case lotteryledger.FieldAction:
+		return m.Action()
+	case lotteryledger.FieldSourceType:
+		return m.SourceType()
+	case lotteryledger.FieldSourceID:
+		return m.SourceID()
+	case lotteryledger.FieldAmountUnits:
+		return m.AmountUnits()
+	case lotteryledger.FieldTicketDelta:
+		return m.TicketDelta()
+	case lotteryledger.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *LotteryLedgerMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case lotteryledger.FieldPoolID:
+		return m.OldPoolID(ctx)
+	case lotteryledger.FieldUserID:
+		return m.OldUserID(ctx)
+	case lotteryledger.FieldAction:
+		return m.OldAction(ctx)
+	case lotteryledger.FieldSourceType:
+		return m.OldSourceType(ctx)
+	case lotteryledger.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case lotteryledger.FieldAmountUnits:
+		return m.OldAmountUnits(ctx)
+	case lotteryledger.FieldTicketDelta:
+		return m.OldTicketDelta(ctx)
+	case lotteryledger.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown LotteryLedger field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryLedgerMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case lotteryledger.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPoolID(v)
+		return nil
+	case lotteryledger.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case lotteryledger.FieldAction:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAction(v)
+		return nil
+	case lotteryledger.FieldSourceType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceType(v)
+		return nil
+	case lotteryledger.FieldSourceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case lotteryledger.FieldAmountUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountUnits(v)
+		return nil
+	case lotteryledger.FieldTicketDelta:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetTicketDelta(v)
+		return nil
+	case lotteryledger.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryLedger field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *LotteryLedgerMutation) AddedFields() []string {
+	var fields []string
+	if m.addpool_id != nil {
+		fields = append(fields, lotteryledger.FieldPoolID)
+	}
+	if m.adduser_id != nil {
+		fields = append(fields, lotteryledger.FieldUserID)
+	}
+	if m.addamount_units != nil {
+		fields = append(fields, lotteryledger.FieldAmountUnits)
+	}
+	if m.addticket_delta != nil {
+		fields = append(fields, lotteryledger.FieldTicketDelta)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *LotteryLedgerMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryledger.FieldPoolID:
+		return m.AddedPoolID()
+	case lotteryledger.FieldUserID:
+		return m.AddedUserID()
+	case lotteryledger.FieldAmountUnits:
+		return m.AddedAmountUnits()
+	case lotteryledger.FieldTicketDelta:
+		return m.AddedTicketDelta()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryLedgerMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case lotteryledger.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPoolID(v)
+		return nil
+	case lotteryledger.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUserID(v)
+		return nil
+	case lotteryledger.FieldAmountUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAmountUnits(v)
+		return nil
+	case lotteryledger.FieldTicketDelta:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddTicketDelta(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryLedger numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *LotteryLedgerMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *LotteryLedgerMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *LotteryLedgerMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown LotteryLedger nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *LotteryLedgerMutation) ResetField(name string) error {
+	switch name {
+	case lotteryledger.FieldPoolID:
+		m.ResetPoolID()
+		return nil
+	case lotteryledger.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case lotteryledger.FieldAction:
+		m.ResetAction()
+		return nil
+	case lotteryledger.FieldSourceType:
+		m.ResetSourceType()
+		return nil
+	case lotteryledger.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case lotteryledger.FieldAmountUnits:
+		m.ResetAmountUnits()
+		return nil
+	case lotteryledger.FieldTicketDelta:
+		m.ResetTicketDelta()
+		return nil
+	case lotteryledger.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryLedger field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *LotteryLedgerMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *LotteryLedgerMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *LotteryLedgerMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *LotteryLedgerMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *LotteryLedgerMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *LotteryLedgerMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *LotteryLedgerMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown LotteryLedger unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *LotteryLedgerMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown LotteryLedger edge %s", name)
+}
+
+// LotteryPoolMutation represents an operation that mutates the LotteryPool nodes in the graph.
+type LotteryPoolMutation struct {
+	config
+	op                 Op
+	typ                string
+	id                 *int64
+	name               *string
+	mode               *string
+	invite_config      *map[string]interface{}
+	threshold_units    *int64
+	addthreshold_units *int64
+	grant_enabled      *bool
+	draw_enabled       *bool
+	rule_locked        *bool
+	sort_order         *int
+	addsort_order      *int
+	activated_at       *time.Time
+	deleted_at         *time.Time
+	created_at         *time.Time
+	updated_at         *time.Time
+	clearedFields      map[string]struct{}
+	done               bool
+	oldValue           func(context.Context) (*LotteryPool, error)
+	predicates         []predicate.LotteryPool
+}
+
+var _ ent.Mutation = (*LotteryPoolMutation)(nil)
+
+// lotterypoolOption allows management of the mutation configuration using functional options.
+type lotterypoolOption func(*LotteryPoolMutation)
+
+// newLotteryPoolMutation creates new mutation for the LotteryPool entity.
+func newLotteryPoolMutation(c config, op Op, opts ...lotterypoolOption) *LotteryPoolMutation {
+	m := &LotteryPoolMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeLotteryPool,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withLotteryPoolID sets the ID field of the mutation.
+func withLotteryPoolID(id int64) lotterypoolOption {
+	return func(m *LotteryPoolMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *LotteryPool
+		)
+		m.oldValue = func(ctx context.Context) (*LotteryPool, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().LotteryPool.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withLotteryPool sets the old LotteryPool of the mutation.
+func withLotteryPool(node *LotteryPool) lotterypoolOption {
+	return func(m *LotteryPoolMutation) {
+		m.oldValue = func(context.Context) (*LotteryPool, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m LotteryPoolMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m LotteryPoolMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *LotteryPoolMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *LotteryPoolMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().LotteryPool.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetName sets the "name" field.
+func (m *LotteryPoolMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *LotteryPoolMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *LotteryPoolMutation) ResetName() {
+	m.name = nil
+}
+
+// SetMode sets the "mode" field.
+func (m *LotteryPoolMutation) SetMode(s string) {
+	m.mode = &s
+}
+
+// Mode returns the value of the "mode" field in the mutation.
+func (m *LotteryPoolMutation) Mode() (r string, exists bool) {
+	v := m.mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMode returns the old "mode" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMode: %w", err)
+	}
+	return oldValue.Mode, nil
+}
+
+// ResetMode resets all changes to the "mode" field.
+func (m *LotteryPoolMutation) ResetMode() {
+	m.mode = nil
+}
+
+// SetInviteConfig sets the "invite_config" field.
+func (m *LotteryPoolMutation) SetInviteConfig(value map[string]interface{}) {
+	m.invite_config = &value
+}
+
+// InviteConfig returns the value of the "invite_config" field in the mutation.
+func (m *LotteryPoolMutation) InviteConfig() (r map[string]interface{}, exists bool) {
+	v := m.invite_config
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInviteConfig returns the old "invite_config" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldInviteConfig(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInviteConfig is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInviteConfig requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInviteConfig: %w", err)
+	}
+	return oldValue.InviteConfig, nil
+}
+
+// ClearInviteConfig clears the value of the "invite_config" field.
+func (m *LotteryPoolMutation) ClearInviteConfig() {
+	m.invite_config = nil
+	m.clearedFields[lotterypool.FieldInviteConfig] = struct{}{}
+}
+
+// InviteConfigCleared returns if the "invite_config" field was cleared in this mutation.
+func (m *LotteryPoolMutation) InviteConfigCleared() bool {
+	_, ok := m.clearedFields[lotterypool.FieldInviteConfig]
+	return ok
+}
+
+// ResetInviteConfig resets all changes to the "invite_config" field.
+func (m *LotteryPoolMutation) ResetInviteConfig() {
+	m.invite_config = nil
+	delete(m.clearedFields, lotterypool.FieldInviteConfig)
+}
+
+// SetThresholdUnits sets the "threshold_units" field.
+func (m *LotteryPoolMutation) SetThresholdUnits(i int64) {
+	m.threshold_units = &i
+	m.addthreshold_units = nil
+}
+
+// ThresholdUnits returns the value of the "threshold_units" field in the mutation.
+func (m *LotteryPoolMutation) ThresholdUnits() (r int64, exists bool) {
+	v := m.threshold_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldThresholdUnits returns the old "threshold_units" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldThresholdUnits(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldThresholdUnits is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldThresholdUnits requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldThresholdUnits: %w", err)
+	}
+	return oldValue.ThresholdUnits, nil
+}
+
+// AddThresholdUnits adds i to the "threshold_units" field.
+func (m *LotteryPoolMutation) AddThresholdUnits(i int64) {
+	if m.addthreshold_units != nil {
+		*m.addthreshold_units += i
+	} else {
+		m.addthreshold_units = &i
+	}
+}
+
+// AddedThresholdUnits returns the value that was added to the "threshold_units" field in this mutation.
+func (m *LotteryPoolMutation) AddedThresholdUnits() (r int64, exists bool) {
+	v := m.addthreshold_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetThresholdUnits resets all changes to the "threshold_units" field.
+func (m *LotteryPoolMutation) ResetThresholdUnits() {
+	m.threshold_units = nil
+	m.addthreshold_units = nil
+}
+
+// SetGrantEnabled sets the "grant_enabled" field.
+func (m *LotteryPoolMutation) SetGrantEnabled(b bool) {
+	m.grant_enabled = &b
+}
+
+// GrantEnabled returns the value of the "grant_enabled" field in the mutation.
+func (m *LotteryPoolMutation) GrantEnabled() (r bool, exists bool) {
+	v := m.grant_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGrantEnabled returns the old "grant_enabled" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldGrantEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGrantEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGrantEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGrantEnabled: %w", err)
+	}
+	return oldValue.GrantEnabled, nil
+}
+
+// ResetGrantEnabled resets all changes to the "grant_enabled" field.
+func (m *LotteryPoolMutation) ResetGrantEnabled() {
+	m.grant_enabled = nil
+}
+
+// SetDrawEnabled sets the "draw_enabled" field.
+func (m *LotteryPoolMutation) SetDrawEnabled(b bool) {
+	m.draw_enabled = &b
+}
+
+// DrawEnabled returns the value of the "draw_enabled" field in the mutation.
+func (m *LotteryPoolMutation) DrawEnabled() (r bool, exists bool) {
+	v := m.draw_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDrawEnabled returns the old "draw_enabled" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldDrawEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDrawEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDrawEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDrawEnabled: %w", err)
+	}
+	return oldValue.DrawEnabled, nil
+}
+
+// ResetDrawEnabled resets all changes to the "draw_enabled" field.
+func (m *LotteryPoolMutation) ResetDrawEnabled() {
+	m.draw_enabled = nil
+}
+
+// SetRuleLocked sets the "rule_locked" field.
+func (m *LotteryPoolMutation) SetRuleLocked(b bool) {
+	m.rule_locked = &b
+}
+
+// RuleLocked returns the value of the "rule_locked" field in the mutation.
+func (m *LotteryPoolMutation) RuleLocked() (r bool, exists bool) {
+	v := m.rule_locked
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRuleLocked returns the old "rule_locked" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldRuleLocked(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRuleLocked is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRuleLocked requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRuleLocked: %w", err)
+	}
+	return oldValue.RuleLocked, nil
+}
+
+// ResetRuleLocked resets all changes to the "rule_locked" field.
+func (m *LotteryPoolMutation) ResetRuleLocked() {
+	m.rule_locked = nil
+}
+
+// SetSortOrder sets the "sort_order" field.
+func (m *LotteryPoolMutation) SetSortOrder(i int) {
+	m.sort_order = &i
+	m.addsort_order = nil
+}
+
+// SortOrder returns the value of the "sort_order" field in the mutation.
+func (m *LotteryPoolMutation) SortOrder() (r int, exists bool) {
+	v := m.sort_order
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSortOrder returns the old "sort_order" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldSortOrder(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSortOrder is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSortOrder requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSortOrder: %w", err)
+	}
+	return oldValue.SortOrder, nil
+}
+
+// AddSortOrder adds i to the "sort_order" field.
+func (m *LotteryPoolMutation) AddSortOrder(i int) {
+	if m.addsort_order != nil {
+		*m.addsort_order += i
+	} else {
+		m.addsort_order = &i
+	}
+}
+
+// AddedSortOrder returns the value that was added to the "sort_order" field in this mutation.
+func (m *LotteryPoolMutation) AddedSortOrder() (r int, exists bool) {
+	v := m.addsort_order
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSortOrder resets all changes to the "sort_order" field.
+func (m *LotteryPoolMutation) ResetSortOrder() {
+	m.sort_order = nil
+	m.addsort_order = nil
+}
+
+// SetActivatedAt sets the "activated_at" field.
+func (m *LotteryPoolMutation) SetActivatedAt(t time.Time) {
+	m.activated_at = &t
+}
+
+// ActivatedAt returns the value of the "activated_at" field in the mutation.
+func (m *LotteryPoolMutation) ActivatedAt() (r time.Time, exists bool) {
+	v := m.activated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldActivatedAt returns the old "activated_at" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldActivatedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldActivatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldActivatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldActivatedAt: %w", err)
+	}
+	return oldValue.ActivatedAt, nil
+}
+
+// ClearActivatedAt clears the value of the "activated_at" field.
+func (m *LotteryPoolMutation) ClearActivatedAt() {
+	m.activated_at = nil
+	m.clearedFields[lotterypool.FieldActivatedAt] = struct{}{}
+}
+
+// ActivatedAtCleared returns if the "activated_at" field was cleared in this mutation.
+func (m *LotteryPoolMutation) ActivatedAtCleared() bool {
+	_, ok := m.clearedFields[lotterypool.FieldActivatedAt]
+	return ok
+}
+
+// ResetActivatedAt resets all changes to the "activated_at" field.
+func (m *LotteryPoolMutation) ResetActivatedAt() {
+	m.activated_at = nil
+	delete(m.clearedFields, lotterypool.FieldActivatedAt)
+}
+
+// SetDeletedAt sets the "deleted_at" field.
+func (m *LotteryPoolMutation) SetDeletedAt(t time.Time) {
+	m.deleted_at = &t
+}
+
+// DeletedAt returns the value of the "deleted_at" field in the mutation.
+func (m *LotteryPoolMutation) DeletedAt() (r time.Time, exists bool) {
+	v := m.deleted_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDeletedAt returns the old "deleted_at" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldDeletedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDeletedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDeletedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDeletedAt: %w", err)
+	}
+	return oldValue.DeletedAt, nil
+}
+
+// ClearDeletedAt clears the value of the "deleted_at" field.
+func (m *LotteryPoolMutation) ClearDeletedAt() {
+	m.deleted_at = nil
+	m.clearedFields[lotterypool.FieldDeletedAt] = struct{}{}
+}
+
+// DeletedAtCleared returns if the "deleted_at" field was cleared in this mutation.
+func (m *LotteryPoolMutation) DeletedAtCleared() bool {
+	_, ok := m.clearedFields[lotterypool.FieldDeletedAt]
+	return ok
+}
+
+// ResetDeletedAt resets all changes to the "deleted_at" field.
+func (m *LotteryPoolMutation) ResetDeletedAt() {
+	m.deleted_at = nil
+	delete(m.clearedFields, lotterypool.FieldDeletedAt)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *LotteryPoolMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *LotteryPoolMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *LotteryPoolMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *LotteryPoolMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *LotteryPoolMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the LotteryPool entity.
+// If the LotteryPool object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPoolMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *LotteryPoolMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the LotteryPoolMutation builder.
+func (m *LotteryPoolMutation) Where(ps ...predicate.LotteryPool) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the LotteryPoolMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *LotteryPoolMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.LotteryPool, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *LotteryPoolMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *LotteryPoolMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (LotteryPool).
+func (m *LotteryPoolMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *LotteryPoolMutation) Fields() []string {
+	fields := make([]string, 0, 12)
+	if m.name != nil {
+		fields = append(fields, lotterypool.FieldName)
+	}
+	if m.mode != nil {
+		fields = append(fields, lotterypool.FieldMode)
+	}
+	if m.invite_config != nil {
+		fields = append(fields, lotterypool.FieldInviteConfig)
+	}
+	if m.threshold_units != nil {
+		fields = append(fields, lotterypool.FieldThresholdUnits)
+	}
+	if m.grant_enabled != nil {
+		fields = append(fields, lotterypool.FieldGrantEnabled)
+	}
+	if m.draw_enabled != nil {
+		fields = append(fields, lotterypool.FieldDrawEnabled)
+	}
+	if m.rule_locked != nil {
+		fields = append(fields, lotterypool.FieldRuleLocked)
+	}
+	if m.sort_order != nil {
+		fields = append(fields, lotterypool.FieldSortOrder)
+	}
+	if m.activated_at != nil {
+		fields = append(fields, lotterypool.FieldActivatedAt)
+	}
+	if m.deleted_at != nil {
+		fields = append(fields, lotterypool.FieldDeletedAt)
+	}
+	if m.created_at != nil {
+		fields = append(fields, lotterypool.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, lotterypool.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *LotteryPoolMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case lotterypool.FieldName:
+		return m.Name()
+	case lotterypool.FieldMode:
+		return m.Mode()
+	case lotterypool.FieldInviteConfig:
+		return m.InviteConfig()
+	case lotterypool.FieldThresholdUnits:
+		return m.ThresholdUnits()
+	case lotterypool.FieldGrantEnabled:
+		return m.GrantEnabled()
+	case lotterypool.FieldDrawEnabled:
+		return m.DrawEnabled()
+	case lotterypool.FieldRuleLocked:
+		return m.RuleLocked()
+	case lotterypool.FieldSortOrder:
+		return m.SortOrder()
+	case lotterypool.FieldActivatedAt:
+		return m.ActivatedAt()
+	case lotterypool.FieldDeletedAt:
+		return m.DeletedAt()
+	case lotterypool.FieldCreatedAt:
+		return m.CreatedAt()
+	case lotterypool.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *LotteryPoolMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case lotterypool.FieldName:
+		return m.OldName(ctx)
+	case lotterypool.FieldMode:
+		return m.OldMode(ctx)
+	case lotterypool.FieldInviteConfig:
+		return m.OldInviteConfig(ctx)
+	case lotterypool.FieldThresholdUnits:
+		return m.OldThresholdUnits(ctx)
+	case lotterypool.FieldGrantEnabled:
+		return m.OldGrantEnabled(ctx)
+	case lotterypool.FieldDrawEnabled:
+		return m.OldDrawEnabled(ctx)
+	case lotterypool.FieldRuleLocked:
+		return m.OldRuleLocked(ctx)
+	case lotterypool.FieldSortOrder:
+		return m.OldSortOrder(ctx)
+	case lotterypool.FieldActivatedAt:
+		return m.OldActivatedAt(ctx)
+	case lotterypool.FieldDeletedAt:
+		return m.OldDeletedAt(ctx)
+	case lotterypool.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case lotterypool.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown LotteryPool field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryPoolMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case lotterypool.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
+	case lotterypool.FieldMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMode(v)
+		return nil
+	case lotterypool.FieldInviteConfig:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInviteConfig(v)
+		return nil
+	case lotterypool.FieldThresholdUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetThresholdUnits(v)
+		return nil
+	case lotterypool.FieldGrantEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGrantEnabled(v)
+		return nil
+	case lotterypool.FieldDrawEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDrawEnabled(v)
+		return nil
+	case lotterypool.FieldRuleLocked:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRuleLocked(v)
+		return nil
+	case lotterypool.FieldSortOrder:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSortOrder(v)
+		return nil
+	case lotterypool.FieldActivatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetActivatedAt(v)
+		return nil
+	case lotterypool.FieldDeletedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDeletedAt(v)
+		return nil
+	case lotterypool.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case lotterypool.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryPool field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *LotteryPoolMutation) AddedFields() []string {
+	var fields []string
+	if m.addthreshold_units != nil {
+		fields = append(fields, lotterypool.FieldThresholdUnits)
+	}
+	if m.addsort_order != nil {
+		fields = append(fields, lotterypool.FieldSortOrder)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *LotteryPoolMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case lotterypool.FieldThresholdUnits:
+		return m.AddedThresholdUnits()
+	case lotterypool.FieldSortOrder:
+		return m.AddedSortOrder()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryPoolMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case lotterypool.FieldThresholdUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddThresholdUnits(v)
+		return nil
+	case lotterypool.FieldSortOrder:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSortOrder(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryPool numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *LotteryPoolMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(lotterypool.FieldInviteConfig) {
+		fields = append(fields, lotterypool.FieldInviteConfig)
+	}
+	if m.FieldCleared(lotterypool.FieldActivatedAt) {
+		fields = append(fields, lotterypool.FieldActivatedAt)
+	}
+	if m.FieldCleared(lotterypool.FieldDeletedAt) {
+		fields = append(fields, lotterypool.FieldDeletedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *LotteryPoolMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *LotteryPoolMutation) ClearField(name string) error {
+	switch name {
+	case lotterypool.FieldInviteConfig:
+		m.ClearInviteConfig()
+		return nil
+	case lotterypool.FieldActivatedAt:
+		m.ClearActivatedAt()
+		return nil
+	case lotterypool.FieldDeletedAt:
+		m.ClearDeletedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryPool nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *LotteryPoolMutation) ResetField(name string) error {
+	switch name {
+	case lotterypool.FieldName:
+		m.ResetName()
+		return nil
+	case lotterypool.FieldMode:
+		m.ResetMode()
+		return nil
+	case lotterypool.FieldInviteConfig:
+		m.ResetInviteConfig()
+		return nil
+	case lotterypool.FieldThresholdUnits:
+		m.ResetThresholdUnits()
+		return nil
+	case lotterypool.FieldGrantEnabled:
+		m.ResetGrantEnabled()
+		return nil
+	case lotterypool.FieldDrawEnabled:
+		m.ResetDrawEnabled()
+		return nil
+	case lotterypool.FieldRuleLocked:
+		m.ResetRuleLocked()
+		return nil
+	case lotterypool.FieldSortOrder:
+		m.ResetSortOrder()
+		return nil
+	case lotterypool.FieldActivatedAt:
+		m.ResetActivatedAt()
+		return nil
+	case lotterypool.FieldDeletedAt:
+		m.ResetDeletedAt()
+		return nil
+	case lotterypool.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case lotterypool.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryPool field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *LotteryPoolMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *LotteryPoolMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *LotteryPoolMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *LotteryPoolMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *LotteryPoolMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *LotteryPoolMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *LotteryPoolMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown LotteryPool unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *LotteryPoolMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown LotteryPool edge %s", name)
+}
+
+// LotteryPrizeMutation represents an operation that mutates the LotteryPrize nodes in the graph.
+type LotteryPrizeMutation struct {
+	config
+	op               Op
+	typ              string
+	id               *int64
+	pool_id          *int64
+	addpool_id       *int64
+	name             *string
+	kind             *string
+	weight           *int64
+	addweight        *int64
+	stock            *int64
+	addstock         *int64
+	enabled          *bool
+	sort_order       *int
+	addsort_order    *int
+	amount_units     *int64
+	addamount_units  *int64
+	plan_id          *int64
+	addplan_id       *int64
+	plan_name        *string
+	group_id         *int64
+	addgroup_id      *int64
+	validity_days    *int
+	addvalidity_days *int
+	text             *string
+	deleted_at       *time.Time
+	created_at       *time.Time
+	updated_at       *time.Time
+	clearedFields    map[string]struct{}
+	done             bool
+	oldValue         func(context.Context) (*LotteryPrize, error)
+	predicates       []predicate.LotteryPrize
+}
+
+var _ ent.Mutation = (*LotteryPrizeMutation)(nil)
+
+// lotteryprizeOption allows management of the mutation configuration using functional options.
+type lotteryprizeOption func(*LotteryPrizeMutation)
+
+// newLotteryPrizeMutation creates new mutation for the LotteryPrize entity.
+func newLotteryPrizeMutation(c config, op Op, opts ...lotteryprizeOption) *LotteryPrizeMutation {
+	m := &LotteryPrizeMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeLotteryPrize,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withLotteryPrizeID sets the ID field of the mutation.
+func withLotteryPrizeID(id int64) lotteryprizeOption {
+	return func(m *LotteryPrizeMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *LotteryPrize
+		)
+		m.oldValue = func(ctx context.Context) (*LotteryPrize, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().LotteryPrize.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withLotteryPrize sets the old LotteryPrize of the mutation.
+func withLotteryPrize(node *LotteryPrize) lotteryprizeOption {
+	return func(m *LotteryPrizeMutation) {
+		m.oldValue = func(context.Context) (*LotteryPrize, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m LotteryPrizeMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m LotteryPrizeMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *LotteryPrizeMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *LotteryPrizeMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().LotteryPrize.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetPoolID sets the "pool_id" field.
+func (m *LotteryPrizeMutation) SetPoolID(i int64) {
+	m.pool_id = &i
+	m.addpool_id = nil
+}
+
+// PoolID returns the value of the "pool_id" field in the mutation.
+func (m *LotteryPrizeMutation) PoolID() (r int64, exists bool) {
+	v := m.pool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPoolID returns the old "pool_id" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldPoolID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPoolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPoolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPoolID: %w", err)
+	}
+	return oldValue.PoolID, nil
+}
+
+// AddPoolID adds i to the "pool_id" field.
+func (m *LotteryPrizeMutation) AddPoolID(i int64) {
+	if m.addpool_id != nil {
+		*m.addpool_id += i
+	} else {
+		m.addpool_id = &i
+	}
+}
+
+// AddedPoolID returns the value that was added to the "pool_id" field in this mutation.
+func (m *LotteryPrizeMutation) AddedPoolID() (r int64, exists bool) {
+	v := m.addpool_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPoolID resets all changes to the "pool_id" field.
+func (m *LotteryPrizeMutation) ResetPoolID() {
+	m.pool_id = nil
+	m.addpool_id = nil
+}
+
+// SetName sets the "name" field.
+func (m *LotteryPrizeMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *LotteryPrizeMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *LotteryPrizeMutation) ResetName() {
+	m.name = nil
+}
+
+// SetKind sets the "kind" field.
+func (m *LotteryPrizeMutation) SetKind(s string) {
+	m.kind = &s
+}
+
+// Kind returns the value of the "kind" field in the mutation.
+func (m *LotteryPrizeMutation) Kind() (r string, exists bool) {
+	v := m.kind
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKind returns the old "kind" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldKind(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKind is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKind requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKind: %w", err)
+	}
+	return oldValue.Kind, nil
+}
+
+// ResetKind resets all changes to the "kind" field.
+func (m *LotteryPrizeMutation) ResetKind() {
+	m.kind = nil
+}
+
+// SetWeight sets the "weight" field.
+func (m *LotteryPrizeMutation) SetWeight(i int64) {
+	m.weight = &i
+	m.addweight = nil
+}
+
+// Weight returns the value of the "weight" field in the mutation.
+func (m *LotteryPrizeMutation) Weight() (r int64, exists bool) {
+	v := m.weight
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldWeight returns the old "weight" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldWeight(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldWeight is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldWeight requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldWeight: %w", err)
+	}
+	return oldValue.Weight, nil
+}
+
+// AddWeight adds i to the "weight" field.
+func (m *LotteryPrizeMutation) AddWeight(i int64) {
+	if m.addweight != nil {
+		*m.addweight += i
+	} else {
+		m.addweight = &i
+	}
+}
+
+// AddedWeight returns the value that was added to the "weight" field in this mutation.
+func (m *LotteryPrizeMutation) AddedWeight() (r int64, exists bool) {
+	v := m.addweight
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetWeight resets all changes to the "weight" field.
+func (m *LotteryPrizeMutation) ResetWeight() {
+	m.weight = nil
+	m.addweight = nil
+}
+
+// SetStock sets the "stock" field.
+func (m *LotteryPrizeMutation) SetStock(i int64) {
+	m.stock = &i
+	m.addstock = nil
+}
+
+// Stock returns the value of the "stock" field in the mutation.
+func (m *LotteryPrizeMutation) Stock() (r int64, exists bool) {
+	v := m.stock
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStock returns the old "stock" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldStock(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStock is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStock requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStock: %w", err)
+	}
+	return oldValue.Stock, nil
+}
+
+// AddStock adds i to the "stock" field.
+func (m *LotteryPrizeMutation) AddStock(i int64) {
+	if m.addstock != nil {
+		*m.addstock += i
+	} else {
+		m.addstock = &i
+	}
+}
+
+// AddedStock returns the value that was added to the "stock" field in this mutation.
+func (m *LotteryPrizeMutation) AddedStock() (r int64, exists bool) {
+	v := m.addstock
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetStock resets all changes to the "stock" field.
+func (m *LotteryPrizeMutation) ResetStock() {
+	m.stock = nil
+	m.addstock = nil
+}
+
+// SetEnabled sets the "enabled" field.
+func (m *LotteryPrizeMutation) SetEnabled(b bool) {
+	m.enabled = &b
+}
+
+// Enabled returns the value of the "enabled" field in the mutation.
+func (m *LotteryPrizeMutation) Enabled() (r bool, exists bool) {
+	v := m.enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEnabled returns the old "enabled" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEnabled: %w", err)
+	}
+	return oldValue.Enabled, nil
+}
+
+// ResetEnabled resets all changes to the "enabled" field.
+func (m *LotteryPrizeMutation) ResetEnabled() {
+	m.enabled = nil
+}
+
+// SetSortOrder sets the "sort_order" field.
+func (m *LotteryPrizeMutation) SetSortOrder(i int) {
+	m.sort_order = &i
+	m.addsort_order = nil
+}
+
+// SortOrder returns the value of the "sort_order" field in the mutation.
+func (m *LotteryPrizeMutation) SortOrder() (r int, exists bool) {
+	v := m.sort_order
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSortOrder returns the old "sort_order" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldSortOrder(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSortOrder is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSortOrder requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSortOrder: %w", err)
+	}
+	return oldValue.SortOrder, nil
+}
+
+// AddSortOrder adds i to the "sort_order" field.
+func (m *LotteryPrizeMutation) AddSortOrder(i int) {
+	if m.addsort_order != nil {
+		*m.addsort_order += i
+	} else {
+		m.addsort_order = &i
+	}
+}
+
+// AddedSortOrder returns the value that was added to the "sort_order" field in this mutation.
+func (m *LotteryPrizeMutation) AddedSortOrder() (r int, exists bool) {
+	v := m.addsort_order
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSortOrder resets all changes to the "sort_order" field.
+func (m *LotteryPrizeMutation) ResetSortOrder() {
+	m.sort_order = nil
+	m.addsort_order = nil
+}
+
+// SetAmountUnits sets the "amount_units" field.
+func (m *LotteryPrizeMutation) SetAmountUnits(i int64) {
+	m.amount_units = &i
+	m.addamount_units = nil
+}
+
+// AmountUnits returns the value of the "amount_units" field in the mutation.
+func (m *LotteryPrizeMutation) AmountUnits() (r int64, exists bool) {
+	v := m.amount_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAmountUnits returns the old "amount_units" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldAmountUnits(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAmountUnits is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAmountUnits requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAmountUnits: %w", err)
+	}
+	return oldValue.AmountUnits, nil
+}
+
+// AddAmountUnits adds i to the "amount_units" field.
+func (m *LotteryPrizeMutation) AddAmountUnits(i int64) {
+	if m.addamount_units != nil {
+		*m.addamount_units += i
+	} else {
+		m.addamount_units = &i
+	}
+}
+
+// AddedAmountUnits returns the value that was added to the "amount_units" field in this mutation.
+func (m *LotteryPrizeMutation) AddedAmountUnits() (r int64, exists bool) {
+	v := m.addamount_units
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAmountUnits resets all changes to the "amount_units" field.
+func (m *LotteryPrizeMutation) ResetAmountUnits() {
+	m.amount_units = nil
+	m.addamount_units = nil
+}
+
+// SetPlanID sets the "plan_id" field.
+func (m *LotteryPrizeMutation) SetPlanID(i int64) {
+	m.plan_id = &i
+	m.addplan_id = nil
+}
+
+// PlanID returns the value of the "plan_id" field in the mutation.
+func (m *LotteryPrizeMutation) PlanID() (r int64, exists bool) {
+	v := m.plan_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPlanID returns the old "plan_id" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldPlanID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPlanID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPlanID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPlanID: %w", err)
+	}
+	return oldValue.PlanID, nil
+}
+
+// AddPlanID adds i to the "plan_id" field.
+func (m *LotteryPrizeMutation) AddPlanID(i int64) {
+	if m.addplan_id != nil {
+		*m.addplan_id += i
+	} else {
+		m.addplan_id = &i
+	}
+}
+
+// AddedPlanID returns the value that was added to the "plan_id" field in this mutation.
+func (m *LotteryPrizeMutation) AddedPlanID() (r int64, exists bool) {
+	v := m.addplan_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPlanID resets all changes to the "plan_id" field.
+func (m *LotteryPrizeMutation) ResetPlanID() {
+	m.plan_id = nil
+	m.addplan_id = nil
+}
+
+// SetPlanName sets the "plan_name" field.
+func (m *LotteryPrizeMutation) SetPlanName(s string) {
+	m.plan_name = &s
+}
+
+// PlanName returns the value of the "plan_name" field in the mutation.
+func (m *LotteryPrizeMutation) PlanName() (r string, exists bool) {
+	v := m.plan_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPlanName returns the old "plan_name" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldPlanName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPlanName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPlanName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPlanName: %w", err)
+	}
+	return oldValue.PlanName, nil
+}
+
+// ResetPlanName resets all changes to the "plan_name" field.
+func (m *LotteryPrizeMutation) ResetPlanName() {
+	m.plan_name = nil
+}
+
+// SetGroupID sets the "group_id" field.
+func (m *LotteryPrizeMutation) SetGroupID(i int64) {
+	m.group_id = &i
+	m.addgroup_id = nil
+}
+
+// GroupID returns the value of the "group_id" field in the mutation.
+func (m *LotteryPrizeMutation) GroupID() (r int64, exists bool) {
+	v := m.group_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGroupID returns the old "group_id" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldGroupID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGroupID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGroupID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGroupID: %w", err)
+	}
+	return oldValue.GroupID, nil
+}
+
+// AddGroupID adds i to the "group_id" field.
+func (m *LotteryPrizeMutation) AddGroupID(i int64) {
+	if m.addgroup_id != nil {
+		*m.addgroup_id += i
+	} else {
+		m.addgroup_id = &i
+	}
+}
+
+// AddedGroupID returns the value that was added to the "group_id" field in this mutation.
+func (m *LotteryPrizeMutation) AddedGroupID() (r int64, exists bool) {
+	v := m.addgroup_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetGroupID resets all changes to the "group_id" field.
+func (m *LotteryPrizeMutation) ResetGroupID() {
+	m.group_id = nil
+	m.addgroup_id = nil
+}
+
+// SetValidityDays sets the "validity_days" field.
+func (m *LotteryPrizeMutation) SetValidityDays(i int) {
+	m.validity_days = &i
+	m.addvalidity_days = nil
+}
+
+// ValidityDays returns the value of the "validity_days" field in the mutation.
+func (m *LotteryPrizeMutation) ValidityDays() (r int, exists bool) {
+	v := m.validity_days
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldValidityDays returns the old "validity_days" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldValidityDays(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldValidityDays is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldValidityDays requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldValidityDays: %w", err)
+	}
+	return oldValue.ValidityDays, nil
+}
+
+// AddValidityDays adds i to the "validity_days" field.
+func (m *LotteryPrizeMutation) AddValidityDays(i int) {
+	if m.addvalidity_days != nil {
+		*m.addvalidity_days += i
+	} else {
+		m.addvalidity_days = &i
+	}
+}
+
+// AddedValidityDays returns the value that was added to the "validity_days" field in this mutation.
+func (m *LotteryPrizeMutation) AddedValidityDays() (r int, exists bool) {
+	v := m.addvalidity_days
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetValidityDays resets all changes to the "validity_days" field.
+func (m *LotteryPrizeMutation) ResetValidityDays() {
+	m.validity_days = nil
+	m.addvalidity_days = nil
+}
+
+// SetText sets the "text" field.
+func (m *LotteryPrizeMutation) SetText(s string) {
+	m.text = &s
+}
+
+// Text returns the value of the "text" field in the mutation.
+func (m *LotteryPrizeMutation) Text() (r string, exists bool) {
+	v := m.text
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldText returns the old "text" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldText(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldText is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldText requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldText: %w", err)
+	}
+	return oldValue.Text, nil
+}
+
+// ResetText resets all changes to the "text" field.
+func (m *LotteryPrizeMutation) ResetText() {
+	m.text = nil
+}
+
+// SetDeletedAt sets the "deleted_at" field.
+func (m *LotteryPrizeMutation) SetDeletedAt(t time.Time) {
+	m.deleted_at = &t
+}
+
+// DeletedAt returns the value of the "deleted_at" field in the mutation.
+func (m *LotteryPrizeMutation) DeletedAt() (r time.Time, exists bool) {
+	v := m.deleted_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDeletedAt returns the old "deleted_at" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldDeletedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDeletedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDeletedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDeletedAt: %w", err)
+	}
+	return oldValue.DeletedAt, nil
+}
+
+// ClearDeletedAt clears the value of the "deleted_at" field.
+func (m *LotteryPrizeMutation) ClearDeletedAt() {
+	m.deleted_at = nil
+	m.clearedFields[lotteryprize.FieldDeletedAt] = struct{}{}
+}
+
+// DeletedAtCleared returns if the "deleted_at" field was cleared in this mutation.
+func (m *LotteryPrizeMutation) DeletedAtCleared() bool {
+	_, ok := m.clearedFields[lotteryprize.FieldDeletedAt]
+	return ok
+}
+
+// ResetDeletedAt resets all changes to the "deleted_at" field.
+func (m *LotteryPrizeMutation) ResetDeletedAt() {
+	m.deleted_at = nil
+	delete(m.clearedFields, lotteryprize.FieldDeletedAt)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *LotteryPrizeMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *LotteryPrizeMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *LotteryPrizeMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *LotteryPrizeMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *LotteryPrizeMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the LotteryPrize entity.
+// If the LotteryPrize object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LotteryPrizeMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *LotteryPrizeMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the LotteryPrizeMutation builder.
+func (m *LotteryPrizeMutation) Where(ps ...predicate.LotteryPrize) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the LotteryPrizeMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *LotteryPrizeMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.LotteryPrize, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *LotteryPrizeMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *LotteryPrizeMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (LotteryPrize).
+func (m *LotteryPrizeMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *LotteryPrizeMutation) Fields() []string {
+	fields := make([]string, 0, 16)
+	if m.pool_id != nil {
+		fields = append(fields, lotteryprize.FieldPoolID)
+	}
+	if m.name != nil {
+		fields = append(fields, lotteryprize.FieldName)
+	}
+	if m.kind != nil {
+		fields = append(fields, lotteryprize.FieldKind)
+	}
+	if m.weight != nil {
+		fields = append(fields, lotteryprize.FieldWeight)
+	}
+	if m.stock != nil {
+		fields = append(fields, lotteryprize.FieldStock)
+	}
+	if m.enabled != nil {
+		fields = append(fields, lotteryprize.FieldEnabled)
+	}
+	if m.sort_order != nil {
+		fields = append(fields, lotteryprize.FieldSortOrder)
+	}
+	if m.amount_units != nil {
+		fields = append(fields, lotteryprize.FieldAmountUnits)
+	}
+	if m.plan_id != nil {
+		fields = append(fields, lotteryprize.FieldPlanID)
+	}
+	if m.plan_name != nil {
+		fields = append(fields, lotteryprize.FieldPlanName)
+	}
+	if m.group_id != nil {
+		fields = append(fields, lotteryprize.FieldGroupID)
+	}
+	if m.validity_days != nil {
+		fields = append(fields, lotteryprize.FieldValidityDays)
+	}
+	if m.text != nil {
+		fields = append(fields, lotteryprize.FieldText)
+	}
+	if m.deleted_at != nil {
+		fields = append(fields, lotteryprize.FieldDeletedAt)
+	}
+	if m.created_at != nil {
+		fields = append(fields, lotteryprize.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, lotteryprize.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *LotteryPrizeMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryprize.FieldPoolID:
+		return m.PoolID()
+	case lotteryprize.FieldName:
+		return m.Name()
+	case lotteryprize.FieldKind:
+		return m.Kind()
+	case lotteryprize.FieldWeight:
+		return m.Weight()
+	case lotteryprize.FieldStock:
+		return m.Stock()
+	case lotteryprize.FieldEnabled:
+		return m.Enabled()
+	case lotteryprize.FieldSortOrder:
+		return m.SortOrder()
+	case lotteryprize.FieldAmountUnits:
+		return m.AmountUnits()
+	case lotteryprize.FieldPlanID:
+		return m.PlanID()
+	case lotteryprize.FieldPlanName:
+		return m.PlanName()
+	case lotteryprize.FieldGroupID:
+		return m.GroupID()
+	case lotteryprize.FieldValidityDays:
+		return m.ValidityDays()
+	case lotteryprize.FieldText:
+		return m.Text()
+	case lotteryprize.FieldDeletedAt:
+		return m.DeletedAt()
+	case lotteryprize.FieldCreatedAt:
+		return m.CreatedAt()
+	case lotteryprize.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *LotteryPrizeMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case lotteryprize.FieldPoolID:
+		return m.OldPoolID(ctx)
+	case lotteryprize.FieldName:
+		return m.OldName(ctx)
+	case lotteryprize.FieldKind:
+		return m.OldKind(ctx)
+	case lotteryprize.FieldWeight:
+		return m.OldWeight(ctx)
+	case lotteryprize.FieldStock:
+		return m.OldStock(ctx)
+	case lotteryprize.FieldEnabled:
+		return m.OldEnabled(ctx)
+	case lotteryprize.FieldSortOrder:
+		return m.OldSortOrder(ctx)
+	case lotteryprize.FieldAmountUnits:
+		return m.OldAmountUnits(ctx)
+	case lotteryprize.FieldPlanID:
+		return m.OldPlanID(ctx)
+	case lotteryprize.FieldPlanName:
+		return m.OldPlanName(ctx)
+	case lotteryprize.FieldGroupID:
+		return m.OldGroupID(ctx)
+	case lotteryprize.FieldValidityDays:
+		return m.OldValidityDays(ctx)
+	case lotteryprize.FieldText:
+		return m.OldText(ctx)
+	case lotteryprize.FieldDeletedAt:
+		return m.OldDeletedAt(ctx)
+	case lotteryprize.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case lotteryprize.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown LotteryPrize field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryPrizeMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case lotteryprize.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPoolID(v)
+		return nil
+	case lotteryprize.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
+	case lotteryprize.FieldKind:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKind(v)
+		return nil
+	case lotteryprize.FieldWeight:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetWeight(v)
+		return nil
+	case lotteryprize.FieldStock:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStock(v)
+		return nil
+	case lotteryprize.FieldEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEnabled(v)
+		return nil
+	case lotteryprize.FieldSortOrder:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSortOrder(v)
+		return nil
+	case lotteryprize.FieldAmountUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAmountUnits(v)
+		return nil
+	case lotteryprize.FieldPlanID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPlanID(v)
+		return nil
+	case lotteryprize.FieldPlanName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPlanName(v)
+		return nil
+	case lotteryprize.FieldGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGroupID(v)
+		return nil
+	case lotteryprize.FieldValidityDays:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetValidityDays(v)
+		return nil
+	case lotteryprize.FieldText:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetText(v)
+		return nil
+	case lotteryprize.FieldDeletedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDeletedAt(v)
+		return nil
+	case lotteryprize.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case lotteryprize.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryPrize field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *LotteryPrizeMutation) AddedFields() []string {
+	var fields []string
+	if m.addpool_id != nil {
+		fields = append(fields, lotteryprize.FieldPoolID)
+	}
+	if m.addweight != nil {
+		fields = append(fields, lotteryprize.FieldWeight)
+	}
+	if m.addstock != nil {
+		fields = append(fields, lotteryprize.FieldStock)
+	}
+	if m.addsort_order != nil {
+		fields = append(fields, lotteryprize.FieldSortOrder)
+	}
+	if m.addamount_units != nil {
+		fields = append(fields, lotteryprize.FieldAmountUnits)
+	}
+	if m.addplan_id != nil {
+		fields = append(fields, lotteryprize.FieldPlanID)
+	}
+	if m.addgroup_id != nil {
+		fields = append(fields, lotteryprize.FieldGroupID)
+	}
+	if m.addvalidity_days != nil {
+		fields = append(fields, lotteryprize.FieldValidityDays)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *LotteryPrizeMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case lotteryprize.FieldPoolID:
+		return m.AddedPoolID()
+	case lotteryprize.FieldWeight:
+		return m.AddedWeight()
+	case lotteryprize.FieldStock:
+		return m.AddedStock()
+	case lotteryprize.FieldSortOrder:
+		return m.AddedSortOrder()
+	case lotteryprize.FieldAmountUnits:
+		return m.AddedAmountUnits()
+	case lotteryprize.FieldPlanID:
+		return m.AddedPlanID()
+	case lotteryprize.FieldGroupID:
+		return m.AddedGroupID()
+	case lotteryprize.FieldValidityDays:
+		return m.AddedValidityDays()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *LotteryPrizeMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case lotteryprize.FieldPoolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPoolID(v)
+		return nil
+	case lotteryprize.FieldWeight:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddWeight(v)
+		return nil
+	case lotteryprize.FieldStock:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddStock(v)
+		return nil
+	case lotteryprize.FieldSortOrder:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSortOrder(v)
+		return nil
+	case lotteryprize.FieldAmountUnits:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAmountUnits(v)
+		return nil
+	case lotteryprize.FieldPlanID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPlanID(v)
+		return nil
+	case lotteryprize.FieldGroupID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddGroupID(v)
+		return nil
+	case lotteryprize.FieldValidityDays:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddValidityDays(v)
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryPrize numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *LotteryPrizeMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(lotteryprize.FieldDeletedAt) {
+		fields = append(fields, lotteryprize.FieldDeletedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *LotteryPrizeMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *LotteryPrizeMutation) ClearField(name string) error {
+	switch name {
+	case lotteryprize.FieldDeletedAt:
+		m.ClearDeletedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryPrize nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *LotteryPrizeMutation) ResetField(name string) error {
+	switch name {
+	case lotteryprize.FieldPoolID:
+		m.ResetPoolID()
+		return nil
+	case lotteryprize.FieldName:
+		m.ResetName()
+		return nil
+	case lotteryprize.FieldKind:
+		m.ResetKind()
+		return nil
+	case lotteryprize.FieldWeight:
+		m.ResetWeight()
+		return nil
+	case lotteryprize.FieldStock:
+		m.ResetStock()
+		return nil
+	case lotteryprize.FieldEnabled:
+		m.ResetEnabled()
+		return nil
+	case lotteryprize.FieldSortOrder:
+		m.ResetSortOrder()
+		return nil
+	case lotteryprize.FieldAmountUnits:
+		m.ResetAmountUnits()
+		return nil
+	case lotteryprize.FieldPlanID:
+		m.ResetPlanID()
+		return nil
+	case lotteryprize.FieldPlanName:
+		m.ResetPlanName()
+		return nil
+	case lotteryprize.FieldGroupID:
+		m.ResetGroupID()
+		return nil
+	case lotteryprize.FieldValidityDays:
+		m.ResetValidityDays()
+		return nil
+	case lotteryprize.FieldText:
+		m.ResetText()
+		return nil
+	case lotteryprize.FieldDeletedAt:
+		m.ResetDeletedAt()
+		return nil
+	case lotteryprize.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case lotteryprize.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown LotteryPrize field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *LotteryPrizeMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *LotteryPrizeMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *LotteryPrizeMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *LotteryPrizeMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *LotteryPrizeMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *LotteryPrizeMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *LotteryPrizeMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown LotteryPrize unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *LotteryPrizeMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown LotteryPrize edge %s", name)
 }
 
 // PaymentAuditLogMutation represents an operation that mutates the PaymentAuditLog nodes in the graph.

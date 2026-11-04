@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -844,7 +845,7 @@ readLoop:
 		if isTerminalEvent {
 			terminalEventCount++
 		}
-		if firstTokenMs == nil && isTokenEvent {
+		if firstTokenMs == nil && openai.ResponseStartsSemanticOutput(message, eventType) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
@@ -968,7 +969,8 @@ readLoop:
 		if reqStream {
 			// 默认缓冲首 token 前的事件，保留既有的早期错误处理窗口。
 			// 显式开启 HTTP SSE 加速时立即刷出，之后不再重放请求。
-			shouldBuffer := !flushEarlyEvents && firstTokenMs == nil && !isTokenEvent && !isTerminalEvent
+			// Preserve the legacy flush boundary independently of semantic timing.
+			shouldBuffer := !flushEarlyEvents && tokenEventCount == 0 && !isTokenEvent && !isTerminalEvent
 			if shouldBuffer {
 				buffered := make([]byte, len(message))
 				copy(buffered, message)

@@ -356,6 +356,7 @@ export default {
         expiresAt: 'Expires At',
         actions: 'Actions'
       },
+      capacitySortHint: 'Sorts all filtered accounts by current concurrency (the numerator), independent of limits or utilization. Ties follow account ID order. Each refresh reads and sorts again, so accounts may move between pages. If the read fails, previous results remain; retry or choose another sort order.',
       schedulerScore: {
         baseShort: 'Base',
         stickyShort: 'Sticky',
@@ -951,6 +952,9 @@ export default {
         longContextBilling: 'API long-context pricing',
         longContextBillingDesc:
           'Disabled by default. Enable only when this account\'s upstream charges OpenAI API long-context rates above the model threshold.',
+        ultrafastBilling: 'UltraFast tier billing',
+        ultrafastBillingDesc:
+          'Disabled by default. When enabled, read service_tier from upstream responses; every model on this account uses its standard price ×6 for ultrafast, including cache reads and writes, then applies account/group multipliers. If the response omits the tier, bill the requested tier. Explicit ultrafast requests that settle at that tier are billed at 6× even with this switch off. This does not force UltraFast upstream.',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',
@@ -1135,6 +1139,12 @@ export default {
         stripClaudeCodeIdentity: 'Strip Claude Code identity',
         stripClaudeCodeIdentityDesc:
           'Only applies to Anthropic API Key accounts. When enabled, forwarding and connectivity tests automatically strip Claude Code / Agent SDK client signals (rewriting claude-cli User-Agent, removing claude-code/oauth betas, stripping x-anthropic-billing-header blocks and official CLI/SDK identity banners from system, and removing metadata.user_id) so official API keys restricted from Claude Code (such as sk-ant-usr-* credit keys) are not rejected with a low credit balance error.',
+        mimicClaudeCode: 'Mimic Claude Code client',
+        mimicClaudeCodeDesc:
+          'For Anthropic API Key upstreams that require Claude Code clients. Adds missing client headers, a system identity line and session metadata to forwarded requests and connectivity tests; count_tokens only adds headers. Mutually exclusive with "Strip Claude Code identity". The identity line may cause the model to introduce itself as Claude Code.',
+        mimicClaudeCodeDeductTokens: 'Deduct estimated identity tokens',
+        mimicClaudeCodeDeductTokensDesc:
+          'Off by default: bill upstream usage normally. When enabled, deduct an estimated 14-24 tokens only when the gateway adds an identity line. Token counts and mixed-cache classification are estimates. Usage returned to the client always retains upstream values.',
         apiKeyAuthScheme: 'Upstream auth scheme',
         apiKeyAuthSchemeDesc: 'Choose the API key auth header used when forwarding to an Anthropic-compatible upstream. Ollama Cloud uses Authorization: Bearer.',
         apiKeyAuthSchemeXApiKey: 'x-api-key',

@@ -258,7 +258,8 @@ const (
 
 // ConcurrencyService 管理账号和用户的并发限制。
 type ConcurrencyService struct {
-	cache ConcurrencyCache
+	cache             ConcurrencyCache
+	performancePauses PerformancePauseReader
 
 	accountLoadCacheTTL atomic.Int64
 	accountLoadCacheMu  sync.RWMutex
@@ -415,6 +416,17 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 			MaxConcurrency:    maxConcurrency,
 			MaxConcurrencySet: true,
 		}, nil
+	}
+
+	// Recheck the independent live authority even for stale/sticky candidates.
+	if s.performancePauses != nil {
+		paused, err := s.performancePauses.PerformancePaused(ctx, []int64{accountID})
+		if err != nil {
+			return nil, err
+		}
+		if paused[accountID] {
+			return &AcquireResult{Acquired: false}, nil
+		}
 	}
 
 	// Generate unique request ID for this slot

@@ -1,4 +1,5 @@
 import { excelBPSImageLimits } from "@/utils/excelBPSImageLimits";
+import { createPinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, reactive } from "vue";
 import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
@@ -9,6 +10,8 @@ import zhCommon from "@/i18n/locales/zh/common";
 import zhSettings from "@/i18n/locales/zh/admin/settings";
 import SettingsView from "../SettingsView.vue";
 import { apiClient } from "@/api/client";
+import NewFeatureBadge from "@/components/common/NewFeatureBadge.vue";
+import { NEW_FEATURE_NOTICES } from "@/constants/newFeatureNotices";
 
 enableAutoUnmount(afterEach);
 
@@ -22,8 +25,9 @@ beforeEach(() => {
   settingsRoute.query = {};
   settingsRoute.hash = '';
   Element.prototype.scrollIntoView = vi.fn();
-  getOpenAIResponseHeaderTimeoutSettings.mockReset().mockResolvedValue({ enabled: true, seconds: 20 });
+  getOpenAIResponseHeaderTimeoutSettings.mockReset().mockResolvedValue({ enabled: false, seconds: 20 });
   updateOpenAIResponseHeaderTimeoutSettings.mockReset().mockImplementation(async (payload) => payload);
+  getAccountPerformanceSettings.mockReset().mockResolvedValue({ window_minutes: 60 });
 });
 
 const {
@@ -40,6 +44,8 @@ const {
   getStreamTimeoutSettings,
   getOpenAIResponseHeaderTimeoutSettings,
   updateOpenAIResponseHeaderTimeoutSettings,
+  getAccountPerformanceSettings,
+  updateAccountPerformanceSettings,
   getRectifierSettings,
   getBetaPolicySettings,
   getUpstreamBillingProbeSettings,
@@ -76,6 +82,8 @@ const {
   getStreamTimeoutSettings: vi.fn(),
   getOpenAIResponseHeaderTimeoutSettings: vi.fn(),
   updateOpenAIResponseHeaderTimeoutSettings: vi.fn(),
+  getAccountPerformanceSettings: vi.fn(),
+  updateAccountPerformanceSettings: vi.fn().mockImplementation(async (payload) => payload),
   getRectifierSettings: vi.fn(),
   getBetaPolicySettings: vi.fn(),
   getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({
@@ -119,6 +127,8 @@ vi.mock("@/api", () => ({
       getStreamTimeoutSettings,
       getOpenAIResponseHeaderTimeoutSettings,
       updateOpenAIResponseHeaderTimeoutSettings,
+      getAccountPerformanceSettings,
+      updateAccountPerformanceSettings,
       getRectifierSettings,
       getBetaPolicySettings,
     },
@@ -144,6 +154,7 @@ vi.mock("@/api", () => ({
 }));
 
 vi.mock("@/stores", () => ({
+  useAuthStore: () => ({ user: { id: 41 }, isAdmin: true }),
   useAppStore: () => ({
     showError,
     showSuccess,
@@ -614,6 +625,7 @@ function mountView() {
         BackupSettings: true,
         EmailTemplateEditor: true,
       },
+      plugins: [createPinia()],
     },
   });
 }
@@ -708,6 +720,7 @@ describe("admin SettingsView payment visible method controls", () => {
     showError.mockReset();
     showSuccess.mockReset();
     localeRef.value = "zh-CN";
+    localStorage.removeItem("sub2api:new-feature-notices:v1:41");
 
     getSettings.mockResolvedValue({ ...baseSettingsResponse });
     updateSettings.mockImplementation(async (payload) => ({
@@ -772,6 +785,48 @@ describe("admin SettingsView payment visible method controls", () => {
     });
     fetchPublicSettings.mockResolvedValue(undefined);
     adminSettingsFetch.mockResolvedValue(undefined);
+  });
+
+  it("shares one dismissible notice between the feature tab and its settings section", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const badges = wrapper.findAllComponents(NewFeatureBadge)
+      .filter((badge) => badge.props('noticeId') === NEW_FEATURE_NOTICES.protocolFeatureSwitches);
+    expect(badges).toHaveLength(2);
+    await badges[0]!.trigger("click");
+    await flushPromises();
+    expect(wrapper.findAllComponents(NewFeatureBadge)
+      .filter((badge) => badge.props('noticeId') === NEW_FEATURE_NOTICES.protocolFeatureSwitches)
+      .flatMap((badge) => badge.findAll('[data-testid="new-feature-badge"]'))).toHaveLength(0);
+    expect(wrapper.findAllComponents(NewFeatureBadge)
+      .filter((badge) => badge.props('noticeId') === NEW_FEATURE_NOTICES.serverlessIPRouting)
+      .flatMap((badge) => badge.findAll('[data-testid="new-feature-badge"]'))).toHaveLength(1);
+    expect(wrapper.get("#settings-tab-features").attributes("aria-selected")).toBe("false");
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("dismisses the gateway notice across the tab and both routing controls without dismissing protocol settings", async () => {
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { config: { enabled: false, pods: [], regions: [] }, pods: [], stats: {} } });
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+      await openGatewayTab(wrapper);
+      const gatewayBadges = () => wrapper.findAllComponents(NewFeatureBadge)
+        .filter((badge) => badge.props('noticeId') === NEW_FEATURE_NOTICES.serverlessIPRouting)
+        .flatMap((badge) => badge.findAll('[data-testid="new-feature-badge"]'));
+      expect(gatewayBadges()).toHaveLength(3);
+      await gatewayBadges()[0]!.trigger('click');
+      await flushPromises();
+      expect(gatewayBadges()).toHaveLength(0);
+      expect(wrapper.findAllComponents(NewFeatureBadge)
+        .filter((badge) => badge.props('noticeId') === NEW_FEATURE_NOTICES.protocolFeatureSwitches)
+        .flatMap((badge) => badge.findAll('[data-testid="new-feature-badge"]'))).toHaveLength(2);
+      expect(wrapper.get('#settings-tab-gateway').attributes('aria-selected')).toBe('true');
+      expect(updateSettings).not.toHaveBeenCalled();
+    } finally {
+      get.mockRestore();
+    }
   });
 
   it("keeps the IP risk form on IP Audit without loading or saving it from Settings", async () => {
@@ -1259,6 +1314,28 @@ describe("admin SettingsView payment visible method controls", () => {
     );
   });
 
+  it("starts with the OpenAI header timeout disabled and retains seconds for manual enabling", async () => {
+    const wrapper = mountView();
+    const vm = wrapper.vm as unknown as {
+      openAIResponseHeaderTimeoutForm: { enabled: boolean; seconds: number };
+    };
+    expect(vm.openAIResponseHeaderTimeoutForm).toEqual({ enabled: false, seconds: 20 });
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    expect((wrapper.get('[data-testid="openai-header-timeout-enabled"]').element as HTMLInputElement).checked).toBe(false);
+    expect(wrapper.find('[data-testid="openai-header-timeout-seconds"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="openai-header-timeout-save"]').trigger('click');
+    await flushPromises();
+    expect(updateOpenAIResponseHeaderTimeoutSettings).toHaveBeenLastCalledWith({ enabled: false, seconds: 20 });
+
+    await wrapper.get('[data-testid="openai-header-timeout-enabled"]').setValue(true);
+    expect((wrapper.get('[data-testid="openai-header-timeout-seconds"]').element as HTMLInputElement).value).toBe('20');
+    await wrapper.get('[data-testid="openai-header-timeout-save"]').trigger('click');
+    await flushPromises();
+    expect(updateOpenAIResponseHeaderTimeoutSettings).toHaveBeenLastCalledWith({ enabled: true, seconds: 20 });
+  });
+
   it("loads, disables, enables and saves the OpenAI header timeout with server readback", async () => {
     getOpenAIResponseHeaderTimeoutSettings.mockResolvedValueOnce({ enabled: false, seconds: 45 });
     const wrapper = mountView();
@@ -1280,6 +1357,7 @@ describe("admin SettingsView payment visible method controls", () => {
   });
 
   it("keeps the edited timeout after a save error and allows retry", async () => {
+    getOpenAIResponseHeaderTimeoutSettings.mockResolvedValueOnce({ enabled: true, seconds: 20 });
     const wrapper = mountView();
     await flushPromises();
     await openGatewayTab(wrapper);
@@ -1988,6 +2066,7 @@ describe("admin SettingsView payment visible method controls", () => {
           ImageUpload: ImageUploadStub,
           BackupSettings: true,
         },
+        plugins: [createPinia()],
       },
     });
 
@@ -2359,6 +2438,7 @@ describe("admin SettingsView payment visible method controls", () => {
           ImageUpload: ImageUploadStub,
           BackupSettings: true,
         },
+        plugins: [createPinia()],
       },
     });
 

@@ -123,6 +123,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
 	var firstTokenMs *int
+	// Delivery keeps the historical TTFT guard independently of the metric.
+	// A timing-only endpoint change must not alter flushes or timeout/replay safety.
+	legacyTTFTObserved := false
 	ctx = requesttiming.ResponseContext(ctx, resp)
 	ttftMode := s.openAITTFTMode(ctx)
 	requesttiming.Mode(ctx, ttftMode)
@@ -276,9 +279,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var bareErrorPayload []byte
 	bareErrorAccountSideEffectsPending := false
 	pendingSSEEventType := ""
+	var metricEvent openAISSEMetricEvent
 	eventInProgress := false
 	eventStartsClientOutput := false
 	eventStartsTTFTOutput := false
+	eventStartsLegacyTTFTOutput := false
 	eventShouldFlush := false
 	handlePendingWriteError := func(err error) {
 		if firstOutputStage != nil && !firstOutputStage.closed {
@@ -299,6 +304,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
 		completedTTFTEvent := eventStartsTTFTOutput
+		completedLegacyTTFTEvent := eventStartsLegacyTTFTOutput
 		if completedProgressEvent && !terminalFailurePending && !sawFailedEvent {
 			observeOpenAIHTTPProgress(ctx)
 		}
@@ -327,8 +333,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
+		legacyTTFTObserved = legacyTTFTObserved || completedLegacyTTFTEvent
 		eventStartsClientOutput = false
 		eventStartsTTFTOutput = false
+		eventStartsLegacyTTFTOutput = false
 		eventShouldFlush = false
 	}
 	sendErrorEvent := func(code, message string) {
@@ -509,6 +517,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	processSSELine := func(line string, queueDrained bool) {
 		if streamEarlyErr != nil {
 			return
+		}
+		if _, dataLine := extractOpenAISSEDataLine(line); !dataLine {
+			metricEvent.observeLine(line)
 		}
 		if eventType, ok := extractOpenAISSEEventLine(line); ok {
 			pendingSSEEventType = eventType
@@ -743,9 +754,19 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			startsClientOutput := forceFlushFailedEvent || openAIStreamDataStartsClientOutput(data, eventType)
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
 			startsTTFTOutput := openAIStreamDataStartsTTFT(data, eventType, forceFlushFailedEvent, ttftMode)
+			metricPayload, metricType := metricEvent.observeLine("data: " + data)
+			startsSemanticOutput := openAIStreamDataStartsSemanticTTFT(string(metricPayload), metricType)
+			if ttftMode != OpenAITTFTModeVisible {
+				startsTTFTOutput = startsSemanticOutput
+			}
+			startsLegacyTTFTOutput := startsVisibleOutput
+			if ttftMode != OpenAITTFTModeVisible {
+				startsLegacyTTFTOutput = forceFlushFailedEvent || openAIStreamDataStartsLegacySemanticTTFT(data, eventType)
+			}
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
 				eventStartsTTFTOutput = eventStartsTTFTOutput || startsTTFTOutput
+				eventStartsLegacyTTFTOutput = eventStartsLegacyTTFTOutput || startsLegacyTTFTOutput
 				if startsClientOutput {
 					firstOutputScanGuard.Store(false)
 				}
@@ -770,12 +791,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return
 			}
 
-			requesttiming.Content(ctx, []byte(data), eventType)
-			requesttiming.Output(ctx, openAIStreamDataStartsSemanticTTFT(data, eventType), startsVisibleOutput, timingTerminal(eventType))
+			requesttiming.Content(ctx, metricPayload, metricType)
+			requesttiming.Output(ctx, startsSemanticOutput, startsVisibleOutput, timingTerminal(eventType))
 			// 写入客户端（客户端断开后继续 drain 上游）
 			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				shouldFlush := queueDrained && (clientOutputStarted || startsClientOutput)
-				if firstTokenMs == nil && startsVisibleOutput {
+				if !legacyTTFTObserved && startsVisibleOutput {
 					// 保证首个 token 事件尽快出站，避免影响 TTFT。
 					shouldFlush = true
 				}
@@ -793,6 +814,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if !guardFirstOutput && firstTokenMs == nil && startsTTFTOutput {
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
+			}
+			if !guardFirstOutput && !legacyTTFTObserved && startsLegacyTTFTOutput {
+				legacyTTFTObserved = true
 				stopFirstOutputTimer()
 			}
 			s.parseSSEUsageBytesWithType(dataBytes, eventType, usage)
@@ -808,6 +832,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				eventInProgress = false
 				eventStartsClientOutput = false
 				eventStartsTTFTOutput = false
+				eventStartsLegacyTTFTOutput = false
 				eventShouldFlush = false
 				return
 			}
@@ -816,6 +841,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				eventInProgress = false
 				eventStartsClientOutput = false
 				eventStartsTTFTOutput = false
+				eventStartsLegacyTTFTOutput = false
 				eventShouldFlush = false
 				return
 			}

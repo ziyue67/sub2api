@@ -5,14 +5,20 @@ import (
 	"strings"
 )
 
+// OpenAIResponseTierBillingEnabledKey opts a compatible API key into billing
+// the actual response tier, including upgrades. It defaults to disabled.
+const OpenAIResponseTierBillingEnabledKey = "openai_response_tier_billing_enabled"
+
 // ServiceTierBillingResolution describes how the billable service tier of one
 // request was settled between the tier the client asked for and the tier the
 // upstream reports having used.
 type ServiceTierBillingResolution struct {
-	Requested  string // tier carried by the request sent upstream ("" when none)
-	Observed   string // tier declared by the upstream response ("" when none)
-	Billing    string // tier used for billing and the usage log
-	Downgraded bool   // Billing is cheaper than Requested
+	Requested       string // tier carried by the request sent upstream ("" when none)
+	Observed        string // tier declared by the upstream response ("" when none)
+	Billing         string // tier used for billing and the usage log
+	Downgraded      bool   // Billing is cheaper than Requested
+	Upgraded        bool   // explicitly enabled response billing raised the tier
+	ResponseBilling bool   // selected API key opts into actual response-tier billing
 }
 
 // ResolveBillingServiceTier picks the tier to bill. The upstream declaration is
@@ -72,6 +78,25 @@ func serviceTierCostRank(tier string) (rank int, known bool) {
 // reports default for effective Fast turns, so OAuth-like credentials retain
 // the final outbound tier while still exposing the observed value.
 func ResolveOpenAIServiceTierBilling(account *Account, requested, observed string) ServiceTierBillingResolution {
+	// A fixed-tier compatible provider can serve a more expensive tier than
+	// the client requested. This contract must be enabled explicitly for that
+	// credential; other accounts retain the existing downgrade-only policy.
+	if account != nil && account.IsOpenAIApiKey() && account.Extra[OpenAIResponseTierBillingEnabledKey] == true {
+		resolution := ServiceTierBillingResolution{
+			Requested:       normalizeBillingServiceTier(requested),
+			Observed:        normalizeObservedOpenAIServiceTier(observed),
+			Billing:         normalizeBillingServiceTier(requested),
+			ResponseBilling: true,
+		}
+		if resolution.Observed != "" {
+			resolution.Billing = resolution.Observed
+			requestedRank, _ := serviceTierCostRank(resolution.Requested)
+			observedRank, _ := serviceTierCostRank(resolution.Observed)
+			resolution.Downgraded = observedRank < requestedRank
+			resolution.Upgraded = observedRank > requestedRank
+		}
+		return resolution
+	}
 	if account != nil && account.IsOpenAIOAuthLike() && normalizeBillingServiceTier(requested) != "flex" && codexOAuthResponseTierIsNonAuthoritative(observed) {
 		return ServiceTierBillingResolution{
 			Requested: normalizeBillingServiceTier(requested),
@@ -93,6 +118,7 @@ func codexOAuthResponseTierIsNonAuthoritative(observed string) bool {
 
 // ApplyOpenAIServiceTierBillingResolution settles confirmed tiers and rejects
 // unconfirmed client-only discounts, while preserving explicit operator pricing.
+// Upward changes require the selected API key's explicit response-billing opt-in.
 func ApplyOpenAIServiceTierBillingResolution(account *Account, result *OpenAIForwardResult, explicitPricing ...*ModelPricing) ServiceTierBillingResolution {
 	if result == nil {
 		return ServiceTierBillingResolution{}
@@ -125,9 +151,10 @@ func ApplyForwardServiceTierBillingResolution(result *ForwardResult) ServiceTier
 }
 
 // logServiceTierBillingDowngrade records any difference between outgoing and
-// settled tiers, including rejected client-only discounts.
+// settled tiers, including rejected client-only discounts, and logs all
+// explicitly enabled response-tier decisions including missing markers.
 func logServiceTierBillingDowngrade(component string, account *Account, requestID string, resolution ServiceTierBillingResolution) {
-	if resolution.Billing == resolution.Requested {
+	if resolution.Billing == resolution.Requested && !resolution.ResponseBilling {
 		return
 	}
 	attrs := []any{
@@ -139,6 +166,20 @@ func logServiceTierBillingDowngrade(component string, account *Account, requestI
 	}
 	if account != nil {
 		attrs = append(attrs, "platform", account.Platform, "account_id", account.ID)
+	}
+	if resolution.ResponseBilling {
+		attrs = append(attrs, "tier_source", "upstream_response", "upgraded", resolution.Upgraded)
+		if resolution.Observed == "" {
+			attrs = append(attrs, "tier_source_fallback", "outbound_request")
+			slog.Warn("billing.service_tier_response_missing", attrs...)
+			return
+		}
+		slog.Info("billing.service_tier_resolved", attrs...)
+		return
+	}
+	if resolution.Downgraded {
+		slog.Info("billing.service_tier_downgraded", attrs...)
+		return
 	}
 	slog.Info("billing.service_tier_resolved", attrs...)
 }

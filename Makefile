@@ -4,6 +4,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/ImageHistoryView.spec.ts \
 	src/components/admin/__tests__/ImageArchiveAsset.spec.ts \
 	src/views/admin/__tests__/ImageArchiveView.spec.ts \
+	src/components/admin/user/__tests__/UserAutoCreditModal.spec.ts \
+	src/components/common/__tests__/VipAutoCreditNotice.spec.ts \
 	src/components/account/__tests__/OpenAIAuthConnections.spec.ts \
 	src/views/admin/__tests__/RiskControlView.spec.ts \
 	src/i18n/__tests__/riskControlLocales.spec.ts \
@@ -47,6 +49,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/ChannelMonitorView.modeSwitch.spec.ts \
 	src/views/admin/__tests__/AccountQualityView.spec.ts \
 	src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts \
+	src/views/admin/__tests__/AccountsView.declarationRefresh.spec.ts \
 	src/utils/__tests__/qualityRulePatch.spec.ts \
 	src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts \
 	src/utils/__tests__/accountAutoBPS.spec.ts \
@@ -69,6 +72,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/traffic.spec.ts \
 	src/views/user/__tests__/UsageEntryView.spec.ts \
 	src/components/admin/usage/__tests__/UsageFilters.spec.ts \
+	src/components/admin/usage/__tests__/LatencyObservabilityPanel.spec.ts \
 	src/components/admin/usage/__tests__/UsageTimingDialog.spec.ts \
 	src/components/admin/usage/__tests__/UsageTable.spec.ts \
 	src/views/user/__tests__/PelicanShowcaseView.spec.ts \
@@ -112,6 +116,9 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/ChannelStatusView.mode.spec.ts \
 	src/components/user/profile/__tests__/ProfileInfoCard.spec.ts \
 	src/components/settings/ServerlessSettings.spec.ts \
+	src/components/settings/AccountPerformanceSettings.spec.ts \
+	src/components/account/__tests__/AccountPerformanceCell.spec.ts \
+	src/components/account/__tests__/AccountPerformanceDialog.spec.ts \
 	src/components/user/profile/__tests__/ProfileIdentityBindingsSection.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/views/admin/__tests__/HarvestFlowView.spec.ts \

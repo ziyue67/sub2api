@@ -31,14 +31,6 @@
           <details class="mt-3 text-xs text-sky-800 dark:text-sky-300"><summary class="cursor-pointer">{{ t('requestTiming.health.thresholdTitle') }}</summary><p class="mt-2 leading-relaxed">{{ t('requestTiming.health.thresholds') }}</p></details>
         </div>
         <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ t('requestTiming.scope') }}</p>
-        <section v-if="trace.latency" data-testid="attempt-latency" class="rounded-xl border p-4 text-sm">
-          <h4 class="font-semibold">{{ t('latencyObservability.title') }} · {{ trace.latency.status }}</h4>
-          <p>{{ t('latencyObservability.scope') }}</p>
-          <p>{{ t('latencyObservability.switches') }}: {{ trace.latency.account_switches }} / {{ trace.latency.same_account_retries }} · {{ trace.latency.cost_status }}</p>
-          <p v-if="trace.latency.unknown_transitions">{{ t('latencyObservability.unknownTransitions') }}: {{ trace.latency.unknown_transitions }}</p>
-          <p>{{ t('latencyObservability.extra') }}: {{ ms(trace.latency.extra_upload_component_ms) }} / {{ ms(trace.latency.extra_wait_component_ms) }}</p>
-          <p v-for="a in trace.latency.attempts" :key="a.number">#{{ a.number }} · {{ a.transition }} · {{ t('latencyObservability.upload') }} {{ ms(a.body_upload.ms) }} ({{ a.body_upload.status }}) · {{ t('latencyObservability.semantic') }} {{ ms(a.post_upload_first_content_wait.ms) }} ({{ a.post_upload_first_content_wait.status }}) · {{ t('latencyObservability.visible') }} {{ ms(a.post_upload_first_visible_wait.ms) }} ({{ a.post_upload_first_visible_wait.status }})</p>
-        </section>
         <p class="text-sm"><strong>{{ t('usage.latencyTps') }} {{ formatUsageOutputTps(record) ?? '—' }}</strong> · {{ t('requestTiming.tpsNote') }}</p>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('requestTiming.health.attemptGuide') }}</p>
         <p v-if="trace.truncated" class="text-amber-600">{{ t('requestTiming.truncated') }}</p>
@@ -100,12 +92,10 @@ const row = (name: string, value: string, health: TimingHealth = 'neutral'): Det
 const timed = (name: string, value: number | null | undefined, scale: TimingScale = 'stage') => row(name, ms(value), timingHealth(value, scale))
 const flag = (name: string, value: boolean | null | undefined, goodValue: boolean, negative: TimingHealth = 'warn') => row(name, yes(value ?? null), value == null ? 'neutral' : value === goodValue ? 'good' : negative)
 const statusHealth = (status: number): TimingHealth => status >= 500 ? 'critical' : status >= 400 ? 'warn' : status >= 200 && status < 300 ? 'good' : 'neutral'
-const queueWaitMs = computed(() => props.record?.queue_timing?.status === 'measured' ? props.record.queue_wait_ms ?? null : null)
 const serverFirstMs = computed(() => props.record?.queue_timing?.status === 'measured' ? props.record.queue_timing.server_first_token_ms : null)
 const serverTotalMs = computed(() => props.record?.queue_timing?.status === 'measured' ? props.record.queue_timing.server_duration_ms : null)
 const summaries = computed(() => [
   { label: t('requestTiming.legacyFirst'), value: props.record?.first_token_ms, scale: 'first' as const },
-  { label: t('requestTiming.queueWait'), value: queueWaitMs.value, scale: 'first' as const },
   { label: t('requestTiming.serverFirst'), value: serverFirstMs.value, scale: 'first' as const },
   { label: t('requestTiming.legacyTotal'), value: props.record?.duration_ms, scale: 'total' as const },
   { label: t('requestTiming.serverTotal'), value: serverTotalMs.value, scale: 'total' as const },

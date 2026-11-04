@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/tidwall/gjson"
@@ -316,6 +317,18 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 		body = stripAnthropicClaudeCodeIdentityFromBody(body)
 	}
 
+	// 「模拟 Claude Code」：与标准转发路径共用补齐规则，记录身份句供可选估算扣减使用。
+	mimicClaudeCode := account != nil && account.IsAnthropicMimicClaudeCodeEnabled()
+	mimicUserAgent := claude.DefaultUserAgent()
+	var mimicInjection claudeCodeMimicInjection
+	if mimicClaudeCode {
+		body, mimicInjection = mimicAnthropicClaudeCodeBody(body, account, claudeCodeMimicAPIKeyID(c), mimicUserAgent, gjson.GetBytes(body, "model").String())
+	}
+	if account != nil {
+		mimicInjection.AccountID = account.ID
+	}
+	setClaudeCodeMimicInjection(c, mimicInjection)
+
 	// 能力维度 body sanitize：透传路径上 anthropic-beta header 原样透传客户端值，
 	// 依此决定是否保留 body 中的 context_management。避免“客户端 body 带字段但
 	// header 忘记带 beta token”的客户端 bug 在透传场景下让上游 400。
@@ -374,6 +387,9 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 
 	if stripClaudeCodeIdentity {
 		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
+	}
+	if mimicClaudeCode {
+		applyAnthropicClaudeCodeMimicHeaders(req.Header, mimicUserAgent)
 	}
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）

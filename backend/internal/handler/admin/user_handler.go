@@ -23,11 +23,13 @@ import (
 // UserWithConcurrency wraps AdminUser with current concurrency info
 type UserWithConcurrency struct {
 	dto.AdminUser
-	CurrentConcurrency int `json:"current_concurrency"`
+	AutoCreditOutstanding string `json:"auto_credit_outstanding"`
+	CurrentConcurrency    int    `json:"current_concurrency"`
 }
 
 // UserHandler handles admin user management
 type UserHandler struct {
+	autoCredit            service.AutoCreditRepository
 	adminService          service.AdminService
 	concurrencyService    *service.ConcurrencyService
 	userPlatformQuotaRepo service.UserPlatformQuotaRepository // T13 admin quota view
@@ -191,10 +193,23 @@ func (h *UserHandler) List(c *gin.Context) {
 	}
 
 	// Build response with concurrency info
+	debt := map[int64]string{}
+	if h.autoCredit != nil {
+		ids := make([]int64, len(users))
+		for i := range users {
+			ids[i] = users[i].ID
+		}
+		debt, err = h.autoCredit.OutstandingByUsers(c.Request.Context(), ids)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 	out := make([]UserWithConcurrency, len(users))
 	for i := range users {
 		out[i] = UserWithConcurrency{
-			AdminUser: *dto.UserFromServiceAdmin(&users[i]),
+			AdminUser:             *dto.UserFromServiceAdmin(&users[i]),
+			AutoCreditOutstanding: debt[users[i].ID],
 		}
 		if info := loadInfo[users[i].ID]; info != nil {
 			out[i].CurrentConcurrency = info.CurrentConcurrency
@@ -431,6 +446,7 @@ func (h *UserHandler) UpdateBalance(c *gin.Context) {
 		Body:   req,
 	}
 	executeAdminIdempotentJSONWithResponse(c, "admin.users.balance.update", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+		ctx = service.WithAdminBalanceOperation(ctx, adminActorScope(c), c.GetHeader("Idempotency-Key"))
 		user, execErr := h.adminService.UpdateUserBalance(ctx, userID, req.Balance, req.Operation, req.Notes)
 		if execErr != nil {
 			return nil, execErr

@@ -46,6 +46,9 @@ const messages: Record<string, string> = {
   'admin.usage.failedToLoadUser': 'Failed to load user',
 	'admin.usage.requestId': 'Request ID',
 	'admin.usage.upstreamRequestId': 'Upstream ID',
+	'latencyObservability.reasoning_first_ms': 'First reasoning event',
+	'latencyObservability.visible_text_first_ms': 'First visible text',
+	'latencyObservability.response_byte_first_ms': 'First response byte',
 	'usage.requestedModel': 'Requested model',
 	'usage.sentUpstreamModel': 'Sent upstream model',
 	'usage.upstreamResponseModel': 'Upstream response model',
@@ -144,6 +147,21 @@ const UsageTableStub = {
   template: '<div data-test="usage-table"><button class="user-click" @click="$emit(\'userClick\', 2)">user</button></div>',
 }
 const UsageConnectionsStub = { props: ['filters', 'refreshKey'], template: '<div data-test="connection-tab" />' }
+const LatencyObservabilityPanelStub = {
+  props: {
+    startDate: String,
+    endDate: String,
+    model: String,
+    userId: Number,
+    apiKeyId: Number,
+    accountId: Number,
+    groupId: Number,
+    refreshToken: Number,
+    flat: Boolean,
+    hideTitle: Boolean,
+  },
+  template: '<div data-test="latency-tab" />',
+}
 const UserTokenRankingStub = {
   emits: ['select-user'],
   template: '<div data-test="ranking"><button class="pick-user" @click="$emit(\'select-user\', 5, \'rank@test.com\')">pick</button></div>',
@@ -179,6 +197,7 @@ const mountRouteFilteredUsageView = (realDatePicker = false, realCleanupDialog =
     DateRangePicker: !realDatePicker, Icon: true, TokenUsageTrend: true,
     ModelDistributionChart: true, GroupDistributionChart: true,
     EndpointDistributionChart: true, UserTokenRanking: true,
+    LatencyObservabilityPanel: LatencyObservabilityPanelStub,
   } },
 })
 
@@ -208,6 +227,39 @@ describe('admin UsageView route filters', () => {
   })
 
   it('shows the selected user email when opened with a leaderboard user_id', async () => {
+  it('mounts the latency panel only after selecting its tab and passes supported filters', async () => {
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+    expect(wrapper.find('[data-test="latency-tab"]').exists()).toBe(false)
+
+    const vm = wrapper.vm as any
+    vm.filters.model = 'gpt-5.6-sol'
+    vm.filters.user_id = 42
+    vm.filters.api_key_id = 8
+    vm.filters.account_id = 7
+    vm.filters.group_id = 3
+    await wrapper.vm.$nextTick()
+
+    const latencyTab = wrapper.findAll('[data-testid="usage-detail-tab"]').find(tab => tab.text() === 'latencyObservability.title')!
+    await latencyTab.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="latency-tab"]').exists()).toBe(true)
+    expect(wrapper.findComponent(LatencyObservabilityPanelStub).props()).toMatchObject({
+      startDate: expect.any(String),
+      endDate: expect.any(String),
+      model: 'gpt-5.6-sol',
+      userId: 42,
+      apiKeyId: 8,
+      accountId: 7,
+      groupId: 3,
+      flat: true,
+      hideTitle: true,
+    })
+    wrapper.unmount()
+  })
+
+  it('shows the routed user while applying user_id to usage requests', async () => {
     routeQuery.user_id = '42'
     getById.mockResolvedValue({ id: 42, email: 'ranked-user@example.test' })
 
@@ -407,6 +459,12 @@ describe('admin UsageView request ID column visibility', () => {
     await wrapper.vm.$nextTick()
 
     const usageTable = wrapper.findComponent(UsageTableStub)
+    const usageColumnKeys = usageTable.props('columns').map((column: { key: string }) => column.key)
+    const latencyColumnIndex = usageColumnKeys.indexOf('latency')
+    expect(usageColumnKeys[latencyColumnIndex + 1]).toBe('created_at')
+    expect(usageColumnKeys).not.toEqual(expect.arrayContaining([
+      'content_reasoning_first_ms', 'content_visible_text_first_ms', 'content_response_byte_first_ms',
+    ]))
     expect(usageTable.props('columns')).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ key: 'request_id' })]),
     )
@@ -423,6 +481,10 @@ describe('admin UsageView request ID column visibility', () => {
       'usage-hidden-columns-version',
       'upstream-request-id-hidden-by-default',
     )
+
+    expect(wrapper.findAll('button').some(button =>
+      ['First reasoning event', 'First visible text', 'First response byte'].includes(button.text()),
+    )).toBe(false)
   })
 
   it('keeps upstream ID hidden by default and allows enabling it from column settings', async () => {
@@ -613,6 +675,7 @@ describe('admin UsageView ranking tab', () => {
         ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true,
         UserTokenRanking: UserTokenRankingStub,
         UsageConnections: UsageConnectionsStub, OpsErrorLogTable: true, OpsErrorDetailModal: true,
+        LatencyObservabilityPanel: LatencyObservabilityPanelStub,
       } },
     })
     vi.advanceTimersByTime(120)
@@ -622,7 +685,7 @@ describe('admin UsageView ranking tab', () => {
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(false)
 
     const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
-    expect(tabs).toHaveLength(5)
+    expect(tabs).toHaveLength(6)
     expect(wrapper.find('[data-test="connection-tab"]').exists()).toBe(false)
     await tabs[2].trigger('click')
     await flushPromises()
@@ -727,6 +790,7 @@ describe('observer own usage view', () => {
       UserBalanceHistoryModal: true, Pagination: true, Select: true, DateRangePicker: true,
       Icon: true, TokenUsageTrend: true, ModelDistributionChart: true, GroupDistributionChart: true,
       EndpointDistributionChart: true, UserTokenRanking: true, OpsErrorLogTable: true, OpsErrorDetailModal: true,
+      LatencyObservabilityPanel: LatencyObservabilityPanelStub,
     } },
   })
   it('uses own APIs for filters, charts and export, without admin actions', async () => {
@@ -742,6 +806,7 @@ describe('observer own usage view', () => {
     expect(wrapper.find('user-balance-history-modal-stub').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('usage.tabs.ranking')
     expect(wrapper.text()).not.toContain('connections.title')
+    expect(wrapper.text()).not.toContain('latencyObservability.title')
     for (const name of ['model-distribution-chart-stub', 'group-distribution-chart-stub', 'endpoint-distribution-chart-stub']) {
       expect(wrapper.findComponent(name).props('enableBreakdown')).toBe(false)
     }

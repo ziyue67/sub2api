@@ -245,6 +245,20 @@ Empty state placeholder with icon, message, and optional action button.
 />
 ```
 
+---
+
+### NewFeatureBadge.vue
+
+A dismissible "New feature" badge for admin navigation, settings tabs, and feature headings.
+
+**Props:**
+
+- `noticeId: string` - Stable ID shared by every location for the same announcement
+- `userId: number | null` - Admin account that owns the dismissal preference
+- `compact?: boolean` - Render a small indicator for collapsed navigation
+
+Add a new ID to `frontend/src/constants/newFeatureNotices.ts` for each release announcement, then reuse it at all related UI locations. Dismissal is stored per admin in the current browser. ID 登记、复用和重新公告以及必要回归要求，以[贡献指南](../../../../CONTRIBUTING.md#新功能提示登记与接入)为准。
+
 ## Import
 
 You can import components individually:

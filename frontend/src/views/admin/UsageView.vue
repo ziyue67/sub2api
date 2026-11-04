@@ -68,7 +68,6 @@
           <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
         </div>
       </div>
-      <LatencyObservabilityPanel v-if="!props.observerMode && activeTab === 'usage'" :start-date="startDate" :end-date="endDate" :model="filters.model" :user-id="filters.user_id" :api-key-id="filters.api_key_id" :account-id="filters.account_id" :group-id="filters.group_id" :refresh-token="connectionRefreshKey" />
       <!-- 明细区：tab 栏 + 筛选 + 内容收进同一张卡片，消除割裂感 -->
       <div class="card">
         <div class="flex flex-wrap items-center border-b border-gray-200 px-2 dark:border-dark-700 sm:px-4">
@@ -165,6 +164,19 @@
           :refresh-key="connectionRefreshKey"
         />
         <TrafficPanel v-if="!props.observerMode && activeTab === 'traffic'" admin />
+        <LatencyObservabilityPanel
+          v-if="!props.observerMode && activeTab === 'latency'"
+          flat
+          hide-title
+          :start-date="filters.start_date || startDate"
+          :end-date="filters.end_date || endDate"
+          :model="filters.model"
+          :user-id="filters.user_id"
+          :api-key-id="filters.api_key_id"
+          :account-id="filters.account_id"
+          :group-id="filters.group_id"
+          :refresh-token="connectionRefreshKey"
+        />
         <!-- 懒挂载：首次切到该 tab 才请求排行数据，之后随筛选自动刷新 -->
         <div v-if="!props.observerMode && rankingMounted" v-show="activeTab === 'ranking'" class="overflow-hidden rounded-b-2xl">
           <UserTokenRanking
@@ -850,7 +862,7 @@ const loadSavedColumns = () => {
 }
 
 // Detail tabs
-type DetailTab = 'usage' | 'errors' | 'connections' | 'ranking' | 'traffic'
+type DetailTab = 'usage' | 'errors' | 'connections' | 'ranking' | 'traffic' | 'latency'
 const activeTab = ref<DetailTab>('usage')
 const canViewErrors = computed(() => !props.observerMode || !!appStore.cachedPublicSettings?.allow_user_view_error_requests)
 const detailTabs = computed(() => [
@@ -859,6 +871,7 @@ const detailTabs = computed(() => [
   ...(!props.observerMode ? [{ key: 'connections' as const, label: t('connections.title'), icon: 'clock' as const }] : []),
   ...(!props.observerMode ? [{ key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const }] : []),
   ...(!props.observerMode ? [{ key: 'traffic' as const, label: t('traffic.title'), icon: 'chart' as const }] : []),
+  ...(!props.observerMode ? [{ key: 'latency' as const, label: t('latencyObservability.title'), icon: 'clock' as const }] : []),
 ])
 const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
 const connectionRefreshKey = ref(0)

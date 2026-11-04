@@ -478,6 +478,10 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 	if stripClaudeCodeIdentity {
 		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
 	}
+	// count_tokens 仅补客户端请求头，保留原始请求体以避免把补入身份句计入计数。
+	if account.IsAnthropicMimicClaudeCodeEnabled() {
+		applyAnthropicClaudeCodeMimicHeaders(req.Header, claude.DefaultUserAgent())
+	}
 
 	// 账号级请求头覆写（最终生效，覆盖上面所有来源的同名头）
 	account.ApplyHeaderOverrides(req.Header)
@@ -645,6 +649,10 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 
 	if stripClaudeCodeIdentity {
 		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
+	}
+	// count_tokens 仅补客户端请求头，保留原始请求体以避免把补入身份句计入计数。
+	if account.IsAnthropicMimicClaudeCodeEnabled() {
+		applyAnthropicClaudeCodeMimicHeaders(req.Header, claude.DefaultUserAgent())
 	}
 
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）

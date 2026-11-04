@@ -39,6 +39,21 @@ func RegisterAdminRoutes(
 	admin.Use(middleware.AdminComplianceGuard(settingService))
 	// 受限密钥的账户操作走独立资源校验，普通管理员保持原处理器。
 	admin.Use(h.Admin.Account.ScopedAdminKeyAccounts)
+	if h.Lottery != nil {
+		lottery := admin.Group("/lottery")
+		lottery.GET("/settings", h.Lottery.Settings)
+		lottery.PUT("/settings", h.Lottery.SaveSettings)
+		lottery.DELETE("/pools/:id", h.Lottery.DeletePool)
+		lottery.DELETE("/pools/:id/prizes/:prize_id", h.Lottery.DeletePrize)
+		lottery.GET("/pools", h.Lottery.AdminPools)
+		lottery.POST("/pools", h.Lottery.SavePool)
+		lottery.PUT("/pools/:id", h.Lottery.SavePool)
+		lottery.POST("/pools/:id/prizes", h.Lottery.SavePrize)
+		lottery.PUT("/pools/:id/prizes/:prize_id", h.Lottery.SavePrize)
+		lottery.GET("/records", h.Lottery.AdminRecords)
+		lottery.GET("/ledger", h.Lottery.AdminLedger)
+		lottery.GET("/invitations", h.Lottery.AdminInvitations)
+	}
 	{
 		// Optional region-to-Pod routing, configured inside Gateway settings.
 		admin.GET("/serverless", h.Admin.Setting.GetServerless)
@@ -368,6 +383,9 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		users.GET("/:id/api-keys", h.Admin.User.GetUserAPIKeys)
 		users.GET("/:id/usage", h.Admin.User.GetUserUsage)
 		users.GET("/:id/balance-history", h.Admin.User.GetBalanceHistory)
+		users.GET("/:id/auto-credit", h.Admin.User.GetAutoCredit)
+		users.PUT("/:id/auto-credit", h.Admin.User.SaveAutoCredit)
+		users.POST("/:id/auto-credit/:entry_id/settle", h.Admin.User.SettleAutoCredit)
 		users.POST("/:id/replace-group", h.Admin.User.ReplaceGroup)
 		users.GET("/:id/rpm-status", h.Admin.User.GetUserRPMStatus)
 		users.POST("/batch-concurrency", h.Admin.User.BatchUpdateConcurrency)
@@ -472,6 +490,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.POST("/import/codex-session", h.Admin.Account.ImportCodexSession)
 		accounts.POST("/sync/crs", h.Admin.Account.SyncFromCRS)
 		accounts.POST("/sync/crs/preview", h.Admin.Account.PreviewFromCRS)
+		accounts.POST("/performance", h.Admin.Account.AccountPerformanceBatch)
+		accounts.PUT("/:id/performance", h.Admin.Account.SaveAccountPerformance)
+		accounts.POST("/:id/performance/release", h.Admin.Account.ReleaseAccountPerformance)
+		accounts.GET("/:id/performance/events", h.Admin.Account.AccountPerformanceEvents)
 		accounts.PUT("/:id", h.Admin.Account.Update)
 		accounts.PUT("/:id/proxy-lanes/:lane_id", h.Admin.Account.UpdateProxyLane)
 		accounts.GET("/:id/grok-media-eligibility", h.Admin.Account.GetGrokMediaEligibility)
@@ -776,6 +798,8 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpA
 		// OpenAI/Codex 响应头超时配置
 		adminSettings.GET("/openai-response-header-timeout", h.Admin.Setting.GetOpenAIResponseHeaderTimeoutSettings)
 		adminSettings.PUT("/openai-response-header-timeout", h.Admin.Setting.UpdateOpenAIResponseHeaderTimeoutSettings)
+		adminSettings.GET("/account-performance", h.Admin.Setting.GetAccountPerformanceSettings)
+		adminSettings.PUT("/account-performance", h.Admin.Setting.UpdateAccountPerformanceSettings)
 		// 请求整流器配置
 		adminSettings.GET("/rectifier", h.Admin.Setting.GetRectifierSettings)
 		adminSettings.PUT("/rectifier", h.Admin.Setting.UpdateRectifierSettings)
