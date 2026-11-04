@@ -279,6 +279,9 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	if isReservedEmail(email) {
 		return "", nil, ErrEmailReserved
 	}
+	if s.settingService != nil && s.settingService.IsRegistrationEmailBlacklisted(ctx, email) {
+		return "", nil, ErrEmailBlocked
+	}
 	if err := s.validateRegistrationEmailAlias(ctx, email); err != nil {
 		return "", nil, err
 	}
@@ -429,6 +432,9 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 
 	if isReservedEmail(email) {
 		return ErrEmailReserved
+	}
+	if s.settingService != nil && s.settingService.IsRegistrationEmailBlacklisted(ctx, email) {
+		return ErrEmailBlocked
 	}
 	if err := s.validateRegistrationEmailAlias(ctx, email); err != nil {
 		return err
