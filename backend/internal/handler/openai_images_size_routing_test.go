@@ -36,6 +36,7 @@ func newOpenAIImagesSizeRoutingTestHandler(t *testing.T, accounts []service.Acco
 	gatewayService := service.NewOpenAIGatewayService(
 		openAIImagesSizeRoutingAccountRepo{openAIImagesFailoverAccountRepo{accounts: accounts}},
 		nil, nil, nil, nil, nil, nil,
+		nil,
 		cfg,
 		nil, nil, nil, nil, nil,
 		upstream,

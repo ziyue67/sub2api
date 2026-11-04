@@ -141,7 +141,7 @@ func TestScopedAdminSnapshotWriteDoesNotNotifyAutomaticReset(t *testing.T) {
 			openAIAutoResetNotifierRegistry.Unlock()
 			notifier.cancel()
 		}()
-		svc.persistOpenAICodexProbeSnapshotContext(scopedStatisticsServiceContext("accounts.usage.read"), 1, map[string]any{"codex_5h_used_percent": 25.0})
+		svc.persistOpenAICodexProbeSnapshotContext(scopedStatisticsServiceContext("accounts.usage.read"), 1, map[string]any{"codex_5h_used_percent": 25.0}, nil)
 		synctest.Wait()
 		require.Equal(t, 1, repo.extraUpdateCalls)
 		require.Empty(t, notifier.queue)
