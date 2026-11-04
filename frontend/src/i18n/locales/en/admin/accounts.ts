@@ -340,7 +340,7 @@ export default {
         notes: 'Notes',
         priority: 'Priority',
         billingRateMultiplier: 'Billing Rate',
-        upstreamBillingRate: 'Upstream Declared Rate',
+        upstreamBillingRate: 'Upstream Declaration',
         upstreamUsage: 'Upstream Remaining',
         weight: 'Weight',
         schedulerScore: 'Scheduler Score',

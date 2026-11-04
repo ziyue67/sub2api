@@ -227,6 +227,17 @@ describe('admin UsageView route filters', () => {
   })
 
   it('shows the selected user email when opened with a leaderboard user_id', async () => {
+    routeQuery.user_id = '42'
+    getById.mockResolvedValue({ id: 42, email: 'ranked-user@example.test' })
+
+    const wrapper = mountRouteFilteredUsageView()
+    await flushPromises()
+
+    expect(getById).toHaveBeenCalledWith(42, true)
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ user_id: 42 }), expect.anything())
+    expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('ranked-user@example.test')
+  })
+
   it('mounts the latency panel only after selecting its tab and passes supported filters', async () => {
     const wrapper = mountRouteFilteredUsageView()
     await flushPromises()
@@ -977,5 +988,4 @@ describe('admin UsageView rolling 24 hour requests', () => {
     }
     expect(wrapper.findComponent(DateRangePicker).get('.date-picker-trigger').text()).not.toContain('dates.last24Hours')
   })
-})
 })

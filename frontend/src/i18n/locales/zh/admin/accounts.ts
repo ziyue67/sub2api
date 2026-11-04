@@ -183,7 +183,7 @@ export default {
         notes: '备注',
         priority: '优先级',
         billingRateMultiplier: '账号倍率',
-        upstreamBillingRate: '上游声明倍率',
+        upstreamBillingRate: '上游渠道声明',
         upstreamUsage: '上游剩余',
         weight: '权重',
         schedulerScore: '调度权值',

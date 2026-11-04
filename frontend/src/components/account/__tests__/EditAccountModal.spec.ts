@@ -1278,6 +1278,7 @@ describe('EditAccountModal', () => {
         responses: 'https://relay.example.com/v1/responses'
       }
     })
+  })
 
   it.each([false, true])('preserves Mistral settings and redacted key when rotating=%s', async (rotate) => {
     const account = buildAccount()
@@ -3406,5 +3407,4 @@ describe('OpenAI connection account type boundary in the actual editor', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="anthropic-mimic-claude-code-toggle"]').classes()).not.toContain('bg-primary-600')
   })
-})
 })
