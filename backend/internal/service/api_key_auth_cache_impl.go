@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"time"
 
@@ -14,12 +15,13 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
+// v32: per-key model mapping and reasoning effort override。
 // v31: 在 v30 基础上并入 upstream 的 group image_count_billing（按图片张数计费）。
 // v30: 合并 fork v29(multi-group routes/profit controls/group Fast + upstream group
 // model_allowlist, ranxi v26 stream_only and user-group denied models, API key
 // concurrency limit, group client and subagent admission policies)与
 // ranxi v30(include configured API key groups)。
-const apiKeyAuthSnapshotVersion = 31
+const apiKeyAuthSnapshotVersion = 32
 
 // Local-only generation wrapper. Old entries remain bounded by existing TTL
 // and capacity, but cannot authorize after a subscription recovery checkpoint.
@@ -383,6 +385,8 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		GroupRoutes:      apiKey.GroupRoutes,
 		Name:             apiKey.Name,
 		Status:           apiKey.Status,
+		ModelMapping:     maps.Clone(apiKey.ModelMapping),
+		ReasoningEffort:  apiKey.ReasoningEffort,
 		IPWhitelist:      apiKey.IPWhitelist,
 		IPBlacklist:      apiKey.IPBlacklist,
 		Quota:            apiKey.Quota,
@@ -500,6 +504,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		Key:              key,
 		Name:             snapshot.Name,
 		Status:           snapshot.Status,
+		ModelMapping:     maps.Clone(snapshot.ModelMapping),
+		ReasoningEffort:  snapshot.ReasoningEffort,
 		IPWhitelist:      snapshot.IPWhitelist,
 		IPBlacklist:      snapshot.IPBlacklist,
 		Quota:            snapshot.Quota,

@@ -4,8 +4,11 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/ImageHistoryView.spec.ts \
 	src/components/admin/__tests__/ImageArchiveAsset.spec.ts \
 	src/views/admin/__tests__/ImageArchiveView.spec.ts \
+	src/components/settings/BalanceForecastSettings.spec.ts \
 	src/components/admin/user/__tests__/UserAutoCreditModal.spec.ts \
 	src/components/common/__tests__/VipAutoCreditNotice.spec.ts \
+	src/components/admin/user/__tests__/ApiKeyModelPolicyDialog.spec.ts \
+	src/components/admin/user/__tests__/ApiKeyModelPolicyNotices.spec.ts \
 	src/components/account/__tests__/OpenAIAuthConnections.spec.ts \
 	src/views/admin/__tests__/RiskControlView.spec.ts \
 	src/i18n/__tests__/riskControlLocales.spec.ts \
