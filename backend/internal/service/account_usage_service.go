@@ -985,10 +985,6 @@ func (s *AccountUsageService) persistOpenAICodexProbeResponse(ctx context.Contex
 	return nil, nil
 }
 
-func (s *AccountUsageService) persistOpenAICodexProbeSnapshot(accountID int64, updates map[string]any) {
-	s.persistOpenAICodexProbeSnapshotContext(context.Background(), accountID, updates, nil)
-}
-
 func (s *AccountUsageService) persistOpenAICodexProbeSnapshotContext(ctx context.Context, accountID int64, updates map[string]any, observed *openAIQuotaRecoveryObservation) {
 	if s == nil || s.accountRepo == nil || accountID <= 0 {
 		return
