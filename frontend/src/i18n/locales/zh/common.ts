@@ -29,6 +29,8 @@ export default {
       noResults: '未找到匹配功能，请尝试其他名称或关键词',
       hint: '↑ ↓ 选择 · Enter 打开 · Esc 关闭'
     },
+    newFeature: '新功能',
+    dismissNewFeature: '隐藏此新功能提示',
     filter: '筛选',
     export: '导出',
     import: '导入',
@@ -262,6 +264,7 @@ export default {
     loginFailed: '登录失败，请检查您的凭据后重试。',
     errors: {
       USER_NOT_ACTIVE: '账号已被禁用',
+      EMAIL_BLOCKED: '该邮箱不允许注册，请更换其他邮箱。',
     },
     registrationFailed: '注册失败，请重试。',
     emailDomainRegistrationLimit:

@@ -142,6 +142,17 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		body = stripAnthropicClaudeCodeIdentityFromBody(body)
 	}
 
+	// Anthropic API Key「模拟 Claude Code」：只补缺的特征，记录身份句供可选估算扣减使用。
+	mimicAPIKeyClaudeCode := account != nil && account.IsAnthropicMimicClaudeCodeEnabled()
+	var mimicInjection claudeCodeMimicInjection
+	if mimicAPIKeyClaudeCode {
+		body, mimicInjection = mimicAnthropicClaudeCodeBody(body, account, claudeCodeMimicAPIKeyID(c), mimicUserAgent, modelID)
+	}
+	if account != nil {
+		mimicInjection.AccountID = account.ID
+	}
+	setClaudeCodeMimicInjection(c, mimicInjection)
+
 	policyFilterSet := s.getBetaPolicyFilterSet(ctx, c, account, modelID)
 	effectiveDropSet := mergeDropSets(policyFilterSet)
 	finalBetaHeader, finalBetaShouldSet := s.computeFinalAnthropicBeta(
@@ -241,6 +252,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 
 	if stripClaudeCodeIdentity {
 		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
+	}
+	if mimicAPIKeyClaudeCode {
+		applyAnthropicClaudeCodeMimicHeaders(req.Header, mimicUserAgent)
 	}
 
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）。

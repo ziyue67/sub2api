@@ -59,12 +59,15 @@ describe('Usage timing details', () => {
       downstream_write_ms: 1, downstream_error: false, client_disconnect: false, canceled: false,
       outcome: 'success', terminal: 'completed', events: { first_visible: 40000, first_semantic: 40000 },
       spans: [{ name: 'handler', start_ms: 0, end_ms: 50000 }, { name: 'user_queue', start_ms: 0, end_ms: 6000 }],
+      latency: { version: 1, status: 'measured', account_switches: 1, same_account_retries: 0, unknown_transitions: 0, large_body: true, cost_status: 'not_collected', extra_upload_component_ms: 100, extra_wait_component_ms: 200, attempts: [] },
       attempts: [{ kind: 'egress', number: 1, cleanup_canceled: true, account_id: 1, proxy_id: 0, start_ms: 6000, end_ms: 50000, status: 200, reused: false, body_eof: false, request_bytes: 20, response_bytes: 100, events: { response_headers: 10000 } }]
     }] })
     const wrapper = mount(UsageTimingDialog, { props: { record: { ...row(1), output_tokens: 1_095, duration_ms: 9_250, first_token_ms: 9_240 } }, ...options })
     await flushPromises()
     expect(wrapper.text()).toContain('usage.latencyTps 118 t/s')
     expect(wrapper.text()).toContain('requestTiming.tpsNote')
+    expect(wrapper.find('[data-testid="attempt-latency"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('latencyObservability.title')
     expect(wrapper.text()).toContain('requestTiming.health.firstSlow')
     expect(wrapper.text()).toContain('requestTiming.health.largest')
     expect(wrapper.text()).toContain('requestTiming.health.normalClose')
@@ -127,12 +130,12 @@ it('PR610 shows separately sampled server totals when legacy passthrough already
   wrapper.unmount()
 })
 
-it('PR610 leaves old queue values without sampled provenance unknown in details', async () => {
+it('omits old queue values while preserving unknown server measurements in details', async () => {
   mocks.get.mockResolvedValue({ traces: [], retention_days: 30 })
   const wrapper = mount(UsageTimingDialog, { props: { record: { ...row(610), queue_wait_ms: 5_000 } }, ...options })
   await flushPromises()
-  const queue = wrapper.findAll('div').find(n => n.element.children.length === 2 && n.element.children[0]?.textContent === 'requestTiming.queueWait')
-  expect(queue?.text()).toContain('requestTiming.missing')
-  expect(queue?.text()).not.toContain('5.00s')
+  const serverFirst = wrapper.findAll('div').find(n => n.element.children.length === 2 && n.element.children[0]?.textContent === 'requestTiming.serverFirst')
+  expect(serverFirst?.text()).toContain('requestTiming.missing')
+  expect(wrapper.text()).not.toContain('5.00s')
   wrapper.unmount()
 })

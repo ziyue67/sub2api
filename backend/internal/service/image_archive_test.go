@@ -195,6 +195,10 @@ type archiveDisconnectedWriter struct{ gin.ResponseWriter }
 
 func (w *archiveDisconnectedWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
+// io.WriteString prefers WriteString over Write; both must fail so the
+// disconnect marker flips no matter which helper the gateway uses.
+func (w *archiveDisconnectedWriter) WriteString(s string) (int, error) { return 0, io.ErrClosedPipe }
+
 func TestImageArchiveStorageFailuresPreserveResponse(t *testing.T) {
 	for _, reason := range []string{"capacity_limit", "disk_low", "disk_check_failed", "database_write_failed", "asset_download_failed"} {
 		t.Run(reason, func(t *testing.T) {

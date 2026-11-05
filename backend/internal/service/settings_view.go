@@ -332,9 +332,12 @@ type SystemSettings struct {
 	OpenAIAdvancedSchedulerEffectiveWeightSessionSticky    string
 
 	// 余额不足提醒
-	BalanceLowNotifyEnabled     bool
-	BalanceLowNotifyThreshold   float64
-	BalanceLowNotifyRechargeURL string
+	BalanceForecastEnabled          bool
+	BalanceForecastThresholdHours   float64
+	BalanceForecastMaxNotifications int
+	BalanceLowNotifyEnabled         bool
+	BalanceLowNotifyThreshold       float64
+	BalanceLowNotifyRechargeURL     string
 
 	// 订阅到期提醒
 	SubscriptionExpiryNotifyEnabled bool
@@ -478,6 +481,7 @@ type PublicSettings struct {
 
 	// Support tickets ("网站工单") feature switch
 	SupportTicketEnabled bool `json:"support_ticket_enabled"`
+	LotteryEnabled       bool `json:"lottery_enabled"`
 
 	// Affiliate (邀请返利) feature toggle
 	AffiliateEnabled bool `json:"affiliate_enabled"`

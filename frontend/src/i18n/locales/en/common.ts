@@ -29,6 +29,8 @@ export default {
       noResults: 'No matching features. Try another name or keyword.',
       hint: '↑ ↓ Select · Enter Open · Esc Close'
     },
+    newFeature: 'New feature',
+    dismissNewFeature: 'Hide this new feature notice',
     filter: 'Filter',
     export: 'Export',
     import: 'Import',
@@ -262,6 +264,7 @@ export default {
     loginFailed: 'Login failed. Please check your credentials and try again.',
     errors: {
       USER_NOT_ACTIVE: 'Account has been disabled.',
+      EMAIL_BLOCKED: 'This email address is not allowed. Please use a different one.',
     },
     registrationFailed: 'Registration failed. Please try again.',
     emailDomainRegistrationLimit:

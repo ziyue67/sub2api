@@ -124,3 +124,12 @@ describe('AppSidebar MCP entry', () => {
     expect(componentSource).not.toMatch(/path: '\/settings\/mcp'[^\n]*PluginIcon/)
   })
 })
+
+describe('AppSidebar new feature notices', () => {
+  it('shows the shared dismissible notice beside the admin settings entry', () => {
+    expect(componentSource).toContain("import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'")
+    expect(componentSource).toContain("NEW_FEATURE_NOTICES.protocolFeatureSwitches")
+    expect(componentSource).toContain("item.path === '/admin/settings'")
+    expect(componentSource).toContain('<NewFeatureBadge')
+  })
+})

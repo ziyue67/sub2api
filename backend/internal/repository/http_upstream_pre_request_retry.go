@@ -18,11 +18,11 @@ import (
 // Retry only an observed transient TLS handshake failure, before any connection
 // was handed to HTTP. In particular, a missing trace is NOT proof of no write.
 // Keep evidence across all redirects/connections in the first Client.Do call.
-func doWithOpenAIPreRequestRetry(client *http.Client, req *http.Request, proxyURL string, profile service.HTTPUpstreamProfile) (*http.Response, error) {
+func doWithOpenAIPreRequestRetry(client *http.Client, req *http.Request, proxyURL string, profile service.HTTPUpstreamProfile, drainTimeouts ...time.Duration) (*http.Response, error) {
 	if req == nil || req.URL == nil || req.URL.Scheme != "https" ||
 		strings.TrimSpace(proxyURL) == "" || profile != service.HTTPUpstreamProfileOpenAI ||
 		(req.Body != nil && req.Body != http.NoBody && req.GetBody == nil) {
-		return doUpstreamRequest(client, req)
+		return doUpstreamRequest(client, req, drainTimeouts...)
 	}
 	var mu sync.Mutex
 	var started, transientFailure, handedToHTTP bool
@@ -51,7 +51,7 @@ func doWithOpenAIPreRequestRetry(client *http.Client, req *http.Request, proxyUR
 		GotFirstResponseByte: markHTTP,
 	}
 	first := req.Clone(httptrace.WithClientTrace(req.Context(), trace))
-	resp, err := doUpstreamRequest(client, first)
+	resp, err := doUpstreamRequest(client, first, drainTimeouts...)
 	mu.Lock()
 	retry := transientFailure && !handedToHTTP
 	mu.Unlock()
@@ -76,7 +76,7 @@ func doWithOpenAIPreRequestRetry(client *http.Client, req *http.Request, proxyUR
 	// No URL, proxy credentials, account identity or request body in this marker.
 	slog.Info("openai.upstream_pre_request_retry", "attempt", 2, "reason", "tls_handshake_before_http")
 	// Same client/proxy and TLS verification; at most one additional attempt.
-	return doUpstreamRequest(client, second)
+	return doUpstreamRequest(client, second, drainTimeouts...)
 }
 
 func transientTLSHandshakeError(err error) bool {

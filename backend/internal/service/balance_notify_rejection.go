@@ -36,7 +36,7 @@ func (s *BalanceNotifyService) sendResolvedBalanceEmail(ctx context.Context, use
 	if len(recipients) == 0 {
 		return
 	}
-	s.sendBalanceLowEmails(recipients, user.ID, user.Username, user.Email, balance, threshold, s.getSiteName(ctx), rechargeURL)
+	s.sendBalanceLowEmails(ctx, recipients, user.ID, user.Username, user.Email, balance, threshold, s.getSiteName(ctx), rechargeURL)
 }
 
 func (s *BalanceNotifyService) beginBalanceEmail(userID int64, now time.Time) bool {

@@ -20,38 +20,48 @@ import { nextTick } from 'vue'
 import en from '@/i18n/locales/en/admin/resources'
 import zh from '@/i18n/locales/zh/admin/resources'
 import UsageTable from '../UsageTable.vue'
-import enLatency from '@/i18n/locales/en/latencyObservability'
-import zhLatency from '@/i18n/locales/zh/latencyObservability'
 import enDashboard from '@/i18n/locales/en/dashboard'
 import zhDashboard from '@/i18n/locales/zh/dashboard'
 import enTiming from '@/i18n/locales/en/requestTiming'
 import zhTiming from '@/i18n/locales/zh/requestTiming'
+import enLatencyObservability from '@/i18n/locales/en/latencyObservability'
+import zhLatencyObservability from '@/i18n/locales/zh/latencyObservability'
 
 let locale: 'en' | 'zh' = 'en'
 const localizedMessages: Record<'en' | 'zh', Record<string, string>> = {
   en: {
     'requestTiming.legacyFirst': enTiming.legacyFirst,
     'requestTiming.legacyTotal': enTiming.legacyTotal,
-    'latencyObservability.reasoning_first_ms': enLatency.reasoning_first_ms,
-    'latencyObservability.visible_text_first_ms': enLatency.visible_text_first_ms,
-    'latencyObservability.response_byte_first_ms': enLatency.response_byte_first_ms,
-    'latencyObservability.notCollected': enLatency.notCollected,
-    'latencyObservability.sourceNone': enLatency.sourceNone,
+    'usage.latencyFirstTokenHint': enDashboard.usage.latencyFirstTokenHint,
+    'usage.latencyDurationHint': enDashboard.usage.latencyDurationHint,
     'usage.latencyFirstToken': enDashboard.usage.latencyFirstToken,
+    'usage.latencyFirstTokenShort': enDashboard.usage.latencyFirstTokenShort,
     'usage.latencyDuration': enDashboard.usage.latencyDuration,
+    'usage.latencyDurationShort': enDashboard.usage.latencyDurationShort,
+    'usage.latencyTps': enDashboard.usage.latencyTps,
+    'usage.latencyCacheRate': enDashboard.usage.latencyCacheRate,
+    'latencyObservability.reasoning_first_ms': enLatencyObservability.reasoning_first_ms,
+    'latencyObservability.visible_text_first_ms': enLatencyObservability.visible_text_first_ms,
+    'latencyObservability.response_byte_first_ms': enLatencyObservability.response_byte_first_ms,
+    'latencyObservability.typedScope': enLatencyObservability.typedScope,
     'admin.usage.longContext': en.usage.longContext,
     'admin.usage.longContextPricingTooltip': en.usage.longContextPricingTooltip,
   },
   zh: {
     'requestTiming.legacyFirst': zhTiming.legacyFirst,
     'requestTiming.legacyTotal': zhTiming.legacyTotal,
-    'latencyObservability.reasoning_first_ms': zhLatency.reasoning_first_ms,
-    'latencyObservability.visible_text_first_ms': zhLatency.visible_text_first_ms,
-    'latencyObservability.response_byte_first_ms': zhLatency.response_byte_first_ms,
-    'latencyObservability.notCollected': zhLatency.notCollected,
-    'latencyObservability.sourceNone': zhLatency.sourceNone,
+    'usage.latencyFirstTokenHint': zhDashboard.usage.latencyFirstTokenHint,
+    'usage.latencyDurationHint': zhDashboard.usage.latencyDurationHint,
     'usage.latencyFirstToken': zhDashboard.usage.latencyFirstToken,
+    'usage.latencyFirstTokenShort': zhDashboard.usage.latencyFirstTokenShort,
     'usage.latencyDuration': zhDashboard.usage.latencyDuration,
+    'usage.latencyDurationShort': zhDashboard.usage.latencyDurationShort,
+    'usage.latencyTps': zhDashboard.usage.latencyTps,
+    'usage.latencyCacheRate': zhDashboard.usage.latencyCacheRate,
+    'latencyObservability.reasoning_first_ms': zhLatencyObservability.reasoning_first_ms,
+    'latencyObservability.visible_text_first_ms': zhLatencyObservability.visible_text_first_ms,
+    'latencyObservability.response_byte_first_ms': zhLatencyObservability.response_byte_first_ms,
+    'latencyObservability.typedScope': zhLatencyObservability.typedScope,
     'admin.usage.longContext': zh.usage.longContext,
     'admin.usage.longContextPricingTooltip': zh.usage.longContextPricingTooltip,
   },
@@ -124,11 +134,8 @@ vi.mock('vue-i18n', async () => {
     ...actual,
     useI18n: () => ({
       t: (key: string, params?: Record<string, string | number>) => {
-        let value = localizedMessages[locale][key] ?? messages[key] ?? key
-        for (const [name, replacement] of Object.entries(params ?? {})) {
-          value = value.replaceAll(`{${name}}`, String(replacement))
-        }
-        return value
+        const message = localizedMessages[locale][key] ?? messages[key] ?? key
+        return Object.entries(params ?? {}).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), message)
       },
     }),
   }
@@ -198,7 +205,7 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).toContain('Avg TPS')
   })
 
-  it('shows queue-inclusive first token and labels the queue portion', () => {
+  it('keeps queue-inclusive first token without disclosing the queue portion', () => {
     const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 100, duration_ms: 20_000, first_token_ms: 2_000, queue_wait_ms: 30_000,
       queue_timing: { status: 'measured', source: 'ws_frame_ctx_pool', scope: 'pre_final_forward', queue_clamped: false,
         server_first_token_ms: 32_000, server_duration_ms: 50_000, forward_first_token_ms: 2_000, forward_duration_ms: 20_000 } }
@@ -208,7 +215,8 @@ describe('admin UsageTable tooltip', () => {
     })
     expect(wrapper.text()).toContain('32.00s')
     expect(wrapper.text()).toContain('50.00s')
-    expect(wrapper.text()).toContain('30.00s')
+    expect(wrapper.text()).not.toContain('30.00s')
+    expect(wrapper.find('[data-testid="latency-e2e-uncollected"]').exists()).toBe(false)
   })
 
   it('PR610 keeps passthrough overlap out of the server total and retains legacy TPS', () => {
@@ -220,7 +228,7 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.text()).toContain('50.00s')
     expect(wrapper.text()).not.toContain('62.00s')
     expect(wrapper.get('[data-testid="latency-tps"]').text()).toBe('2.0 t/s')
-    expect(wrapper.get('[data-testid="latency-e2e-uncollected"]').attributes('title')).toBe(enLatency.sourceNone)
+    expect(wrapper.find('[data-testid="latency-e2e-uncollected"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -1104,6 +1112,19 @@ const DataTableStubWithLatency = {
   `,
 }
 
+const DataTableStubWithContentTiming = {
+  props: ['data'],
+  template: `
+    <div>
+      <div v-for="row in data" :key="row.request_id" :data-row="row.request_id">
+        <slot name="cell-content_reasoning_first_ms" :row="row" />
+        <slot name="cell-content_visible_text_first_ms" :row="row" />
+        <slot name="cell-content_response_byte_first_ms" :row="row" />
+      </div>
+    </div>
+  `,
+}
+
 describe('admin UsageTable latency TPS', () => {
   const mountLatency = (data: Record<string, unknown>[], extra: Record<string, unknown> = {}) =>
     mount(UsageTable, {
@@ -1292,36 +1313,107 @@ describe('cache creation billing visibility', () => {
 })
 
 for (const [language, first, total] of [['en', 'Server TTFT', 'Server total'], ['zh', '服务端首字', '服务端总耗时']] as const) {
-  it(`Issue603 labels real usage table server timing explicitly in ${language}`, () => {
+  it(`keeps the original four latency rows and omits typed-content timing in ${language}`, () => {
     locale = language
+    const dashboardMessages = language === 'en' ? enDashboard : zhDashboard
+    appStoreMocks.cachedPublicSettings = { usage_show_cache_rate: true }
     const wrapper = mount(UsageTable, {
-      props: { data: [{ ...baseImageRow, duration_ms: 1000, first_token_ms: 200 }], loading: false, columns: [{ key: 'latency', label: 'Latency' }] },
+      props: { data: [{ ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 100, duration_ms: 20_000, first_token_ms: 2_000, queue_wait_ms: 30_000,
+        queue_timing: { status: 'measured', source: 'ws_frame_ctx_pool', scope: 'pre_final_forward', queue_clamped: false, server_first_token_ms: 32_000, server_duration_ms: 50_000, forward_first_token_ms: 2_000, forward_duration_ms: 20_000 },
+        content_timing: { reasoning_first_ms: 120, visible_text_first_ms: 450, response_byte_first_ms: 30 } }], loading: false, columns: [{ key: 'latency', label: 'Latency' }] },
       global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
     })
     expect(wrapper.text()).toContain(first)
     expect(wrapper.text()).toContain(total)
-    expect(wrapper.get('[data-testid="latency-e2e-uncollected"]').text()).toBe(language === 'en' ? enLatency.notCollected : zhLatency.notCollected)
-    expect(wrapper.get('[data-testid="latency-e2e-uncollected"]').attributes('title')).toBe(language === 'en' ? enLatency.sourceNone : zhLatency.sourceNone)
+    expect(wrapper.text()).toContain('32.00s')
+    expect(wrapper.text()).toContain('50.00s')
+    expect(wrapper.findAll('[class*="col-start-2"][class*="row-start-"]').map(node => node.text())).toEqual([
+      dashboardMessages.usage.latencyFirstToken,
+      dashboardMessages.usage.latencyDuration,
+      dashboardMessages.usage.latencyTps,
+      dashboardMessages.usage.latencyCacheRate,
+    ])
+    expect(wrapper.find('[data-testid="typed-content-timing"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="latency-e2e-uncollected"]').exists()).toBe(false)
     wrapper.unmount()
+    appStoreMocks.cachedPublicSettings = undefined
     locale = 'en'
   })
 }
 
-for (const language of ['en', 'zh'] as const) {
-  it(`Issue605 displays typed reasoning visible text and response byte in ${language}`, () => {
-    locale = language
-    const messages = language === 'en' ? enLatency : zhLatency
-    const row = { ...baseImageRow, content_timing: { reasoning_first_ms: 120, visible_text_first_ms: 450, response_byte_first_ms: 30, status: 'observed', source: 'httptrace_and_typed_sse', scope: 'final_http', reasoning_streaming_capability: 'unknown', capability_source: 'none' } }
-    const w = mount(UsageTable, { props: { data: [row, { ...baseImageRow, request_id: 'legacy' }], loading: false, columns: [{ key: 'latency', label: 'Latency' }] }, global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } } })
-    const cells = w.findAll('[data-testid="typed-content-timing"]')
-    expect(cells).toHaveLength(2)
-    expect(cells[0]!.text()).toContain(messages.reasoning_first_ms)
-    expect(cells[0]!.text()).toContain(messages.visible_text_first_ms)
-    expect(cells[0]!.text()).toContain(messages.response_byte_first_ms)
-    expect(cells[0]!.text()).toContain('120ms')
-    expect(cells[0]!.text()).toContain('450ms')
-    expect(cells[0]!.text()).toContain('30ms')
-    expect(cells[1]!.findAll('strong').map(n => n.text())).toEqual(['—', '—', '—'])
-    w.unmount(); locale = 'en'
+it('keeps queue-inclusive admin latency compact and explains server boundaries on hover', () => {
+  const row = {
+    ...baseImageRow,
+    image_count: 0,
+    billing_mode: 'token',
+    output_tokens: 100,
+    duration_ms: 20_000,
+    first_token_ms: 2_000,
+    queue_wait_ms: 30_000,
+    queue_timing: {
+      status: 'measured',
+      source: 'ws_frame_ctx_pool',
+      scope: 'pre_final_forward',
+      queue_clamped: false,
+      server_first_token_ms: 32_000,
+      server_duration_ms: 50_000,
+      forward_first_token_ms: 2_000,
+      forward_duration_ms: 20_000,
+    },
+  }
+  const wrapper = mount(UsageTable, {
+    props: { data: [row], loading: false, enableTimingDetails: true, columns: [{ key: 'latency', label: 'Latency' }] },
+    global: { stubs: { DataTable: DataTableStubWithLatency, EmptyState: true, Icon: true, Teleport: true } },
   })
-}
+
+  expect(wrapper.text()).toContain('First token')
+  expect(wrapper.text()).toContain('Total')
+  expect(wrapper.text()).toContain('32.00s')
+  expect(wrapper.text()).toContain('50.00s')
+  expect(wrapper.text()).not.toContain('incl. pre-forward wait')
+  expect(wrapper.text()).not.toContain('30.00s')
+  const firstValue = wrapper.findAll('span').find((span) => span.text() === '32.00s')
+  const totalValue = wrapper.findAll('span').find((span) => span.text() === '50.00s')
+  expect(firstValue?.attributes('title')).not.toContain('30.00s')
+  expect(firstValue?.attributes('title')).toContain('sampled server boundaries')
+  expect(totalValue?.attributes('title')).not.toContain('30.00s')
+  expect(totalValue?.attributes('title')).toContain('sampled server boundaries')
+  wrapper.unmount()
+})
+
+it('renders content timing in separate columns and uses a dash for missing values', () => {
+  const wrapper = mount(UsageTable, {
+    props: {
+      data: [
+        {
+          ...baseImageRow,
+          request_id: 'timing-measured',
+          content_timing: {
+            reasoning_first_ms: 120,
+            visible_text_first_ms: 1_330,
+            response_byte_first_ms: 30,
+            status: 'measured',
+            source: 'fixture',
+            scope: 'final_physical_http_attempt_offsets_from_application_entry',
+            reasoning_streaming_capability: 'unknown',
+            capability_source: 'none',
+          },
+        },
+        { ...baseImageRow, request_id: 'timing-missing', content_timing: null },
+      ],
+      loading: false,
+      columns: [
+        { key: 'content_reasoning_first_ms', label: enLatencyObservability.reasoning_first_ms },
+        { key: 'content_visible_text_first_ms', label: enLatencyObservability.visible_text_first_ms },
+        { key: 'content_response_byte_first_ms', label: enLatencyObservability.response_byte_first_ms },
+      ],
+    },
+    global: { stubs: { DataTable: DataTableStubWithContentTiming, EmptyState: true, Icon: true, Teleport: true } },
+  })
+
+  expect(wrapper.find('[data-testid="content-timing-reasoning-first"]').exists()).toBe(false)
+  expect(wrapper.find('[data-testid="content-timing-visible-text-first"]').exists()).toBe(false)
+  expect(wrapper.find('[data-testid="content-timing-response-byte-first"]').exists()).toBe(false)
+  expect(wrapper.text()).not.toContain('Client end-to-end time')
+  wrapper.unmount()
+})

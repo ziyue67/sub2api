@@ -23,11 +23,13 @@ import (
 // UserWithConcurrency wraps AdminUser with current concurrency info
 type UserWithConcurrency struct {
 	dto.AdminUser
-	CurrentConcurrency int `json:"current_concurrency"`
+	AutoCreditOutstanding string `json:"auto_credit_outstanding"`
+	CurrentConcurrency    int    `json:"current_concurrency"`
 }
 
 // UserHandler handles admin user management
 type UserHandler struct {
+	autoCredit            service.AutoCreditRepository
 	adminService          service.AdminService
 	concurrencyService    *service.ConcurrencyService
 	userPlatformQuotaRepo service.UserPlatformQuotaRepository // T13 admin quota view
@@ -156,7 +158,7 @@ func (h *UserHandler) List(c *gin.Context) {
 		includeSubscriptions := parseBoolQueryWithDefault(raw, true)
 		filters.IncludeSubscriptions = &includeSubscriptions
 	}
-	principal := adminaccess.FromContext(c.Request.Context())
+	principal := adminaccess.RestrictedFromContext(c.Request.Context())
 	if principal != nil {
 		includeSubscriptions := false
 		filters.IncludeSubscriptions = &includeSubscriptions
@@ -191,10 +193,23 @@ func (h *UserHandler) List(c *gin.Context) {
 	}
 
 	// Build response with concurrency info
+	debt := map[int64]string{}
+	if h.autoCredit != nil {
+		ids := make([]int64, len(users))
+		for i := range users {
+			ids[i] = users[i].ID
+		}
+		debt, err = h.autoCredit.OutstandingByUsers(c.Request.Context(), ids)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+	}
 	out := make([]UserWithConcurrency, len(users))
 	for i := range users {
 		out[i] = UserWithConcurrency{
-			AdminUser: *dto.UserFromServiceAdmin(&users[i]),
+			AdminUser:             *dto.UserFromServiceAdmin(&users[i]),
+			AutoCreditOutstanding: debt[users[i].ID],
 		}
 		if info := loadInfo[users[i].ID]; info != nil {
 			out[i].CurrentConcurrency = info.CurrentConcurrency
@@ -431,6 +446,7 @@ func (h *UserHandler) UpdateBalance(c *gin.Context) {
 		Body:   req,
 	}
 	executeAdminIdempotentJSONWithResponse(c, "admin.users.balance.update", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
+		ctx = service.WithAdminBalanceOperation(ctx, adminActorScope(c), c.GetHeader("Idempotency-Key"))
 		user, execErr := h.adminService.UpdateUserBalance(ctx, userID, req.Balance, req.Operation, req.Notes)
 		if execErr != nil {
 			return nil, execErr
@@ -438,7 +454,7 @@ func (h *UserHandler) UpdateBalance(c *gin.Context) {
 		return dto.UserFromServiceAdmin(user), nil
 	}, func(data any) any {
 		// 成功确认不隐式授予用户资料或余额读取权限；缓存重放也必须经过此边界。
-		if adminaccess.FromContext(c.Request.Context()) != nil {
+		if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
 			return gin.H{"id": userID}
 		}
 		return data

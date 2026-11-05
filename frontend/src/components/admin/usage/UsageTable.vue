@@ -47,7 +47,7 @@
         </template>
 
         <template #cell-api_key="{ row }">
-          <span class="text-sm text-gray-900 dark:text-white">{{ row.api_key?.name || '-' }}</span>
+          <UsageApiKeyName :name="row.api_key?.name" />
         </template>
 
         <template #cell-account="{ row }">
@@ -257,12 +257,6 @@
 
         <!-- 状态列：首字/总耗时/TPS 用左侧色条表示健康度。缓存率百分数为绿色，色条延伸到这一行，但不改变上面三段的健康色。 -->
         <template #cell-latency="{ row }">
-          <div data-testid="typed-content-timing" class="mb-2 grid grid-cols-3 gap-x-3 text-xs" :title="t('latencyObservability.typedScope')">
-            <div v-for="metric in ['reasoning_first_ms', 'visible_text_first_ms', 'response_byte_first_ms'] as const" :key="metric">
-              <span class="block text-gray-400">{{ t(`latencyObservability.${metric}`) }}</span>
-              <strong class="tabular-nums">{{ row.content_timing?.[metric] == null ? '—' : formatDuration(row.content_timing[metric]) }}</strong>
-            </div>
-          </div>
           <component :is="enableTimingDetails ? 'button' : 'div'" :type="enableTimingDetails ? 'button' : undefined" class="grid grid-cols-[0.25rem_max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-left text-xs" :class="enableTimingDetails ? 'hover:opacity-80 focus-visible:outline focus-visible:outline-primary-500' : ''" :aria-label="enableTimingDetails ? t('requestTiming.title') : undefined" @click="enableTimingDetails && (timingRecord = row)">
             <span
               data-testid="latency-bar"
@@ -271,16 +265,14 @@
               :style="cacheRateBarStyle(row)"
               aria-hidden="true"
             ></span>
-            <span class="col-start-2 row-start-1 text-gray-400 dark:text-gray-500">{{ t(row.queue_timing?.status === 'measured' ? 'usage.latencyFirstToken' : 'requestTiming.legacyFirst') }}</span>
-            <span v-if="firstTokenQueueInclusive(row) != null" class="col-start-3 row-start-1 font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(firstTokenQueueInclusive(row) ?? 0)]" :title="row.queue_timing?.status === 'measured' ? firstTokenQueueTitle(row) : undefined">
+            <span class="col-start-2 row-start-1 text-gray-400 dark:text-gray-500">{{ t(enableTimingDetails ? 'usage.latencyFirstTokenShort' : row.queue_timing?.status === 'measured' ? 'usage.latencyFirstToken' : 'requestTiming.legacyFirst') }}</span>
+            <span v-if="firstTokenQueueInclusive(row) != null" class="col-start-3 row-start-1 font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[firstTokenSeverity(firstTokenQueueInclusive(row) ?? 0)]" :title="row.queue_timing?.status === 'measured' ? t('usage.latencyFirstTokenHint') : enableTimingDetails ? t('requestTiming.legacyFirst') : undefined">
               {{ formatDuration(firstTokenQueueInclusive(row)) }}
-              <span v-if="row.queue_timing?.status === 'measured' && row.queue_wait_ms" class="ml-1 text-[10px] font-normal text-amber-600 dark:text-amber-400">{{ t('usage.queuePortion') }} {{ row.queue_timing.queue_clamped ? '≥' : '' }}{{ formatDuration(row.queue_wait_ms) }}</span>
             </span>
-            <span v-else class="col-start-3 row-start-1 text-gray-400 dark:text-gray-500">-</span>
-            <span class="col-start-2 row-start-2 text-gray-400 dark:text-gray-500">{{ t(row.queue_timing?.status === 'measured' ? 'usage.latencyDuration' : 'requestTiming.legacyTotal') }}</span>
-            <span class="col-start-3 row-start-2 font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(durationQueueInclusive(row) ?? 0)]" :title="row.queue_timing?.status === 'measured' ? t('usage.latencyDurationHint', { forward: formatDuration(row.queue_timing?.forward_duration_ms), queue: formatDuration(row.queue_wait_ms ?? 0) }) : undefined">
+            <span v-else class="col-start-3 row-start-1 text-gray-400 dark:text-gray-500" :title="enableTimingDetails ? t('requestTiming.legacyFirst') : undefined">-</span>
+            <span class="col-start-2 row-start-2 text-gray-400 dark:text-gray-500">{{ t(enableTimingDetails ? 'usage.latencyDurationShort' : row.queue_timing?.status === 'measured' ? 'usage.latencyDuration' : 'requestTiming.legacyTotal') }}</span>
+            <span class="col-start-3 row-start-2 font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(durationQueueInclusive(row) ?? 0)]" :title="row.queue_timing?.status === 'measured' ? t('usage.latencyDurationHint') : enableTimingDetails ? t('requestTiming.legacyTotal') : undefined">
               {{ formatDuration(durationQueueInclusive(row)) }}
-              <span v-if="row.queue_timing?.status === 'measured' && row.queue_wait_ms" class="ml-1 text-[10px] font-normal text-amber-600 dark:text-amber-400">{{ t('usage.queuePortion') }} {{ row.queue_timing.queue_clamped ? '≥' : '' }}{{ formatDuration(row.queue_wait_ms) }}</span>
             </span>
             <span class="col-start-2 row-start-3 text-gray-400 dark:text-gray-500">{{ t('usage.latencyTps') }}</span>
             <span
@@ -301,8 +293,6 @@
               >{{ formatUsageCacheRate(row) }}</span>
               <span v-else data-testid="latency-cache-rate" class="col-start-3 row-start-4 text-gray-400 dark:text-gray-500">-</span>
             </template>
-            <span class="col-start-2 text-gray-400 dark:text-gray-500" :class="showCacheRate ? 'row-start-5' : 'row-start-4'">{{ t('latencyObservability.e2e') }}</span>
-            <span data-testid="latency-e2e-uncollected" class="col-start-3 text-gray-400 dark:text-gray-500" :class="showCacheRate ? 'row-start-5' : 'row-start-4'" :title="t('latencyObservability.sourceNone')">{{ t('latencyObservability.notCollected') }}</span>
           </component>
         </template>
 
@@ -602,6 +592,7 @@
 import { computed, ref, inject, onUnmounted } from 'vue'
 import { useWindowSize } from '@vueuse/core'
 import UsageDetailPopover from './UsageDetailPopover.vue'
+import UsageApiKeyName from './UsageApiKeyName.vue'
 import UsageTimingDialog from './UsageTimingDialog.vue'
 import { observerUsageContext } from './observerUsageContext'
 import { useI18n } from 'vue-i18n'
@@ -864,11 +855,6 @@ const LATENCY_BAR_COLORS: Record<LatencySeverity, string> = {
 // Historical rows retain their legacy values and are not claimed as measured.
 const firstTokenQueueInclusive = (row: AdminUsageLog): number | null =>
   row.queue_timing?.status === 'measured' ? row.queue_timing.server_first_token_ms : row.first_token_ms
-const firstTokenQueueTitle = (row: AdminUsageLog): string =>
-  t('usage.latencyFirstTokenHint', {
-    first: formatDuration(row.queue_timing?.forward_first_token_ms),
-    queue: formatDuration(row.queue_wait_ms),
-  })
 const durationQueueInclusive = (row: AdminUsageLog): number | null =>
   row.queue_timing?.status === 'measured' ? row.queue_timing.server_duration_ms : row.duration_ms
 

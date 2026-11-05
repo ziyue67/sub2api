@@ -183,7 +183,7 @@ export default {
         notes: '备注',
         priority: '优先级',
         billingRateMultiplier: '账号倍率',
-        upstreamBillingRate: '上游声明倍率',
+        upstreamBillingRate: '上游渠道声明',
         upstreamUsage: '上游剩余',
         weight: '权重',
         schedulerScore: '调度权值',
@@ -199,6 +199,7 @@ export default {
         expiresAt: '过期时间',
         actions: '操作'
       },
+      capacitySortHint: '按当前筛选结果中所有账号的实时并发使用量（分子）排序，不参考并发上限或占用比例。同值按账号 ID 排序。每次刷新重新读取并排序，账号可能跨页移动；读取失败时保留上次结果，请重试或选择其他排序。',
       schedulerScore: {
         baseShort: '普通',
         stickyShort: '粘性',
@@ -1068,6 +1069,8 @@ export default {
           '默认关闭：/responses 上的 namespace 工具声明原样转发，这正是 ChatGPT Codex 后端期望的形态。仅当该 OAuth 账号指向不认识 namespace 的兼容上游时才开启——摊平会把工具改名为 namespace__tool，使按 functions.<命名空间>.<工具> 寻址的模型（如 gpt-5.6 多智能体）无法调用。压缩（compact）请求不受该开关影响，始终摊平。',
         longContextBilling: 'API 长上下文计费',
         longContextBillingDesc: '默认关闭。仅当该账号的上游会按模型阈值收取 OpenAI API 长上下文费率时开启。',
+        ultrafastBilling: 'UltraFast 档位计费',
+        ultrafastBillingDesc: '默认关闭。开启后识别上游响应中的 service_tier；该账号所有模型遇到 ultrafast 时按模型标准单价 ×6（含缓存读写），再乘账号/分组倍率。未返回档位时按请求档位结算。客户端请求 ultrafast 且最终仍按该档位结算时，关闭本开关也按6倍计费。本开关不强制上游使用 UltraFast。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '默认关闭。开启后可启用 responses_websockets_v2 协议能力（受网关全局开关与账号类型开关约束）。',
@@ -1103,6 +1106,10 @@ export default {
         imagesUrlToB64Json: '生图结果 URL 转 base64',
         imagesUrlToB64JsonDesc:
           '仅对 OpenAI API Key 的 Images 非流式响应生效。上游返回的图片缺少 b64_json 但带 url 时，网关下载该 url 并以 base64 回填 b64_json（url 保留），兼容按官方接口实现的客户端；下载失败则原样返回。',
+        imageSizeTiers: '生图尺寸档位',
+        imageSizeTiersDesc:
+          '限制本账号承接的生图尺寸档位，档位与计费一致：最长边 ≤1024 为 1K，≤2048 为 2K，更大为 4K（2560x1440 属于 4K）。指定了尺寸的请求只会调度到允许该档位的账号；未传尺寸或 auto 的请求优先调度到不限档位的账号，没有时依次选允许 4K、2K、1K 的账号。全选即不限，对 Images 接口与 Responses 生图工具生效。',
+        imageSizeTiersAtLeastOne: '至少保留一个档位',
         endpointCapabilities: '端点能力',
         endpointCapabilitiesDesc:
           '用于调度筛选。文本端点会跟随上方 Responses API 支持显示为 Responses、Chat Completions 或自动模式；Embeddings 独立控制 /v1/embeddings。',
@@ -1239,6 +1246,12 @@ export default {
         stripClaudeCodeIdentity: '抹除 Claude Code 身份',
         stripClaudeCodeIdentityDesc:
           '仅对 Anthropic API Key 生效。开启后，转发与测试连接时自动剥离 Claude Code / Agent SDK 客户端特征（替换 claude-cli User-Agent、移除 claude-code/oauth beta、剔除 system 中的 x-anthropic-billing-header 块与官方 CLI/SDK 身份句、移除 metadata.user_id），避免限制 Claude Code 调用的官方 API Key（如 sk-ant-usr-* 额度 Key）被上游拒绝并返回余额不足错误。',
+        mimicClaudeCode: '模拟 Claude Code 客户端',
+        mimicClaudeCodeDesc:
+          '用于要求 Claude Code 客户端的 Anthropic API Key 上游. 与抹除身份开关互斥. 转发和连接测试会补齐缺失的客户端请求头, system 身份句及会话信息; count_tokens 仅补请求头. 身份句可能影响模型自述.',
+        mimicClaudeCodeDeductTokens: '按模型估算扣除身份句 token',
+        mimicClaudeCodeDeductTokensDesc:
+          '默认关闭, 按上游用量正常计费. 开启后, 仅在网关补入身份句时按模型估算扣除 14-24 个 token. token 数量和混合缓存分类均为估算. 返回客户端的 usage 始终保留上游原值.',
         apiKeyAuthScheme: '上游认证方式',
         apiKeyAuthSchemeDesc: '选择转发到 Anthropic-compatible 上游时使用的 API Key 认证头。Ollama Cloud 使用 Authorization: Bearer。',
         apiKeyAuthSchemeXApiKey: 'x-api-key',

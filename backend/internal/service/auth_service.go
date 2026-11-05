@@ -83,6 +83,7 @@ const affiliateAttributionTTL = 30 * 24 * time.Hour
 
 // AuthService 认证服务
 type AuthService struct {
+	lottery               *LotteryService
 	entClient             *dbent.Client
 	userRepo              UserRepository
 	redeemRepo            RedeemCodeRepository
@@ -278,6 +279,9 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	if isReservedEmail(email) {
 		return "", nil, ErrEmailReserved
 	}
+	if s.settingService != nil && s.settingService.IsRegistrationEmailBlacklisted(ctx, email) {
+		return "", nil, ErrEmailBlocked
+	}
 	if err := s.validateRegistrationEmailAlias(ctx, email); err != nil {
 		return "", nil, err
 	}
@@ -428,6 +432,9 @@ func (s *AuthService) SendVerifyCode(ctx context.Context, email string, locale .
 
 	if isReservedEmail(email) {
 		return ErrEmailReserved
+	}
+	if s.settingService != nil && s.settingService.IsRegistrationEmailBlacklisted(ctx, email) {
+		return ErrEmailBlocked
 	}
 	if err := s.validateRegistrationEmailAlias(ctx, email); err != nil {
 		return err
@@ -1150,6 +1157,9 @@ func (s *AuthService) postAuthUserBootstrap(ctx context.Context, user *User, sig
 	if touchLogin {
 		s.touchUserLogin(ctx, user.ID)
 	}
+	if err := s.lottery.RegisterInvitedUser(ctx, user.ID); err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Lottery invitation binding pending: user_id=%d err=%v", user.ID, err)
+	}
 }
 
 func (s *AuthService) updateUserSignupSource(ctx context.Context, userID int64, signupSource string) {
@@ -1342,7 +1352,19 @@ func inferLegacySignupSource(email string) string {
 	}
 }
 
+// validateRegistrationEmailPolicy 校验邮箱能否用于新建账号或绑定为账号邮箱：精确黑名单与域名白名单。
 func (s *AuthService) validateRegistrationEmailPolicy(ctx context.Context, email string) error {
+	if s.settingService == nil {
+		return nil
+	}
+	if s.settingService.IsRegistrationEmailBlacklisted(ctx, email) {
+		return ErrEmailBlocked
+	}
+	return s.validateRegistrationEmailSuffixPolicy(ctx, email)
+}
+
+// validateRegistrationEmailSuffixPolicy 只校验域名白名单。
+func (s *AuthService) validateRegistrationEmailSuffixPolicy(ctx context.Context, email string) error {
 	if s.settingService == nil {
 		return nil
 	}
@@ -1353,12 +1375,15 @@ func (s *AuthService) validateRegistrationEmailPolicy(ctx context.Context, email
 	return nil
 }
 
-// validateRegistrationEmailQuota 保留白名单为空时的全放行行为；配置白名单后，
-// 非白名单域名默认直接拒绝（严格白名单模式）；仅当域名限量注册开关开启时，
+// validateRegistrationEmailQuota 精确黑名单命中直接拒绝；保留白名单为空时的全放行行为；
+// 配置白名单后，非白名单域名默认直接拒绝（严格白名单模式）；仅当域名限量注册开关开启时，
 // 非白名单域名每个最多允许一个账户。
 func (s *AuthService) validateRegistrationEmailQuota(ctx context.Context, email string) error {
 	if s.settingService == nil {
 		return nil
+	}
+	if s.settingService.IsRegistrationEmailBlacklisted(ctx, email) {
+		return ErrEmailBlocked
 	}
 	whitelist := s.settingService.GetRegistrationEmailSuffixWhitelist(ctx)
 	if !IsRegistrationEmailSuffixLimited(email, whitelist) {

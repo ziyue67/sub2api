@@ -212,6 +212,14 @@ func (s *stubAdminService) BatchUpdateLimits(ctx context.Context, userIDs []int6
 	return len(userIDs), nil
 }
 
+func (s *stubAdminService) FindActiveUsersByBlacklistedEmails(ctx context.Context, emails []string) ([]service.User, error) {
+	return []service.User{}, nil
+}
+
+func (s *stubAdminService) BatchDisableUsers(ctx context.Context, userIDs []int64) (int, error) {
+	return len(userIDs), nil
+}
+
 func (s *stubAdminService) GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int, sortBy, sortOrder string) ([]service.APIKey, int64, error) {
 	return s.apiKeys, int64(len(s.apiKeys)), nil
 }
@@ -810,6 +818,27 @@ func (s *stubAdminService) AdminResetAPIKeyRateLimitUsage(ctx context.Context, k
 		}
 	}
 	return nil, service.ErrAPIKeyNotFound
+}
+
+func (s *stubAdminService) AdminUpdateAPIKeySettings(ctx context.Context, keyID int64, input service.AdminUpdateAPIKeySettingsInput) (*service.AdminUpdateAPIKeyGroupIDResult, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	result, err := s.AdminUpdateAPIKeyGroupID(ctx, keyID, input.GroupID)
+	if err != nil {
+		return nil, err
+	}
+	if input.ModelMapping != nil {
+		result.APIKey.ModelMapping = *input.ModelMapping
+	}
+	if input.ReasoningEffort != nil {
+		result.APIKey.ReasoningEffort = *input.ReasoningEffort
+	}
+	if input.ResetRateLimitUsage {
+		result.APIKey.Usage5h, result.APIKey.Usage1d, result.APIKey.Usage7d = 0, 0, 0
+		result.APIKey.Window5hStart, result.APIKey.Window1dStart, result.APIKey.Window7dStart = nil, nil, nil
+	}
+	return result, nil
 }
 
 func (s *stubAdminService) ResetAccountQuota(ctx context.Context, id int64) error {

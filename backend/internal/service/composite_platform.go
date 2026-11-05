@@ -42,7 +42,9 @@ func WithCompositeRouteDecision(ctx context.Context, decision CompositeRouteDeci
 		ctx = context.WithValue(ctx, ctxkey.ResolvedUpstreamModel, model)
 	}
 	if model := strings.TrimSpace(decision.PublicModel); model != "" {
-		ctx = context.WithValue(ctx, ctxkey.RequestedPublicModel, model)
+		if _, exists := RequestedPublicModelFromContext(ctx); !exists {
+			ctx = context.WithValue(ctx, ctxkey.RequestedPublicModel, model)
+		}
 	}
 	if source := strings.TrimSpace(decision.Source); source != "" {
 		ctx = context.WithValue(ctx, ctxkey.CompositeRouteSource, source)
@@ -116,6 +118,8 @@ func DetectModelPlatform(model string) (string, bool) {
 			return PlatformDeepseek, true
 		case "minimax":
 			return PlatformMiniMax, true
+		case "mistral":
+			return PlatformMistral, true
 		case "typesafe", "jev":
 			return PlatformTypeSafe, true
 		}
@@ -158,6 +162,18 @@ func DetectModelPlatform(model string) (string, bool) {
 		return PlatformKimi, true
 	case strings.HasPrefix(normalized, "glm-"):
 		return PlatformZhipu, true
+	case strings.HasPrefix(normalized, "mistral-"),
+		strings.HasPrefix(normalized, "open-mistral-"),
+		strings.HasPrefix(normalized, "mixtral-"),
+		strings.HasPrefix(normalized, "open-mixtral-"),
+		strings.HasPrefix(normalized, "codestral-"),
+		strings.HasPrefix(normalized, "pixtral-"),
+		strings.HasPrefix(normalized, "magistral-"),
+		strings.HasPrefix(normalized, "ministral-"),
+		strings.HasPrefix(normalized, "devstral-"),
+		strings.HasPrefix(normalized, "voxtral-"),
+		strings.HasPrefix(normalized, "mathstral-"):
+		return PlatformMistral, true
 	case strings.HasPrefix(normalized, "deepseek-"):
 		return PlatformDeepseek, true
 	case strings.HasPrefix(normalized, "minimax-"),

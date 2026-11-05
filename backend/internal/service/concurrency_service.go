@@ -258,7 +258,8 @@ const (
 
 // ConcurrencyService 管理账号和用户的并发限制。
 type ConcurrencyService struct {
-	cache ConcurrencyCache
+	cache             ConcurrencyCache
+	performancePauses PerformancePauseReader
 
 	accountLoadCacheTTL atomic.Int64
 	accountLoadCacheMu  sync.RWMutex
@@ -404,11 +405,36 @@ type UserLoadInfo struct {
 // If the account is at max concurrency, it waits until a slot is available or timeout.
 // Returns a release function that MUST be called when the request completes.
 func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
+	if s == nil {
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}, MaxConcurrency: maxConcurrency, MaxConcurrencySet: true}, nil
+	}
+	// Recheck the independent live authority even for stale/sticky candidates
+	// and before both the unlimited fast path and the nil-cache fallback: a
+	// paused account must never acquire a slot under any of them.
+	if s.performancePauses != nil {
+		paused, err := s.performancePauses.PerformancePaused(ctx, []int64{accountID})
+		if err != nil {
+			return nil, err
+		}
+		if paused[accountID] {
+			return &AcquireResult{Acquired: false}, nil
+		}
+	}
+
 	// A non-nil service with a nil cache is common in lightweight/admin
 	// processes and during rolling startup. Treat it as the no-service path;
 	// otherwise a positive account limit would dereference s.cache and panic.
+	if s.cache == nil {
+		return &AcquireResult{
+			Acquired:          true,
+			ReleaseFunc:       func() {}, // no-op
+			MaxConcurrency:    maxConcurrency,
+			MaxConcurrencySet: true,
+		}, nil
+	}
+
 	// If maxConcurrency is 0 or negative, no limit.
-	if s == nil || s.cache == nil || maxConcurrency <= 0 {
+	if maxConcurrency <= 0 {
 		return &AcquireResult{
 			Acquired:          true,
 			ReleaseFunc:       func() {}, // no-op
