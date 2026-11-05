@@ -32,6 +32,9 @@ func RegisterGatewayRoutes(
 	compositeResolver *service.CompositeRouteResolver,
 	cfg *config.Config,
 ) {
+	bodyMemoryBudget := pkghttputil.NewBodyMemoryBudget(cfg.Gateway.RequestBodyMemoryBudgetBytes)
+	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize, bodyMemoryBudget)
+	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize, bodyMemoryBudget)
 	h.Gateway.ConfigureAPIKeyGroupRouting(apiKeyService)
 	// BPS fetches these capability URLs without the client's API key. There is
 	// no public upload route; only authenticated BPS requests can create them.
@@ -58,8 +61,6 @@ func RegisterGatewayRoutes(
 		trafficRecorder = h.Admin.Usage
 	}
 	traffic := middleware.UserTraffic(trafficRecorder)
-	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize)
-	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize)
 	imageAdmission := middleware.ExcelBPSImageAdmission()
 	clientRequestID := middleware.ClientRequestID()
 	opsErrorLogger := handler.OpsErrorLoggerMiddleware(opsService)
@@ -687,6 +688,9 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 
 		body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 		if err != nil {
+			if middleware.RejectRequestBodyReadError(c, err) {
+				return
+			}
 			status := http.StatusBadRequest
 			message := "Failed to read request body"
 			var maxErr *http.MaxBytesError

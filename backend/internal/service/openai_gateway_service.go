@@ -611,8 +611,8 @@ type OpenAIGatewayService struct {
 	codexSnapshotClosed                 bool
 	openAIModelsCache                   openAIModelsCache
 	excelBPSModelsCache                 openAIModelsCache
-	openaiCompatSessionResponses        sync.Map
-	openaiCompatAnthropicDigestSessions sync.Map
+	openaiCompatSessionResponses        sessionMemoryCache
+	openaiCompatAnthropicDigestSessions sessionMemoryCache
 	// openaiCodexTurnStateOrigins: 下游会话 seed → openAICodexTurnStateOrigin，
 	// 记录最近一次向该会话下发 x-codex-turn-state 的铸造账号，供出站守卫
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
@@ -866,25 +866,28 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 	}
 }
 
-// CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池的后台 worker 和空闲连接。
+// CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池、后台 worker 和会话缓存清理 timer。
 // 应在应用优雅关闭时调用。
 func (s *OpenAIGatewayService) CloseOpenAIWSPool() {
-	if s != nil {
-		s.codexSnapshotMu.Lock()
-		s.codexSnapshotClosed = true
-		throttle := s.codexSnapshotThrottle
-		s.codexSnapshotMu.Unlock()
-		if throttle != nil {
-			throttle.close()
-		}
+	if s == nil {
+		return
 	}
-	if s != nil && s.regionalMetering != nil && s.regionalMetering.Stop != nil {
+	s.codexSnapshotMu.Lock()
+	s.codexSnapshotClosed = true
+	throttle := s.codexSnapshotThrottle
+	s.codexSnapshotMu.Unlock()
+	if throttle != nil {
+		throttle.close()
+	}
+	if s.regionalMetering != nil && s.regionalMetering.Stop != nil {
 		s.regionalMetering.Stop()
 	}
-	if s != nil && s.stopAstraSetup != nil {
+	if s.stopAstraSetup != nil {
 		s.stopAstraSetup()
 	}
-	if s != nil && s.openaiWSPool != nil {
+	s.openaiCompatSessionResponses.Close()
+	s.openaiCompatAnthropicDigestSessions.Close()
+	if s.openaiWSPool != nil {
 		s.openaiWSPool.Close()
 	}
 }

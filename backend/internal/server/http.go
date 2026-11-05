@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/iprisk"
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -177,7 +178,7 @@ func ProvideHTTPServer(cfg *config.Config, router *gin.Engine, lifecycle *Lifecy
 		// IdleTimeout: 空闲连接超时时间，释放不活跃的连接资源
 		IdleTimeout: time.Duration(cfg.Server.IdleTimeout) * time.Second,
 		// 注意：不设置 WriteTimeout，因为流式响应可能持续十几分钟
-		// 不设置 ReadTimeout，因为大请求体可能需要较长时间读取
+		// 请求体使用逐次读取的 idle deadline，不设置覆盖整个大请求上传的 ReadTimeout。
 	}
 
 	globalMaxSize := cfg.Server.MaxRequestBodySize
@@ -215,6 +216,8 @@ func ProvideHTTPServer(cfg *config.Config, router *gin.Engine, lifecycle *Lifecy
 		}
 	}
 
+	httpHandler = pkghttputil.WithBodyReadTimeout(httpHandler, time.Duration(cfg.Gateway.RequestBodyReadTimeoutSeconds)*time.Second)
+	httpHandler = pkghttputil.WithWriteTimeout(httpHandler, time.Duration(cfg.Gateway.DownstreamWriteTimeoutSeconds)*time.Second)
 	server.Handler = lifecycle.Wrap(httpHandler)
 	return server
 }
