@@ -26,7 +26,7 @@ func TestToolConversionTimingRetainsPreConversionObservation(t *testing.T) {
 		`data: {"type":"response.function_call_arguments.done","item_id":"i1","arguments":"{\"input\":\"dir\"}"}`,
 		"", "",
 	}, "\n")
-	body := newResponsesClientToolStreamBody(io.NopCloser(bytes.NewBufferString(wire)), apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}}, defaultMaxLineSize, req.Context())
+	body := newResponsesClientToolStreamBody(io.NopCloser(bytes.NewBufferString(wire)), apicompat.ResponsesClientToolMapping{CustomTools: map[string]bool{"exec": true}}, defaultMaxLineSize, nil, req.Context())
 	out, err := io.ReadAll(body)
 	require.NoError(t, err)
 	require.NoError(t, body.Close())
