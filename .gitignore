@@ -154,7 +154,9 @@ docs/*
 !docs/openai-2fa-dual-oauth.md
 !docs/openai-siwc.md
 !docs/agent-resource-safety.md!docs/admin-api-keys.md
-!docs/mcp.md
+!docs/agent-resource-safety.md
+!docs/moego-json-batching.md
+!docs/admin-api-keys.md!docs/mcp.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

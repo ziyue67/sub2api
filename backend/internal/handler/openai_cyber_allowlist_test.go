@@ -49,7 +49,7 @@ func TestCyberAllowlistedUserBypassesExistingBlocksAndContinuesWebSocket(t *test
 	explicitKey := service.CyberSessionExplicitBlockKey(harness.apiKey.ID, c, payload)
 	store, ok := harness.gatewayCache.(service.CyberSessionBlockStore)
 	require.True(t, ok)
-	require.NoError(t, store.SetCyberSessionBlocked(context.Background(), "", []string{explicitKey}, time.Minute))
+	require.NoError(t, store.SetCyberSessionBlocked(context.Background(), service.CyberSessionBlock{APIKeyID: harness.apiKey.ID, Keys: []string{explicitKey}}, time.Minute))
 	for _, format := range []cyberSessionBlockFormat{cyberBlockFormatResponses, cyberBlockFormatChat, cyberBlockFormatAnthropic} {
 		require.False(t, harness.handler.rejectIfCyberSessionBlocked(c, harness.apiKey, payload, "gpt-5.1", format))
 	}
