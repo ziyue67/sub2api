@@ -40,6 +40,11 @@ export FAKE_CONTAINER_STATE="${STATE_DIR}"
 export PATH="${TEST_DIR}/fixtures/bin:${PATH}"
 export SUB2API_ENV_FILE="${ENV_FILE}"
 
+# macOS ships plutil for real; everywhere else use the shim next to the fixtures.
+if ! command -v plutil >/dev/null 2>&1; then
+    export PATH="${TEST_DIR}/fixtures/portable-bin:${PATH}"
+fi
+
 mkdir -p "${STATE_DIR}"
 
 "${SCRIPT}" init
