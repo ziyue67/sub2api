@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Minimal stand-in for macOS `plutil -extract`.
+
+`deploy/apple-container.sh` reads fields out of Apple `container inspect` JSON
+with `plutil -extract <keypath> raw|json -o - -`. macOS ships plutil; the Linux
+runners that exercise this script do not, so the lifecycle test puts this shim
+on PATH when no real plutil is available.
+
+Only the invocation shape the script actually uses is implemented. Anything
+else exits non-zero, which makes the caller's `|| die` fire instead of silently
+returning a wrong value.
+"""
+
+import json
+import sys
+
+USAGE = "plutil shim: expected `-extract <keypath> raw|json -o - -`"
+
+
+def extract(document, keypath):
+    node = document
+    for segment in keypath.split("."):
+        if isinstance(node, list):
+            node = node[int(segment)]
+        elif isinstance(node, dict):
+            node = node[segment]
+        else:
+            raise KeyError(keypath)
+    return node
+
+
+def render(value, fmt):
+    if fmt == "json":
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+def main(argv):
+    if len(argv) != 6 or argv[0] != "-extract" or argv[3] != "-o" or argv[4] != "-":
+        sys.stderr.write(USAGE + "\n")
+        return 2
+
+    keypath = argv[1]
+    fmt = argv[2]
+    if fmt not in ("raw", "json"):
+        sys.stderr.write(USAGE + "\n")
+        return 2
+    if argv[5] != "-":
+        sys.stderr.write("plutil shim: only stdin input is supported\n")
+        return 2
+
+    try:
+        document = json.load(sys.stdin)
+    except ValueError as error:
+        sys.stderr.write("plutil shim: input is not valid JSON: %s\n" % error)
+        return 1
+
+    try:
+        value = extract(document, keypath)
+    except (KeyError, IndexError, ValueError):
+        sys.stderr.write("plutil shim: key path not found: %s\n" % keypath)
+        return 1
+
+    sys.stdout.write(render(value, fmt) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

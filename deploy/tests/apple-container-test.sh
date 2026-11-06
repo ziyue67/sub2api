@@ -27,14 +27,28 @@ assert_missing() {
     [[ ! -e "$1" ]] || fail "Expected path to be absent: $1"
 }
 
+# Mirror deploy/apple-container.sh: BSD stat on macOS, GNU stat elsewhere.
+file_mode() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        stat -f '%Lp' "$1"
+    else
+        stat -c '%a' "$1"
+    fi
+}
+
 export FAKE_CONTAINER_STATE="${STATE_DIR}"
 export PATH="${TEST_DIR}/fixtures/bin:${PATH}"
 export SUB2API_ENV_FILE="${ENV_FILE}"
 
+# macOS ships plutil for real; everywhere else use the shim next to the fixtures.
+if ! command -v plutil >/dev/null 2>&1; then
+    export PATH="${TEST_DIR}/fixtures/portable-bin:${PATH}"
+fi
+
 mkdir -p "${STATE_DIR}"
 
 "${SCRIPT}" init
-[[ "$(stat -f '%Lp' "${ENV_FILE}")" == "600" ]] || fail "init did not create a mode-600 env file"
+[[ "$(file_mode "${ENV_FILE}")" == "600" ]] || fail "init did not create a mode-600 env file"
 grep -q '^POSTGRES_PASSWORD=change_this_secure_password$' "${ENV_FILE}" && fail "init retained the placeholder password"
 
 chmod 644 "${ENV_FILE}"
