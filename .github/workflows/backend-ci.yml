@@ -9,7 +9,11 @@ permissions:
 
 jobs:
   shell:
-    runs-on: macos-15
+    # These are syntax checks plus fixtures-only script tests: nothing here needs
+    # Apple hardware. macos-15 runners regularly fail to be acquired under hosted
+    # capacity pressure ("job was not acquired by Runner of type hosted"), which
+    # turned this gate red for infra reasons, so keep it on the Ubuntu pool.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
