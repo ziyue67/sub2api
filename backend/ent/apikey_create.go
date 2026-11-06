@@ -154,6 +154,20 @@ func (_c *APIKeyCreate) SetNillableReasoningEffort(v *string) *APIKeyCreate {
 	return _c
 }
 
+// SetAllowLongContext sets the "allow_long_context" field.
+func (_c *APIKeyCreate) SetAllowLongContext(v bool) *APIKeyCreate {
+	_c.mutation.SetAllowLongContext(v)
+	return _c
+}
+
+// SetNillableAllowLongContext sets the "allow_long_context" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableAllowLongContext(v *bool) *APIKeyCreate {
+	if v != nil {
+		_c.SetAllowLongContext(*v)
+	}
+	return _c
+}
+
 // SetLastUsedAt sets the "last_used_at" field.
 func (_c *APIKeyCreate) SetLastUsedAt(v time.Time) *APIKeyCreate {
 	_c.mutation.SetLastUsedAt(v)
@@ -440,6 +454,10 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultReasoningEffort
 		_c.mutation.SetReasoningEffort(v)
 	}
+	if _, ok := _c.mutation.AllowLongContext(); !ok {
+		v := apikey.DefaultAllowLongContext
+		_c.mutation.SetAllowLongContext(v)
+	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		v := apikey.DefaultQuota
 		_c.mutation.SetQuota(v)
@@ -528,6 +546,9 @@ func (_c *APIKeyCreate) check() error {
 		if err := apikey.ReasoningEffortValidator(v); err != nil {
 			return &ValidationError{Name: "reasoning_effort", err: fmt.Errorf(`ent: validator failed for field "APIKey.reasoning_effort": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.AllowLongContext(); !ok {
+		return &ValidationError{Name: "allow_long_context", err: errors.New(`ent: missing required field "APIKey.allow_long_context"`)}
 	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		return &ValidationError{Name: "quota", err: errors.New(`ent: missing required field "APIKey.quota"`)}
@@ -622,6 +643,10 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ReasoningEffort(); ok {
 		_spec.SetField(apikey.FieldReasoningEffort, field.TypeString, value)
 		_node.ReasoningEffort = value
+	}
+	if value, ok := _c.mutation.AllowLongContext(); ok {
+		_spec.SetField(apikey.FieldAllowLongContext, field.TypeBool, value)
+		_node.AllowLongContext = value
 	}
 	if value, ok := _c.mutation.LastUsedAt(); ok {
 		_spec.SetField(apikey.FieldLastUsedAt, field.TypeTime, value)
@@ -938,6 +963,18 @@ func (u *APIKeyUpsert) SetReasoningEffort(v string) *APIKeyUpsert {
 // UpdateReasoningEffort sets the "reasoning_effort" field to the value that was provided on create.
 func (u *APIKeyUpsert) UpdateReasoningEffort() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldReasoningEffort)
+	return u
+}
+
+// SetAllowLongContext sets the "allow_long_context" field.
+func (u *APIKeyUpsert) SetAllowLongContext(v bool) *APIKeyUpsert {
+	u.Set(apikey.FieldAllowLongContext, v)
+	return u
+}
+
+// UpdateAllowLongContext sets the "allow_long_context" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateAllowLongContext() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldAllowLongContext)
 	return u
 }
 
@@ -1435,6 +1472,20 @@ func (u *APIKeyUpsertOne) SetReasoningEffort(v string) *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) UpdateReasoningEffort() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateReasoningEffort()
+	})
+}
+
+// SetAllowLongContext sets the "allow_long_context" field.
+func (u *APIKeyUpsertOne) SetAllowLongContext(v bool) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAllowLongContext(v)
+	})
+}
+
+// UpdateAllowLongContext sets the "allow_long_context" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateAllowLongContext() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAllowLongContext()
 	})
 }
 
@@ -2143,6 +2194,20 @@ func (u *APIKeyUpsertBulk) SetReasoningEffort(v string) *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) UpdateReasoningEffort() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateReasoningEffort()
+	})
+}
+
+// SetAllowLongContext sets the "allow_long_context" field.
+func (u *APIKeyUpsertBulk) SetAllowLongContext(v bool) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAllowLongContext(v)
+	})
+}
+
+// UpdateAllowLongContext sets the "allow_long_context" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateAllowLongContext() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAllowLongContext()
 	})
 }
 

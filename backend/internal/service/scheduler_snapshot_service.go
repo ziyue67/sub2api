@@ -141,6 +141,8 @@ type SchedulerSnapshotService struct {
 	outboxRebuildRetryReason     string
 	outboxLagWarningActive       bool
 	outboxMaxIDErrorLastLoggedAt time.Time
+	outboxEventRetryMu           sync.Mutex
+	outboxEventRetry             schedulerOutboxEventRetry
 
 	fullRebuildRunMu     sync.Mutex
 	fullRebuildStateMu   sync.Mutex
@@ -203,6 +205,13 @@ func (s *SchedulerSnapshotService) Start() {
 			defer s.wg.Done()
 			s.runOutboxWorker(interval)
 		}()
+		if retries, ok := s.outboxRepo.(SchedulerOutboxRetryRepository); ok {
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.runOutboxRetryWorker(retries, interval)
+			}()
+		}
 	}
 
 	fullInterval := s.fullRebuildInterval()
@@ -498,6 +507,10 @@ func (s *SchedulerSnapshotService) pollOutbox() {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox watermark read failed: %v", err)
 		return
 	}
+	if !s.outboxEventRetryReady(watermark) {
+		s.checkPendingOutboxLag(watermark)
+		return
+	}
 
 	events, err := s.outboxRepo.ListAfterAndReleaseDedup(ctx, watermark, 200)
 	if err != nil {
@@ -513,17 +526,50 @@ func (s *SchedulerSnapshotService) pollOutbox() {
 	}
 
 	seen := make(map[batchSeenKey]struct{})
+	lastHandledID := watermark
 	for _, event := range events {
 		eventCtx, cancel := context.WithTimeout(context.Background(), outboxEventTimeout)
+		if _, ok := s.outboxRepo.(SchedulerOutboxRetryRepository); ok {
+			// A retry may own the bucket while a newer event arrives. Do not
+			// acknowledge that newer change merely because the bucket is busy.
+			eventCtx = context.WithValue(eventCtx, schedulerOutboxStrictKey{}, true)
+		}
 		err := s.handleOutboxEvent(eventCtx, event, seen)
 		cancel()
 		if err != nil {
-			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox handle failed: id=%d type=%s err=%v", event.ID, event.EventType, err)
+			if s.deferOutboxEventDurably(event, err) {
+				lastHandledID = event.ID
+				s.clearOutboxEventRetryThrough(event.ID)
+				// A partial handler may already have marked buckets in this batch.
+				// Later events must not inherit those incomplete rebuild markers.
+				seen = make(map[batchSeenKey]struct{})
+				continue
+			}
+			failures, delay := s.deferOutboxEvent(event.ID)
+			logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox handle failed: id=%d type=%s failures=%d retry_in=%s err=%v", event.ID, event.EventType, failures, delay, err)
+			// The failed event stays durable and ordered. Commit only the completed
+			// prefix so a poison event does not replay all earlier successes. A lag
+			// rebuild is only reconciliation assistance: it may skip busy buckets,
+			// so its success must never acknowledge this failed event.
+			if lastHandledID > watermark && s.advanceOutboxWatermark(lastHandledID) {
+				watermark = lastHandledID
+			}
+			s.checkPendingOutboxLag(watermark)
 			return
 		}
+		lastHandledID = event.ID
+		s.clearOutboxEventRetryThrough(event.ID)
 	}
 
-	lastID := events[len(events)-1].ID
+	if !s.advanceOutboxWatermark(lastHandledID) {
+		return
+	}
+	// 只有 watermark 成功推进后，当前批次才算已消费。延迟必须按下一条待消费事件计算，
+	// 否则本批次处理越慢，越容易误触发一次更慢的全量重建，形成正反馈。
+	s.checkPendingOutboxLag(lastHandledID)
+}
+
+func (s *SchedulerSnapshotService) advanceOutboxWatermark(lastID int64) bool {
 	var wmErr error
 	for i := range 3 {
 		wmCtx, wmCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -538,14 +584,16 @@ func (s *SchedulerSnapshotService) pollOutbox() {
 	}
 	if wmErr != nil {
 		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] outbox watermark write failed: %v", wmErr)
-		return
+		return false
 	}
 	s.cleanupConsumedOutbox(lastID)
+	return true
+}
 
-	// 只有 watermark 成功推进后，当前批次才算已消费。延迟必须按下一条待消费事件计算，
-	// 否则本批次处理越慢，越容易误触发一次更慢的全量重建，形成正反馈。
+func (s *SchedulerSnapshotService) checkPendingOutboxLag(watermark int64) {
+	// Event processing may have exhausted the poll's original read context.
 	lagCtx, lagCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	s.checkOutboxLag(lagCtx, lastID)
+	s.checkOutboxLag(lagCtx, watermark)
 	lagCancel()
 }
 
@@ -592,6 +640,13 @@ func (s *SchedulerSnapshotService) handleOutboxEvent(ctx context.Context, event 
 	case SchedulerOutboxEventGroupChanged:
 		return s.handleGroupEvent(ctx, event.GroupID, seen)
 	case SchedulerOutboxEventFullRebuild:
+		if isStrictOutboxPublication(ctx) {
+			// A coalesced ordinary rebuild can skip busy/fenced buckets. An outbox
+			// event needs its own strict run before it can be acknowledged.
+			s.fullRebuildRunMu.Lock()
+			defer s.fullRebuildRunMu.Unlock()
+			return s.rebuildFullSnapshot(ctx, "outbox")
+		}
 		return s.triggerFullRebuild("outbox")
 	default:
 		return nil
@@ -691,7 +746,7 @@ func (s *SchedulerSnapshotService) handleBulkAccountEvent(ctx context.Context, p
 		}
 		allAccountsFound = false
 		if s.cache != nil {
-			if err := s.cache.DeleteAccount(ctx, id); err != nil {
+			if err := s.deleteOutboxAccount(ctx, id); err != nil {
 				return err
 			}
 		}
@@ -781,7 +836,7 @@ func (s *SchedulerSnapshotService) handleAccountEvent(ctx context.Context, accou
 	if err != nil {
 		if errors.Is(err, ErrAccountNotFound) {
 			if s.cache != nil {
-				if err := s.cache.DeleteAccount(ctx, *accountID); err != nil {
+				if err := s.deleteOutboxAccount(ctx, *accountID); err != nil {
 					return err
 				}
 			}
@@ -1019,7 +1074,7 @@ func (s *SchedulerSnapshotService) bucketsForPlatform(platform string, groupIDs 
 func (s *SchedulerSnapshotService) rebuildBuckets(ctx context.Context, buckets []SchedulerBucket, reason string) error {
 	tasks, firstErr := s.prepareBucketWriteTasks(ctx, buckets)
 	queries := newSchedulerAccountQueryCache(tasks)
-	if err := s.rebuildPreparedBucketTasks(ctx, tasks, reason, false, queries); err != nil && firstErr == nil {
+	if err := s.rebuildPreparedBucketTasks(ctx, tasks, reason, isStrictOutboxPublication(ctx), queries); err != nil && firstErr == nil {
 		firstErr = err
 	}
 	return firstErr
@@ -1034,7 +1089,29 @@ func (s *SchedulerSnapshotService) prepareBucketWriteTasks(ctx context.Context, 
 	for _, bucket := range buckets {
 		token, err := s.cache.CaptureBucketWriteToken(ctx, bucket)
 		if err != nil {
+			if isStrictOutboxPublication(ctx) && errors.Is(err, ErrSchedulerBucketRetired) && bucket.GroupID > 0 && !s.isRunModeSimple() {
+				// A delayed account event can refer to a now-deleted group. Recheck
+				// authority under the existing lifecycle lease; do not reopen it
+				// from the event payload or retain an already-retired group forever.
+				plan, lifecycleErr := s.prepareGroupLifecycle(ctx, bucket.GroupID, nil)
+				if lifecycleErr != nil {
+					if firstErr == nil {
+						firstErr = lifecycleErr
+					}
+					continue
+				}
+				for _, task := range plan.tasks {
+					if task.bucket == bucket {
+						tasks = append(tasks, task)
+						break
+					}
+				}
+				continue
+			}
 			if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
+				if isStrictOutboxPublication(ctx) && firstErr == nil {
+					firstErr = err
+				}
 				continue
 			}
 			if firstErr == nil {
@@ -1120,6 +1197,11 @@ func (s *SchedulerSnapshotService) setRebuildSnapshot(
 	accounts []Account,
 	queries *schedulerAccountQueryCache,
 ) error {
+	if isOutboxRetryPublication(ctx) {
+		// Retry completion requires a real publication of fresh membership; do
+		// not reuse a previous query's account IDs or skip metadata validation.
+		return s.cache.SetSnapshot(ctx, task.bucket, task.token, accounts)
+	}
 	writer, ok := s.cache.(schedulerSnapshotAccountIDWriter)
 	key, reusable := schedulerAccountQueryKeyForBucket(task.bucket)
 	if !ok || queries == nil || !reusable {
@@ -1335,7 +1417,7 @@ func (s *SchedulerSnapshotService) prepareAndRebuildFullSnapshot(
 	if err := s.rebuildPreparedBucketTasks(ctx, reopened, reason, true, queries); err != nil {
 		firstErr = err
 	}
-	if err := s.rebuildPreparedBucketTasks(ctx, captured, reason, false, queries); err != nil && firstErr == nil {
+	if err := s.rebuildPreparedBucketTasks(ctx, captured, reason, isStrictOutboxPublication(ctx), queries); err != nil && firstErr == nil {
 		firstErr = err
 	}
 	return firstErr
@@ -1629,6 +1711,9 @@ func (s *SchedulerSnapshotService) loadAccountsForRebuild(
 	bucket SchedulerBucket,
 	queries *schedulerAccountQueryCache,
 ) ([]Account, error) {
+	if isOutboxRetryPublication(ctx) {
+		return s.loadAccountsFromDB(ctx, bucket, bucket.Mode == SchedulerModeMixed)
+	}
 	key, cacheable := schedulerAccountQueryKeyForBucket(bucket)
 	if queries == nil || !cacheable {
 		return s.loadAccountsFromDB(ctx, bucket, bucket.Mode == SchedulerModeMixed)

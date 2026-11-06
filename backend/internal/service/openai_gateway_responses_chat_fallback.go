@@ -222,6 +222,9 @@ func (s *OpenAIGatewayService) bufferChatCompletionsAsResponses(
 		responsesResp.Output = []apicompat.ResponsesOutput{}
 		responsesResp.Error = deepSeekToolTextError(c, requestID, toolTextErr)
 	}
+	if responsesResp.Status != "completed" {
+		usage.CacheReadKnown = false
+	}
 	recordChatReasoningOnlyFailure(c, requestID, upstreamModel, responsesResp)
 	s.cacheReasoningItemsFromOutput(responsesResp.Output)
 	if suppressSummary {
@@ -364,6 +367,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 			ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 			Stream:                        true,
+			ClientDisconnect:              clientDisconnected,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  scan.FirstTokenMs,
 		}, fmt.Errorf("stream usage incomplete: %w", scan.Err)
@@ -392,14 +396,17 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 			UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 			ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 			Stream:                        true,
+			ClientDisconnect:              clientDisconnected,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  scan.FirstTokenMs,
 		}, fmt.Errorf("invalid tool call arguments from upstream: %w", err)
 	}
 
 	finalEvents := apicompat.FinalizeChatCompletionsResponsesStream(state)
+	protectionFailed := false
 	for _, event := range finalEvents {
 		if event.Type == "response.failed" {
+			protectionFailed = true
 			recordChatReasoningOnlyFailure(c, requestID, upstreamModel, event.Response)
 		}
 	}
@@ -417,6 +424,9 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 	if !scan.SawDone {
 		logCCStreamMissingDoneSentinel("openai responses chat fallback", requestID)
 	}
+	if !scan.SawDone || clientDisconnected || protectionFailed {
+		scan.Usage.CacheReadKnown = false
+	}
 
 	return &OpenAIForwardResult{
 		RequestID:                     requestID,
@@ -431,6 +441,7 @@ func (s *OpenAIGatewayService) streamChatCompletionsAsResponses(
 		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
 		ServiceTier:                   resolvedOpenAIUpstreamServiceTier(c, serviceTier),
 		Stream:                        true,
+		ClientDisconnect:              clientDisconnected,
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  scan.FirstTokenMs,
 	}, nil

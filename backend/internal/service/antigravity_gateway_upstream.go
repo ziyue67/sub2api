@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -80,6 +79,9 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	}
 
 	// 发送请求
+	if err := checkAPIKeyLongContextBeforeForward(ctx, c, nil, body, originalModel); err != nil {
+		return nil, err
+	}
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	s.rateLimitService.observeQualityResponse(req.Context(), account, resp, err)
 	if err != nil {
@@ -126,7 +128,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		clientDisconnect = streamRes.clientDisconnect
 	} else {
 		// 非流式响应：直接透传
-		respBody, err := io.ReadAll(resp.Body)
+		respBody, err := ReadUpstreamResponseBody(resp.Body, s.antigravitySSEConfig(), c, anthropicTooLargeError)
 		if err != nil {
 			return nil, fmt.Errorf("read upstream response: %w", err)
 		}

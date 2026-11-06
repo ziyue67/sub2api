@@ -36,8 +36,36 @@ export interface CallbackPaths {
 
 // --- Constants ---
 
+/** Native BEpusdt trade_type values; only enable networks with receiving wallets. */
+export const BEPUSDT_TRADE_TYPES: TypeOption[] = [
+  { value: 'usdt.trc20', label: 'USDT (TRC20)' },
+  { value: 'usdt.erc20', label: 'USDT (ERC20)' },
+  { value: 'usdt.bep20', label: 'USDT (BEP20)' },
+  { value: 'usdt.polygon', label: 'USDT (Polygon)' },
+  { value: 'usdt.aptos', label: 'USDT (Aptos)' },
+  { value: 'usdt.solana', label: 'USDT (Solana)' },
+  { value: 'usdt.xlayer', label: 'USDT (X-Layer)' },
+  { value: 'usdt.arbitrum', label: 'USDT (Arbitrum)' },
+  { value: 'usdt.plasma', label: 'USDT (Plasma)' },
+  { value: 'usdt.ton', label: 'USDT (TON)' },
+  { value: 'usdc.trc20', label: 'USDC (TRC20)' },
+  { value: 'usdc.erc20', label: 'USDC (ERC20)' },
+  { value: 'usdc.bep20', label: 'USDC (BEP20)' },
+  { value: 'usdc.polygon', label: 'USDC (Polygon)' },
+  { value: 'usdc.aptos', label: 'USDC (Aptos)' },
+  { value: 'usdc.solana', label: 'USDC (Solana)' },
+  { value: 'usdc.xlayer', label: 'USDC (X-Layer)' },
+  { value: 'usdc.arbitrum', label: 'USDC (Arbitrum)' },
+  { value: 'usdc.base', label: 'USDC (Base)' },
+  { value: 'tron.trx', label: 'TRX (Tron)' },
+  { value: 'ethereum.eth', label: 'ETH (Ethereum)' },
+  { value: 'bsc.bnb', label: 'BNB (BSC)' },
+  { value: 'ton.gram', label: 'TON (TON)' },
+]
+
 /** Maps provider key → available payment types. */
 export const PROVIDER_SUPPORTED_TYPES: Record<string, string[]> = {
+  bepusdt: BEPUSDT_TRADE_TYPES.map(method => method.value),
   easypay: ['alipay', 'wxpay'],
   alipay: ['alipay'],
   wxpay: ['wxpay'],
@@ -49,7 +77,11 @@ export const PROVIDER_SUPPORTED_TYPES: Record<string, string[]> = {
 export const EASYPAY_PAYMENT_MODES = ['qrcode', 'popup'] as const
 
 /** Fixed display order for user-facing payment methods */
-export const METHOD_ORDER = ['alipay', 'alipay_direct', 'wxpay', 'wxpay_direct', 'stripe', 'airwallex'] as const
+export const METHOD_ORDER = ['alipay', 'alipay_direct', 'wxpay', 'wxpay_direct', 'stripe', 'airwallex', ...BEPUSDT_TRADE_TYPES.map(method => method.value)] as const
+
+export function getDefaultSupportedTypes(providerKey: string): string[] {
+  return providerKey === 'bepusdt' ? ['usdt.bep20'] : [...(PROVIDER_SUPPORTED_TYPES[providerKey] || [])]
+}
 
 export function isBuiltInAlipayMethod(type: string): boolean {
   return type === 'alipay' || type === 'alipay_direct'
@@ -106,6 +138,7 @@ export function getPaymentPopupFeatures(): string {
 
 /** Webhook paths for each provider (relative to origin). */
 export const WEBHOOK_PATHS: Record<string, string> = {
+  bepusdt: '/api/v1/payment/webhook/bepusdt',
   easypay: '/api/v1/payment/webhook/easypay',
   alipay: '/api/v1/payment/webhook/alipay',
   wxpay: '/api/v1/payment/webhook/wxpay',
@@ -117,6 +150,7 @@ export const RETURN_PATH = '/payment/result'
 
 /** Fixed callback paths per provider — displayed as read-only after base URL. */
 export const PROVIDER_CALLBACK_PATHS: Record<string, CallbackPaths> = {
+  bepusdt: { notifyUrl: WEBHOOK_PATHS.bepusdt, returnUrl: RETURN_PATH },
   easypay: { notifyUrl: WEBHOOK_PATHS.easypay, returnUrl: RETURN_PATH },
   alipay: { notifyUrl: WEBHOOK_PATHS.alipay, returnUrl: RETURN_PATH },
   wxpay: { notifyUrl: WEBHOOK_PATHS.wxpay },
@@ -126,6 +160,12 @@ export const PROVIDER_CALLBACK_PATHS: Record<string, CallbackPaths> = {
 
 /** Per-provider config fields (excludes notifyUrl/returnUrl which are handled separately). */
 export const PROVIDER_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
+  bepusdt: [
+    { key: 'mode', label: '', sensitive: false, defaultValue: 'embedded' },
+    { key: 'apiBase', label: '', sensitive: false, hintKey: 'admin.settings.payment.bepusdtApiBaseHint' },
+    { key: 'apiToken', label: 'API Token', sensitive: true },
+    { key: 'currency', label: '', sensitive: false, defaultValue: 'CNY', hintKey: 'admin.settings.payment.bepusdtCurrencyHint', options: PAYMENT_CURRENCY_OPTIONS.filter(option => ['CNY', 'USD', 'EUR', 'GBP', 'JPY'].includes(option.value)) },
+  ],
   easypay: [
     { key: 'pid', label: 'PID', sensitive: false },
     { key: 'pkey', label: 'PKey', sensitive: true },
@@ -164,6 +204,13 @@ export const PROVIDER_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
   ],
 }
 
+export function getProviderConfigFields(providerKey: string, config: Record<string, string>): ConfigFieldDef[] {
+  const fields = PROVIDER_CONFIG_FIELDS[providerKey] || []
+  return providerKey === 'bepusdt' && config.mode === 'embedded'
+    ? fields.filter(field => !['apiBase', 'apiToken'].includes(field.key))
+    : fields
+}
+
 // --- Helpers ---
 
 /** Resolve type label for display. */
@@ -182,6 +229,7 @@ export function getAvailableTypes(
   allTypes: TypeOption[],
   redirectLabel: string,
 ): TypeOption[] {
+  if (providerKey === 'bepusdt') return BEPUSDT_TRADE_TYPES.map(method => ({ ...method }))
   const types = PROVIDER_SUPPORTED_TYPES[providerKey] || []
   return types.map(t => resolveTypeLabel(t, providerKey, allTypes, redirectLabel))
 }

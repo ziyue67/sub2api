@@ -76,6 +76,7 @@ func (r *apiKeyRepository) create(ctx context.Context, key *service.APIKey) erro
 	created, err := builder.Save(ctx)
 	if err == nil {
 		key.ID = created.ID
+		key.AllowLongContext = created.AllowLongContext
 		key.LastUsedAt = created.LastUsedAt
 		key.CreatedAt = created.CreatedAt
 		key.UpdatedAt = created.UpdatedAt
@@ -148,6 +149,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			apikey.FieldStatus,
 			apikey.FieldModelMapping,
 			apikey.FieldReasoningEffort,
+			apikey.FieldAllowLongContext,
 			apikey.FieldIPWhitelist,
 			apikey.FieldIPBlacklist,
 			apikey.FieldQuota,
@@ -247,6 +249,8 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldProfitControlEnabled,
 				group.FieldProfitMinMargin,
 				group.FieldProfitSafetyBuffer,
+				// OpenAI 选号从 ctx 分组读取隐私门，漏选会放行未设置隐私的账号。
+				group.FieldRequirePrivacySet,
 			)
 		}).
 		Only(ctx)
@@ -297,6 +301,9 @@ func (r *apiKeyRepository) update(ctx context.Context, key *service.APIKey, fiel
 	}
 	if fields.ReasoningEffort {
 		builder.SetReasoningEffort(key.ReasoningEffort)
+	}
+	if fields.AllowLongContext {
+		builder.SetAllowLongContext(key.AllowLongContext)
 	}
 	if fields.Status {
 		builder.SetStatus(key.Status)
@@ -963,6 +970,7 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		Status:           m.Status,
 		ModelMapping:     m.ModelMapping,
 		ReasoningEffort:  m.ReasoningEffort,
+		AllowLongContext: m.AllowLongContext,
 		IPWhitelist:      m.IPWhitelist,
 		IPBlacklist:      m.IPBlacklist,
 		LastUsedAt:       m.LastUsedAt,

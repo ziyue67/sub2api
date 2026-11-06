@@ -603,15 +603,23 @@ var (
 )
 
 type concurrencyCache struct {
-	rdb                 *redis.Client
-	slotTTLSeconds      int // 槽位过期时间（秒）
-	waitQueueTTLSeconds int // 等待队列过期时间（秒）
+	rdb                  *redis.Client
+	slotTTLSeconds       int // 槽位过期时间（秒）
+	waitQueueTTLSeconds  int // 等待队列过期时间（秒）
+	apiKeySlotTTLSeconds int // 普通 API Key 槽位独立过期时间（秒）；<=0 继承 slotTTLSeconds
 }
 
 // NewConcurrencyCache 创建并发控制缓存
 // slotTTLMinutes: 槽位过期时间（分钟），0 或负数使用默认值 15 分钟
 // waitQueueTTLSeconds: 等待队列过期时间（秒），0 或负数使用 slot TTL
 func NewConcurrencyCache(rdb *redis.Client, slotTTLMinutes int, waitQueueTTLSeconds int) service.ConcurrencyCache {
+	return NewConcurrencyCacheWithAPIKeyTTL(rdb, slotTTLMinutes, waitQueueTTLSeconds, 0)
+}
+
+// NewConcurrencyCacheWithAPIKeyTTL 在 NewConcurrencyCache 的基础上，为普通
+// API Key 槽位指定独立过期时间（秒）。apiKeySlotTTLSeconds <= 0 表示继承共享
+// slot TTL，保持既有调用方（含 regional authority 的 base 缓存）行为不变。
+func NewConcurrencyCacheWithAPIKeyTTL(rdb *redis.Client, slotTTLMinutes int, waitQueueTTLSeconds int, apiKeySlotTTLSeconds int) service.ConcurrencyCache {
 	if slotTTLMinutes <= 0 {
 		slotTTLMinutes = defaultSlotTTLMinutes
 	}
@@ -619,14 +627,25 @@ func NewConcurrencyCache(rdb *redis.Client, slotTTLMinutes int, waitQueueTTLSeco
 		waitQueueTTLSeconds = slotTTLMinutes * 60
 	}
 	return &concurrencyCache{
-		rdb:                 rdb,
-		slotTTLSeconds:      slotTTLMinutes * 60,
-		waitQueueTTLSeconds: waitQueueTTLSeconds,
+		rdb:                  rdb,
+		slotTTLSeconds:       slotTTLMinutes * 60,
+		waitQueueTTLSeconds:  waitQueueTTLSeconds,
+		apiKeySlotTTLSeconds: apiKeySlotTTLSeconds,
 	}
 }
 
 var _ service.LaneConcurrencyCache = (*concurrencyCache)(nil)
 var _ service.LaneConcurrencyBatchCache = (*concurrencyCache)(nil)
+
+// effectiveAPIKeySlotTTLSeconds 返回普通 API Key 槽位使用的有效过期时间。
+// 未配置专用值（<=0）时回退共享 slot TTL，避免把 0 传给 Redis EXPIRE。
+// 仅适用于普通 API Key 成员；account/user 与 Live 租约继续使用各自期限。
+func (c *concurrencyCache) effectiveAPIKeySlotTTLSeconds() int {
+	if c.apiKeySlotTTLSeconds > 0 {
+		return c.apiKeySlotTTLSeconds
+	}
+	return c.slotTTLSeconds
+}
 
 // Helper functions for key generation
 func accountSlotKey(accountID int64) string {
@@ -1163,7 +1182,7 @@ func (c *concurrencyCache) AcquireAPIKeySlotWithTime(ctx context.Context, apiKey
 		c.rdb,
 		acquireAPIKeySlotScript,
 		[]string{apiKeySlotKey(apiKeyID), liveAPIKeySlotKey(apiKeyID), apiKeyWaitKey(apiKeyID), apiKeyWaitClosedKey(apiKeyID)},
-		c.slotTTLSeconds,
+		c.effectiveAPIKeySlotTTLSeconds(),
 		liveLeaseTTLSeconds,
 		requestID,
 		maxConcurrency,
@@ -1312,7 +1331,7 @@ func (c *concurrencyCache) AdvanceAPIKeyQueue(ctx context.Context, apiKeyID int6
 		deadlineMs,
 		keyLimit,
 		maxWaiting,
-		c.slotTTLSeconds,
+		c.effectiveAPIKeySlotTTLSeconds(),
 		liveLeaseTTLSeconds,
 		apiKeyQueueCleanupGraceSeconds,
 	).Int()
@@ -1344,7 +1363,7 @@ func (c *concurrencyCache) GetAPIKeyQueueStats(ctx context.Context, apiKeyID int
 		c.rdb,
 		apiKeyQueueStatsScript,
 		[]string{apiKeySlotKey(apiKeyID), liveAPIKeySlotKey(apiKeyID), apiKeyWaitKey(apiKeyID), apiKeyWaitClosedKey(apiKeyID)},
-		c.slotTTLSeconds,
+		c.effectiveAPIKeySlotTTLSeconds(),
 		liveLeaseTTLSeconds,
 	)
 	if err != nil {
@@ -1365,7 +1384,7 @@ func (c *concurrencyCache) GetAPIKeyQueueStatsBatch(ctx context.Context, apiKeyI
 	for i, id := range apiKeyIDs {
 		cmds[i] = apiKeyQueueStatsScript.EvalSha(ctx, pipe,
 			[]string{apiKeySlotKey(id), liveAPIKeySlotKey(id), apiKeyWaitKey(id), apiKeyWaitClosedKey(id)},
-			c.slotTTLSeconds, liveLeaseTTLSeconds)
+			c.effectiveAPIKeySlotTTLSeconds(), liveLeaseTTLSeconds)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !redis.HasErrorPrefix(err, "NOSCRIPT") {
 		return nil, fmt.Errorf("read API key queue statistics: %w", err)
@@ -1375,7 +1394,7 @@ func (c *concurrencyCache) GetAPIKeyQueueStatsBatch(ctx context.Context, apiKeyI
 			id := apiKeyIDs[i]
 			cmds[i] = apiKeyQueueStatsScript.Eval(ctx, pipe,
 				[]string{apiKeySlotKey(id), liveAPIKeySlotKey(id), apiKeyWaitKey(id), apiKeyWaitClosedKey(id)},
-				c.slotTTLSeconds, liveLeaseTTLSeconds)
+				c.effectiveAPIKeySlotTTLSeconds(), liveLeaseTTLSeconds)
 		} else if err := cmd.Err(); err != nil {
 			return nil, fmt.Errorf("read API key %d queue statistics: %w", apiKeyIDs[i], err)
 		}
@@ -1405,7 +1424,7 @@ func (c *concurrencyCache) GetAPIKeyQueueStatsBatch(ctx context.Context, apiKeyI
 
 func (c *concurrencyCache) TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error {
 	key := apiKeySlotKey(apiKeyID)
-	_, err := trackSlotScript.Run(ctx, c.rdb, []string{key}, c.slotTTLSeconds, requestID).Result()
+	_, err := trackSlotScript.Run(ctx, c.rdb, []string{key}, c.effectiveAPIKeySlotTTLSeconds(), requestID).Result()
 	return err
 }
 
@@ -1415,11 +1434,11 @@ func (c *concurrencyCache) ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64
 }
 
 func (c *concurrencyCache) APIKeySlotRefreshInterval() time.Duration {
-	return time.Duration(c.slotTTLSeconds) * time.Second / 3
+	return time.Duration(c.effectiveAPIKeySlotTTLSeconds()) * time.Second / 3
 }
 
 func (c *concurrencyCache) APIKeySlotTTL() time.Duration {
-	return time.Duration(c.slotTTLSeconds) * time.Second
+	return time.Duration(c.effectiveAPIKeySlotTTLSeconds()) * time.Second
 }
 
 // Refresh only an existing member, atomically with its key TTL. In particular,
@@ -1436,7 +1455,7 @@ var refreshAPIKeySlotScript = redis.NewScript(`
 `)
 
 func (c *concurrencyCache) RefreshAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) (bool, error) {
-	n, err := refreshAPIKeySlotScript.Run(ctx, c.rdb, []string{apiKeySlotKey(apiKeyID)}, c.slotTTLSeconds, requestID).Int()
+	n, err := refreshAPIKeySlotScript.Run(ctx, c.rdb, []string{apiKeySlotKey(apiKeyID)}, c.effectiveAPIKeySlotTTLSeconds(), requestID).Int()
 	return n == 1, err
 }
 
@@ -1524,7 +1543,9 @@ func (c *concurrencyCache) AcquireLiveLeaseTransferring(ctx context.Context, req
 		request.KeyRequestID,
 		request.LeaseID,
 		liveLeaseTTLSeconds,
-		c.slotTTLSeconds,
+		// 该脚本的 slotTTL 参数只用于裁剪普通 API Key 成员；account/user
+		// 普通/成员期限不受它影响。
+		c.effectiveAPIKeySlotTTLSeconds(),
 	).Int()
 	if err != nil {
 		// The script may have executed even if the reply was lost; the caller
@@ -1644,7 +1665,7 @@ func (c *concurrencyCache) acquireLiveLease(
 		liveUserSlotKey(userID),
 		liveAPIKeySlotKey(apiKeyID),
 		apiKeySlotKey(apiKeyID),
-	}, accountMax, userMax, liveLeaseTTLSeconds, leaseID, replacing, apiKeyMax, c.slotTTLSeconds, keyRequestID).Int()
+	}, accountMax, userMax, liveLeaseTTLSeconds, leaseID, replacing, apiKeyMax, c.effectiveAPIKeySlotTTLSeconds(), keyRequestID).Int()
 	if err == nil && result == 2 {
 		return false, service.ErrAPIKeyConcurrencyLimit
 	}
@@ -1687,7 +1708,7 @@ func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKey
 	if err != nil {
 		return nil, fmt.Errorf("redis TIME: %w", err)
 	}
-	cutoffTime := now.Unix() - int64(c.slotTTLSeconds)
+	cutoffTime := now.Unix() - int64(c.effectiveAPIKeySlotTTLSeconds())
 
 	pipe := c.rdb.Pipeline()
 	type apiKeyCmd struct {

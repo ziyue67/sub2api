@@ -420,6 +420,25 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 			return &AcquireResult{Acquired: false}, nil
 		}
 	}
+	// A stale scheduler snapshot may still carry the concurrency from before an
+	// AI action. Recheck the shared authority before admitting a new slot; never
+	// enlarge a caller's stricter bound or interrupt an already-held request.
+	if reader, ok := s.performancePauses.(interface {
+		AIOpsRuntime(context.Context, []int64) (map[int64]AIOpsRuntime, error)
+	}); ok {
+		runtime, err := reader.AIOpsRuntime(ctx, []int64{accountID})
+		if err != nil {
+			return nil, err
+		}
+		if current, exists := runtime[accountID]; exists {
+			if current.Paused {
+				return &AcquireResult{Acquired: false}, nil
+			}
+			if current.Concurrency > 0 && (maxConcurrency <= 0 || current.Concurrency < maxConcurrency) {
+				maxConcurrency = current.Concurrency
+			}
+		}
+	}
 
 	// A non-nil service with a nil cache is common in lightweight/admin
 	// processes and during rolling startup. Treat it as the no-service path;
@@ -432,8 +451,6 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 			MaxConcurrencySet: true,
 		}, nil
 	}
-
-	// If maxConcurrency is 0 or negative, no limit.
 	if maxConcurrency <= 0 {
 		return &AcquireResult{
 			Acquired:          true,

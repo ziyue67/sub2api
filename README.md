@@ -177,6 +177,11 @@ Please read the following carefully before using this project:
 <td>Thanks to <a href="https://soleapi.com/r/sub2api">SoleAPI</a> for supporting this project! SoleAPI is an AI model gateway for developers and enterprises: one API key gives you access to 30+ leading models including Claude, GPT and Gemini. It is natively compatible with the OpenAI and Anthropic protocols, so Claude Code, Codex, Cursor and your existing SDKs work by simply changing the Base URL. Requests are routed in real time by latency and upstream health, with millisecond-level automatic failover to backup channels, 99.99% service availability and 24/7 technical support. Every call lands on a single bill with per-request token and cost breakdowns you can inspect at any time. Sign up through this project's <a href="https://soleapi.com/r/sub2api">referral link</a> to receive free trial credits, and earn ongoing cashback by inviting friends who top up!</td>
 </tr>
 
+<tr>
+<td width="180"><a href="https://api.muteki.site/register?aff=Sub2"><img src="assets/partners/logos/marucode.jpg" alt="MaruCode" width="150"></a></td>
+<td><a href="https://api.muteki.site/register?aff=Sub2">MaruCode</a> — a small, no-frills API site that does a bit of charity now and then. 🍟 Every Thursday it runs limited-time rate-multiplier events. In operation for over half a year, with a 3K-member main group, focused on stability and welcoming collaboration with universities, enterprises, and more — thank you 🙇. It runs a self-operated account pool with no top-up marketing gimmicks, mainly offering mainstream models such as Codex (GPT 6.2 Astra), Claude Code (Claude Opus 5.5), and GPT Image 2.6, with WebSocket protocol support, clearly published pricing (Codex 0.3x, CC 1.7x), and a transparent exchange rate (1:1).</td>
+</tr>
+
 </table>
 
 </details>
@@ -237,6 +242,7 @@ Sub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅的
 - **并发控制** - 用户级、账号级和 API Key 级并发限制，支持可配置的 Key 等待队列
 - **速率限制** - 可配置的请求和 Token 速率限制
 - **内置支付系统** - 支持 EasyPay 易支付、支付宝官方、微信官方、Stripe，用户自助充值，无需独立部署支付服务（[配置指南](docs/PAYMENT_CN.md)）
+- **USDT / USDC 加密货币支付** - 内置 BEpusdt 引擎，无需外部网关 API 或 Token；支持钱包管理、故障补扫、多网络充值与订阅购买，保留外接网关模式和幂等入账（[配置指南](docs/BEPUSDT_PAYMENT.md)）
 - **管理后台** - Web 界面进行监控和管理
 - **外部系统集成** - 支持通过 iframe 嵌入外部系统（如工单等），扩展管理后台功能
 

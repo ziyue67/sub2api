@@ -7,6 +7,16 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/keys/__tests__/UseKeyModal.spec.ts \
 	src/utils/__tests__/codexQuickConfig.spec.ts \
 	src/utils/__tests__/ccswitchImport.spec.ts \	src/components/settings/BalanceForecastSettings.spec.ts \
+	src/components/common/__tests__/NewFeatureBadge.spec.ts \
+	src/components/admin/group/__tests__/GroupAntiDistillationSettings.spec.ts \
+	src/views/admin/__tests__/ChannelsView.modelSync.spec.ts \
+	src/views/admin/__tests__/ChannelsView.webSearchEmulation.spec.ts \
+	src/views/admin/__tests__/channelPricingTransfer.spec.ts \
+	src/views/admin/__tests__/ChannelsView.pricingTransfer.spec.ts \
+	src/utils/__tests__/ccswitchImport.spec.ts \
+	src/components/settings/SmartOpsSidebarSettings.spec.ts \
+	src/utils/__tests__/smartOpsSidebar.spec.ts \
+	src/components/settings/BalanceForecastSettings.spec.ts \
 	src/components/admin/user/__tests__/UserAutoCreditModal.spec.ts \
 	src/components/common/__tests__/VipAutoCreditNotice.spec.ts \
 	src/components/admin/user/__tests__/ApiKeyModelPolicyDialog.spec.ts \
@@ -55,6 +65,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/AccountQualityView.spec.ts \
 	src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts \
 	src/views/admin/__tests__/AccountsView.declarationRefresh.spec.ts \
+	src/utils/__tests__/accountUpstreamModelAutoSync.spec.ts \
 	src/utils/__tests__/qualityRulePatch.spec.ts \
 	src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts \
 	src/utils/__tests__/accountAutoBPS.spec.ts \
@@ -124,6 +135,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/settings/AccountPerformanceSettings.spec.ts \
 	src/components/account/__tests__/AccountPerformanceCell.spec.ts \
 	src/components/account/__tests__/AccountPerformanceDialog.spec.ts \
+	src/api/__tests__/admin.accounts.performance.spec.ts \
 	src/components/user/profile/__tests__/ProfileIdentityBindingsSection.spec.ts \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/views/admin/__tests__/HarvestFlowView.spec.ts \

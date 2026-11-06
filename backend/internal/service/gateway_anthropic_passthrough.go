@@ -397,6 +397,9 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	applyForcedAnthropicCacheTTL1hBeta(req.Header, account, body)
 	filterSonnet55ToolsetBetaHeader(req.Header, body, gjson.GetBytes(body, "model").String())
 
+	if err := checkAPIKeyLongContextBeforeForward(ctx, c, s.billingService, body, gjson.GetBytes(body, "model").String()); err != nil {
+		return nil, nil, err
+	}
 	return req, body, nil
 }
 

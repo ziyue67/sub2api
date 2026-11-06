@@ -806,6 +806,36 @@ describe("admin SettingsView payment visible method controls", () => {
       .flatMap(b => b.findAll('[data-testid="new-feature-badge"]'))).toHaveLength(0);
   });
 
+  it.each([0, 1, 2])("dismisses the BEpusdt notice from real entry %s without changing payment settings", async (index) => {
+    const oldNotice = NEW_FEATURE_NOTICES.protocolFeatureSwitches;
+    localStorage.setItem("sub2api:new-feature-notices:v1:41", JSON.stringify([oldNotice]));
+    getSettings.mockResolvedValue({ ...baseSettingsResponse, payment_enabled_types: ["bepusdt"] });
+    const wrapper = mountView();
+    await flushPromises();
+    await openPaymentTab(wrapper);
+    const badges = () => wrapper.findAllComponents(NewFeatureBadge)
+      .filter(b => b.props('noticeId') === NEW_FEATURE_NOTICES.bepusdtPayment)
+      .flatMap(b => b.findAll('[data-testid="new-feature-badge"]'));
+    expect(badges()).toHaveLength(3);
+    await badges()[index]!.trigger('click');
+    await flushPromises();
+    expect(badges()).toHaveLength(0);
+    expect(wrapper.get('[data-testid="bepusdt-payment-type"]').classes()).toContain('bg-primary-500');
+    expect((wrapper.findComponent({ name: 'BEpusdtManager' }).get('details').element as HTMLDetailsElement).open).toBe(false);
+    expect(updateSettings).not.toHaveBeenCalled();
+    wrapper.unmount();
+    const refreshed = mountView();
+    await flushPromises();
+    expect(refreshed.findAllComponents(NewFeatureBadge)
+      .filter(b => b.props('noticeId') === oldNotice || b.props('noticeId') === NEW_FEATURE_NOTICES.bepusdtPayment)
+      .flatMap(b => b.findAll('[data-testid="new-feature-badge"]'))).toHaveLength(0);
+    expect(refreshed.findAllComponents(NewFeatureBadge)
+      .filter(b => b.props('noticeId') === NEW_FEATURE_NOTICES.balanceForecast)
+      .flatMap(b => b.findAll('[data-testid="new-feature-badge"]'))).toHaveLength(2);
+    expect(JSON.parse(localStorage.getItem("sub2api:new-feature-notices:v1:41") ?? '[]'))
+      .toEqual([oldNotice, NEW_FEATURE_NOTICES.bepusdtPayment]);
+  });
+
   it("loads, saves, and disables forecast independently of amount notifications", async () => {
     getSettings.mockResolvedValue({ ...baseSettingsResponse, balance_forecast_enabled: true, balance_forecast_threshold_hours: 6.5, balance_forecast_max_notifications: 2, balance_low_notify_enabled: true });
     const wrapper = mountView();
@@ -844,6 +874,24 @@ describe("admin SettingsView payment visible method controls", () => {
       .flatMap((badge) => badge.findAll('[data-testid="new-feature-badge"]'))).toHaveLength(1);
     expect(wrapper.get("#settings-tab-features").attributes("aria-selected")).toBe("false");
     expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps tab badges in the normal tab flow so dismissing one reserves no space", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const tabBadge = (tab: string) => wrapper.find(`#settings-tab-${tab} + [data-testid="new-feature-badge"]`);
+    const tabBar = wrapper.get(".settings-tabs").element;
+
+    expect(["features", "gateway", "payment", "email"].filter((tab) => tabBadge(tab).exists())).toHaveLength(4);
+    expect(tabBar.querySelector("[style]")).toBeNull();
+    expect(tabBar.querySelector(".absolute")).toBeNull();
+
+    await tabBadge("gateway").trigger("click");
+    await flushPromises();
+
+    expect(tabBadge("gateway").exists()).toBe(false);
+    expect(tabBadge("email").exists()).toBe(true);
+    expect(tabBar.querySelector("[style]")).toBeNull();
   });
 
   it("dismisses the gateway notice across the tab and both routing controls without dismissing protocol settings", async () => {
