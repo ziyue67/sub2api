@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -29,7 +30,11 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	if !compactionTriggerNeedsDecode(body) {
+	// Escaped trigger names and invalid input retain the full decoder path.
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) > 0 && trimmed[0] == '{' &&
+		!bytes.Contains(body, []byte("compaction_trigger")) &&
+		!bytes.Contains(body, []byte(`\u`)) && json.Valid(body) {
 		return body, false, nil
 	}
 	var payload map[string]any
@@ -65,18 +70,6 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 		return body, false, err
 	}
 	return encoded, true, nil
-}
-
-// compactionTriggerNeedsDecode lets bodies that cannot hold a trigger skip the
-// full decode: the type string appears literally unless a \u escape spells it.
-// Such a body must still be a valid JSON object, so decode errors keep
-// surfacing from the original path.
-func compactionTriggerNeedsDecode(body []byte) bool {
-	if bytes.Contains(body, []byte("compaction_trigger")) || bytes.Contains(body, []byte(`\u`)) {
-		return true
-	}
-	trimmed := bytes.TrimLeft(body, " \t\r\n")
-	return len(trimmed) == 0 || trimmed[0] != '{' || !gjson.ValidBytes(body)
 }
 
 func isOpenAINativeCompactionV2(c *gin.Context) bool {

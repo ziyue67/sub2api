@@ -64,6 +64,11 @@ ARG TARGETARCH
 
 ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
+# goproxy.cn 的 HTTP/2 端点在并发抓取约 2000 个 stream（错误里的 LastStreamID=1999）
+# 时会主动发 GOAWAY 并断连；go 对这类连接层错误不会像 404 那样回退到 direct，
+# 整次 docker build 直接失败。让 go 的 HTTP 客户端走 HTTP/1.1 避开该并发上限。
+# 仅作用于 backend-builder 阶段，不影响最终运行镜像。
+ENV GODEBUG=http2client=0
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -75,8 +80,16 @@ COPY backend/go.mod backend/go.sum ./
 COPY backend/third_party ./third_party
 # Cache mount keeps the module cache across builds so a transient CDN blip on
 # retry resumes instead of re-fetching every zip from scratch.
+# Bounded retry: a transient proxy hiccup must not fail the whole image build.
+# The module cache mount persists fetched zips, so a retry only re-fetches the
+# remainder and issues far fewer concurrent requests.
 RUN --mount=type=cache,id=sub2api-gomod,target=/go/pkg/mod \
-    go mod download
+    for attempt in 1 2 3; do \
+      if go mod download; then break; fi; \
+      if [ "$attempt" = "3" ]; then echo "go mod download failed after 3 attempts" >&2; exit 1; fi; \
+      echo "go mod download failed (attempt $attempt), retrying in 5s..." >&2; \
+      sleep 5; \
+    done
 
 # Copy backend source first
 COPY backend/ ./
