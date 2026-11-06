@@ -138,7 +138,10 @@ vite.config.js
 user-traffic-pending/
 docs/*
 !docs/image-request-archive.md
+!docs/ai-ops-codex.md
+!docs/openai-context-limit-errors.md
 !docs/stream-timing.md
+!docs/openai-sse-delivery.md
 !docs/user-traffic.md
 !docs/typesafe-content-audit.md
 !docs/multi-host-session-owner.md
@@ -159,6 +162,8 @@ docs/*
 !docs/admin-api-keys.md!docs/mcp.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
+!docs/easypay-confirmation-recovery.md
+!docs/BEPUSDT_PAYMENT.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/PRISM_BRIDGE_RESEARCH_CN.md
@@ -222,6 +227,7 @@ issues/
 
 !docs/astra-candy-beta.md
 !docs/api-key-model-policy.md
+!docs/api-key-long-context-control.md
 
 # PR screenshots belong in PR attachments; retain text evidence in docs/screenshots.
 !docs/screenshots/

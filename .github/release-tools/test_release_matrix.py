@@ -133,6 +133,9 @@ class ReleaseMatrixTest(unittest.TestCase):
         Path('deploy/docker-entrypoint.sh').write_text('#!/bin/sh\nexec /app/sub2api\n')
         Path('backend/resources').mkdir()
         Path('backend/resources/data').write_text('fixture')
+        Path('THIRD_PARTY_NOTICES.md').write_text('BEpusdt collection engine notices\n')
+        Path('LICENSES').mkdir()
+        Path('LICENSES/BEpusdt-GPL-3.0.txt').write_text('BEpusdt GPL-3.0 license fixture\n')
         release.contexts(args)
         arches = sorted({t['goarch'] for t in release.targets() if t['goos'] == 'linux'})
         self.assertTrue(arches)
@@ -140,6 +143,9 @@ class ReleaseMatrixTest(unittest.TestCase):
             binary = Path('contexts') / arch / 'sub2api'
             self.assertEqual(binary.read_bytes(), b'fixture')
             self.assertEqual(binary.stat().st_mode & 0o777, 0o755)
+            context = binary.parent
+            self.assertEqual((context / 'THIRD_PARTY_NOTICES.md').read_text(), Path('THIRD_PARTY_NOTICES.md').read_text())
+            self.assertEqual((context / 'LICENSES/BEpusdt-GPL-3.0.txt').read_text(), Path('LICENSES/BEpusdt-GPL-3.0.txt').read_text())
 
     def test_plan_requires_a_tag_for_publication(self):
         args = argparse.Namespace(ref='main', dry_run=False, simple=False)

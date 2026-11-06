@@ -216,7 +216,6 @@ func TestRejectIfCyberSessionBlocked_FailOpen(t *testing.T) {
 	require.False(t, h2.rejectIfCyberSessionBlocked(c, key, []byte(`{}`), "gpt-5", cyberBlockFormatResponses), "nil gateway service → pass")
 }
 
-<<<<<<< HEAD
 func newCyberIdentityAdmissionTestHandler(settings map[string]string) *OpenAIGatewayHandler {
 	settingSvc := service.NewSettingService(&contentModerationHandlerSettingRepo{values: settings}, nil)
 	cfg := &config.Config{}
@@ -335,15 +334,10 @@ func TestWriteCyberSessionIdentityRejectedResponseFormats(t *testing.T) {
 }
 
 func TestOpenAIWSCyberIdentityBinding(t *testing.T) {
-=======
-func TestBuildCyberSessionBlockCombinesExplicitAndTranscriptKeys(t *testing.T) {
-	body := []byte(`{"messages":[{"role":"user","content":"setup"},{"role":"assistant","content":"ready"},{"role":"user","content":"trigger"}]}`)
->>>>>>> upstream/main
 	c := newTestGinContext()
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
 	binding := &openAIWSCyberIdentityBinding{}
 
-<<<<<<< HEAD
 	first := binding.resolve(7, c, []byte(`{"client_metadata":{"thread_id":"thread-a"}}`), true, false)
 	require.False(t, first.reject)
 	require.True(t, first.effective.Resolved())
@@ -384,19 +378,6 @@ func TestBuildCyberSessionBlockCombinesExplicitAndTranscriptKeys(t *testing.T) {
 	disabledBinding := &openAIWSCyberIdentityBinding{}
 	disabled := disabledBinding.resolve(7, c, []byte(`{}`), false, true)
 	require.False(t, disabled.reject, "strict setting is inert while cyber session blocking is disabled")
-=======
-	block := buildCyberSessionBlock(7, c, body)
-	require.Len(t, block.Keys, 2)
-	require.Equal(t, []int{3, 2}, block.TranscriptLengths)
-	require.Equal(t, int64(7), block.APIKeyID)
-	require.NotEmpty(t, block.ScopeKey)
-
-	c.Request.Header.Set("session_id", "sess-explicit")
-	block = buildCyberSessionBlock(7, c, body)
-	require.Len(t, block.Keys, 3)
-	require.Equal(t, []int{3, 2}, block.TranscriptLengths)
-	require.NotEmpty(t, block.ScopeKey)
->>>>>>> upstream/main
 }
 
 // TestRecordCyberPolicyIfMarked_BlockKeyPlumbed verifies the 6th param is

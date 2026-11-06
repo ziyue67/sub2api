@@ -17,12 +17,13 @@ type APIKeyAuthSnapshot struct {
 	GroupRoutes      []domain.APIKeyGroupRoute `json:"group_routes,omitempty"`
 	Name             string                    `json:"name"`
 	Status           string                    `json:"status"`
+	ModelMapping     map[string]string         `json:"model_mapping,omitempty"`
+	ReasoningEffort  string                    `json:"reasoning_effort,omitempty"`
+	AllowLongContext bool                      `json:"allow_long_context"`
 	IPWhitelist      []string                  `json:"ip_whitelist,omitempty"`
 	IPBlacklist      []string                  `json:"ip_blacklist,omitempty"`
 	User             APIKeyAuthUserSnapshot    `json:"user"`
 	Group            *APIKeyAuthGroupSnapshot  `json:"group,omitempty"`
-	ModelMapping     map[string]string         `json:"model_mapping,omitempty"`
-	ReasoningEffort  string                    `json:"reasoning_effort,omitempty"`
 
 	// Quota fields for API Key independent quota feature
 	Quota     float64 `json:"quota"`      // Quota limit in USD (0 = unlimited)

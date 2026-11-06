@@ -22,6 +22,7 @@ var (
 		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
 		{Name: "model_mapping", Type: field.TypeJSON},
 		{Name: "reasoning_effort", Type: field.TypeString, Size: 16, Default: ""},
+		{Name: "allow_long_context", Type: field.TypeBool, Default: true},
 		{Name: "last_used_at", Type: field.TypeTime, Nullable: true},
 		{Name: "ip_whitelist", Type: field.TypeJSON, Nullable: true},
 		{Name: "ip_blacklist", Type: field.TypeJSON, Nullable: true},

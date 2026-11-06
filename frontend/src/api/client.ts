@@ -45,6 +45,7 @@ apiClient.interceptors.request.use(
     if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
       config.headers.setContentType(false)
     }
+    const requestURL = String(config.url || '')
 
     // Attach token from localStorage
     const token = localStorage.getItem('auth_token')
@@ -57,8 +58,11 @@ apiClient.interceptors.request.use(
       config.headers['Accept-Language'] = getLocale()
     }
 
-    // Attach timezone for all GET requests (backend may use it for default date ranges)
-    if (config.method === 'get') {
+    // AI operations rejects query parameters; other GET APIs may use timezone
+    // for default date ranges. Preserve explicitly supplied parameters so the
+    // backend can still reject unsupported input.
+    const isAIOpsRequest = /^\/admin\/ops\/ai(?:\/|$)/.test(requestURL)
+    if (config.method === 'get' && !isAIOpsRequest) {
       if (!config.params) {
         config.params = {}
       }
@@ -66,7 +70,6 @@ apiClient.interceptors.request.use(
     }
 
     if (config.headers) {
-      const requestURL = String(config.url || '')
       if (config.method === 'get' && requestURL.replace(/\?.*$/, '') === '/auth/me') {
         // A redeemed code or an administrator balance adjustment must be visible
         // immediately, even when a reverse proxy has seen an older profile response.

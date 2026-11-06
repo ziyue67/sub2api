@@ -139,6 +139,10 @@ func init() {
 	apikey.DefaultReasoningEffort = apikeyDescReasoningEffort.Default.(string)
 	// apikey.ReasoningEffortValidator is a validator for the "reasoning_effort" field. It is called by the builders before save.
 	apikey.ReasoningEffortValidator = apikeyDescReasoningEffort.Validators[0].(func(string) error)
+	// apikeyDescAllowLongContext is the schema descriptor for allow_long_context field.
+	apikeyDescAllowLongContext := apikeyFields[8].Descriptor()
+	// apikey.DefaultAllowLongContext holds the default value on creation for the allow_long_context field.
+	apikey.DefaultAllowLongContext = apikeyDescAllowLongContext.Default.(bool)
 	// apikeyDescQuota is the schema descriptor for quota field.
 	apikeyDescQuota := apikeyFields[12].Descriptor()
 	// apikey.DefaultQuota holds the default value on creation for the quota field.
