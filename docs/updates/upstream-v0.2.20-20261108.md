@@ -27,3 +27,11 @@
 - 本PR不宣称修复amsg_ encrypted content hydration failed；原版仍有相关未关闭报告。
 - 不修改生产数据、白名单开关或管理Key，不部署生产服务器。
 - 验证与最终CI证据以PR说明为准；源码合并和CI不等同于生产业务验收。
+
+## 本地验证结果
+
+- 前端类型检查通过；UseKeyModal/CC Switch/模型白名单/账号用量四组141项测试通过；i18n完整性3项通过；生产构建通过。
+- apicompat/openai/openai_ws_v2/httputil完整包测试通过。
+- service/middleware相关白名单、Key、退款、图片、请求体及计费回归通过；routes/handler/admin相关回归通过。
+- 最终Sol/Terra计费边界测试通过，包括订阅与API Key在500k边界两侧的不同处理。
+- GitHub全量CI必须在最终head实际运行并全部成功后才合并；未运行、排队、跳过均不当作成功。
