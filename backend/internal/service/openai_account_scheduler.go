@@ -92,7 +92,10 @@ type OpenAIAccountScheduleRequest struct {
 	// generic sticky health or concurrency heuristics would prefer another.
 	DisableStickyEscape bool
 	// EncryptedReasoning suppresses quality-only escapes, not hard/capacity gates.
-	EncryptedReasoning      bool
+	EncryptedReasoning bool
+	// EncryptedTaskAffinity prevents quality-only escapes for opaque agent or
+	// compacted history. It is not evidence of hard response/task ownership.
+	EncryptedTaskAffinity   bool
 	RequirePrivacySet       bool
 	PreviousResponseID      string
 	PreviousResponseCanMove bool
@@ -802,7 +805,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		slog.Info("sticky_escape_triggered", "account_id", accountID, "reason", "priority_capacity_imbalance")
 		return nil, true, nil
 	}
-	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyForRequest(req, accountID, escapeCfg); shouldEscape && !req.DisableStickyEscape && !req.EncryptedReasoning {
+	if reason, errorRate, ttft, shouldEscape := s.shouldEscapeStickyForRequest(req, accountID, escapeCfg); shouldEscape && !req.DisableStickyEscape && !req.EncryptedReasoning && !req.EncryptedTaskAffinity {
 		slog.Info("sticky_escape_triggered",
 			"account_id", accountID,
 			"reason", reason,
@@ -3327,6 +3330,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		StickyLaneAccountID:     stickyLaneAccountID,
 		StickyLaneID:            stickyLaneID,
 		EncryptedReasoning:      platform == PlatformOpenAI && ctx.Value(openAIEncryptedReasoningAffinityKey{}) == true,
+		EncryptedTaskAffinity:   platform == PlatformOpenAI && ctx.Value(openAIEncryptedTaskAffinityKey{}) == true,
 		GuardianParentAccountID: guardianParentAccountID,
 		StickyPreviousAccountID: stickyPreviousAccountID,
 		StickyWeighted:          stickyWeighted,
