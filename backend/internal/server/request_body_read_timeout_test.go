@@ -128,7 +128,7 @@ func TestHTTPServerBodyReadTimeoutAnthropicMessages(t *testing.T) {
 	cfg.Server.MaxRequestBodySize = 0
 	cfg.Gateway.MaxBodySize = 0
 	cfg.Gateway.RequestBodyReadTimeoutSeconds = 1
-	addr, stop := serveIngressTestServer(t, ProvideHTTPServer(cfg, r))
+	addr, stop := serveIngressTestServer(t, ProvideHTTPServer(cfg, r, NewLifecycle()))
 	defer stop()
 
 	conn, err := net.DialTimeout("tcp", addr, time.Second)
