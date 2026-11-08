@@ -16,7 +16,8 @@ permissions:
   contents: read
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -39,7 +40,8 @@ jobs:
           name: image-header-backend-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/image-header-tests.log
   ui:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

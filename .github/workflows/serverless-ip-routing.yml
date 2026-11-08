@@ -17,7 +17,8 @@ permissions:
 
 jobs:
   routing:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -32,7 +33,8 @@ jobs:
         run: go test -race ./internal/serverless -count=1 -timeout=5m
 
   settings:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

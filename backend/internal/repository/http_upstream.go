@@ -688,12 +688,6 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	return s.getClientEntryWithTLSAndLane(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, 0, markInFlight, enforceLimit)
 }
 
-// getClientEntryWithTLSHeaderTimeout keeps the header-timeout entry point for
-// callers that only vary the timeout.
-func (s *httpUpstreamService) getClientEntryWithTLSHeaderTimeout(proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, upstreamProfile service.HTTPUpstreamProfile, markInFlight bool, enforceLimit bool, headerTimeout time.Duration) (*upstreamClientEntry, error) {
-	return s.getClientEntryWithTLSAndLaneAndHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, 0, markInFlight, enforceLimit, headerTimeout)
-}
-
 // getClientEntryWithTLSAndLane is the lane-aware implementation.  laneID is
 // part of the cache key whenever non-zero, even when two lanes happen to use
 // the same proxy URL, so their connection pools and in-flight eviction state
