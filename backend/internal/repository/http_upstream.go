@@ -272,7 +272,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 		return nil, bindErr
 	}
 	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
-	entry, err := s.acquireClientWithProfileAndLane(proxyURL, accountID, accountConcurrency, profile, laneID)
+	entry, err := s.acquireClientWithProfileAndLaneAndHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, laneID, requestResponseHeaderTimeout(req))
 	if err != nil {
 		requestcapture.FromContext(req.Context()).SelectionFailed(accountID, 0, nil, nil, err)
 		return nil, err
@@ -371,7 +371,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 		return nil, bindErr
 	}
 	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
-	entry, err := s.acquireClientWithTLSAndLane(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID)
+	entry, err := s.acquireClientWithTLSAndLaneAndHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID, requestResponseHeaderTimeout(req))
 	if err != nil {
 		requestcapture.FromContext(req.Context()).SelectionFailed(accountID, 0, nil, nil, err)
 		slog.Debug("tls_fingerprint_acquire_client_failed", "account_id", accountID, "error", err)
@@ -677,6 +677,11 @@ func (s *httpUpstreamService) acquireClientWithTLSAndLane(proxyURL string, accou
 	return s.getClientEntryWithTLSAndLane(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID, true, true)
 }
 
+// acquireClientWithTLSAndLaneAndHeaderTimeout 同时应用 TLS 指纹、车道隔离与响应头超时。
+func (s *httpUpstreamService) acquireClientWithTLSAndLaneAndHeaderTimeout(proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, upstreamProfile service.HTTPUpstreamProfile, laneID int64, headerTimeout time.Duration) (*upstreamClientEntry, error) {
+	return s.getClientEntryWithTLSAndLaneAndHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID, true, true, headerTimeout)
+}
+
 // getClientEntryWithTLS 获取或创建带 TLS 指纹的客户端条目
 // TLS 指纹客户端使用独立的缓存键，与普通客户端隔离
 func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, upstreamProfile service.HTTPUpstreamProfile, markInFlight bool, enforceLimit bool) (*upstreamClientEntry, error) {
@@ -839,14 +844,21 @@ func (s *httpUpstreamService) acquireClientWithProfileAndLane(proxyURL string, a
 	return s.getClientEntryWithLane(proxyURL, accountID, accountConcurrency, profile, laneID, true, true)
 }
 
+// acquireClientWithProfileAndLaneAndHeaderTimeout 同时应用车道隔离与请求级响应头超时。
+func (s *httpUpstreamService) acquireClientWithProfileAndLaneAndHeaderTimeout(proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile, laneID int64, headerTimeout time.Duration) (*upstreamClientEntry, error) {
+	return s.getClientEntryWithLaneAndHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, laneID, true, true, headerTimeout)
+}
+
 // acquireRequestClient 按请求 context 里的响应头等待时间获取客户端。
 func (s *httpUpstreamService) acquireRequestClient(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile service.HTTPUpstreamProfile) (*upstreamClientEntry, error) {
-	return s.getClientEntryWithHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, true, true, requestResponseHeaderTimeout(req))
+	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
+	return s.getClientEntryWithLaneAndHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, laneID, true, true, requestResponseHeaderTimeout(req))
 }
 
 // acquireRequestClientWithTLS 是 acquireRequestClient 的 TLS 指纹版本。
 func (s *httpUpstreamService) acquireRequestClientWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, profile *tlsfingerprint.Profile, upstreamProfile service.HTTPUpstreamProfile) (*upstreamClientEntry, error) {
-	return s.getClientEntryWithTLSHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, true, true, requestResponseHeaderTimeout(req))
+	laneID := service.AccountProxyLaneIDFromContext(reqContext(req))
+	return s.getClientEntryWithTLSAndLaneAndHeaderTimeout(proxyURL, accountID, accountConcurrency, profile, upstreamProfile, laneID, true, true, requestResponseHeaderTimeout(req))
 }
 
 func requestResponseHeaderTimeout(req *http.Request) time.Duration {

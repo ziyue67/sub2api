@@ -1405,12 +1405,21 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	if platform == service.PlatformComposite {
 		availableModels := h.compositeAvailableModels(ctx, groupID, service.CompositeRouteEndpointResponses, false)
 		fallbackModels := defaultCodexModelIDsForPlatform(service.PlatformComposite)
-		models := availableModels
-		if len(models) == 0 {
+		// nil 表示该分组没有任何可用信号，才回落到平台默认目录；空切片是
+		// 明确的「没有可列出模型」（例如 OAuth 首次授权范围为空的复合分组），
+		// 必须原样返回空列表而不是被默认目录覆盖。
+		var models []string
+		switch {
+		case availableModels != nil:
+			models = availableModels
+		default:
 			models = fallbackModels
 		}
 		if group.ModelAllowlistEnabled() {
 			models = group.ModelAllowlist.FilterForListing(models)
+		}
+		if len(models) == 0 {
+			return models
 		}
 		if filtered, err := h.gatewayService.FilterCompositeCodexModels(ctx, group.ID, models); err == nil {
 			return filtered
