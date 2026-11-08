@@ -218,9 +218,20 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key 已过期")
 			return
 		}
+		// Discovery does not spend balance or quota, but expired keys must not
+		// regain access through the metadata path.
+		_, modelListingRequest := GetModelListingGroups(c)
+		if modelListingRequest && (apiKey.Status == service.StatusAPIKeyExpired || apiKey.IsExpired()) {
+			AbortWithError(c, http.StatusForbidden, "API_KEY_EXPIRED", "API key 已过期")
+			return
+		}
+		if modelListingRequest && (apiKey.Status == service.StatusAPIKeyQuotaExhausted || apiKey.IsQuotaExhausted()) {
+			abortWithAPIKeyQuotaError(c)
+			return
+		}
 		// Read-only endpoints must remain discoverable after a generation consumes
 		// the key's remaining balance. They never trigger upstream model usage.
-		metadataReadRequest := billingInfoRequest || pelicanReadRequest || imageHistoryRead
+		metadataReadRequest := billingInfoRequest || pelicanReadRequest || imageHistoryRead || modelListingRequest
 		skipBilling := c.Request.URL.Path == "/v1/usage" || metadataReadRequest ||
 			isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path) ||
 			isModelListRead(c.Request.Method, c.Request.URL.Path)

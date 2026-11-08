@@ -21,6 +21,7 @@ import (
 // RateLimitService 处理限流和过载状态管理
 type RateLimitService struct {
 	accountOps            *AccountOpsService
+	openAITOTP429Rotator  openAITOTP429Rotator
 	qualityTrigger        *quality5xxTrigger
 	accountRepo           AccountRepository
 	usageRepo             UsageLogRepository
@@ -356,6 +357,7 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 // handleUpstreamErrorAfterStreakReset keeps account policy handling shared with
 // the OpenAI gateway, which resets the streak before its early-return policies.
 func (s *RateLimitService) handleUpstreamErrorAfterStreakReset(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
+	ctx = s.maybeRotateOpenAITOTPOn429(ctx, account, statusCode)
 	// An edge refusal must not reach account-specific rules, linked-account
 	// mutation or quota handlers, even when administrators configured a broad 403.
 	if statusCode == http.StatusForbidden && isCloudflareBotBlockResponse(responseBody) {
@@ -605,10 +607,10 @@ func (s *RateLimitService) handleUpstreamErrorAfterStreakReset(ctx context.Conte
 			shouldDisable = true
 		}
 	case 402:
-		// 国产供应商 / OpenCode Zen / Command Code：余额（积分）不足是可恢复状态
-		// （充值/检测恢复后由周期任务自动解除），不能走 handleAuthError 永久置
+		// 国产供应商 / OpenCode Zen / Command Code / Mistral：余额（积分/预算）不足是可恢复状态
+		// （充值/月度重置/检测恢复后由周期任务自动解除），不能走 handleAuthError 永久置
 		// status=error。改为可恢复的临时停调。
-		if account.IsCNProvider() || account.IsOpenCodeZen() || account.IsCommandCode() {
+		if account.IsCNProvider() || account.IsOpenCodeZen() || account.IsCommandCode() || account.IsMistral() {
 			s.handleCNProviderInsufficientBalance(ctx, account, upstreamMsg)
 			shouldDisable = true
 			break

@@ -246,3 +246,4 @@ tools/local-worker/
 # 而 Vite 解析优先 .js，会静默覆盖真正的 .ts 源码。
 frontend/src/**/*.js
 frontend/src/**/*.js.map
+!docs/key-risk-patrol.md

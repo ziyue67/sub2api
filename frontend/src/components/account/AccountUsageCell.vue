@@ -490,6 +490,11 @@
         @updated="handleOpenCodeGoUsageUpdated"
       />
       <div v-else class="space-y-1">
+        <NewFeatureBadge
+          v-if="account.platform === 'mistral' && (cnQuotaCellVisible || cnBalanceCellVisible) && noticeUserId != null"
+          :notice-id="NEW_FEATURE_NOTICES.mistralBudgetUsage"
+          :user-id="noticeUserId"
+        />
         <!-- 子单元格各自按 模式×平台 判定可见；两者都不可见时（智谱 payg 无公开
              余额端点、coding 探测也不适用）才回落到占位符。 -->
         <div
@@ -497,8 +502,8 @@
           class="text-xs text-gray-400"
           :title="t('admin.accounts.cnProviders.noBalanceEndpoint')"
         >-</div>
-        <CNProviderQuotaCell :account="account" />
-        <CNProviderBalanceCell :account="account" />
+        <CNProviderQuotaCell :account="account" @probed="handleCNQuotaProbed" />
+        <CNProviderBalanceCell :account="account" :probed-balance="cnProbedBalance" />
       </div>
     </template>
 
@@ -724,6 +729,8 @@
 import ExcelBPSCredentialStatus from './ExcelBPSCredentialStatus.vue'
 import { ref, computed, onMounted, onBeforeUnmount, onUnmounted, watch } from 'vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import type { Account, AccountUsageInfo, GeminiCredentials, WindowStats } from '@/types'
@@ -754,6 +761,7 @@ const USAGE_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 const props = withDefaults(
   defineProps<{
     account: Account
+    noticeUserId?: number | null
     todayStats?: WindowStats | null
     todayStatsLoading?: boolean
     manualRefreshToken?: number
@@ -764,6 +772,7 @@ const props = withDefaults(
   }>(),
   {
     todayStats: null,
+    noticeUserId: null,
     todayStatsLoading: false,
     manualRefreshToken: 0,
     batchedUsage: null,
@@ -850,6 +859,18 @@ const shouldFetchUsage = computed(() => {
 // credentialsBuilder 的单一实现）：都不可见时显示 `-` 占位符。
 const cnQuotaCellVisible = computed(() => cnQuotaCellVisibleFn(props.account))
 const cnBalanceCellVisible = computed(() => cnBalanceCellVisibleFn(props.account))
+const cnProbedBalance = ref<import('@/api/admin/cnProviders').CNProviderBalanceResult | null>(null)
+const handleCNQuotaProbed = (result: import('@/api/admin/cnProviders').CNProviderQuotaProbeResult) => {
+  if (result.balance?.success) {
+    cnProbedBalance.value = result.balance
+  }
+}
+watch(
+  () => props.account.id,
+  () => {
+    cnProbedBalance.value = null
+  }
+)
 
 const isBatchManaged = computed(() => typeof props.requestBatchedUsage === 'function')
 

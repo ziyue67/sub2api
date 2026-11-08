@@ -4,6 +4,9 @@
  * browser; use a new ID to announce the feature again in a later release.
  */
 export const NEW_FEATURE_NOTICES = {
+  keyRisk: 'key-risk-notices-acknowledgement-initial-announcement',
+  mistralBudgetUsage: 'mistral-budget-usage-initial-announcement',
+  deepSeekSearch: 'deepseek-search-provider-initial-announcement',
   groupAntiDistillation: 'group-openai-anti-distillation-initial-announcement',
   channelPricingTransfer: 'channel-pricing-import-export-initial-announcement',
   channelPricingListActions: 'channel-pricing-list-actions-initial-announcement',
@@ -17,9 +20,12 @@ export const NEW_FEATURE_NOTICES = {
   apiKeyLongContext: 'api-key-long-context-control-initial-announcement',
   profitOperationsToday: 'profit-operations-today-filter-initial-announcement',
   vipAutoCredit: 'vip-auto-credit-initial-announcement',
+  oauthInitialTOTPRotation429: 'oauth-initial-totp-rotation-on-429-initial-announcement',
   aiOpsCodex: 'ai-ops-codex-observe-initial-announcement',
   bepusdtPayment: 'bepusdt-embedded-payment-initial-announcement',
   accountDailyScheduling: 'account-daily-schedulable-timers-initial-announcement',
   accountAutoRefreshUpstreamModels: 'account-auto-refresh-upstream-models-initial-announcement',
   streamFirstEventTiming: 'stream-first-event-timing-initial-announcement',
+  openaiImageHeaderTimeoutGroups: 'openai-image-header-timeout-groups-initial-announcement',
+  oauthInitialModelSelection: 'oauth-initial-model-selection-initial-announcement',
 } as const

@@ -760,6 +760,7 @@ export default {
         enabledHint: 'Global switch. When disabled, web search emulation is inactive for all channels and accounts.',
         providers: 'Search Providers',
         addProvider: 'Add Provider',
+        deepSeekHint: 'Uses the standalone DeepSeek Search API with a DeepSeek API key. Queries must contain 1–128 Unicode characters; returns search results without fetching full pages.',
         providerType: 'Provider Type',
         apiKey: 'API Key',
         apiKeyPlaceholder: 'Enter API Key',
@@ -1319,6 +1320,12 @@ export default {
         seconds: 'Timeout (seconds)',
         secondsHint:
           '1–600 seconds; default 20s. Slow nonstream responses and SSE headers can time out before the first token. Body streams after headers and native WebSocket upstreams use their own limits.',
+        imageTitle: 'Longer wait for image groups',
+        imageHint:
+          'Image generation and edit requests in the selected groups use the timeout below. Other requests and groups keep the timeout above. Use it for upstreams that respond only after the image is finished.',
+        imageGroups: 'Groups',
+        imageSeconds: 'Image timeout (seconds)',
+        imageSecondsHint: '1–600 seconds; default 180s. It has no effect unless it is longer than the timeout above.',
         saved: 'OpenAI response header timeout settings saved',
         saveFailed: 'Failed to save OpenAI response header timeout settings',
         loadFailed: 'Could not load the saved timeout. Reload before editing.'

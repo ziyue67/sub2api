@@ -733,6 +733,15 @@ func (a *Account) GetModelMapping() map[string]string {
 	}
 
 	mapping := a.resolveModelMapping(rawMapping)
+	if a.hasOAuthInitialModelSelection() {
+		filtered := make(map[string]string)
+		for source, target := range mapping {
+			if a.oauthInitialSelectionAllows(source) && a.oauthInitialSelectionAllows(target) {
+				filtered[source] = target
+			}
+		}
+		mapping = filtered
+	}
 	if !rawSigReady {
 		rawSig = modelMappingSignature(rawMapping)
 	}
@@ -1080,6 +1089,10 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // （isDeepseekServableModel）——未知模型名透传上游只会得到 404/400，并误触发
 // per-(账号,模型) 30 分钟冷却；带 [1m] 上下文后缀的写法先归一化再比对。
 func (a *Account) IsModelSupported(requestedModel string) bool {
+	// OAuth 首次授权时选定的模型范围优先于默认值、别名与媒体兜底。
+	if !a.oauthInitialSelectionAllows(requestedModel) {
+		return false
+	}
 	// Apply the credential boundary before passthrough's model allowlist bypass.
 	if a.IsExcelOAuth() && !a.IsExcelBPSEnabledForModel(requestedModel) {
 		return false
@@ -1899,6 +1912,12 @@ func (a *Account) GetCodingPlanProvider() string {
 	if a.IsCline() {
 		if a.clineAccountAPISupported() {
 			return PlatformCline
+		}
+		return ""
+	}
+	if a.IsMistral() {
+		if a.mistralUsageSupported() {
+			return PlatformMistral
 		}
 		return ""
 	}
