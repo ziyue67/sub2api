@@ -439,6 +439,9 @@ type ResponsesOutput struct {
 // arguments 是 JSON 对象而非 function_call 语义下的字符串。reasoning 项始终提供
 // summary 数组（关闭摘要时为空），其余类型走默认结构体序列化。
 func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
+	if o.Type == "message" || o.Type == "tool_search_call" {
+		return json.Marshal(responsesItemWire(&o))
+	}
 	type responsesOutputAlias ResponsesOutput
 	if o.Type == "reasoning" {
 		summary := o.Summary
@@ -450,20 +453,7 @@ func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
 			Summary []ResponsesSummary `json:"summary"`
 		}{responsesOutputAlias: responsesOutputAlias(o), Summary: summary})
 	}
-	if o.Type != "tool_search_call" {
-		return json.Marshal(responsesOutputAlias(o))
-	}
-	m := map[string]any{
-		"type":      o.Type,
-		"id":        o.ID,
-		"call_id":   o.CallID,
-		"execution": "client",
-		"arguments": toolSearchCallArgumentsJSON(o.Arguments),
-	}
-	if o.Status != "" {
-		m["status"] = o.Status
-	}
-	return json.Marshal(m)
+	return json.Marshal(responsesOutputAlias(o))
 }
 
 // UnmarshalJSON accepts both the Responses function-call string form and the

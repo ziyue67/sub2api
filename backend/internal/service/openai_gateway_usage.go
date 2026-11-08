@@ -689,7 +689,7 @@ const openAIGPT61SolSubscriptionLongContextThreshold = 500_000
 // 只豁免 OpenAI 订阅凭据（OAuth、Setup Token）上的 GPT-6.1 Sol，且计入长上下文
 // 判断的输入 token 不超过 500,000。超过 500,000 时不再豁免，沿用价卡倍率
 // （输入 ×2、输出 ×1.5，缓存侧与价卡一致）。API Key 不豁免，仍按价卡的
-// 272,000 阶梯。其它模型、其它平台和 upstream 透传不因这次规则被豁免。
+// 272,000 阶梯。Terra 订阅凭据沿用原版无附加费规则。其它模型、其它平台和 upstream 透传不豁免。
 //
 // 该标志只关闭官方模型长上下文阶梯（DisableModelLongContextPricing），
 // 分组自定义区间价格不受影响。token 口径与 shouldApplySessionLongContextPricing
@@ -704,6 +704,10 @@ func openAIGPT61SolLongContextExempt(account *Account, result *OpenAIForwardResu
 	model := strings.TrimSpace(result.UpstreamModel)
 	if model == "" {
 		model = result.Model
+	}
+	// Terra follows the upstream subscription exemption; keep the fork's Sol 500k boundary.
+	if openai.IsGPT61TerraModelSpelling(model) {
+		return true
 	}
 	if !openai.IsGPT61SolModelSpelling(model) {
 		return false
