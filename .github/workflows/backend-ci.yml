@@ -265,9 +265,18 @@ jobs:
       - name: Install checksum-pinned Kustomize for offline gateway rendering
         run: |
           mkdir -p "$RUNNER_TEMP/sub2api-kustomize"
-          curl --fail --show-error --silent --location \
-            https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.7.1/kustomize_v5.7.1_linux_amd64.tar.gz \
-            --output "$RUNNER_TEMP/sub2api-kustomize/kustomize.tar.gz"
+          # GitHub Releases 偶尔返回 504/5xx；有界重试避免整条流水线因此失败。
+          for attempt in 1 2 3 4; do
+            if curl --fail --show-error --silent --location \
+                 --connect-timeout 10 --max-time 90 \
+                 https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.7.1/kustomize_v5.7.1_linux_amd64.tar.gz \
+                 --output "$RUNNER_TEMP/sub2api-kustomize/kustomize.tar.gz"; then
+              break
+            fi
+            if [ "$attempt" = "4" ]; then echo "kustomize download failed after 4 attempts" >&2; exit 1; fi
+            echo "kustomize download failed (attempt $attempt), retrying..." >&2
+            sleep $((attempt * 10))
+          done
           printf '%s  %s\n' 'ea375e7372f9aa029129d4b2d16c66b7750b7f1213c4f66f910d981c895818d8' \
             "$RUNNER_TEMP/sub2api-kustomize/kustomize.tar.gz" | sha256sum --check -
           tar -xzf "$RUNNER_TEMP/sub2api-kustomize/kustomize.tar.gz" -C "$RUNNER_TEMP/sub2api-kustomize" kustomize

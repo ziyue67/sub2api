@@ -54,7 +54,7 @@ func (t *regionalUpstreamTransport) RoundTrip(req *http.Request) (*http.Response
 	if t.fingerprint != nil && req.URL.Scheme == "https" {
 		entry, err = t.service.acquireClientWithTLSAndLane(proxy, t.accountID, t.concurrency, t.fingerprint, t.profile, 0)
 	} else {
-		entry, err = t.service.acquireClientWithProfile(proxy, t.accountID, t.concurrency, t.profile)
+		entry, err = t.service.acquireRequestClient(req, proxy, t.accountID, t.concurrency, t.profile)
 	}
 	if err != nil {
 		return nil, upstreamroute.TransportError(err)

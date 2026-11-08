@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+
 	"github.com/tidwall/gjson"
 )
 
@@ -12,6 +14,10 @@ type openAIEncryptedTaskAffinityKey struct{}
 // account selection. Opaque task/history items get a separate soft preference:
 // unlike the existing reasoning policy, it must not imply hard account ownership.
 func WithOpenAIEncryptedReasoningAffinity(ctx context.Context, body []byte) context.Context {
+	// Escaped keys may still contain the field, so retain the original lookup.
+	if !bytes.Contains(body, []byte("encrypted_content")) && !bytes.Contains(body, []byte(`\u`)) {
+		return context.WithValue(ctx, openAIEncryptedReasoningAffinityKey{}, false)
+	}
 	input := gjson.GetBytes(body, "input")
 	found := false
 	opaque := false

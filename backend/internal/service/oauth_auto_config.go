@@ -18,26 +18,28 @@ const AutoConfigConcurrencyExtraKey = "auto_config_concurrency"
 
 // Initial account fields, BPS defaults, model billing and concurrency upgrades are independent.
 type OAuthAutoConfig struct {
-	OpenAITwoFAAdmission OpenAITwoFAAdmissionConfig `json:"openai_two_fa_admission"`
-	QualityRule          *OAuthInitialQualityRule   `json:"quality_rule,omitempty"`
-	ModelMappings        []OAuthModelMappingRule    `json:"model_mappings"`
-	ModelBilling         ModelBillingConfig         `json:"model_billing"`
-	ExcelBPS             ExcelBPSDefaults           `json:"excel_bps"`
-	UpdatedAt            time.Time                  `json:"updated_at"`
-	Enabled              bool                       `json:"enabled"`
-	Platform             string                     `json:"platform"`
-	Priority             int                        `json:"priority"`
-	LoadFactor           int                        `json:"load_factor"`
-	Concurrency          int                        `json:"concurrency"`
-	GroupIDs             []int64                    `json:"group_ids"`
-	UpgradeEnabled       bool                       `json:"upgrade_enabled"`
-	UpgradeGroupIDs      []int64                    `json:"upgrade_group_ids"`
-	SuccessesPerStep     int                        `json:"successes_per_step"`
-	UpgradeStep          int                        `json:"upgrade_step"`
-	MaxConcurrency       int                        `json:"max_concurrency"`
-	CooldownSeconds      int                        `json:"cooldown_seconds"`
-	CostMultiplier       float64                    `json:"cost_multiplier"`
-	Revision             string                     `json:"revision"`
+	OpenAITwoFAAdmission  OpenAITwoFAAdmissionConfig `json:"openai_two_fa_admission"`
+	OpenAITOTPRotateOn429 bool                       `json:"openai_totp_rotate_on_429"`
+	QualityRule           *OAuthInitialQualityRule   `json:"quality_rule,omitempty"`
+	ModelMappings         []OAuthModelMappingRule    `json:"model_mappings"`
+	SelectedModels        []string                   `json:"selected_models"`
+	ModelBilling          ModelBillingConfig         `json:"model_billing"`
+	ExcelBPS              ExcelBPSDefaults           `json:"excel_bps"`
+	UpdatedAt             time.Time                  `json:"updated_at"`
+	Enabled               bool                       `json:"enabled"`
+	Platform              string                     `json:"platform"`
+	Priority              int                        `json:"priority"`
+	LoadFactor            int                        `json:"load_factor"`
+	Concurrency           int                        `json:"concurrency"`
+	GroupIDs              []int64                    `json:"group_ids"`
+	UpgradeEnabled        bool                       `json:"upgrade_enabled"`
+	UpgradeGroupIDs       []int64                    `json:"upgrade_group_ids"`
+	SuccessesPerStep      int                        `json:"successes_per_step"`
+	UpgradeStep           int                        `json:"upgrade_step"`
+	MaxConcurrency        int                        `json:"max_concurrency"`
+	CooldownSeconds       int                        `json:"cooldown_seconds"`
+	CostMultiplier        float64                    `json:"cost_multiplier"`
+	Revision              string                     `json:"revision"`
 }
 
 func DefaultOAuthAutoConfig() OAuthAutoConfig {
@@ -51,6 +53,9 @@ func ValidateOAuthAutoConfig(c OAuthAutoConfig) error {
 		return err
 	}
 	if err := validateOAuthModelMappings(c.ModelMappings); err != nil {
+		return err
+	}
+	if err := validateOAuthSelectedModels(c.SelectedModels); err != nil {
 		return err
 	}
 	if err := validateModelBillingConfig(c.ModelBilling); err != nil {
@@ -136,6 +141,8 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 	}
 	input.InitialQualityPlan = nil
 	input.InitialAdmissionPlan = nil
+	input.Credentials = maps.Clone(input.Credentials)
+	delete(input.Credentials, OAuthInitialModelSelectionKey)
 	// Imported/user-supplied markers must not fabricate automatic-configuration history.
 	input.Extra = maps.Clone(input.Extra)
 	delete(input.Extra, "auto_config_initial_revision")
@@ -173,7 +180,7 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 		return err
 	}
 	input.InitialQualityPlan = plan
-	applyOAuthModelMappings(input, c.ModelMappings)
+	applyOAuthInitialModels(input, c.ModelMappings, c.SelectedModels)
 	input.Priority = c.Priority
 	lf := c.LoadFactor
 	input.LoadFactor = &lf
@@ -186,6 +193,9 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 	// No credentials or account identity is stored in the marker.
 	input.Extra["auto_config_initial_revision"] = c.Revision
 	input.Extra[AccountCostMultiplierExtraKey] = c.CostMultiplier
+	if input.Platform == PlatformOpenAI {
+		input.Extra[OpenAITOTPRotateOn429ExtraKey] = c.OpenAITOTPRotateOn429
+	}
 	return nil
 }
 func (s *AccountOpsService) GetOAuthAutoConfig(ctx context.Context) (OAuthAutoConfig, error) {

@@ -34,6 +34,7 @@ func RegisterGatewayRoutes(
 	bodyMemoryBudget := pkghttputil.NewBodyMemoryBudget(cfg.Gateway.RequestBodyMemoryBudgetBytes)
 	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize, bodyMemoryBudget)
 	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize, bodyMemoryBudget)
+	apiKeyAuth = middleware.ModelListingClientPolicy(settingService, apiKeyAuth)
 	h.Gateway.ConfigureAPIKeyGroupRouting(apiKeyService)
 	// BPS fetches these capability URLs without the client's API key. There is
 	// no public upload route; only authenticated BPS requests can create them.

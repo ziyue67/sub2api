@@ -733,6 +733,15 @@ func (a *Account) GetModelMapping() map[string]string {
 	}
 
 	mapping := a.resolveModelMapping(rawMapping)
+	if a.hasOAuthInitialModelSelection() {
+		filtered := make(map[string]string)
+		for source, target := range mapping {
+			if a.oauthInitialSelectionAllows(source) && a.oauthInitialSelectionAllows(target) {
+				filtered[source] = target
+			}
+		}
+		mapping = filtered
+	}
 	if !rawSigReady {
 		rawSig = modelMappingSignature(rawMapping)
 	}
@@ -1080,6 +1089,29 @@ func resolveRequestedModelInMapping(mapping map[string]string, requestedModel st
 // （isDeepseekServableModel）——未知模型名透传上游只会得到 404/400，并误触发
 // per-(账号,模型) 30 分钟冷却；带 [1m] 上下文后缀的写法先归一化再比对。
 func (a *Account) IsModelSupported(requestedModel string) bool {
+	// OAuth 首次授权时选定的模型范围优先于默认值、别名与媒体兜底，
+	// 且请求模型与其映射目标都必须在范围内：否则一次选中就能借映射把
+	// 白名单外的模型放进来。透传模式同样受此约束。
+	if !a.oauthInitialSelectionAllows(requestedModel) || !a.oauthInitialSelectionAllows(a.GetMappedModel(requestedModel)) {
+		return false
+	}
+	return supportsOpenAIRequestModel(a, requestedModel, false)
+}
+
+func (a *Account) isModelMappingSupported(requestedModel string) bool {
+	// OAuth 首次授权选定的范围是导入时的硬边界，必须先于透传短路判定：
+	// 否则一次选中就能借透传或映射把白名单外的模型放进来。
+	if !a.oauthInitialSelectionAllows(requestedModel) || !a.oauthInitialSelectionAllows(a.GetMappedModel(requestedModel)) {
+		return false
+	}
+	if a.hasOAuthInitialModelSelection() {
+		// Consult the stored exact scope before provider defaults can inject
+		// passthroughs, aliases, media fallbacks or an empty-map fallback.
+		target, ok := asAnyModelMapping(a.Credentials["model_mapping"])[requestedModel].(string)
+		if !ok || !a.oauthInitialSelectionAllows(target) {
+			return false
+		}
+	}
 	// Apply the credential boundary before passthrough's model allowlist bypass.
 	if a.IsExcelOAuth() && !a.IsExcelBPSEnabledForModel(requestedModel) {
 		return false
@@ -1099,10 +1131,7 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 			}
 		}
 	}
-	return supportsOpenAIRequestModel(a, requestedModel, false)
-}
 
-func (a *Account) isModelMappingSupported(requestedModel string) bool {
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
 	// credentials 里常残留旧的非空 model_mapping，若不在此放行，透传账号会被
@@ -1899,6 +1928,12 @@ func (a *Account) GetCodingPlanProvider() string {
 	if a.IsCline() {
 		if a.clineAccountAPISupported() {
 			return PlatformCline
+		}
+		return ""
+	}
+	if a.IsMistral() {
+		if a.mistralUsageSupported() {
+			return PlatformMistral
 		}
 		return ""
 	}
