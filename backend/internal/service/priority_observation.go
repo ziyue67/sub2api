@@ -77,7 +77,7 @@ func priorityRequestAttemptKey(req OpenAIAccountScheduleRequest, accountID int64
 // A miss schedules a bounded asynchronous read, so sessions consisting only of
 // sticky requests also acquire evidence. Missing evidence never means slow.
 func (s *defaultOpenAIAccountScheduler) shouldYieldPriorityLatencySticky(req OpenAIAccountScheduleRequest, account *Account) bool {
-	if s == nil || s.service == nil || account == nil || req.DisableStickyEscape || req.PreserveStickyBinding || req.EncryptedReasoning || req.GuardianParentAccountID > 0 || strings.TrimSpace(req.PreviousResponseID) != "" || req.Platform != PlatformOpenAI || !req.UseUpstreamTokenCost || req.RequiredImageCapability != "" {
+	if s == nil || s.service == nil || account == nil || req.DisableStickyEscape || req.PreserveStickyBinding || req.EncryptedReasoning || req.EncryptedTaskAffinity || req.GuardianParentAccountID > 0 || strings.TrimSpace(req.PreviousResponseID) != "" || req.Platform != PlatformOpenAI || !req.UseUpstreamTokenCost || req.RequiredImageCapability != "" {
 		return false
 	}
 	cfg := s.service.prioritySchedulingRuntimeConfig()

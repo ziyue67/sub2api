@@ -250,6 +250,33 @@ func TestPriorityLatencyModesBoundOwnership(t *testing.T) {
 	}
 }
 
+func TestEncryptedTaskAffinityPriorityLatencyPolicy(t *testing.T) {
+	for _, mode := range []string{PriorityLatencyDeprioritize, PriorityLatencyStop} {
+		for _, encrypted := range []bool{false, true} {
+			name := mode + "/plaintext"
+			if encrypted {
+				name = mode + "/opaque-task"
+			}
+			t.Run(name, func(t *testing.T) {
+				_, scheduler, req, _, _ := latencyModeFixture(t, mode)
+				req.SessionHash = "mode-sticky"
+				req.StickyAccountID = 1
+				req.EncryptedTaskAffinity = encrypted
+				require.False(t, priorityLatencyOwnershipBound(req), "opaque task affinity must not become hard account ownership")
+				selected, err := modeSelect(t, scheduler, req)
+				require.NoError(t, err)
+				require.NotNil(t, selected)
+				want := int64(2)
+				if encrypted && mode == PriorityLatencyDeprioritize {
+					want = 1
+				}
+				require.Equal(t, want, selected.Account.ID)
+				require.Nil(t, selected.WaitPlan)
+			})
+		}
+	}
+}
+
 type latencyInFlightBody struct {
 	io.Reader
 	once  sync.Once
