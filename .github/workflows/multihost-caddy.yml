@@ -22,10 +22,18 @@ jobs:
           set -euo pipefail
           proxy_fixture_dir="$RUNNER_TEMP/sub2api-caddy-contract"
           mkdir -p "$proxy_fixture_dir"
-          curl --fail --location --silent --show-error \
-            --connect-timeout 10 --max-time 90 \
-            https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz \
-            --output "$proxy_fixture_dir/caddy.tar.gz"
+          # GitHub Releases 偶尔返回 504/5xx；有界重试避免整条流水线因此失败。
+          for attempt in 1 2 3 4; do
+            if curl --fail --location --silent --show-error \
+                 --connect-timeout 10 --max-time 90 \
+                 https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz \
+                 --output "$proxy_fixture_dir/caddy.tar.gz"; then
+              break
+            fi
+            if [ "$attempt" = "4" ]; then echo "caddy download failed after 4 attempts" >&2; exit 1; fi
+            echo "caddy download failed (attempt $attempt), retrying..." >&2
+            sleep $((attempt * 10))
+          done
           echo '727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b  '"$proxy_fixture_dir/caddy.tar.gz" | sha256sum --check --strict
           tar -xzf "$proxy_fixture_dir/caddy.tar.gz" -C "$proxy_fixture_dir" caddy
           echo "CADDY_BIN=$proxy_fixture_dir/caddy" >> "$GITHUB_ENV"
