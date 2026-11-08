@@ -59,3 +59,7 @@ go test -tags=unit ./internal/service -run 'TestEncryptedAgentHydration|TestEncr
 - 完整 service 单测执行结束但失败（487.685s）。除文件权限、目录 sync 等外，含 Mistral SDK 命令退出 9009、Windows connectex 代理拒绝连接，以及 TestQuality5xxDoesNotSkipRecentlyCompletedPlan 的结果条数断言失败。后两类单独复核仍失败；本修复未触及这些实现，没有做修复前全量对照，不把所有失败笼统归为既有问题。
 - 全仓 ./... 检查没有获得一次全部完成且通过的结果：先因资源压力终止，限并行重跑在 service 完整失败后停止后续执行。另一次多余的 service 全量重跑已取消。相关日志保留在工作区父目录 encrypted-agent-hydration-*.log。
 - 结论：确认的软粘连遗漏已修复，定向及 race 验证通过；全量未绿，禁止据此宣称达到生产发布验收。未修改测试断言以掩盖失败，未合并版本同步 PR，未发布到生产。
+
+## PR 提交时同步最新主分支
+
+2026-11-08 再次 fetch：origin/main 已到 2fb8cc3252abe9278bcc1cf921391febbb3e8127（0.2.20），上游同步 PR #157 已由后续操作合并。本修复分支无冲突合入该主分支，仍仅以 6 个修复/测试/说明文件作为 PR 差异。以上验证记录属于同步前基线；同步后定向验证与 GitHub CI 结果以 PR 当前 head 为准。没有将主分支既有 CI 结果当作本 PR 的通过证据。
