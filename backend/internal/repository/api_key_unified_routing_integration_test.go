@@ -7,6 +7,33 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+func (s *APIKeyRepoSuite) TestUnifiedRoutingLegacyNullPolicyPreservesRoutes() {
+	user := s.mustCreateUser("unified-null@test.invalid")
+	a, b, c := s.mustCreateGroup("null-a"), s.mustCreateGroup("null-b"), s.mustCreateGroup("null-c")
+	routes := []domain.APIKeyGroupRoute{{GroupID: c.ID, Priority: 1, Weight: 1, Enabled: true}}
+	k := &service.APIKey{UserID: user.ID, Key: "sk-unified-null", Name: "legacy", Status: service.StatusActive, GroupID: &a.ID, GroupRoutes: routes}
+	s.Require().NoError(s.repo.Create(s.ctx, k))
+	var sqlNull bool
+	s.Require().NoError(scanSingleRow(s.ctx, s.client, "SELECT group_routing IS NULL FROM api_keys WHERE id=$1", []any{k.ID}, &sqlNull))
+	s.True(sqlNull, "legacy writes use SQL NULL")
+	// Also accept JSON null from older serializers, without touching legacy routes.
+	_, err := s.client.ExecContext(s.ctx, "UPDATE api_keys SET group_routing='null'::jsonb WHERE id=$1", k.ID)
+	s.Require().NoError(err)
+	_, err = s.repo.UpdateGroupIDByUserAndGroup(s.ctx, user.ID, a.ID, b.ID)
+	s.Require().NoError(err)
+	got, err := s.repo.GetByID(s.ctx, k.ID)
+	s.Require().NoError(err)
+	s.Nil(got.GroupRouting)
+	s.Equal(routes, got.GroupRoutes)
+	s.Equal(b.ID, *got.GroupID)
+	_, err = s.repo.ClearGroupIDByGroupID(s.ctx, b.ID)
+	s.Require().NoError(err)
+	got, err = s.repo.GetByID(s.ctx, k.ID)
+	s.Require().NoError(err)
+	s.Nil(got.GroupID)
+	s.Equal(routes, got.GroupRoutes)
+}
+
 func (s *APIKeyRepoSuite) TestUnifiedRoutingRoundTripAndGroupChanges() {
 	user := s.mustCreateUser("unified-routing@test.invalid")
 	a, b, c := s.mustCreateGroup("unified-a"), s.mustCreateGroup("unified-b"), s.mustCreateGroup("unified-c")

@@ -58,7 +58,6 @@ func (r *apiKeyRepository) create(ctx context.Context, key *service.APIKey) erro
 		SetStatus(key.Status).
 		SetNillableGroupID(key.GroupID).
 		SetGroupRoutes(key.GroupRoutes).
-		SetGroupRouting(key.GroupRouting).
 		SetNillableLastUsedAt(key.LastUsedAt).
 		SetQuota(key.Quota).
 		SetQuotaUsed(key.QuotaUsed).
@@ -67,6 +66,9 @@ func (r *apiKeyRepository) create(ctx context.Context, key *service.APIKey) erro
 		SetRateLimit1d(key.RateLimit1d).
 		SetRateLimit7d(key.RateLimit7d)
 
+	if key.GroupRouting != nil {
+		builder.SetGroupRouting(key.GroupRouting)
+	}
 	if len(key.IPWhitelist) > 0 {
 		builder.SetIPWhitelist(key.IPWhitelist)
 	}
@@ -353,7 +355,11 @@ func (r *apiKeyRepository) update(ctx context.Context, key *service.APIKey, fiel
 		}
 	}
 	if fields.GroupRouting {
-		builder.SetGroupRouting(key.GroupRouting)
+		if key.GroupRouting == nil {
+			builder.ClearGroupRouting()
+		} else {
+			builder.SetGroupRouting(key.GroupRouting)
+		}
 	}
 	if fields.GroupRoutes {
 		builder.SetGroupRoutes(key.GroupRoutes)
@@ -790,7 +796,7 @@ func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID in
 			SELECT MIN(g.group_id) FROM api_key_groups g WHERE g.api_key_id = k.id AND g.group_id <> $1
 		) ELSE k.group_id END,
 		group_routing = `+rewriteAPIKeyRoutingSQL("k.group_routing", "$1", "NULL")+`,
-		group_routes = CASE WHEN k.group_routing IS NULL THEN k.group_routes ELSE (`+rewriteAPIKeyRoutingSQL("k.group_routing", "$1", "NULL")+`)->'routes' END,
+		group_routes = CASE WHEN jsonb_typeof(k.group_routing) IS DISTINCT FROM 'object' THEN k.group_routes ELSE (`+rewriteAPIKeyRoutingSQL("k.group_routing", "$1", "NULL")+`)->'routes' END,
 		updated_at = NOW()
 		WHERE (k.group_id = $1 OR k.group_routing->'routes' @> jsonb_build_array(jsonb_build_object('group_id',$1::bigint))) AND k.deleted_at IS NULL`, groupID)
 	if err != nil {
@@ -818,7 +824,7 @@ func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, user
 		)
 		UPDATE api_keys k SET group_id = CASE WHEN k.group_id = $2 THEN $3 ELSE k.group_id END,
 		group_routing = `+rewriteAPIKeyRoutingSQL("k.group_routing", "$2", "$3")+`,
-		group_routes = CASE WHEN k.group_routing IS NULL THEN k.group_routes ELSE (`+rewriteAPIKeyRoutingSQL("k.group_routing", "$2", "$3")+`)->'routes' END,
+		group_routes = CASE WHEN jsonb_typeof(k.group_routing) IS DISTINCT FROM 'object' THEN k.group_routes ELSE (`+rewriteAPIKeyRoutingSQL("k.group_routing", "$2", "$3")+`)->'routes' END,
 		updated_at = NOW()
 		WHERE k.id IN (SELECT id FROM candidates)`, userID, oldGroupID, newGroupID)
 	if err != nil {

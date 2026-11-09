@@ -5,7 +5,7 @@ import "fmt"
 // Arguments are fixed SQL identifiers/placeholders, never request text. Keep
 // canonical policies in the same statement/row lock as bulk binding changes.
 func rewriteAPIKeyRoutingSQL(column, oldID, newID string) string {
-	return fmt.Sprintf(`CASE WHEN %[1]s IS NULL THEN NULL ELSE jsonb_set(%[1]s, '{routes}',
+	return fmt.Sprintf(`CASE WHEN jsonb_typeof(%[1]s) IS DISTINCT FROM 'object' THEN NULL ELSE jsonb_set(%[1]s, '{routes}',
  COALESCE((SELECT jsonb_agg(route ORDER BY ord) FROM (
   SELECT DISTINCT ON ((mapped->>'group_id')::bigint) mapped AS route, ord
   FROM (
