@@ -4,7 +4,7 @@
  */
 
 import { apiClient } from './client'
-import type { ApiKey, ApiKeyConcurrencySnapshot, ApiKeyGroupRoute, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
+import type { ApiKey, ApiKeyConcurrencySnapshot, ApiKeyGroupRoute, ApiKeyGroupRouting, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
 
 /**
  * List all API keys for current user
@@ -69,14 +69,16 @@ export async function create(
   rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
   concurrencyLimit: number = 0,
   groupRoutes?: ApiKeyGroupRoute[],
-  groupIds?: number[]
+  groupIds?: number[],
+  groupRouting?: ApiKeyGroupRouting
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = { name, concurrency_limit: concurrencyLimit }
-  if (groupIds !== undefined) payload.group_ids = groupIds
-  if (groupId !== undefined) {
+  if (groupRouting) payload.group_routing = groupRouting
+  if (!groupRouting && groupIds !== undefined) payload.group_ids = groupIds
+  if (!groupRouting && groupId !== undefined) {
     payload.group_id = groupId
   }
-  if (groupRoutes !== undefined) {
+  if (!groupRouting && groupRoutes !== undefined) {
     payload.group_routes = groupRoutes
   }
   if (customKey) {

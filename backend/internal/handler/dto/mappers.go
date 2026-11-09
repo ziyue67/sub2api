@@ -91,6 +91,7 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		GroupIDs:           k.ConfiguredGroupIDs(),
 		GroupID:            k.GroupID,
 		GroupRoutes:        k.GroupRoutes,
+		GroupRouting:       k.GroupRouting,
 		Status:             k.Status,
 		ModelMapping:       k.ModelMapping,
 		ReasoningEffort:    k.ReasoningEffort,

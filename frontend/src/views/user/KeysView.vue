@@ -162,7 +162,7 @@
             <div class="group/dropdown relative">
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
-                @click="(row.group_ids?.length ?? 0) > 1 ? editKey(row) : openGroupSelector(row)"
+                @click="(row.group_routing || (row.group_ids?.length ?? 0) > 1) ? editKey(row) : openGroupSelector(row)"
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="t('keys.clickToChangeGroup')"
               >
@@ -593,132 +593,7 @@
           </p>
         </fieldset>
 
-        <div>
-          <div class="flex items-center gap-2">
-            <label class="input-label mb-0" for="key-form-group">{{ t('keys.groupLabel') }}</label>
-            <span
-              v-if="formData.enable_group_routes"
-              class="text-xs text-gray-500 dark:text-dark-400"
-            >
-              {{ t('keys.defaultGroupFollowsRoute') }}
-            </span>
-          </div>
-          <Select
-            :key="showEditModal ? 'edit' : createProvider"
-            id="key-form-group"
-            :aria-label="t('keys.groupLabel')"
-            v-model="formData.group_id"
-            :options="formGroupOptions"
-            :disabled="formData.enable_group_routes"
-            :placeholder="t('keys.selectGroup')"
-            :empty-text="t('common.noGroupsAvailable')"
-            :searchable="true"
-            :search-placeholder="t('keys.searchGroup')"
-            data-tour="key-form-group"
-          >
-            <template #selected="{ option }">
-              <GroupBadge
-                v-if="option"
-                :name="(option as unknown as GroupOption).label"
-                :platform="(option as unknown as GroupOption).platform"
-                :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                :rate-multiplier="(option as unknown as GroupOption).rate"
-                :user-rate-multiplier="(option as unknown as GroupOption).userRate"
-                :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
-                :peak-start="(option as unknown as GroupOption).peakStart"
-                :peak-end="(option as unknown as GroupOption).peakEnd"
-                :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
-              />
-              <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
-            </template>
-            <template #option="{ option, selected }">
-              <GroupOptionItem
-                :name="(option as unknown as GroupOption).label"
-                :platform="(option as unknown as GroupOption).platform"
-                :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                :rate-multiplier="(option as unknown as GroupOption).rate"
-                :user-rate-multiplier="(option as unknown as GroupOption).userRate"
-                :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
-                :peak-start="(option as unknown as GroupOption).peakStart"
-                :peak-end="(option as unknown as GroupOption).peakEnd"
-                :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
-                :description="(option as unknown as GroupOption).description"
-                :selected="selected"
-              />
-            </template>
-          </Select>
-          <fieldset class="mt-3 space-y-2" data-testid="key-additional-groups">
-            <legend class="input-label">{{ t('keys.additionalGroups') }}</legend>
-            <p class="input-hint">{{ t('keys.multiGroupHint') }}</p>
-            <div class="max-h-48 space-y-2 overflow-y-auto">
-              <label v-for="option in groupOptions.filter(item => item.value !== null && item.value !== formData.group_id)"
-                :key="String(option.value)" class="flex items-center gap-2 text-sm">
-                <input v-model="formData.group_ids" type="checkbox" :value="option.value" :disabled="!formData.group_ids.includes(Number(option.value)) && selectedFormGroupIDs().length >= 20" />
-                <GroupBadge :name="option.label" :platform="option.platform"
-                  :subscription-type="option.subscriptionType" :rate-multiplier="option.rate"
-                  :user-rate-multiplier="option.userRate" />
-              </label>
-            </div>
-          </fieldset>
-        </div>
-
-        <div class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-700">
-          <div class="flex items-center justify-between gap-3">
-            <div>
-              <label class="input-label mb-0">{{ t('keys.multiGroupRouting') }}</label>
-              <p class="input-hint mt-1">{{ t('keys.multiGroupRoutingHint') }}</p>
-            </div>
-            <button
-              type="button"
-              @click="toggleGroupRoutes"
-              :class="['relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors', formData.enable_group_routes ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600']"
-              :aria-label="t('keys.toggleMultiGroupRouting')"
-            >
-              <span :class="['pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition', formData.enable_group_routes ? 'translate-x-4' : 'translate-x-0']" />
-            </button>
-          </div>
-          <div v-if="formData.enable_group_routes" class="space-y-2">
-            <div v-for="(route, index) in formData.group_routes" :key="index" class="grid grid-cols-[minmax(0,1fr)_70px_70px_80px_32px] items-end gap-2">
-              <label class="block min-w-0 text-xs text-gray-500 dark:text-dark-400">{{ t('keys.group') }}
-                <Select
-                  :model-value="route.group_id"
-                  :options="groupOptions"
-                  :searchable="true"
-                  :placeholder="t('keys.selectGroup')"
-                  class="mt-1"
-                  @update:model-value="route.group_id = Number($event)"
-                >
-                  <template #selected="{ option }">
-                    <GroupBadge
-                      v-if="option"
-                      :name="(option as unknown as GroupOption).label"
-                      :platform="(option as unknown as GroupOption).platform"
-                      :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                      :show-rate="false"
-                    />
-                    <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
-                  </template>
-                  <template #option="{ option, selected }">
-                    <GroupOptionItem
-                      :name="(option as unknown as GroupOption).label"
-                      :platform="(option as unknown as GroupOption).platform"
-                      :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                      :rate-multiplier="(option as unknown as GroupOption).rate"
-                      :user-rate-multiplier="(option as unknown as GroupOption).userRate"
-                      :description="(option as unknown as GroupOption).description"
-                      :selected="selected"
-                    />
-                  </template>
-                </Select>
-              </label>
-              <label class="block text-xs text-gray-500 dark:text-dark-400">{{ t('keys.routePriority') }}<input v-model.number="route.priority" min="1" type="number" class="input mt-1 w-full" /></label>
-              <label class="block text-xs text-gray-500 dark:text-dark-400">{{ t('keys.routeWeight') }}<input v-model.number="route.weight" min="1" type="number" class="input mt-1 w-full" /></label>
-              <label class="block text-xs text-gray-500 dark:text-dark-400">{{ t('keys.routeCooldown') }}<input v-model.number="route.cooldown_seconds" min="0" type="number" class="input mt-1 w-full" /></label>
-              <button type="button" class="btn btn-secondary !px-2" :aria-label="t('keys.removeRouteGroup')" @click="removeGroupRoute(index)">×</button>
-            </div>
-            <button type="button" class="btn btn-secondary text-sm" @click="addGroupRoute">{{ t('keys.addRouteGroup') }}</button>
-          </div>
-        </div>
+        <KeyGroupRoutingEditor v-model="formData.group_routing" :legacy="legacyRoutingPreview" :groups="routingGroupOptions" />
 
         <!-- Custom Key Section (only for create) -->
         <div v-if="!showEditModal" class="space-y-3">
@@ -1421,12 +1296,14 @@ import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-import type { ApiKey, ApiKeyConcurrencySnapshot, ApiKeyGroupRoute, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+import type { ApiKey, ApiKeyConcurrencySnapshot, ApiKeyGroupRouting, Group, PublicSettings, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
+import KeyGroupRoutingEditor from '@/components/keys/KeyGroupRoutingEditor.vue'
+import { cloneGroupRouting, legacyGroupRouting, validGroupRouting } from '@/utils/keyGroupRouting'
 import { syncPrimaryGroupRoute } from '@/utils/apiKeyGroupRoutes'
 import { platformBadgeLightClass } from '@/utils/platformColors'
 import { KEY_GROUP_PROVIDERS, KEY_GROUP_PROVIDER_ICONS, getKeyGroupProvider, type KeyGroupProvider } from '@/utils/keyGroupProviders'
@@ -1444,19 +1321,6 @@ const formatDateTimeLocal = (isoDate: string): string => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-interface GroupOption {
-  value: number
-  label: string
-  description: string | null
-  rate: number
-  userRate: number | null
-  peakRateEnabled: boolean
-  peakStart: string
-  peakEnd: string
-  peakRateMultiplier: number
-  subscriptionType: SubscriptionType
-  platform: GroupPlatform
-}
 
 const appStore = useAppStore()
 const authStore = useAuthStore()
@@ -1728,9 +1592,7 @@ const formData = ref({
   name: '',
   concurrency_limit: 0 as number | string,
   group_id: null as number | null,
-  enable_group_routes: false,
-  group_routes: [] as ApiKeyGroupRoute[],
-  group_ids: [] as number[],
+  group_routing: { strategy: 'lowest_rate', failover: false, routes: [] } as ApiKeyGroupRouting | null,
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1778,72 +1640,7 @@ const customKeyError = computed(() => {
   return ''
 })
 
-const primaryGroupRoute = () => {
-  const routes = formData.value.group_routes
-    .map((route, index) => ({ route, index }))
-    .filter(({ route }) => route.enabled !== false && route.group_id > 0)
-
-  return routes.sort((a, b) => a.route.priority - b.route.priority || a.index - b.index)[0]?.route
-}
-
-const syncDefaultGroupWithPrimaryRoute = () => {
-  if (!formData.value.enable_group_routes) return
-
-  const primaryRoute = primaryGroupRoute()
-  if (primaryRoute) {
-    formData.value.group_id = primaryRoute.group_id
-  }
-}
-
-const addGroupRoute = () => {
-  const groupId = formData.value.group_id ?? groups.value[0]?.id
-  if (!groupId) return
-  formData.value.group_routes.push({ group_id: groupId, priority: formData.value.group_routes.length + 1, weight: 1, enabled: true, cooldown_seconds: 0 })
-}
-
-const removeGroupRoute = (index: number) => {
-  formData.value.group_routes.splice(index, 1)
-  syncDefaultGroupWithPrimaryRoute()
-}
-
-const toggleGroupRoutes = () => {
-  formData.value.enable_group_routes = !formData.value.enable_group_routes
-  if (formData.value.enable_group_routes && formData.value.group_routes.length === 0) addGroupRoute()
-  syncDefaultGroupWithPrimaryRoute()
-}
-
-watch(
-  () => [
-    formData.value.enable_group_routes,
-    ...formData.value.group_routes.flatMap((route) => [route.group_id, route.priority, route.enabled])
-  ],
-  syncDefaultGroupWithPrimaryRoute
-)
-
-const validateGroupRoutes = () => {
-  if (!formData.value.enable_group_routes) return true
-  if (formData.value.group_routes.length === 0) {
-    appStore.showError(t('keys.groupRouteRequired'))
-    return false
-  }
-
-  const groupIDs = new Set<number>()
-  for (const route of formData.value.group_routes) {
-    if (!Number.isInteger(route.group_id) || route.group_id <= 0 ||
-      !Number.isInteger(route.priority) || route.priority <= 0 ||
-      !Number.isInteger(route.weight) || route.weight <= 0 ||
-      !Number.isInteger(route.cooldown_seconds) || route.cooldown_seconds < 0) {
-      appStore.showError(t('keys.groupRouteInvalid'))
-      return false
-    }
-    if (groupIDs.has(route.group_id)) {
-      appStore.showError(t('keys.groupRouteDuplicate'))
-      return false
-    }
-    groupIDs.add(route.group_id)
-  }
-  return true
-}
+const legacyRoutingPreview = computed<ApiKeyGroupRouting>(() => selectedKey.value ? legacyGroupRouting(selectedKey.value) : { strategy: 'lowest_rate', failover: false, routes: [] })
 
 const statusOptions = computed(() => [
   { value: 'active', label: t('common.active') },
@@ -1916,6 +1713,12 @@ const formGroupOptions = computed(() => showEditModal.value
   ? groupOptions.value
   : groupOptions.value.filter((group) => getKeyGroupProvider(group.platform) === createProvider.value)
 )
+
+// Provider cards filter additions without discarding already selected groups.
+const routingGroupOptions = computed(() => {
+  const selected = new Set(formData.value.group_routing?.routes.map(route => route.group_id) ?? [])
+  return groupOptions.value.filter(group => showEditModal.value || selected.has(group.value) || formGroupOptions.value.some(option => option.value === group.value))
+})
 
 const selectCreateProvider = (provider: KeyGroupProvider) => {
   if (createProvider.value === provider) return
@@ -2101,23 +1904,15 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   loadApiKeys()
 }
 
-const selectedFormGroupIDs = (): number[] => [...new Set([
-  ...(formData.value.group_id === null ? [] : [formData.value.group_id]),
-  ...formData.value.group_ids.filter(id => id !== formData.value.group_id)
-])]
-
 const editKey = (key: ApiKey) => {
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
-  const groupRoutes = syncPrimaryGroupRoute(key.group_id, key.group_routes || [])
   formData.value = {
     name: key.name,
     concurrency_limit: key.concurrency_limit ?? 0,
     group_id: key.group_id,
-    enable_group_routes: groupRoutes.length > 0,
-    group_routes: groupRoutes,
-    group_ids: (key.group_ids ?? []).filter(id => id !== key.group_id),
+    group_routing: key.group_routing ? cloneGroupRouting(key.group_routing) : null,
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -2231,7 +2026,6 @@ const confirmDelete = (key: ApiKey) => {
 }
 
 const handleSubmit = async () => {
-  syncDefaultGroupWithPrimaryRoute()
 
   if (concurrencyLimitError.value) {
     appStore.showError(concurrencyLimitError.value)
@@ -2240,13 +2034,8 @@ const handleSubmit = async () => {
   // An empty input explicitly clears the saved key limit.
   const concurrencyLimit = Number(formData.value.concurrency_limit)
 
-  // Validate group_id is required
-  if (formData.value.group_id === null) {
-    appStore.showError(t('keys.groupRequired'))
-    return
-  }
-
-  if (!validateGroupRoutes()) {
+  if (formData.value.group_routing && !validGroupRouting(formData.value.group_routing)) {
+    appStore.showError(t('keys.groupRouteInvalid'))
     return
   }
 
@@ -2303,8 +2092,7 @@ const handleSubmit = async () => {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
         concurrency_limit: concurrencyLimit,
-        group_id: formData.value.group_id,
-        group_ids: selectedFormGroupIDs(),
+        ...(formData.value.group_routing ? { group_routing: cloneGroupRouting(formData.value.group_routing) } : {}),
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -2312,7 +2100,6 @@ const handleSubmit = async () => {
         rate_limit_5h: rateLimitData.rate_limit_5h,
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
-        group_routes: formData.value.enable_group_routes ? formData.value.group_routes : [],
       }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status
@@ -2323,7 +2110,7 @@ const handleSubmit = async () => {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
       await keysAPI.create(
         formData.value.name,
-        formData.value.group_id,
+        undefined,
         customKey,
         ipWhitelist,
         ipBlacklist,
@@ -2331,8 +2118,9 @@ const handleSubmit = async () => {
         expiresInDays,
         rateLimitData,
         concurrencyLimit,
-        formData.value.enable_group_routes ? formData.value.group_routes : [],
-        selectedFormGroupIDs()
+        undefined,
+        undefined,
+        formData.value.group_routing ?? undefined
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -2380,9 +2168,7 @@ const closeModals = () => {
     name: '',
     concurrency_limit: 0,
     group_id: null,
-    enable_group_routes: false,
-    group_routes: [],
-    group_ids: [],
+    group_routing: { strategy: 'lowest_rate', failover: false, routes: [] },
     status: 'active',
     use_custom_key: false,
     custom_key: '',

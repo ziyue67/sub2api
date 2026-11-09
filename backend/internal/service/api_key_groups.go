@@ -34,6 +34,9 @@ func (k *APIKey) ConfiguredGroupIDs() []int64 {
 	if k == nil {
 		return nil
 	}
+	if k.GroupRouting != nil {
+		return routingGroupIDs(k.GroupRouting, true)
+	}
 	if len(k.GroupIDs) > 0 {
 		return append([]int64(nil), k.GroupIDs...)
 	}
@@ -101,6 +104,7 @@ func (s *APIKeyService) PinAPIKeyGroup(ctx context.Context, key *APIKey, id int6
 
 func (s *APIKeyService) apiKeyWithGroup(ctx context.Context, key *APIKey, group *Group) (*APIKey, error) {
 	copyKey := *key
+	copyKey.GroupRouting = cloneAPIKeyGroupRouting(key.GroupRouting)
 	copyKey.ModelMapping = maps.Clone(key.ModelMapping)
 	copyUser := *key.User
 	copyKey.User = &copyUser
@@ -137,6 +141,7 @@ func (s *APIKeyService) BillingGroups(ctx context.Context, key *APIKey) ([]*APIK
 			continue
 		}
 		copyKey := *key
+		copyKey.GroupRouting = cloneAPIKeyGroupRouting(key.GroupRouting)
 		copyKey.ModelMapping = maps.Clone(key.ModelMapping)
 		copyKey.GroupID, copyKey.Group = &group.ID, group
 		out = append(out, &copyKey)
@@ -148,6 +153,8 @@ type apiKeyGroupCandidate struct {
 	key          *APIKey
 	rate         float64
 	availability APIKeyGroupAvailability
+	priority     int
+	weight       int
 }
 
 // ModelListingGroups checks only read entitlements. It never selects a billing
@@ -205,7 +212,16 @@ func (s *APIKeyService) ModelListingGroups(ctx context.Context, key *APIKey, acc
 // effective token multiplier (including user overrides and peak hours). Equal
 // rates prefer lower load, with randomized ties to avoid a permanent hot group.
 func (s *APIKeyService) SelectRequestGroup(ctx context.Context, key *APIKey, models []string, kind string, subscriptions *SubscriptionService, accepts func(*APIKey) bool, checkBilling bool) (*APIKey, error) {
-	if key == nil || len(key.ConfiguredGroupIDs()) < 2 {
+	if key == nil {
+		return nil, nil
+	}
+	copy := *key
+	copy.requestGroupRouting = &apiKeyRequestGroupRouting{models: append([]string(nil), models...), kind: kind, subscriptions: subscriptions, accepts: accepts, checkBilling: checkBilling}
+	return s.selectRequestGroup(ctx, &copy, models, kind, subscriptions, accepts, checkBilling)
+}
+
+func (s *APIKeyService) selectRequestGroup(ctx context.Context, key *APIKey, models []string, kind string, subscriptions *SubscriptionService, accepts func(*APIKey) bool, checkBilling bool) (*APIKey, error) {
+	if key == nil || !key.UsesRequestGroupSelection() {
 		return key, nil
 	}
 	if s.groupRouter == nil || s.localAuth != nil {
@@ -215,6 +231,13 @@ func (s *APIKeyService) SelectRequestGroup(ctx context.Context, key *APIKey, mod
 	now := time.Now()
 	var lastErr error
 	for _, id := range key.ConfiguredGroupIDs() {
+		route, allowed, routeErr := s.requestGroupRoute(ctx, key, id)
+		if routeErr != nil {
+			return nil, routeErr
+		}
+		if !allowed {
+			continue
+		}
 		group, err := s.groupRepo.GetByIDLite(ctx, id)
 		if err != nil {
 			if !errors.Is(err, ErrGroupNotFound) {
@@ -285,7 +308,7 @@ func (s *APIKeyService) SelectRequestGroup(ctx context.Context, key *APIKey, mod
 		if math.IsNaN(rate) || math.IsInf(rate, 0) || rate < 0 {
 			continue
 		}
-		candidates = append(candidates, apiKeyGroupCandidate{key: candidate, rate: rate})
+		candidates = append(candidates, apiKeyGroupCandidate{key: candidate, rate: rate, priority: route.Priority, weight: route.Weight})
 	}
 	if len(candidates) == 0 {
 		if lastErr != nil {
@@ -296,6 +319,8 @@ func (s *APIKeyService) SelectRequestGroup(ctx context.Context, key *APIKey, mod
 	// Shuffle before stable sorting so exact ties share traffic.
 	rand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].rate < candidates[j].rate })
+	priorityMode := (key.GroupRouting != nil && key.GroupRouting.Strategy == APIKeyRoutingPriority) || (key.GroupRouting == nil && len(key.GroupRoutes) > 0)
+	var ready []apiKeyGroupCandidate
 	var best *apiKeyGroupCandidate
 	for i := range candidates {
 		candidate := &candidates[i]
@@ -312,12 +337,48 @@ func (s *APIKeyService) SelectRequestGroup(ctx context.Context, key *APIKey, mod
 			continue
 		}
 		candidate.availability = availability
+		if priorityMode {
+			ready = append(ready, *candidate)
+			continue
+		}
 		if best == nil || apiKeyGroupLess(*candidate, *best) {
 			best = candidate
 		}
 		// Every remaining group costs more and cannot beat an idle group.
 		if best != nil && !best.availability.Busy && i+1 < len(candidates) && candidates[i+1].rate > best.rate {
 			break
+		}
+	}
+	if priorityMode && len(ready) > 0 {
+		// Prefer ready capacity; then priority. Weight is applied only within
+		// the winning tier, not overridden by price or tiny load differences.
+		sort.SliceStable(ready, func(i, j int) bool {
+			if ready[i].availability.Busy != ready[j].availability.Busy {
+				return !ready[i].availability.Busy
+			}
+			if ready[i].priority != ready[j].priority {
+				return ready[i].priority < ready[j].priority
+			}
+			return *ready[i].key.GroupID < *ready[j].key.GroupID
+		})
+		total := uint64(0)
+		for _, c := range ready {
+			if c.priority == ready[0].priority && c.availability.Busy == ready[0].availability.Busy {
+				total += uint64(c.weight)
+			}
+		}
+		if total > 0 {
+			pick := (s.routeSequence.Add(1) - 1) % total
+			for i := range ready {
+				if ready[i].priority != ready[0].priority || ready[i].availability.Busy != ready[0].availability.Busy {
+					continue
+				}
+				if pick < uint64(ready[i].weight) {
+					best = &ready[i]
+					break
+				}
+				pick -= uint64(ready[i].weight)
+			}
 		}
 	}
 	if best == nil {

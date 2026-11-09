@@ -29,16 +29,18 @@ func IsWindowExpired(windowStart *time.Time, duration time.Duration) bool {
 }
 
 type APIKey struct {
-	ID          int64
-	UserID      int64
-	Key         string
-	Name        string
-	GroupIDs    []int64 // Configured groups; GroupID is the selected group for a request.
-	GroupID     *int64
-	GroupRoutes []domain.APIKeyGroupRoute
-	Status      string
-	IPWhitelist []string
-	IPBlacklist []string
+	ID                  int64
+	UserID              int64
+	Key                 string
+	Name                string
+	GroupIDs            []int64 // Configured groups; GroupID is the selected group for a request.
+	GroupID             *int64
+	GroupRoutes         []domain.APIKeyGroupRoute
+	GroupRouting        *domain.APIKeyGroupRouting
+	requestGroupRouting *apiKeyRequestGroupRouting
+	Status              string
+	IPWhitelist         []string
+	IPBlacklist         []string
 
 	// Model, reasoning effort and long context policies are managed only by administrators.
 	// Mapping is an exact, single-step rewrite; empty policy preserves the request.

@@ -66,6 +66,9 @@ func (r *apiKeyRepository) create(ctx context.Context, key *service.APIKey) erro
 		SetRateLimit1d(key.RateLimit1d).
 		SetRateLimit7d(key.RateLimit7d)
 
+	if key.GroupRouting != nil {
+		builder.SetGroupRouting(key.GroupRouting)
+	}
 	if len(key.IPWhitelist) > 0 {
 		builder.SetIPWhitelist(key.IPWhitelist)
 	}
@@ -145,6 +148,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			apikey.FieldUserID,
 			apikey.FieldGroupID,
 			apikey.FieldGroupRoutes,
+			apikey.FieldGroupRouting,
 			apikey.FieldName,
 			apikey.FieldStatus,
 			apikey.FieldModelMapping,
@@ -348,6 +352,13 @@ func (r *apiKeyRepository) update(ctx context.Context, key *service.APIKey, fiel
 			builder.SetGroupID(*key.GroupID)
 		} else {
 			builder.ClearGroupID()
+		}
+	}
+	if fields.GroupRouting {
+		if key.GroupRouting == nil {
+			builder.ClearGroupRouting()
+		} else {
+			builder.SetGroupRouting(key.GroupRouting)
 		}
 	}
 	if fields.GroupRoutes {
@@ -781,10 +792,13 @@ func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID in
 		WITH removed AS (
 			DELETE FROM api_key_groups WHERE group_id = $1
 		)
-		UPDATE api_keys k SET group_id = (
+		UPDATE api_keys k SET group_id = CASE WHEN k.group_id = $1 THEN (
 			SELECT MIN(g.group_id) FROM api_key_groups g WHERE g.api_key_id = k.id AND g.group_id <> $1
-		), updated_at = NOW()
-		WHERE k.group_id = $1 AND k.deleted_at IS NULL`, groupID)
+		) ELSE k.group_id END,
+		group_routing = `+rewriteAPIKeyRoutingSQL("k.group_routing", "$1", "NULL")+`,
+		group_routes = CASE WHEN jsonb_typeof(k.group_routing) IS DISTINCT FROM 'object' THEN k.group_routes ELSE (`+rewriteAPIKeyRoutingSQL("k.group_routing", "$1", "NULL")+`)->'routes' END,
+		updated_at = NOW()
+		WHERE (k.group_id = $1 OR k.group_routing->'routes' @> jsonb_build_array(jsonb_build_object('group_id',$1::bigint))) AND k.deleted_at IS NULL`, groupID)
 	if err != nil {
 		return 0, err
 	}
@@ -808,7 +822,10 @@ func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, user
 			SELECT id, $3 FROM candidates WHERE group_id IS DISTINCT FROM $2 AND group_id IS DISTINCT FROM $3
 			ON CONFLICT DO NOTHING
 		)
-		UPDATE api_keys k SET group_id = CASE WHEN k.group_id = $2 THEN $3 ELSE k.group_id END, updated_at = NOW()
+		UPDATE api_keys k SET group_id = CASE WHEN k.group_id = $2 THEN $3 ELSE k.group_id END,
+		group_routing = `+rewriteAPIKeyRoutingSQL("k.group_routing", "$2", "$3")+`,
+		group_routes = CASE WHEN jsonb_typeof(k.group_routing) IS DISTINCT FROM 'object' THEN k.group_routes ELSE (`+rewriteAPIKeyRoutingSQL("k.group_routing", "$2", "$3")+`)->'routes' END,
+		updated_at = NOW()
 		WHERE k.id IN (SELECT id FROM candidates)`, userID, oldGroupID, newGroupID)
 	if err != nil {
 		return 0, err
@@ -991,6 +1008,7 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 		Window1dStart:    m.Window1dStart,
 		Window7dStart:    m.Window7dStart,
 		GroupRoutes:      m.GroupRoutes,
+		GroupRouting:     m.GroupRouting,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)

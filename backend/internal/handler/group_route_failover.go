@@ -20,13 +20,15 @@ func switchToNextAPIKeyRoute(
 	attempted map[int64]struct{},
 	markCurrentRouteFailed bool,
 ) (bool, error) {
-	if c == nil || apiKeyService == nil || apiKey == nil || len(apiKey.GroupRoutes) == 0 {
+	if c == nil || apiKeyService == nil || apiKey == nil || !apiKey.HasGroupFailover() {
 		return false, nil
 	}
 	if apiKey.GroupID != nil {
 		attempted[*apiKey.GroupID] = struct{}{}
 		if markCurrentRouteFailed {
-			apiKeyService.MarkGroupRouteFailed(apiKey, *apiKey.GroupID)
+			if err := apiKeyService.MarkRequestGroupRouteFailed(c.Request.Context(), apiKey, *apiKey.GroupID); err != nil {
+				return false, err
+			}
 		}
 	}
 

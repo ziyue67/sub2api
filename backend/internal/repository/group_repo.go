@@ -997,6 +997,13 @@ func (r *groupRepository) deleteCascade(ctx context.Context, id int64, requireEm
 		return nil, err
 	}
 
+	if _, err := exec.ExecContext(ctx, `UPDATE api_keys k SET
+		group_routing = `+rewriteAPIKeyRoutingSQL("k.group_routing", "$1", "NULL")+`,
+		group_routes = (`+rewriteAPIKeyRoutingSQL("k.group_routing", "$1", "NULL")+`)->'routes', updated_at=NOW()
+		WHERE k.group_routing->'routes' @> jsonb_build_array(jsonb_build_object('group_id',$1::bigint))`, id); err != nil {
+		return nil, err
+	}
+
 	// 5. Soft-delete group itself.
 	if _, err := txClient.Group.Delete().Where(group.IDEQ(id)).Exec(ctx); err != nil {
 		return nil, err

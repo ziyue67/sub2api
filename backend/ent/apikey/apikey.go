@@ -31,6 +31,8 @@ const (
 	FieldName = "name"
 	// FieldGroupID holds the string denoting the group_id field in the database.
 	FieldGroupID = "group_id"
+	// FieldGroupRouting holds the string denoting the group_routing field in the database.
+	FieldGroupRouting = "group_routing"
 	// FieldGroupRoutes holds the string denoting the group_routes field in the database.
 	FieldGroupRoutes = "group_routes"
 	// FieldStatus holds the string denoting the status field in the database.
@@ -113,6 +115,7 @@ var Columns = []string{
 	FieldKey,
 	FieldName,
 	FieldGroupID,
+	FieldGroupRouting,
 	FieldGroupRoutes,
 	FieldStatus,
 	FieldModelMapping,
