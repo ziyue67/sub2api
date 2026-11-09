@@ -78,8 +78,9 @@ type APIKeyUpdateFields struct {
 	Quota            bool
 	GroupID          bool
 	// GroupRoutes 覆盖 API Key 的多分组路由配置。
-	GroupRoutes bool
-	ExpiresAt   bool
+	GroupRoutes  bool
+	GroupRouting bool
+	ExpiresAt    bool
 	// QuotaUsed 仅供"重置配额用量"路径声明；常规计费走 IncrementQuotaUsed。
 	QuotaUsed bool
 	// RateLimits 覆盖 rate_limit_5h / _1d / _7d 三个阈值。
@@ -225,14 +226,15 @@ type APIKeyAuthCacheInvalidator interface {
 
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
-	ConcurrencyLimit int                       `json:"concurrency_limit"`
-	Name             string                    `json:"name"`
-	GroupIDs         []int64                   `json:"group_ids"`
-	GroupID          *int64                    `json:"group_id"`
-	GroupRoutes      []domain.APIKeyGroupRoute `json:"group_routes"`
-	CustomKey        *string                   `json:"custom_key"`   // 可选的自定义key
-	IPWhitelist      []string                  `json:"ip_whitelist"` // IP 白名单
-	IPBlacklist      []string                  `json:"ip_blacklist"` // IP 黑名单
+	ConcurrencyLimit int                        `json:"concurrency_limit"`
+	Name             string                     `json:"name"`
+	GroupIDs         []int64                    `json:"group_ids"`
+	GroupID          *int64                     `json:"group_id"`
+	GroupRoutes      []domain.APIKeyGroupRoute  `json:"group_routes"`
+	GroupRouting     *domain.APIKeyGroupRouting `json:"group_routing"`
+	CustomKey        *string                    `json:"custom_key"`   // 可选的自定义key
+	IPWhitelist      []string                   `json:"ip_whitelist"` // IP 白名单
+	IPBlacklist      []string                   `json:"ip_blacklist"` // IP 黑名单
 
 	// Quota fields
 	Quota         float64 `json:"quota"`           // Quota limit in USD (0 = unlimited)
@@ -251,6 +253,7 @@ type UpdateAPIKeyRequest struct {
 	GroupIDs         *[]int64                   `json:"group_ids"`
 	GroupID          *int64                     `json:"group_id"`
 	GroupRoutes      *[]domain.APIKeyGroupRoute `json:"group_routes"`
+	GroupRouting     *domain.APIKeyGroupRouting `json:"group_routing"`
 	Status           *string                    `json:"status"`
 	IPWhitelist      *[]string                  `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
 	IPBlacklist      *[]string                  `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
@@ -660,6 +663,9 @@ func (s *APIKeyService) MarkGroupRouteFailed(key *APIKey, groupID int64) {
 //
 // Route-only legacy keys are still supported by selecting their first route.
 func (s *APIKeyService) ApplySelectedGroupRoute(ctx context.Context, key *APIKey) error {
+	if key != nil && key.GroupRouting != nil {
+		return nil
+	}
 	if key == nil {
 		return nil
 	}
@@ -754,6 +760,9 @@ func (s *APIKeyService) ResolveImageGenerationAPIKey(ctx context.Context, key *A
 // ApplyNextGroupRoute applies an untried, non-cooled route to the same API key.
 // It is used by gateway retry loops before any response bytes have been sent.
 func (s *APIKeyService) ApplyNextGroupRoute(ctx context.Context, key *APIKey, attempted map[int64]struct{}) (bool, error) {
+	if key != nil && key.UsesRequestGroupSelection() {
+		return s.nextUnifiedGroup(ctx, key, attempted)
+	}
 	route := s.selectedAPIKeyGroupRouteExcluding(key, attempted)
 	if route == nil {
 		return false, nil
@@ -827,6 +836,22 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
+	policy, err := normalizeAPIKeyGroupRouting(req.GroupRouting)
+	if err != nil {
+		return nil, err
+	}
+	if policy != nil {
+		if routingFieldsConflict(req.GroupID, req.GroupIDs, req.GroupRoutes) {
+			return nil, errAPIKeyRoutingConflict
+		}
+		if err := s.validateAPIKeyGroupRoutes(ctx, user, policy.Routes); err != nil {
+			return nil, err
+		}
+		ids := routingGroupIDs(policy, false)
+		req.GroupID, req.GroupIDs = &ids[0], ids
+	} else if len(req.GroupIDs) > 1 && len(req.GroupRoutes) > 0 {
+		return nil, errAPIKeyRoutingConflict
+	}
 	groupRoutes, err := normalizeAPIKeyGroupRoutes(req.GroupRoutes)
 	if err != nil {
 		return nil, err
@@ -922,6 +947,10 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		RateLimit5h:      req.RateLimit5h,
 		RateLimit1d:      req.RateLimit1d,
 		RateLimit7d:      req.RateLimit7d,
+	}
+
+	if policy != nil {
+		applyAPIKeyGroupRouting(apiKey, policy)
 	}
 
 	// Set expiration time if specified
@@ -1229,6 +1258,26 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		fields.Name = true
 	}
 
+	if req.GroupRouting != nil {
+		if req.GroupID != nil || req.GroupIDs != nil || req.GroupRoutes != nil {
+			return nil, errAPIKeyRoutingConflict
+		}
+		policy, err := normalizeAPIKeyGroupRouting(req.GroupRouting)
+		if err != nil {
+			return nil, err
+		}
+		user, err := s.userRepo.GetByID(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.validateAPIKeyGroupRoutes(ctx, user, policy.Routes); err != nil {
+			return nil, err
+		}
+		applyAPIKeyGroupRouting(apiKey, policy)
+		fields.GroupRouting, fields.GroupID, fields.GroupRoutes = true, true, true
+	} else if apiKey.GroupRouting != nil && (req.GroupID != nil || req.GroupIDs != nil || req.GroupRoutes != nil) {
+		return nil, errAPIKeyRoutingConflict
+	}
 	if req.GroupID != nil || req.GroupIDs != nil {
 		user, err := s.userRepo.GetByID(ctx, userID)
 		if err != nil {
@@ -1267,6 +1316,10 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		}
 		apiKey.GroupRoutes = routes
 		fields.GroupRoutes = true
+	}
+
+	if req.GroupRouting == nil && (fields.GroupID || fields.GroupRoutes) && len(apiKey.GroupIDs) > 1 && len(apiKey.GroupRoutes) > 0 {
+		return nil, errAPIKeyRoutingConflict
 	}
 
 	if req.Status != nil {

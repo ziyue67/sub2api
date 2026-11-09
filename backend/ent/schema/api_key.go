@@ -48,6 +48,9 @@ func (APIKey) Fields() []ent.Field {
 		field.Int64("group_id").
 			Optional().
 			Nillable(),
+		field.JSON("group_routing", &domain.APIKeyGroupRouting{}).
+			Optional().
+			Comment("Unified routing policy; null preserves legacy keys"),
 		field.JSON("group_routes", []domain.APIKeyGroupRoute{}).
 			Optional().
 			Comment("Ordered multi-group routes for this API key"),

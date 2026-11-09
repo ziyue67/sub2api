@@ -1,0 +1,36 @@
+name: Unified key group routing
+on:
+  pull_request:
+    paths:
+      - 'backend/internal/service/api_key*'
+      - 'backend/internal/repository/api_key*'
+      - 'backend/internal/repository/group_repo.go'
+      - 'backend/internal/server/middleware/api_key*'
+      - 'backend/internal/handler/group_route_failover.go'
+      - 'backend/migrations/337_api_key_unified_group_routing.sql'
+      - 'frontend/src/components/keys/**'
+      - 'frontend/src/views/user/KeysView.vue'
+      - '.github/workflows/unified-key-group-routing.yml'
+permissions:
+  contents: read
+jobs:
+  routing-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: '2'
+      GOFLAGS: '-p=2'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Routing, billing, admission and shared cooldown race regressions
+        working-directory: backend
+        run: go test -race -tags=unit ./internal/service ./internal/repository ./internal/server/middleware ./internal/handler ./internal/server/routes -run 'Test.*(Unified|MultiGroup|GroupRoute|APIKeyGroups|APIKeyAdmission|APIKeyQueue|ModelListing|APIKeyServiceSelected|InvestigationMultiGroupModeConflict)' -count=1 -timeout=10m -v
+      - name: Real PostgreSQL migrations, policy persistence and administrative group changes
+        working-directory: backend
+        run: go test -tags=integration ./internal/repository -run 'TestAPIKeyRepoSuite/(TestUnified|TestAdditionalGroup|TestGroupDeletion)' -count=1 -timeout=10m -v

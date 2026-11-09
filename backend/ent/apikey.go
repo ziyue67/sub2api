@@ -37,6 +37,8 @@ type APIKey struct {
 	Name string `json:"name,omitempty"`
 	// GroupID holds the value of the "group_id" field.
 	GroupID *int64 `json:"group_id,omitempty"`
+	// Unified routing policy; null preserves legacy keys
+	GroupRouting *domain.APIKeyGroupRouting `json:"group_routing,omitempty"`
 	// Ordered multi-group routes for this API key
 	GroupRoutes []domain.APIKeyGroupRoute `json:"group_routes,omitempty"`
 	// Status holds the value of the "status" field.
@@ -132,7 +134,7 @@ func (*APIKey) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case apikey.FieldGroupRoutes, apikey.FieldModelMapping, apikey.FieldIPWhitelist, apikey.FieldIPBlacklist:
+		case apikey.FieldGroupRouting, apikey.FieldGroupRoutes, apikey.FieldModelMapping, apikey.FieldIPWhitelist, apikey.FieldIPBlacklist:
 			values[i] = new([]byte)
 		case apikey.FieldAllowLongContext:
 			values[i] = new(sql.NullBool)
@@ -214,6 +216,14 @@ func (_m *APIKey) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.GroupID = new(int64)
 				*_m.GroupID = value.Int64
+			}
+		case apikey.FieldGroupRouting:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field group_routing", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.GroupRouting); err != nil {
+					return fmt.Errorf("unmarshal field group_routing: %w", err)
+				}
 			}
 		case apikey.FieldGroupRoutes:
 			if value, ok := values[i].(*[]byte); !ok {
@@ -426,6 +436,9 @@ func (_m *APIKey) String() string {
 		builder.WriteString("group_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("group_routing=")
+	builder.WriteString(fmt.Sprintf("%v", _m.GroupRouting))
 	builder.WriteString(", ")
 	builder.WriteString("group_routes=")
 	builder.WriteString(fmt.Sprintf("%v", _m.GroupRoutes))

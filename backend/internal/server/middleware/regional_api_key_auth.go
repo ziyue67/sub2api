@@ -54,7 +54,7 @@ func RegionalAPIKeyAuth(svc regionalAPIKeyAuthenticator, cfg *config.Config) gin
 			}
 			return
 		}
-		if len(auth.ConfiguredGroupIDs()) > 1 {
+		if auth.UsesRequestGroupSelection() {
 			AbortWithError(c, http.StatusServiceUnavailable, "MULTI_GROUP_ROUTING_UNAVAILABLE", "Multi-group routing is unavailable on this regional gateway")
 			return
 		}

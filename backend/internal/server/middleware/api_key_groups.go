@@ -15,7 +15,7 @@ import (
 )
 
 func isMultiGroupBillingInfoRequest(c *gin.Context, key *service.APIKey) bool {
-	return c.Request.URL.Path == "/v1/sub2api/billing" && len(key.ConfiguredGroupIDs()) > 1
+	return c.Request.URL.Path == "/v1/sub2api/billing" && key.UsesRequestGroupSelection()
 }
 
 const modelListingGroupsKey = "api_key.model_listing_groups"
@@ -42,7 +42,7 @@ func ModelListingClientPolicy(settings *service.SettingService, auth APIKeyAuthM
 // Only the ordinary collection uses a union. Explicit model selection, model
 // retrieval and Codex manifests retain their existing request-group semantics.
 func isMultiGroupModelListing(c *gin.Context, key *service.APIKey) bool {
-	return key != nil && len(key.ConfiguredGroupIDs()) > 1 && c.Request.Method == http.MethodGet &&
+	return key != nil && key.UsesRequestGroupSelection() && c.Request.Method == http.MethodGet &&
 		(c.Request.URL.Path == "/v1/models" || c.Request.URL.Path == "/models") &&
 		!c.Request.URL.Query().Has("model") && c.Query("client_version") == ""
 }
@@ -82,7 +82,7 @@ func selectAPIKeyRequestGroup(c *gin.Context, keys *service.APIKeyService, subsc
 	if target, ok := c.Get("security_penalty.original_group_id"); ok && target != nil {
 		return key, nil
 	}
-	if len(key.ConfiguredGroupIDs()) < 2 || isMultiGroupBillingInfoRequest(c, key) || c.Request.URL.Path == "/v1/usage" || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path) {
+	if !key.UsesRequestGroupSelection() || isMultiGroupBillingInfoRequest(c, key) || c.Request.URL.Path == "/v1/usage" || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path) {
 		return key, nil
 	}
 	var models []string
@@ -128,6 +128,10 @@ func selectAPIKeyRequestGroup(c *gin.Context, keys *service.APIKeyService, subsc
 	}
 	accepts := func(candidate *service.APIKey) bool {
 		group := candidate.Group
+		// Re-run the same capability gates on failover as queued admission.
+		if apiKeyQueueRevokedCapability(candidate, service.APIKeyQueueRequestPermissionsFromContext(c.Request.Context())) != nil {
+			return false
+		}
 		// Binding the restricted target must not make the normal cheapest-group
 		// selector send healthy conversations there. Forced penalties returned
 		// above already passed the normal target authorization checks.

@@ -22,7 +22,7 @@ import (
 // model_allowlist, ranxi v26 stream_only and user-group denied models, API key
 // concurrency limit, group client and subagent admission policies)与
 // ranxi v30(include configured API key groups)。
-const apiKeyAuthSnapshotVersion = 33
+const apiKeyAuthSnapshotVersion = 34
 
 // Local-only generation wrapper. Old entries remain bounded by existing TTL
 // and capacity, but cannot authorize after a subscription recovery checkpoint.
@@ -384,6 +384,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		GroupIDs:         append([]int64(nil), apiKey.GroupIDs...),
 		GroupID:          apiKey.GroupID,
 		GroupRoutes:      apiKey.GroupRoutes,
+		GroupRouting:     cloneAPIKeyGroupRouting(apiKey.GroupRouting),
 		Name:             apiKey.Name,
 		Status:           apiKey.Status,
 		ModelMapping:     maps.Clone(apiKey.ModelMapping),
@@ -505,6 +506,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		GroupIDs:         append([]int64(nil), snapshot.GroupIDs...),
 		GroupID:          snapshot.GroupID,
 		GroupRoutes:      snapshot.GroupRoutes,
+		GroupRouting:     cloneAPIKeyGroupRouting(snapshot.GroupRouting),
 		Key:              key,
 		Name:             snapshot.Name,
 		Status:           snapshot.Status,

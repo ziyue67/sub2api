@@ -23,7 +23,7 @@ func nextWithAPIKeyAdmissionOwner(c *gin.Context, apiKeyService *service.APIKeyS
 			lookup = apiKeyService.GetByKeyUncached
 		}
 	}
-	if apiKeyService != nil && lookup != nil && len(key.ConfiguredGroupIDs()) > 1 && key.GroupID != nil {
+	if apiKeyService != nil && lookup != nil && key.UsesRequestGroupSelection() && key.GroupID != nil {
 		baseLookup, groupID := lookup, *key.GroupID
 		lookup = func(ctx context.Context, credential string) (*service.APIKey, error) {
 			latest, err := baseLookup(ctx, credential)

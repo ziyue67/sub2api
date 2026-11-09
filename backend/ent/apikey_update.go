@@ -142,6 +142,18 @@ func (_u *APIKeyUpdate) ClearGroupID() *APIKeyUpdate {
 	return _u
 }
 
+// SetGroupRouting sets the "group_routing" field.
+func (_u *APIKeyUpdate) SetGroupRouting(v *domain.APIKeyGroupRouting) *APIKeyUpdate {
+	_u.mutation.SetGroupRouting(v)
+	return _u
+}
+
+// ClearGroupRouting clears the value of the "group_routing" field.
+func (_u *APIKeyUpdate) ClearGroupRouting() *APIKeyUpdate {
+	_u.mutation.ClearGroupRouting()
+	return _u
+}
+
 // SetGroupRoutes sets the "group_routes" field.
 func (_u *APIKeyUpdate) SetGroupRoutes(v []domain.APIKeyGroupRoute) *APIKeyUpdate {
 	_u.mutation.SetGroupRoutes(v)
@@ -683,6 +695,12 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.GroupRouting(); ok {
+		_spec.SetField(apikey.FieldGroupRouting, field.TypeJSON, value)
+	}
+	if _u.mutation.GroupRoutingCleared() {
+		_spec.ClearField(apikey.FieldGroupRouting, field.TypeJSON)
+	}
 	if value, ok := _u.mutation.GroupRoutes(); ok {
 		_spec.SetField(apikey.FieldGroupRoutes, field.TypeJSON, value)
 	}
@@ -1035,6 +1053,18 @@ func (_u *APIKeyUpdateOne) SetNillableGroupID(v *int64) *APIKeyUpdateOne {
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *APIKeyUpdateOne) ClearGroupID() *APIKeyUpdateOne {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetGroupRouting sets the "group_routing" field.
+func (_u *APIKeyUpdateOne) SetGroupRouting(v *domain.APIKeyGroupRouting) *APIKeyUpdateOne {
+	_u.mutation.SetGroupRouting(v)
+	return _u
+}
+
+// ClearGroupRouting clears the value of the "group_routing" field.
+func (_u *APIKeyUpdateOne) ClearGroupRouting() *APIKeyUpdateOne {
+	_u.mutation.ClearGroupRouting()
 	return _u
 }
 
@@ -1608,6 +1638,12 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(apikey.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.GroupRouting(); ok {
+		_spec.SetField(apikey.FieldGroupRouting, field.TypeJSON, value)
+	}
+	if _u.mutation.GroupRoutingCleared() {
+		_spec.ClearField(apikey.FieldGroupRouting, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.GroupRoutes(); ok {
 		_spec.SetField(apikey.FieldGroupRoutes, field.TypeJSON, value)

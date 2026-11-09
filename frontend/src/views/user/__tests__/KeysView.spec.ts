@@ -6,6 +6,13 @@ import { createPinia } from 'pinia'
 import type { ApiKey, ApiKeyConcurrencySnapshot, Group } from '@/types'
 import { keysAPI } from '@/api'
 import KeysView from '../KeysView.vue'
+import KeyGroupRoutingEditor from '@/components/keys/KeyGroupRoutingEditor.vue'
+
+const routingPolicy = (...ids: number[]) => ({ strategy: 'lowest_rate' as const, failover: false, routes: ids.map(group_id => ({ group_id, priority: 1, weight: 1, enabled: true, cooldown_seconds: 0 })) })
+const chooseRouting = async (wrapper: VueWrapper, ...ids: number[]) => {
+  wrapper.getComponent(KeyGroupRoutingEditor).vm.$emit('update:modelValue', routingPolicy(...ids))
+  await nextTick()
+}
 
 enableAutoUnmount(afterEach)
 
@@ -652,12 +659,12 @@ describe('user KeysView column settings', () => {
     await getButtonByText(wrapper, 'Create API Key').trigger('click')
     expect((wrapper.get('#key-concurrency-limit').element as HTMLInputElement).value).toBe('0')
     await wrapper.get('[data-tour="key-form-name"]').setValue('new-key')
-    await wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 42)
+    await chooseRouting(wrapper, 42)
     await wrapper.get('#key-concurrency-limit').setValue(input)
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
-    expect(createKey).toHaveBeenCalledWith('new-key', 42, undefined, [], [], 0, undefined,
-      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, Number(input), [], [42])
+    expect(createKey).toHaveBeenCalledWith('new-key', undefined, undefined, [], [], 0, undefined,
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, Number(input), undefined, undefined, routingPolicy(42))
     await getButtonByText(wrapper, 'Create API Key').trigger('click')
     expect((wrapper.get('#key-concurrency-limit').element as HTMLInputElement).value).toBe('0')
   })
@@ -679,7 +686,7 @@ describe('user KeysView column settings', () => {
     listKeys.mockResolvedValueOnce({ items: [{ ...createApiKey(), group_id: 42 }], total: 1 })
     const wrapper = await mountView()
     await getButtonByText(wrapper, mode === 'edit' ? 'common.edit' : 'Create API Key').trigger('click')
-    await wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 42)
+    await chooseRouting(wrapper, 42)
     await wrapper.get('#key-concurrency-limit').setValue(input)
     expect(wrapper.get('#key-concurrency-limit').attributes('aria-invalid')).toBe('true')
     expect(wrapper.get('#key-concurrency-error').text()).toBe(messages['keys.concurrencyLimitInvalid'])
@@ -783,11 +790,11 @@ describe('user KeysView column settings', () => {
     await wrapper.get('#key-concurrency-limit').setValue(2)
     expect(wrapper.get('#key-queue-policy').text()).toContain('7 waiting requests')
     await wrapper.get('[data-tour="key-form-name"]').setValue('new-key')
-    await wrapper.getComponent('[data-tour="key-form-group"]').vm.$emit('update:modelValue', 42)
+    await chooseRouting(wrapper, 42)
     await wrapper.get('#key-form').trigger('submit')
     await flushPromises()
-    expect(createKey).toHaveBeenCalledWith('new-key', 42, undefined, [], [], 0, undefined,
-      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, 2, [], [42])
+    expect(createKey).toHaveBeenCalledWith('new-key', undefined, undefined, [], [], 0, undefined,
+      { rate_limit_5h: 0, rate_limit_1d: 0, rate_limit_7d: 0 }, 2, undefined, undefined, routingPolicy(42))
   })
 
   it('distinguishes unknown statistics and policy from zero and still permits saving', async () => {
@@ -1090,7 +1097,7 @@ describe('user KeysView column settings', () => {
     } as Group
 
     const formOption = (wrapper: VueWrapper) => wrapper
-      .getComponent('[data-tour="key-form-group"]').props('options')
+      .getComponent(KeyGroupRoutingEditor).props('groups')
       .find((option: { value: number }) => option.value === group.id)
 
     beforeEach(() => {
@@ -1179,8 +1186,8 @@ describe('user KeysView column settings', () => {
       rate_multiplier: 1,
       subscription_type: 'standard',
     }))
-    const groupSelect = (wrapper: VueWrapper) => wrapper.findComponent('[data-tour="key-form-group"]')
-    const optionIds = (wrapper: VueWrapper) => groupSelect(wrapper).props('options').map((option: { value: number }) => option.value)
+    const groupSelect = (wrapper: VueWrapper) => wrapper.getComponent(KeyGroupRoutingEditor)
+    const optionIds = (wrapper: VueWrapper) => groupSelect(wrapper).props('groups').map((option: { value: number }) => option.value)
     const chooseProvider = (wrapper: VueWrapper, value: string) => wrapper.get(`input[name="key-provider"][value="${value}"]`).setValue()
     const openCreate = async () => {
       const wrapper = await mountView()
@@ -1205,22 +1212,24 @@ describe('user KeysView column settings', () => {
       expect(wrapper.findAllComponents({ name: 'Select' })[0].props('options')).toHaveLength(14)
     })
 
-    it('clears the previous group on provider change and submits only the newly selected group', async () => {
+    it('preserves selected candidates across provider filters and submits one routing policy', async () => {
       const wrapper = await openCreate()
       await wrapper.get('[data-tour="key-form-name"]').setValue('My key')
-      await groupSelect(wrapper).vm.$emit('update:modelValue', 1)
-      await chooseProvider(wrapper, 'domestic')
-      expect(groupSelect(wrapper).props('modelValue')).toBeNull()
       await wrapper.get('#key-form').trigger('submit')
       expect(keysAPI.create).not.toHaveBeenCalled()
-      expect(showError).toHaveBeenCalledWith('keys.groupRequired')
-
-      await groupSelect(wrapper).vm.$emit('update:modelValue', 5)
-      vi.mocked(keysAPI.create).mockResolvedValue({ ...createApiKey(), group_id: 5 })
+      expect(showError).toHaveBeenCalledWith('keys.groupRouteInvalid')
+      await chooseRouting(wrapper, 1)
+      await chooseProvider(wrapper, 'domestic')
+      expect(groupSelect(wrapper).props('modelValue')).toEqual(routingPolicy(1))
+      expect(optionIds(wrapper)).toEqual([1, 3, 4, 5, 6])
+      await chooseRouting(wrapper, 1, 5)
+      vi.mocked(keysAPI.create).mockResolvedValue({ ...createApiKey(), group_routing: routingPolicy(1, 5) })
       await wrapper.get('#key-form').trigger('submit')
       await flushPromises()
       expect(keysAPI.create).toHaveBeenCalledOnce()
-      expect(vi.mocked(keysAPI.create).mock.calls[0].slice(0, 2)).toEqual(['My key', 5])
+      const args = vi.mocked(keysAPI.create).mock.calls[0]
+      expect(args.slice(0, 2)).toEqual(['My key', undefined])
+      expect(args.slice(9)).toEqual([undefined, undefined, routingPolicy(1, 5)])
     })
 
     it('defaults to a provider with available groups and disables empty categories', async () => {
@@ -1252,11 +1261,11 @@ describe('user KeysView column settings', () => {
     it('resets provider and group when reopening create, and preserves edit options', async () => {
       const wrapper = await openCreate()
       await chooseProvider(wrapper, 'domestic')
-      await groupSelect(wrapper).vm.$emit('update:modelValue', 5)
+      await chooseRouting(wrapper, 5)
       await wrapper.get('[data-test="close-dialog"]').trigger('click')
       await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
       expect(optionIds(wrapper)).toEqual([1])
-      expect(groupSelect(wrapper).props('modelValue')).toBeNull()
+      expect(groupSelect(wrapper).props('modelValue')).toEqual(routingPolicy())
       await wrapper.get('[data-test="close-dialog"]').trigger('click')
       await getButtonByText(wrapper, 'common.edit').trigger('click')
       expect(wrapper.find('[data-tour="key-form-provider"]').exists()).toBe(false)

@@ -34,16 +34,17 @@ func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
 
 // CreateAPIKeyRequest represents the create API key request payload
 type CreateAPIKeyRequest struct {
-	ConcurrencyLimit int                       `json:"concurrency_limit" binding:"gte=0"`
-	Name             string                    `json:"name" binding:"required"`
-	GroupID          *int64                    `json:"group_id"`        // nullable
-	CustomKey        *string                   `json:"custom_key"`      // 可选的自定义key
-	IPWhitelist      []string                  `json:"ip_whitelist"`    // IP 白名单
-	IPBlacklist      []string                  `json:"ip_blacklist"`    // IP 黑名单
-	Quota            *float64                  `json:"quota"`           // 配额限制 (USD)
-	ExpiresInDays    *int                      `json:"expires_in_days"` // 过期天数
-	GroupRoutes      []domain.APIKeyGroupRoute `json:"group_routes"`
-	GroupIDs         []int64                   `json:"group_ids"`
+	ConcurrencyLimit int                        `json:"concurrency_limit" binding:"gte=0"`
+	Name             string                     `json:"name" binding:"required"`
+	GroupID          *int64                     `json:"group_id"`        // nullable
+	CustomKey        *string                    `json:"custom_key"`      // 可选的自定义key
+	IPWhitelist      []string                   `json:"ip_whitelist"`    // IP 白名单
+	IPBlacklist      []string                   `json:"ip_blacklist"`    // IP 黑名单
+	Quota            *float64                   `json:"quota"`           // 配额限制 (USD)
+	ExpiresInDays    *int                       `json:"expires_in_days"` // 过期天数
+	GroupRoutes      []domain.APIKeyGroupRoute  `json:"group_routes"`
+	GroupRouting     *domain.APIKeyGroupRouting `json:"group_routing"`
+	GroupIDs         []int64                    `json:"group_ids"`
 
 	// Rate limit fields (0 = unlimited)
 	RateLimit5h *float64 `json:"rate_limit_5h"`
@@ -63,6 +64,7 @@ type UpdateAPIKeyRequest struct {
 	ExpiresAt        *string                    `json:"expires_at"`   // 过期时间 (ISO 8601)
 	ResetQuota       *bool                      `json:"reset_quota"`  // 重置已用配额
 	GroupRoutes      *[]domain.APIKeyGroupRoute `json:"group_routes"`
+	GroupRouting     *domain.APIKeyGroupRouting `json:"group_routing"`
 	GroupIDs         *[]int64                   `json:"group_ids"`
 
 	// Rate limit fields (nil = no change, 0 = unlimited)
@@ -214,6 +216,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		IPBlacklist:      req.IPBlacklist,
 		ExpiresInDays:    req.ExpiresInDays,
 		GroupRoutes:      req.GroupRoutes,
+		GroupRouting:     req.GroupRouting,
 	}
 	if req.Quota != nil {
 		svcReq.Quota = *req.Quota
@@ -273,6 +276,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		RateLimit7d:         req.RateLimit7d,
 		ResetRateLimitUsage: req.ResetRateLimitUsage,
 		GroupRoutes:         req.GroupRoutes,
+		GroupRouting:        req.GroupRouting,
 	}
 	if req.Name != "" {
 		svcReq.Name = &req.Name
