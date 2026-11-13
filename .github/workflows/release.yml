@@ -121,7 +121,7 @@ jobs:
           check-latest: false
           cache: false
       - name: Verify Go version
-        run: go version | grep -q 'go1.27.3'
+        run: go version | grep -q 'go1.27.4'
       # Docker setup for GoReleaser
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

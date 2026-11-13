@@ -1,6 +1,14 @@
 <template>
   <fieldset class="space-y-3" data-testid="key-group-routing">
     <legend class="input-label">{{ t('keys.unifiedRouting') }}</legend>
+    <label class="block text-sm font-medium">
+      {{ t('keys.routingPlatform') }}
+      <select v-model="platformFilter" class="input mt-1 w-full" data-testid="routing-platform">
+        <option value="">{{ t('keys.routingAllPlatforms') }}</option>
+        <option v-for="platform in platforms" :key="platform" :value="platform">{{ platformLabel(platform) }}</option>
+      </select>
+    </label>
+    <p class="input-hint">{{ t('keys.routingPlatformHint') }}</p>
     <label class="block text-sm">
       {{ t('keys.routingStrategy') }}
       <select class="input mt-1 w-full" :value="modelValue?.strategy ?? 'legacy'" data-testid="routing-strategy" @change="chooseStrategy">
@@ -13,8 +21,14 @@
     <div v-for="(route, index) in current.routes" :key="index" class="rounded-lg border border-gray-200 p-3 dark:border-dark-600" data-testid="routing-row">
       <div class="flex items-center gap-2">
         <input type="checkbox" :checked="route.enabled" :disabled="!modelValue" :aria-label="t('common.enabled')" @change="update(index, 'enabled', ($event.target as HTMLInputElement).checked)" />
-        <Select :model-value="route.group_id" :options="groups.filter(group => group.value === route.group_id || !current.routes.some(other => other.group_id === group.value))" :disabled="!modelValue" :searchable="true" class="min-w-0 flex-1" :aria-label="t('keys.group')" @update:model-value="update(index, 'group_id', Number($event))" />
-        <span class="whitespace-nowrap text-xs text-gray-500">{{ rate(route.group_id) }}</span>
+        <Select :model-value="route.group_id" :options="optionsFor(route.group_id)" :disabled="!modelValue" :searchable="true" class="min-w-0 flex-1" :aria-label="t('keys.group')" @update:model-value="update(index, 'group_id', Number($event))">
+          <template #selected="{ option }">
+            <RoutingGroupOption v-if="option" :group="option as RoutingGroupChoice" />
+          </template>
+          <template #option="{ option }">
+            <RoutingGroupOption :group="option as RoutingGroupChoice" />
+          </template>
+        </Select>
         <button v-if="modelValue" type="button" class="btn btn-secondary !px-2" :aria-label="t('keys.removeRouteGroup')" @click="remove(index)">×</button>
       </div>
       <div v-if="modelValue" class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -31,21 +45,43 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
+import RoutingGroupOption from './RoutingGroupOption.vue'
+import type { RoutingGroupChoice } from './RoutingGroupOption.vue'
+import { platformDisplayName } from '@/constants/platformCatalog'
 import type { ApiKeyGroupRoute, ApiKeyGroupRouting } from '@/types'
 import { cloneGroupRouting } from '@/utils/keyGroupRouting'
 
 const props = defineProps<{
   modelValue: ApiKeyGroupRouting | null
   legacy: ApiKeyGroupRouting
-  groups: { value: number; label: string; rate: number; userRate: number | null }[]
+  groups: RoutingGroupChoice[]
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: ApiKeyGroupRouting] }>()
 const { t } = useI18n()
 const current = computed(() => props.modelValue ?? props.legacy)
-const unusedGroup = computed(() => props.groups.find(group => !current.value.routes.some(route => route.group_id === group.value)))
+const platformFilter = ref('')
+const platforms = computed(() => [...new Set(props.groups.map(group => group.platform).filter((platform): platform is string => !!platform))])
+const filteredGroups = computed(() => props.groups.filter(group => !platformFilter.value || group.platform === platformFilter.value))
+const unusedGroup = computed(() => filteredGroups.value.find(group => !current.value.routes.some(route => route.group_id === group.value)))
+watch(platforms, available => {
+  if (!available.includes(platformFilter.value)) platformFilter.value = ''
+})
+function platformLabel(platform: string) {
+  return platform === 'composite' ? t('keys.routingCompositePlatform') : platformDisplayName(platform)
+}
+function optionsFor(id: number): RoutingGroupChoice[] {
+  // Keep this row's selection visible even when it is outside the filter.
+  // Filtering changes additions only, never the submitted routing policy.
+  const options = props.groups.filter(group => group.value === id ||
+    ((!platformFilter.value || group.platform === platformFilter.value) && !current.value.routes.some(route => route.group_id === group.value)))
+  if (!options.some(group => group.value === id)) {
+    options.unshift({ value: id, label: `#${id}`, disabled: true })
+  }
+  return options
+}
 function chooseStrategy(event: Event) {
   const strategy = (event.target as HTMLSelectElement).value as ApiKeyGroupRouting['strategy']
   if (strategy !== 'lowest_rate' && strategy !== 'priority_weighted') return
@@ -67,9 +103,5 @@ function add() {
   const next = cloneGroupRouting(current.value)
   next.routes.push({ group_id: unusedGroup.value.value, priority: 1, weight: 1, enabled: true, cooldown_seconds: 0 })
   emit('update:modelValue', next)
-}
-function rate(id: number) {
-  const group = props.groups.find(group => group.value === id)
-  return group ? `${group.userRate ?? group.rate}x` : `#${id}`
 }
 </script>
