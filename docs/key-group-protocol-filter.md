@@ -35,3 +35,10 @@ settings anchors and account links). Running those same suites from pristine
 was corrected and the locale completeness test rerun successfully. These existing
 failures are not removed or skipped by this change. The dedicated CI job covers
 the touched UI and the existing routing regression job remains in place.
+
+## Build security follow-up
+
+The PR scan found GO-2026-6859 in the existing Go 1.27.3 standard library.
+The build images, go.mod and CI version assertions are updated together to Go
+1.27.4, which fixes the net/http MaxBytesReader header race. No scan exception
+is added and no application billing/routing code changes are included.

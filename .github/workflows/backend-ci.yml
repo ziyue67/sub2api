@@ -47,7 +47,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.3'
+          go version | grep -q 'go1.27.4'
       - name: Warm Go module cache (retry transient proxy errors)
         working-directory: backend
         shell: bash
@@ -152,7 +152,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.3'
+          go version | grep -q 'go1.27.4'
       - name: Warm Go module cache (retry transient proxy errors)
         working-directory: backend
         shell: bash
