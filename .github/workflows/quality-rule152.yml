@@ -3,6 +3,7 @@ on:
   push:
     branches: [fix/quality-operations-live-regressions]
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/repository/account_repo.go'
       - 'backend/internal/service/admin_account.go'

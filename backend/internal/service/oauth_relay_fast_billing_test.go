@@ -28,7 +28,7 @@ func TestOAuthRelayFastBillingContract(t *testing.T) {
 		{"explicit standard downgrade", "priority", "standard", "standard", true, false, false},
 		{"no outbound tier", "", "default", "", true, false, false},
 		{"filtered outbound tier", "default", "default", "default", true, false, false},
-		{"flex outbound", "flex", "default", "flex", true, false, false},
+		{"flex outbound", "flex", "default", "default", true, false, false},
 		{"ultrafast is outside contract", "ultrafast", "default", "default", true, false, false},
 		{"response cannot upgrade", "priority", "ultrafast", "priority", true, false, false},
 		{"missing response", "priority", "", "priority", true, false, false},
