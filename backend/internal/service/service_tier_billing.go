@@ -38,12 +38,6 @@ func ResolveBillingServiceTier(requested, observed string) ServiceTierBillingRes
 	requested = normalizeBillingServiceTier(requested)
 	observed = normalizeBillingServiceTier(observed)
 	resolution := ServiceTierBillingResolution{Requested: requested, Observed: observed, Billing: requested}
-	// Discounts require upstream confirmation. A client cannot obtain flex
-	// pricing merely by asking an untiered provider for it.
-	if requested == "flex" && observed != "flex" {
-		resolution.Billing = "default"
-		return resolution
-	}
 	if observed == "" || observed == requested {
 		return resolution
 	}
@@ -113,7 +107,7 @@ func ResolveOpenAIServiceTierBilling(account *Account, requested, observed strin
 			}
 		}
 	}
-	if account != nil && account.IsOpenAIOAuthLike() && normalizeBillingServiceTier(requested) != "flex" && codexOAuthResponseTierIsNonAuthoritative(observed) {
+	if account != nil && account.IsOpenAIOAuthLike() && codexOAuthResponseTierIsNonAuthoritative(observed) {
 		return ServiceTierBillingResolution{
 			Requested: normalizeBillingServiceTier(requested),
 			Observed:  normalizeBillingServiceTier(observed),

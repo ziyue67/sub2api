@@ -3,6 +3,7 @@ name: Readable continuation 409 RED GREEN
 on:
   workflow_dispatch:
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/service/openai_409_*'
       - 'backend/internal/service/openai_agent_message_*'

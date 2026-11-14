@@ -158,7 +158,7 @@ func TestLockAndMergeAccountProbeExtraKeepsLatestGrokManagedKeys(t *testing.T) {
 					"ollama_session", "ollama_auto", "ollama_snapshot",
 					"opencode_group_unchanged", "opencode_auto", "opencode_snapshot",
 					"current_extra", "concurrency",
-				}).AddRow(false, false, true, nil, nil, nil, nil, nil, nil, false, nil, nil, lockedJSON, 3))
+				}).AddRow(false, false, true, nil, nil, nil, nil, nil, nil, nil, false, nil, nil, lockedJSON, 3))
 
 			account := &service.Account{
 				ID:          41,

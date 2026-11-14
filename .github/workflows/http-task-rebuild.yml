@@ -9,6 +9,7 @@ on:
         options: [RED, GREEN, BOTH]
         default: BOTH
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/handler/openai_409_*'
       - 'backend/internal/handler/openai_gateway_handler.go'

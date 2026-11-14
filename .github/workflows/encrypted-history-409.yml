@@ -1,6 +1,7 @@
 name: Encrypted history 409 Beta
 on:
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/service/openai_409_omit_history*'
       - 'backend/internal/service/openai_history_omission.go'

@@ -189,7 +189,7 @@ func TestLockAndMergeAccountProbeExtraPreservesOpenCodeGoManagedState(t *testing
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(tt.account.ID, tt.account.Platform, tt.account.Type, string(credentials), nil).
 				WillReturnRows(sqlmock.NewRows(openCodeGoMergeMockColumns()).
-					AddRow(false, false, tt.proxyUnchanged, nil, nil, nil, nil, nil, nil, tt.groupUnchanged, tt.databaseAuto, tt.databaseSnapshot, nil, 3))
+					AddRow(false, false, tt.proxyUnchanged, nil, nil, nil, nil, nil, nil, nil, tt.groupUnchanged, tt.databaseAuto, tt.databaseSnapshot, nil, 3))
 
 			got, err := lockAndMergeAccountProbeExtra(context.Background(), client, tt.account, nil, nil)
 			require.NoError(t, err)

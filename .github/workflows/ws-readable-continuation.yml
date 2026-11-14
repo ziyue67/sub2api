@@ -9,6 +9,7 @@ on:
         default: BOTH
         description: Five real WS adapters against accepted baseline and production candidate
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/handler/openai_409_*'
       - 'backend/internal/handler/openai_gateway_handler.go'
