@@ -17,7 +17,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   filters:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -45,7 +46,8 @@ jobs:
           path: ${{ runner.temp }}/filters-evidence
 
   backend:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
       GOMAXPROCS: '2'
@@ -156,7 +158,8 @@ jobs:
           name: issue733-pg-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/filters-pg
   analysis-race:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       GOMAXPROCS: '2'
@@ -186,7 +189,8 @@ jobs:
           name: issue733-analysis-race-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/analysis-race*
   build:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -205,7 +209,8 @@ jobs:
       - run: pnpm --dir frontend run build
 
   browser:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

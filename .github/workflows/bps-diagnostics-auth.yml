@@ -18,7 +18,8 @@ permissions:
 
 jobs:
   protocol-and-receipt:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -33,7 +34,8 @@ jobs:
       - working-directory: backend
         run: go test -race -tags=unit ./internal/service ./internal/handler/admin ./internal/server/middleware -run 'Test(ExcelBPSToolArgumentsDiagnostic|ConnectionAuthorizationStatus|OpenAIConnectionManagement|OpenAIConnectionHandlerAccountType|OpenAIAuthConnection|Audit)' -count=1 -v -timeout=10m
   authorization-ui:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

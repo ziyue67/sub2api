@@ -6,7 +6,8 @@ permissions:
   contents: read
 jobs:
   unit:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       GOMAXPROCS: '2'
@@ -60,7 +61,8 @@ jobs:
           name: oauth-degradation-unit-${{ github.event_name }}-${{ github.run_id }}
           path: evidence/
   timezone-race:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GOMAXPROCS: '2'
@@ -120,7 +122,8 @@ jobs:
           name: oauth-degradation-timezone-race-${{ github.run_id }}
           path: evidence/
   postgres:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       GOMAXPROCS: '2'
@@ -166,7 +169,8 @@ jobs:
           name: oauth-degradation-postgres-${{ github.event_name }}-${{ github.run_id }}
           path: evidence/
   integration-race:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       CI: 'true'
@@ -256,7 +260,8 @@ jobs:
           name: oauth-degradation-integration-race-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/
   ui:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6

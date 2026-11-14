@@ -19,7 +19,8 @@ concurrency:
 
 jobs:
   focused-backend:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
@@ -32,7 +33,8 @@ jobs:
       - working-directory: backend
         run: go test -tags=unit ./internal/service -run 'Test(Qwen|StrictSessionAffinity)' -count=1 -v
   actual-component:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

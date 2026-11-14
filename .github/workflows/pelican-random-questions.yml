@@ -42,7 +42,8 @@ permissions:
   contents: read
 jobs:
   browser:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -77,7 +78,8 @@ jobs:
           path: evidence/
   isolated-e2e:
     name: Isolated application E2E (manual, account and group schedules; full acceptance pending)
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       APP_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

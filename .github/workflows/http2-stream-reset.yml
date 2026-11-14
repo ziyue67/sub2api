@@ -11,7 +11,8 @@ permissions:
 jobs:
   regression:
     if: github.head_ref == 'fix/http2-stream-error-clarity' || github.ref_name == 'fix/http2-stream-error-clarity' || github.head_ref == 'fix/http2-reset-review-followup-20261114' || github.ref_name == 'fix/http2-reset-review-followup-20261114'
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -335,7 +336,8 @@ jobs:
 
   timezone-race:
     if: github.head_ref == 'fix/http2-reset-review-followup-20261114' || github.ref_name == 'fix/http2-reset-review-followup-20261114'
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GOMAXPROCS: '2'
@@ -403,7 +405,8 @@ jobs:
 
   user-surface:
     if: github.head_ref == 'fix/http2-stream-error-clarity' || github.ref_name == 'fix/http2-stream-error-clarity' || github.head_ref == 'fix/http2-reset-review-followup-20261114' || github.ref_name == 'fix/http2-reset-review-followup-20261114'
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

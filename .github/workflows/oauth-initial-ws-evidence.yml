@@ -22,7 +22,8 @@ permissions:
   contents: read
 jobs:
   rendered-before-after:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -70,7 +71,8 @@ jobs:
           path: ${{ runner.temp }}/oauth-ws-evidence
           if-no-files-found: error
   fallback-before-after:
-    runs-on: ubuntu-latest
+    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       SOURCE_BASE: 8545bf9ffac5a870ade18fbe7c4b61a48755c8db
