@@ -6779,6 +6779,8 @@ const handleSubmit = async () => {
     } else {
       delete credentials.api_base_urls
     }
+  }
+
   if (form.platform === 'qwen') {
     applyQwenCacheSettings(credentials, qwenSessionCache.value, qwenStrictAffinity.value)
   }

@@ -133,7 +133,6 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	// cache_creation_30m_tokens, cache_creation_12h_tokens, tool_surcharges,
 	// created_at, cache_creation_billing, queue_timing。
 	idx := len(prepared.args) - 9
-	idx := len(prepared.args) - 8
 	arg, ok := prepared.args[idx].(sql.NullString)
 	require.True(t, ok, "upstream_request_id arg should be sql.NullString, got %T", prepared.args[idx])
 	require.True(t, arg.Valid)

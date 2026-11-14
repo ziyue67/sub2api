@@ -178,8 +178,6 @@
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="(row.group_routing || (row.group_ids?.length ?? 0) > 1) ? editKey(row) : openGroupSelector(row)"
-                class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
-                @click="(row.group_ids?.length ?? 0) > 1 ? editKey(row) : openGroupSelector(row)"
                 class="key-group-control -mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="t('keys.clickToChangeGroup')"
               >
@@ -280,29 +278,14 @@
           <template #cell-usage="{ row }">
             <div class="key-usage-cell text-sm">
               <div class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span
-                  v-if="usageLoading && !usageStats[row.id]"
-                  data-test="usage-pending"
-                  class="inline-block h-3 w-14 animate-pulse rounded bg-gray-200 dark:bg-dark-600"
-                />
-                <span v-else class="font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
-                </span>
-              </div>
-              <div class="mt-0.5 flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span
-                  v-if="usageLoading && !usageStats[row.id]"
-                  class="inline-block h-3 w-14 animate-pulse rounded bg-gray-200 dark:bg-dark-600"
-                />
-                <span v-else class="font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
                 <span class="key-usage-label text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
                 <span v-if="usageLoading && !usageStats[row.id]" data-test="usage-pending"
                   class="inline-block h-3 w-14 animate-pulse rounded bg-gray-200 dark:bg-dark-600" />
                 <span v-else class="key-usage-amount font-medium text-gray-900 dark:text-white">
                   {{ formatUsageCost(row.id, 'today_actual_cost') }}
+                </span>
+              </div>
+              <div class="mt-0.5 flex items-center gap-1.5">
                 <span class="key-usage-label text-gray-500 dark:text-gray-400">{{ t(usagePreset === '30days' ? 'keys.total' : 'keys.selectedPeriod') }}:</span>
                 <span class="key-usage-amount font-medium text-gray-900 dark:text-white" :title="`${usageStartDate} ~ ${usageEndDate}`">
                   {{ formatUsageCost(row.id, 'total_actual_cost') }}
@@ -1432,13 +1415,13 @@ const submitting = ref(false)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
-const usageLoading = ref(false)
 const defaultUsageEnd = new Date()
 const defaultUsageStart = new Date(defaultUsageEnd)
 defaultUsageStart.setDate(defaultUsageStart.getDate() - 29)
 const usageEndDate = ref(formatDateLocalInput(defaultUsageEnd))
 const usageStartDate = ref(formatDateLocalInput(defaultUsageStart))
 const usagePreset = ref<string | null>('30days')
+const usageLoading = ref(false)
 const usageFailed = ref(false)
 const formatUsageCost = (keyID: number, field: 'today_actual_cost' | 'total_actual_cost') => {
   if (usageLoading.value || usageFailed.value) return '—'
@@ -1748,7 +1731,6 @@ const loadApiKeys = async () => {
   abortController = controller
   const { signal } = controller
   loading.value = true
-  usageLoading.value = false
   usageLoading.value = true
   usageFailed.value = false
   usageStats.value = {}
@@ -1776,10 +1758,8 @@ const loadApiKeys = async () => {
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
-    // 用量统计要聚合 30 天的 usage_logs，可能比列表慢很多：不阻塞表格渲染，单独加载
     usageLoading.value = response.items.length > 0
     if (response.items.length > 0) {
-      void loadUsageStats(response.items.map((k) => k.id), signal)
       void loadUsageStats(response.items.map((k) => k.id), controller, {
         start_date: usageStartDate.value,
         end_date: usageEndDate.value,
@@ -1803,22 +1783,13 @@ const loadApiKeys = async () => {
   }
 }
 
-const loadUsageStats = async (keyIds: number[], signal: AbortSignal) => {
-  try {
-    const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal })
-    if (signal.aborted) return
-    usageStats.value = usageResponse.stats
-  } catch (e) {
-    if (!isAbortError(e)) {
-      console.error('Failed to load usage stats:', e)
-    }
-  } finally {
-    if (!signal.aborted) {
-      usageLoading.value = false
-    }
+const loadUsageStats = async (
+  keyIds: number[],
   controller: AbortController,
   range: { start_date: string; end_date: string; timezone: string }
+) => {
   const { signal } = controller
+  try {
     const response = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal, ...range })
     if (signal.aborted || abortController !== controller || disposed) return
     usageStats.value = response.stats
@@ -1827,6 +1798,8 @@ const loadUsageStats = async (keyIds: number[], signal: AbortSignal) => {
     if (!isAbortError(error)) {
       usageFailed.value = true
       appStore.showError(t('keys.failedToLoadUsage'))
+    }
+  } finally {
     if (!signal.aborted && abortController === controller && !disposed) usageLoading.value = false
   }
 }

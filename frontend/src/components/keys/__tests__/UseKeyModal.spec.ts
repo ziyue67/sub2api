@@ -1012,8 +1012,6 @@ describe('UseKeyModal', () => {
         models: [
           { slug: 'claude-opus-4-8' },
           { slug: 'gpt-6.1-sol' }
-          { slug: 'gpt-6-astra' },
-          { slug: 'gpt-5.5' }
         ]
       })
     }))
@@ -1050,6 +1048,51 @@ describe('UseKeyModal', () => {
       .find((content) => content.includes('[model_providers.sub2api]'))
     expect(config).toContain('model = "gpt-6.1-sol"')
     expect(config).toContain('review_model = "gpt-6.1-sol"')
+  })
+
+  it('derives OpenAI Codex reasoning effort from the selected catalog descriptor', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        models: [
+          {
+            slug: 'glm-5.3',
+            default_reasoning_level: 'none',
+            supported_reasoning_levels: [{ effort: 'none' }]
+          }
+        ]
+      })
+    }))
+
+    const wrapper = mount(UseKeyModal, {
+      props: {
+        show: true,
+        apiKey: 'sk-openai-test',
+        baseUrl: 'https://example.com/v1',
+        platform: 'openai'
+      },
+      global: {
+        stubs: {
+          BaseDialog: {
+            template: '<div><slot /><slot name="footer" /></div>'
+          },
+          Icon: {
+            template: '<span />'
+          }
+        }
+      }
+    })
+
+    await wrapper.get('[data-testid="codex-model-catalog-mode"]').setValue('file')
+    await wrapper.get('[data-testid="codex-model-catalog-fetch"]').trigger('click')
+    await flushPromises()
+
+    const configToml = wrapper.findAll('pre code')
+      .map((code) => code.text())
+      .find((content) => content.includes('model_provider = "OpenAI"'))
+    expect(configToml).toContain('model = "glm-5.3"')
+    expect(configToml).not.toContain('model_reasoning_effort')
   })
 
   it.each(['legacy', 'api-key'])('offers Fast and remote/file catalogs across OpenAI transports and platforms in %s mode', async (authMode) => {
@@ -1104,8 +1147,6 @@ describe('UseKeyModal', () => {
       }
     }
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(config).toContain('model = "gpt-6-astra"')
-    expect(config).toContain('review_model = "gpt-6-astra"')
   })
 
   it('derives OpenAI Codex reasoning effort from the selected catalog descriptor', async () => {

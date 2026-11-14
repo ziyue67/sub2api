@@ -148,7 +148,7 @@ func TestLockAndMergeAccountProbeExtraKeepsLatestGrokManagedKeys(t *testing.T) {
 				require.NoError(t, json.Unmarshal(tt.databaseMetadata, &decoded))
 				lockedExtra[service.UpstreamModelMetadataExtraKey] = decoded
 			}
-			lockedExtraJSON, err := json.Marshal(lockedExtra)
+			lockedJSON, err := json.Marshal(lockedExtra)
 			require.NoError(t, err)
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(int64(41), service.PlatformGrok, tt.accountType, string(credentials), nil).

@@ -128,8 +128,6 @@
                 type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />
             </div>
             <div v-if="props.platform === 'openai'">
-              <label class="text-xs text-gray-400" :title="t('admin.channels.form.cacheWrite12hHint')">{{ t('admin.channels.form.cacheWrite12hPrice') }}</label>
-              <input :value="entry.cache_write_12h_price" @input="emitField('cache_write_12h_price', ($event.target as HTMLInputElement).value)"
               <label class="text-xs text-gray-400" :title="t('admin.channels.form.cacheWrite12hHint')">{{ t('admin.channels.form.cacheWrite12hPrice') }} <NewFeatureBadge v-if="noticeUserId != null" :notice-id="NEW_FEATURE_NOTICES.openaiCacheWriteTTL12h" :user-id="noticeUserId" /></label>
               <input data-testid="cache-write-12h-price" :value="entry.cache_write_12h_price" @input="emitField('cache_write_12h_price', ($event.target as HTMLInputElement).value)"
                 type="number" step="any" min="0" class="input mt-0.5 text-sm" :placeholder="t('admin.channels.form.pricePlaceholder')" />

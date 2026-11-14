@@ -6604,6 +6604,8 @@ const handleSubmit = async () => {
           delete newCredentials.api_protocol
           delete newCredentials.api_base_urls
         }
+      }
+
       if (props.account.platform === 'qwen') {
         applyQwenCacheSettings(newCredentials, qwenSessionCache.value, qwenStrictAffinity.value)
       }
