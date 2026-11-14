@@ -172,16 +172,13 @@ const presets: DatePreset[] = [
     labelKey: 'dates.last24Hours',
     value: 'last24Hours',
     getRange: () => {
-      if (props.rolling24Hours) {
-        // 滚动模式要求精确到毫秒的 [now-24h, now)，便于前后端对齐同一窗口。
-        const end = new Date()
-        const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
-        return { start: start.toISOString(), end: end.toISOString() }
+      const end = new Date()
+      const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
+      return {
+        start: props.rolling24Hours ? start.toISOString() : formatDateToString(start),
+        end: props.rolling24Hours ? end.toISOString() : formatDateToString(end)
       }
-      return getLast24HourRange()
-    },
-    // 只有带时间部分的边界才算滚动窗口；两个自然日不算。
-    matches: (start, end) => hasTimeComponent(start) && hasTimeComponent(end)
+    }
   },
   {
     labelKey: 'dates.last7Days',

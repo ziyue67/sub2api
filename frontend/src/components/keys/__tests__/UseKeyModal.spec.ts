@@ -1010,8 +1010,8 @@ describe('UseKeyModal', () => {
       status: 200,
       text: async () => JSON.stringify({
         models: [
-          { slug: 'claude-opus-4-8' },
-          { slug: 'gpt-6.1-sol' }
+          { slug: 'gpt-6.1-sol' },
+          { slug: 'claude-opus-4-8' }
         ]
       })
     }))

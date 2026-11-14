@@ -76,7 +76,6 @@ vi.mock('vue-i18n', async () => {
 
 const DataTableStub = defineComponent({
   props: { data: { type: Array, default: () => [] }, columns: { type: Array, default: () => [] }, loading: Boolean },
-  props: { data: { type: Array, default: () => [] }, loading: Boolean, columns: { type: Array, default: () => [] } },
   emits: ['sort'],
   template: `
     <div>

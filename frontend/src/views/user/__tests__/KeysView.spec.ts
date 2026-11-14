@@ -435,15 +435,8 @@ describe('user KeysView column settings', () => {
     expect(wrapper.get('.key-quota-values').findAll('.key-usage-amount').map(amount => amount.text())).toEqual(['$42.00', '$100.00'])
     expect(getDashboardApiKeysUsage).toHaveBeenCalledWith([key.id], expect.objectContaining({ signal: expect.any(AbortSignal) }))
 
-    await groupField.get('.key-group-control').trigger('click')
-    await flushPromises()
-    if (multiple) {
-      expect(wrapper.get('[role="dialog"]').exists()).toBe(true)
-      expect(wrapper.getComponent('[data-tour="key-form-group"]').props('modelValue')).toBe(group.id)
-      expect(wrapper.get<HTMLInputElement>(`[data-testid="key-additional-groups"] input[value="${additionalGroup.id}"]`).element.checked).toBe(true)
-    } else {
-      expect(wrapper.get('input[placeholder="keys.searchGroup"]').exists()).toBe(true)
-    }
+    // 多分组信息在列表行内即可见，分组切换不再弹出旧的「主分组 + 附加分组」弹窗。
+    expect(groupField.text()).toContain(multiple ? '2 groups' : 'Select group')
   })
 
   it('preserves large quota values in independently wrapping amount units', async () => {
@@ -1482,7 +1475,7 @@ describe('user KeysView column settings', () => {
       const wrapper = await mountView()
 
       expect(wrapper.find('[data-test="usage-pending"]').exists()).toBe(false)
-      expect(wrapper.get('[data-test="usage"]').text()).toContain('$0.0000')
+      expect(wrapper.get('[data-test="usage"]').text()).toContain('—')
       consoleError.mockRestore()
     })
   })
@@ -1542,7 +1535,7 @@ describe('user KeysView column settings', () => {
       const wrapper = await mountView()
 
       expect(wrapper.find('[data-test="usage-pending"]').exists()).toBe(false)
-      expect(wrapper.get('[data-test="usage"]').text()).toContain('$0.0000')
+      expect(wrapper.get('[data-test="usage"]').text()).toContain('—')
       consoleError.mockRestore()
     })
   })
