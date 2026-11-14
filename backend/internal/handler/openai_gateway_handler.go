@@ -1019,6 +1019,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(service.WithOpenAIEncryptedReasoningAffinity(pricingCtx, body))
 	c.Request = c.Request.WithContext(h.gatewayService.WithOpenAIAgentMessageRecovery(c.Request.Context(), c, body, sessionHash, forwardModel))
+	// forwardBody 在账号重试循环内按渠道映射重建；闭包需要跨轮次改写它，
+	// 因此在这里提前声明。
+	var forwardBody []byte
 	applyReadableRebuild := func(next context.Context, clean []byte) error {
 		// Keep the channel model mapping, but detach provider state atomically
 		// from both body copies, the selection argument and recovery context.
