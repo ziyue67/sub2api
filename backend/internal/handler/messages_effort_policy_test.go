@@ -45,7 +45,7 @@ func TestMessagesEffortPolicyBinding(t *testing.T) {
 				apiKey := &service.APIKey{Group: &service.Group{Platform: platform, MaxReasoningEffort: test.ceiling, ReasoningEffortMappings: test.mappings, MaxReasoningEffortOverLimit: test.overLimit}}
 				body := []byte(`{"model":"gpt-6.1-sol"` + test.preference + `}`)
 				ensureCompositeTargetPlatform(c, apiKey, "gpt-6.1-sol")
-				bindOpenAIReasoningEffortPolicyForMessagesRequest(c, apiKey, body)
+				_, _ = prepareOpenAIReasoningEffortPolicyForMessagesRequest(c, apiKey, body)
 				converted := []byte(`{"model":"gpt-6.1-sol","reasoning":{"effort":"` + test.effort + `"}}`)
 				got, changed, err := service.ApplyOpenAIReasoningEffortPolicyFromContext(c.Request.Context(), converted)
 				if test.deny {
@@ -91,7 +91,7 @@ func TestMessagesEffortPolicyBindingCNTargetsOmitted(t *testing.T) {
 						Platform: platform, MaxReasoningEffort: "low", MaxReasoningEffortOverLimit: service.ReasoningEffortOverLimitDeny,
 						ReasoningEffortMappings: []service.ReasoningEffortMapping{{From: "none", To: "deny"}, {From: "medium", To: "deny"}},
 					}}
-					bindOpenAIReasoningEffortPolicyForMessagesRequest(requestContext, apiKey, []byte(`{"model":"glm-5.2"`+preference+`}`))
+					_, _ = prepareOpenAIReasoningEffortPolicyForMessagesRequest(requestContext, apiKey, []byte(`{"model":"glm-5.2"`+preference+`}`))
 					for _, effort := range []string{"none", "medium", "high"} {
 						converted := []byte(`{"model":"glm-5.2","reasoning_effort":"` + effort + `"}`)
 						got, changed, err := service.ApplyOpenAIReasoningEffortPolicyFromContext(requestContext.Request.Context(), converted)
