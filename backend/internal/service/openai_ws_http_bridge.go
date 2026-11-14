@@ -31,6 +31,7 @@ const openAIWSHTTPBridgeToolStateContextKey = "openai_ws_http_bridge_tool_state"
 
 type openAIWSHTTPBridgeToolState struct {
 	ClientMapping apicompat.ResponsesClientToolMapping
+	ClientTools   json.RawMessage // declarations before lowering; inherited by an omitted-tools turn
 	LoweredTools  json.RawMessage
 }
 
@@ -48,6 +49,7 @@ func setOpenAIWSHTTPBridgeToolState(c *gin.Context, state openAIWSHTTPBridgeTool
 		return
 	}
 	state.LoweredTools = append(json.RawMessage(nil), state.LoweredTools...)
+	state.ClientTools = append(json.RawMessage(nil), state.ClientTools...)
 	c.Set(openAIWSHTTPBridgeToolStateContextKey, state)
 }
 
@@ -511,6 +513,10 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 			}
 		}
 		inheritedState, _ := openAIWSHTTPBridgeToolStateFromContext(c)
+		clientTools := inheritedState.ClientTools
+		if currentTools, present := openAIWSHTTPBridgeRawField(body, "tools"); present {
+			clientTools = currentTools
+		}
 		inheritedLoweredTools := decodeOpenAIWSHTTPBridgeLoweredTools(inheritedState.LoweredTools)
 		body, clientToolMapping, err = adaptResponsesClientToolsForFunctionUpstreamWithMapping(
 			body,
@@ -535,6 +541,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 		setOpenAIWSHTTPBridgeToolState(c, openAIWSHTTPBridgeToolState{
 			ClientMapping: clientToolMapping,
+			ClientTools:   clientTools,
 			LoweredTools:  loweredTools,
 		})
 	}
@@ -628,6 +635,10 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 				account.ID,
 				admissionErr,
 			)
+			if forwardStart.IsZero() {
+				source, _ := ctx.Value(openAIWSAgentSourceKey{}).([]byte)
+				admissionErr = openAIWSUnsentTurn(admissionErr, source, originalModel, turn)
+			}
 			return nil, admissionErr
 		}
 		// Freeze the first-send boundary. Rejected-field network attempts remain
