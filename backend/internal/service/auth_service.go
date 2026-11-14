@@ -2052,11 +2052,13 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 
 	// Atomically consume the old token and retain its family for reuse detection.
 	if store := s.sessionSecurityStore(); store != nil {
-		consumed, err := store.ConsumeRefreshToken(ctx, tokenHash)
+		consumed, err := store.ConsumeRefreshTokenForRotation(ctx, tokenHash)
 		if err != nil {
+			logger.LegacyPrintf("service.auth", "[Auth] Failed to consume old refresh token: %v", err)
 			return nil, ErrServiceUnavailable
 		}
 		if !consumed {
+			logger.LegacyPrintf("service.auth", "[Auth] Refresh token already consumed, possible reuse attack")
 			return nil, s.revokeRotatedRefresh(ctx, tokenHash)
 		}
 	} else if err := s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash); err != nil {

@@ -21,10 +21,14 @@ type PelicanTestConfig struct {
 	BPSRecoveryPending bool           `json:"-"`
 	Quality            *QualityPolicy `json:"quality,omitempty"`
 	QuestionKind       string         `json:"question_kind,omitempty"`
-	TestChannel        string         `json:"test_channel,omitempty"`
-	Prompt             string         `json:"prompt"`
-	ReasoningEffort    string         `json:"reasoning_effort"`
-	ParallelCount      int            `json:"parallel_count"`
+	// Empty mode preserves the exact prompt of legacy/custom plans.
+	PromptMode      string           `json:"prompt_mode,omitempty"`
+	PelicanQuestion *PelicanQuestion `json:"pelican_question,omitempty"`
+	ActualPrompt    string           `json:"actual_prompt,omitempty"`
+	TestChannel     string           `json:"test_channel,omitempty"`
+	Prompt          string           `json:"prompt"`
+	ReasoningEffort string           `json:"reasoning_effort"`
+	ParallelCount   int              `json:"parallel_count"`
 	// ModelID is recorded with each result so later edits do not relabel history.
 	ModelID string `json:"model_id,omitempty"`
 	// ModelIDs selects all models in a quality round; old plans use ModelID.
@@ -33,6 +37,8 @@ type PelicanTestConfig struct {
 
 // ScheduledTestPlan represents a scheduled test plan domain model.
 type ScheduledTestPlan struct {
+	// Populated only from the repository's one-shot manual trigger marker.
+	ManualQualityRun      bool              `json:"-"`
 	QualityBatchEvaluated bool              `json:"-"`
 	QualityBatchModels    map[string]string `json:"-"`
 	// Request-only: importing configuration preserves this target's ownership.
@@ -61,6 +67,10 @@ type ScheduledTestPlan struct {
 
 // ScheduledTestResult represents a single test execution result.
 type ScheduledTestResult struct {
+	// Runtime-only; set solely from an actual own-credential OAuth HTTP 401.
+	DirectOAuth401        bool `json:"-"`
+	DirectOAuthRevoked401 bool `json:"-"`
+
 	QualityRoundID  string             `json:"quality_round_id,omitempty"`
 	QualityJudgment *QualityJudgment   `json:"quality_judgment,omitempty"`
 	QualityAction   string             `json:"quality_action,omitempty"`

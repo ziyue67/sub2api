@@ -1085,6 +1085,10 @@ func (s *SchedulerSnapshotService) prepareBucketWriteTasks(ctx context.Context, 
 		return nil, ErrSchedulerCacheNotReady
 	}
 	tasks := make([]schedulerBucketWriteTask, 0, len(buckets))
+	// A successful inactive reconciliation already retires the entire group,
+	// including historical buckets. Reuse only that completed decision within
+	// this preparation; failures and active plans still follow the fresh path.
+	var retiredGroups map[int64]struct{}
 	var firstErr error
 	for _, bucket := range buckets {
 		token, err := s.cache.CaptureBucketWriteToken(ctx, bucket)
@@ -1093,11 +1097,23 @@ func (s *SchedulerSnapshotService) prepareBucketWriteTasks(ctx context.Context, 
 				// A delayed account event can refer to a now-deleted group. Recheck
 				// authority under the existing lifecycle lease; do not reopen it
 				// from the event payload or retain an already-retired group forever.
+				// Capture above always takes precedence: a concurrent reopen can
+				// supply a current token even after this group's inactive decision.
+				if _, completed := retiredGroups[bucket.GroupID]; completed {
+					continue
+				}
 				plan, lifecycleErr := s.prepareGroupLifecycle(ctx, bucket.GroupID, nil)
 				if lifecycleErr != nil {
 					if firstErr == nil {
 						firstErr = lifecycleErr
 					}
+					continue
+				}
+				if !plan.active {
+					if retiredGroups == nil {
+						retiredGroups = make(map[int64]struct{})
+					}
+					retiredGroups[bucket.GroupID] = struct{}{}
 					continue
 				}
 				for _, task := range plan.tasks {
@@ -1171,11 +1187,14 @@ func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicyAndQueryCache(
 	rebuildCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	rebuildStarted := time.Now()
 	accounts, err := s.loadAccountsForRebuild(rebuildCtx, bucket, queries)
+	loadDuration := time.Since(rebuildStarted)
 	if err != nil {
-		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild failed: bucket=%s reason=%s err=%v", bucket.String(), reason, err)
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild failed: bucket=%s reason=%s load_ms=%d err=%v", bucket.String(), reason, loadDuration.Milliseconds(), err)
 		return err
 	}
+	publicationStarted := time.Now()
 	if err := s.setRebuildSnapshot(rebuildCtx, task, accounts, queries); err != nil {
 		if errors.Is(err, ErrSchedulerBucketRetired) || errors.Is(err, ErrSchedulerBucketWriteFenced) {
 			slog.Debug("[Scheduler] rebuild fenced", "bucket", bucket.String(), "reason", reason)
@@ -1184,10 +1203,10 @@ func (s *SchedulerSnapshotService) rebuildBucketWithTokenPolicyAndQueryCache(
 			}
 			return nil
 		}
-		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild cache failed: bucket=%s reason=%s err=%v", bucket.String(), reason, err)
+		logger.LegacyPrintf("service.scheduler_snapshot", "[Scheduler] rebuild cache failed: bucket=%s reason=%s size=%d load_ms=%d publish_ms=%d elapsed_ms=%d err=%v", bucket.String(), reason, len(accounts), loadDuration.Milliseconds(), time.Since(publicationStarted).Milliseconds(), time.Since(rebuildStarted).Milliseconds(), err)
 		return err
 	}
-	slog.Debug("[Scheduler] rebuild ok", "bucket", bucket.String(), "reason", reason, "size", len(accounts))
+	slog.Debug("[Scheduler] rebuild ok", "bucket", bucket.String(), "reason", reason, "size", len(accounts), "load_ms", loadDuration.Milliseconds(), "publish_ms", time.Since(publicationStarted).Milliseconds(), "elapsed_ms", time.Since(rebuildStarted).Milliseconds())
 	return nil
 }
 

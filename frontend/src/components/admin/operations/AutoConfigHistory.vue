@@ -78,7 +78,7 @@ import { getAutoConfigEvents, type AutoConfigEvent, type AutoConfigEventKind } f
 const props = defineProps<{ refreshKey: number }>()
 const { t } = useI18n()
 const auth = useAuthStore()
-const kinds: AutoConfigEventKind[] = ['config_saved', 'initial_applied', 'concurrency_upgraded', 'failure_cooldown']
+const kinds: AutoConfigEventKind[] = ['config_saved', 'initial_applied', 'concurrency_upgraded', 'failure_cooldown', 'degradation_applied']
 const kind = ref<AutoConfigEventKind | ''>('')
 const events = ref<AutoConfigEvent[]>([])
 const hasMore = ref(false), loading = ref(false), error = ref(''), retryMore = ref(false)
@@ -120,6 +120,18 @@ function badgeClass(value: AutoConfigEventKind) {
 }
 function details(event: AutoConfigEvent) {
   const d = event.details
+  if (event.kind === 'degradation_applied' && d.degradation) {
+    const e = d.degradation
+    const actions = []
+    if (e.limit_concurrency !== false) actions.push(t('autoConfig.degradation.concurrencyEvent', { before: d.previous_concurrency, after: d.concurrency }))
+    if (e.limit_models !== false) actions.push(t('autoConfig.degradation.modelsEvent', { models: (e.models ?? []).join(', ') || '∅' }))
+    if (e.limit_groups) actions.push(t('autoConfig.degradation.groupsEvent', { groups: groupIDs(e.group_ids), removed: groupIDs(e.removed_group_ids) }))
+    if (e.trigger_reason === 'upstream_429' && e.upstream_error) {
+      const http = e.upstream_error
+      return t('autoConfig.degradation.upstream429Event', { failures: http.failures, total: http.total, rateLimited: http.rate_limited ?? 0, errorThreshold: e.upstream_error_threshold_percent ?? 80, shareThreshold: e.upstream_429_share_threshold_percent ?? 80, actions: actions.join(' · '), start: formatDateTime(e.window_start), end: formatDateTime(e.window_end) })
+    }
+    return t('autoConfig.degradation.event', { percent: e.degradation_percent, threshold: e.threshold_percent, samples: e.quality_samples, actions: actions.join(' · '), start: formatDateTime(e.window_start), end: formatDateTime(e.window_end) })
+  }
   if (event.kind === 'config_saved' && d.config) return t('autoConfig.logs.savedDetail', { initial: t(d.config.enabled ? 'autoConfig.logs.on' : 'autoConfig.logs.off'), upgrade: t(d.config.upgrade_enabled ? 'autoConfig.logs.on' : 'autoConfig.logs.off'), priority: d.config.priority, load: d.config.load_factor, concurrency: d.config.concurrency })
   if (event.kind === 'initial_applied') return t('autoConfig.logs.initialDetail', { priority: d.priority, load: d.load_factor, concurrency: d.concurrency, groups: groupIDs(d.group_ids) })
   if (event.kind === 'concurrency_upgraded') return t('autoConfig.logs.upgradeDetail', { before: d.previous_concurrency, after: d.concurrency, seconds: d.cooldown_seconds })

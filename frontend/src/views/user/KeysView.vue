@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <TablePageLayout>
+    <TablePageLayout class="keys-page-layout">
       <template #filters>
         <div class="flex flex-col gap-3">
           <UserKeyRiskNotices />
@@ -23,6 +23,21 @@
               :options="statusFilterOptions"
               @update:model-value="onStatusFilterChange"
             />
+            <div class="relative flex flex-wrap items-center gap-2" data-test="key-usage-date-range">
+              <span class="text-sm text-gray-600 dark:text-gray-300">{{ t('keys.usageDateRange') }}</span>
+              <DateRangePicker
+                class="key-usage-range-picker"
+                :start-date="usageStartDate"
+                :end-date="usageEndDate"
+                :show-last24-hours="false"
+                @change="onUsageDateRangeChange"
+              />
+              <NewFeatureBadge
+                v-if="authStore.isAdmin"
+                :notice-id="NEW_FEATURE_NOTICES.apiKeyUsageDateRange"
+                :user-id="authStore.user?.id"
+              />
+            </div>
           </div>
           <EndpointPopover
             v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0"
@@ -159,15 +174,17 @@
           </template>
 
           <template #cell-group="{ row }">
-            <div class="group/dropdown relative">
+            <div class="key-group-cell group/dropdown relative">
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="(row.group_routing || (row.group_ids?.length ?? 0) > 1) ? editKey(row) : openGroupSelector(row)"
-                class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
+                class="key-group-control -mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="t('keys.clickToChangeGroup')"
               >
                 <GroupBadge
                   v-if="row.group"
+                  class="key-group-badge"
+                  :truncate="false"
                   :name="row.group.name"
                   :platform="row.group.platform"
                   :subscription-type="row.group.subscription_type"
@@ -181,8 +198,8 @@
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
-                <span v-if="(row.group_ids?.length ?? 0) > 1" class="text-xs text-primary-600">{{ t('keys.multiGroupCount', { count: row.group_ids.length }) }}</span>
-                <span v-else class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
+                <span v-if="(row.group_ids?.length ?? 0) > 1" class="key-group-hint text-xs text-primary-600">{{ t('keys.multiGroupCount', { count: row.group_ids.length }) }}</span>
+                <span v-else class="key-group-hint text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
                 <svg
                   class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
                   fill="none"
@@ -259,31 +276,35 @@
           </template>
 
           <template #cell-usage="{ row }">
-            <div class="text-sm">
+            <div class="key-usage-cell text-sm">
               <div class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.today_actual_cost ?? 0).toFixed(4) }}
+                <span class="key-usage-label text-gray-500 dark:text-gray-400">{{ t('keys.today') }}:</span>
+                <span v-if="usageLoading && !usageStats[row.id]" data-test="usage-pending"
+                  class="inline-block h-3 w-14 animate-pulse rounded bg-gray-200 dark:bg-dark-600" />
+                <span v-else class="key-usage-amount font-medium text-gray-900 dark:text-white">
+                  {{ formatUsageCost(row.id, 'today_actual_cost') }}
                 </span>
               </div>
               <div class="mt-0.5 flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t('keys.total') }}:</span>
-                <span class="font-medium text-gray-900 dark:text-white">
-                  ${{ (usageStats[row.id]?.total_actual_cost ?? 0).toFixed(4) }}
+                <span class="key-usage-label text-gray-500 dark:text-gray-400">{{ t(usagePreset === '30days' ? 'keys.total' : 'keys.selectedPeriod') }}:</span>
+                <span class="key-usage-amount font-medium text-gray-900 dark:text-white" :title="`${usageStartDate} ~ ${usageEndDate}`">
+                  {{ formatUsageCost(row.id, 'total_actual_cost') }}
                 </span>
               </div>
               <!-- Quota progress (if quota is set) -->
               <div v-if="row.quota > 0" class="mt-1.5">
                 <div class="flex items-center gap-1.5">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('keys.quota') }}:</span>
-                  <span :class="[
-                    'font-medium',
+                  <span class="key-usage-label text-gray-500 dark:text-gray-400">{{ t('keys.quota') }}:</span>
+                  <div :class="[
+                    'key-quota-values flex min-w-0 max-w-full flex-wrap items-baseline gap-x-1 font-medium',
                     row.quota_used >= row.quota ? 'text-red-500' :
                     row.quota_used >= row.quota * 0.8 ? 'text-yellow-500' :
                     'text-gray-900 dark:text-white'
                   ]">
-                    ${{ row.quota_used?.toFixed(2) || '0.00' }} / ${{ row.quota?.toFixed(2) }}
-                  </span>
+                    <span class="key-usage-amount">${{ row.quota_used?.toFixed(2) || '0.00' }}</span>
+                    <span>/</span>
+                    <span class="key-usage-amount">${{ row.quota?.toFixed(2) }}</span>
+                  </div>
                 </div>
                 <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
                   <div
@@ -441,7 +462,7 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-1">
+            <div class="flex items-center gap-1 max-lg:flex-wrap">
               <button
                 v-if="isCodexQuickConfigPlatform(row.group?.platform)"
                 @click="openCodexQuickConfigModal(row)"
@@ -596,6 +617,7 @@
             </button>
             <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.apiKeyModelPolicy" :user-id="authStore.user?.id" />
             <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.apiKeyLongContext" :user-id="authStore.user?.id" compact />
+            <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.apiKeyContextTokenLimit" :user-id="authStore.user?.id" compact />
           </div>
           <p class="mt-2 text-sm text-gray-500 dark:text-dark-300">{{ t('apiKeyModelPolicy.scopeHint') }}</p>
         </div>
@@ -1234,6 +1256,7 @@ import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 import ApiKeyModelPolicyDialog from '@/components/admin/user/ApiKeyModelPolicyDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 	import DataTable from '@/components/common/DataTable.vue'
 	import Pagination from '@/components/common/Pagination.vue'
@@ -1251,7 +1274,7 @@ import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import type { ApiKey, ApiKeyConcurrencySnapshot, ApiKeyGroupRouting, Group, PublicSettings, UpdateApiKeyRequest } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, formatDateLocalInput, getBrowserTimeZone } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
 import KeyGroupRoutingEditor from '@/components/keys/KeyGroupRoutingEditor.vue'
 import { cloneGroupRouting, legacyGroupRouting, validGroupRouting } from '@/utils/keyGroupRouting'
@@ -1392,6 +1415,28 @@ const submitting = ref(false)
 const now = ref(new Date())
 let resetTimer: ReturnType<typeof setInterval> | null = null
 const usageStats = ref<Record<string, BatchApiKeyUsageStats>>({})
+const defaultUsageEnd = new Date()
+const defaultUsageStart = new Date(defaultUsageEnd)
+defaultUsageStart.setDate(defaultUsageStart.getDate() - 29)
+const usageEndDate = ref(formatDateLocalInput(defaultUsageEnd))
+const usageStartDate = ref(formatDateLocalInput(defaultUsageStart))
+const usagePreset = ref<string | null>('30days')
+const usageLoading = ref(false)
+const usageFailed = ref(false)
+const formatUsageCost = (keyID: number, field: 'today_actual_cost' | 'total_actual_cost') => {
+  if (usageLoading.value || usageFailed.value) return '—'
+  return `$${(usageStats.value[keyID]?.[field] ?? 0).toFixed(4)}`
+}
+const onUsageDateRangeChange = (range: { startDate: string; endDate: string; preset: string | null }) => {
+  if (!range.startDate || !range.endDate || range.startDate > range.endDate) {
+    appStore.showError(t('keys.invalidUsageDateRange'))
+    return
+  }
+  usageStartDate.value = range.startDate
+  usageEndDate.value = range.endDate
+  usagePreset.value = range.preset
+  void loadApiKeys()
+}
 const userGroupRates = ref<Record<number, number>>({})
 
 // Policy and counts always belong to one completed refresh, never to editable key data.
@@ -1686,6 +1731,9 @@ const loadApiKeys = async () => {
   abortController = controller
   const { signal } = controller
   loading.value = true
+  usageLoading.value = true
+  usageFailed.value = false
+  usageStats.value = {}
   try {
     // Build filters
     const filters: {
@@ -1710,23 +1758,21 @@ const loadApiKeys = async () => {
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
-    // Load usage stats for all API keys in the list
+    usageLoading.value = response.items.length > 0
     if (response.items.length > 0) {
-      const keyIds = response.items.map((k) => k.id)
-      try {
-        const usageResponse = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal })
-        if (signal.aborted) return
-        usageStats.value = usageResponse.stats
-      } catch (e) {
-        if (!isAbortError(e)) {
-          console.error('Failed to load usage stats:', e)
-        }
-      }
+      void loadUsageStats(response.items.map((k) => k.id), controller, {
+        start_date: usageStartDate.value,
+        end_date: usageEndDate.value,
+        timezone: getBrowserTimeZone()
+      })
     }
+
   } catch (error) {
-    if (isAbortError(error)) {
+    if (signal.aborted || isAbortError(error)) {
       return
     }
+    usageFailed.value = true
+    usageLoading.value = false
     appStore.showError(t('keys.failedToLoad'))
   } finally {
     if (abortController === controller) {
@@ -1734,6 +1780,27 @@ const loadApiKeys = async () => {
       concurrencyPageReady = true
       void refreshConcurrency()
     }
+  }
+}
+
+const loadUsageStats = async (
+  keyIds: number[],
+  controller: AbortController,
+  range: { start_date: string; end_date: string; timezone: string }
+) => {
+  const { signal } = controller
+  try {
+    const response = await usageAPI.getDashboardApiKeysUsage(keyIds, { signal, ...range })
+    if (signal.aborted || abortController !== controller || disposed) return
+    usageStats.value = response.stats
+  } catch (error) {
+    if (signal.aborted || abortController !== controller || disposed) return
+    if (!isAbortError(error)) {
+      usageFailed.value = true
+      appStore.showError(t('keys.failedToLoadUsage'))
+    }
+  } finally {
+    if (!signal.aborted && abortController === controller && !disposed) usageLoading.value = false
   }
 }
 
@@ -2256,6 +2323,81 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+@media (max-width: 639px) {
+  .key-usage-range-picker {
+    position: static;
+  }
+
+  .key-usage-range-picker :deep(.date-picker-dropdown) {
+    left: 0;
+    min-width: 0;
+    width: min(320px, calc(100vw - 2rem));
+  }
+
+  .key-usage-range-picker :deep(.date-picker-field),
+  .key-usage-range-picker :deep(.date-picker-input) {
+    min-width: 0;
+  }
+}
+
+@media (min-width: 1024px) {
+  .keys-page-layout :deep(.layout-section-scrollable) {
+    min-height: 14rem;
+  }
+}
+
+@media (max-width: 1023px) {
+  :deep([data-field='group']),
+  :deep([data-field='usage']) {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  :deep([data-field='group'] > span),
+  :deep([data-field='usage'] > span) {
+    white-space: nowrap;
+  }
+
+  :deep([data-field='group'] > div),
+  :deep([data-field='usage'] > div) {
+    width: 100%;
+    text-align: left;
+  }
+
+  .key-group-control {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    flex-wrap: wrap;
+    text-align: left;
+  }
+
+  .key-group-badge {
+    max-width: 100%;
+  }
+
+  .key-group-hint,
+  .key-group-control > svg {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .key-usage-cell > .flex,
+  .key-usage-cell > div > .flex {
+    flex-wrap: wrap;
+  }
+
+  .key-usage-label {
+    white-space: nowrap;
+  }
+
+  .key-usage-amount {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+}
+
 :deep([data-field='current_concurrency']) {
   flex-wrap: wrap;
 }

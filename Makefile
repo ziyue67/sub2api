@@ -22,6 +22,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/smartOpsSidebar.spec.ts \
 	src/components/settings/BalanceForecastSettings.spec.ts \
 	src/components/admin/user/__tests__/UserAutoCreditModal.spec.ts \
+	src/components/admin/user/__tests__/UserBalanceHistoryModal.spec.ts \
 	src/components/common/__tests__/VipAutoCreditNotice.spec.ts \
 	src/components/admin/user/__tests__/ApiKeyModelPolicyDialog.spec.ts \
 	src/components/admin/user/__tests__/ApiKeyModelPolicyNotices.spec.ts \
@@ -31,6 +32,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/common/__tests__/PlatformTypeBadge.openaiPlans.spec.ts \
 	src/components/common/__tests__/PlatformTypeBadge.grok.spec.ts \
 	src/views/admin/__tests__/AutoConfigView.spec.ts \
+	src/views/admin/__tests__/OAuthDegradationActions.spec.ts \
 	src/utils/__tests__/openaiTwoFAAdmission.spec.ts \
 	src/components/admin/account/__tests__/BulkExport2FADialog.spec.ts \
 	src/components/admin/account/__tests__/AccountBulkActionsBar.spec.ts \
@@ -42,6 +44,9 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/account/__tests__/ModelTracePanel.spec.ts \
 	src/components/admin/account/__tests__/IQTestModal.modelTrace.spec.ts \
 	src/components/admin/account/__tests__/IQTestModal.spec.ts \
+	src/components/admin/account/__tests__/PelicanPromptMode.spec.ts \
+	src/utils/__tests__/pelicanQuestionRound.spec.ts \
+	src/components/admin/account/__tests__/PelicanTestFields.spec.ts \
 	src/components/admin/account/__tests__/PelicanRecordsDashboard.spec.ts \
 	src/api/admin/__tests__/scheduledTests.spec.ts \
 	src/features/ip-risk/__tests__/IPRiskSettings.spec.ts \
@@ -77,6 +82,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/operations/__tests__/QualityProbeSchedule.spec.ts \
 	src/components/admin/operations/__tests__/SmartOpsNav.spec.ts \
 	src/components/layout/__tests__/AppSidebar.spec.ts \
+	src/components/layout/__tests__/AppHeader.spec.ts \
 	src/components/account/__tests__/CreateAccountModal.autoBPS.spec.ts \
 	src/components/account/__tests__/EditAccountModal.autoBPS.spec.ts \
 	src/stores/__tests__/accountQuality.spec.ts \
@@ -99,6 +105,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/PelicanShowcaseView.spec.ts \
 	src/utils/__tests__/usageTps.spec.ts \
 	src/utils/__tests__/usageCacheRate.spec.ts \
+	src/utils/__tests__/usageRate.spec.ts \
 	src/views/admin/ops/components/__tests__/OpsErrorDetailModal.spec.ts \
 	src/router/__tests__/feature-access.spec.ts \
 	src/api/admin/__tests__/requestCaptures.spec.ts \
@@ -130,6 +137,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/moderation/__tests__/ModerationUserQuickEnable.spec.ts \
 	src/api/__tests__/admin.users.spec.ts \
 	src/views/user/__tests__/KeysView.spec.ts \
+	src/api/__tests__/usage.apiKeysRange.spec.ts \
 	src/api/__tests__/channelMonitorV2.spec.ts \
 	src/views/auth/__tests__/LinuxDoCallbackView.spec.ts \
 	src/views/auth/__tests__/WechatCallbackView.spec.ts \

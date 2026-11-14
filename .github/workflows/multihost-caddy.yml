@@ -34,6 +34,7 @@ jobs:
             echo "caddy download failed (attempt $attempt), retrying..." >&2
             sleep $((attempt * 10))
           done
+            --retry 3 --retry-delay 2 --retry-max-time 120 \
           echo '727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b  '"$proxy_fixture_dir/caddy.tar.gz" | sha256sum --check --strict
           tar -xzf "$proxy_fixture_dir/caddy.tar.gz" -C "$proxy_fixture_dir" caddy
           echo "CADDY_BIN=$proxy_fixture_dir/caddy" >> "$GITHUB_ENV"

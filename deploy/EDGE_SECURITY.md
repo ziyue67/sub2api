@@ -15,8 +15,12 @@ response. Healthy generations can remain open while an upstream is thinking.
   image, video, and batch-image endpoints.
 - `gateway.text_max_body_size: 33554432` limits the known pure-text
   `/embeddings` and `/alpha/search` endpoints to 32 MiB.
-- `gateway.request_body_memory_budget_bytes: 1073741824` shares a 1 GiB
-  buffering budget across gateway routes and aliases. Chunk allocations, the
+- `gateway.request_body_memory_budget_bytes` shares one buffering budget
+  across gateway routes and aliases. When it is set in neither the config file
+  nor `GATEWAY_REQUEST_BODY_MEMORY_BUDGET_BYTES`, startup sizes it to a quarter
+  of the process memory limit (the smallest of physical memory, the cgroup
+  limit and `GOMEMLIMIT`), never below 1 GiB, and logs the chosen value. Any
+  explicit value is used as-is (`0` disables the budget). Chunk allocations, the
   contiguous body copy, decompressed output, JSON normalization, and a Zstd
   decoder reservation are charged before allocation. Each phase releases the
   intermediate allocations it no longer references: chunks after assembly,
@@ -104,10 +108,12 @@ to reclaim that unreachable memory immediately.
 
 For example, 200 long-lived streams retaining 4 MiB each account for about
 800 MiB before new uploads and decoding. Another 32 concurrent Zstd decoders
-can reserve 256 MiB of window space alone, exceeding the default 1 GiB budget
-before their input/output buffers are counted. Increase the budget for such a
-workload only with sufficient instance memory, or reduce concurrency/request
-sizes. Leave separate memory headroom for SSE frames (which may be larger than
+can reserve 256 MiB of window space alone, exceeding a 1 GiB budget (the
+auto-sized value on instances with 4 GiB or less) before their input/output
+buffers are counted. Increase the budget for such a workload only with
+sufficient instance memory, or reduce concurrency/request sizes. Deployments
+that copied the old example config pin `request_body_memory_budget_bytes:
+1073741824`; remove that line to use auto-sizing. Leave separate memory headroom for SSE frames (which may be larger than
 the queue budget), conversion state, caches, connections and GC. Setting the
 budget to `0` disables ingress memory admission rather than limiting RSS.
 
@@ -306,3 +312,11 @@ cannot absorb volumetric attacks, TLS floods, bandwidth saturation, or a large
 distributed source set. Those require upstream network capacity, CDN/WAF
 filtering, provider firewall rules, and origin isolation. Avoid high-cardinality
 metrics or per-request database security logs during rejection storms.
+
+## Request-body memory budget
+
+`gateway.request_body_memory_budget_bytes` is one shared instance budget across gateway aliases and text/media routes. When absent from both YAML and a non-empty `GATEWAY_REQUEST_BODY_MEMORY_BUDGET_BYTES`, startup chooses one quarter of the smallest physical RAM, cgroup v1/v2 ancestor limit and GOMEMLIMIT, with a minimum of 1 GiB. Startup logs both detected memory and chosen budget. Explicit values, including `0` (disabled), remain unchanged; remove a pinned 1073741824 value to enable automatic sizing.
+
+Read chunks, assembly, decompression, Zstd workspace and JSON normalization reserve capacity before allocation. Temporary intermediates are released after their phase; final bodies remain charged until handler return, including long SSE responses. Preread borrowed buffers stay charged to their original owner. Accepted asynchronous image tasks take over their body reservation and release it on completion/cancellation. Exhaustion returns 503 with Retry-After: 1; per-request limits remain 413. This admission budget does not bound total heap/RSS: leave headroom for stream frames, conversion state, caches, connections and GC. For example 200 streams retaining 4 MiB use about 800 MiB, before concurrent decoder workspace.
+
+Compressed output is limited to 64 MiB by default; fork callers specifying a different decoded cap retain that cap. Oversize decompression is rejected rather than truncated. Zstd has one decoder worker and an 8 MiB window cap. Cgroup files are opened through os.Root to prevent mount escape, including symlinks.

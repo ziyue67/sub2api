@@ -16,7 +16,7 @@ type SessionSecurityStore interface {
 	RevokeSession(context.Context, string, time.Duration) error
 	IsSessionRevoked(context.Context, string) (bool, error)
 	GetRotatedRefreshToken(context.Context, string) (*RefreshTokenData, error)
-	ConsumeRefreshToken(context.Context, string) (bool, error)
+	ConsumeRefreshTokenForRotation(context.Context, string) (bool, error)
 }
 
 func (s *AuthService) sessionSecurityStore() SessionSecurityStore {

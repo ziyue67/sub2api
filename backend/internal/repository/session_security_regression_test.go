@@ -122,7 +122,7 @@ func TestTKSecurityRefreshConsumptionIsAtomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ok, err := store.ConsumeRefreshToken(context.Background(), "fixture-hash")
+			ok, err := store.ConsumeRefreshTokenForRotation(context.Background(), "fixture-hash")
 			if err != nil {
 				t.Error(err)
 			}

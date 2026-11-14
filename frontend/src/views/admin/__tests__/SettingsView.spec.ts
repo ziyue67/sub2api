@@ -11,6 +11,8 @@ import zhSettings from "@/i18n/locales/zh/admin/settings";
 import SettingsView from "../SettingsView.vue";
 import { apiClient } from "@/api/client";
 import NewFeatureBadge from "@/components/common/NewFeatureBadge.vue";
+import PaymentProviderDialog from "@/components/payment/PaymentProviderDialog.vue";
+import PaymentProviderList from "@/components/payment/PaymentProviderList.vue";
 import { NEW_FEATURE_NOTICES } from "@/constants/newFeatureNotices";
 
 enableAutoUnmount(afterEach);
@@ -955,8 +957,11 @@ describe("admin SettingsView payment visible method controls", () => {
     await tabBadge("gateway").trigger("click");
     await flushPromises();
 
-    // Gateway has independent announcements; dismissing one leaves the other
-    // in normal flow until it is dismissed as well.
+    // Gateway has three independent announcements. Each dismissal removes only
+    // that notice and leaves the remaining notices in the normal tab flow.
+    expect(tabBadge("gateway").exists()).toBe(true);
+    await tabBadge("gateway").trigger("click");
+    await flushPromises();
     expect(tabBadge("gateway").exists()).toBe(true);
     await tabBadge("gateway").trigger("click");
     await flushPromises();
@@ -2415,6 +2420,79 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(payload.grok_video_source_url_enabled).toBe(false);
   });
 
+  it.each([0, 1])("persists the 409 Beta notice dismissal from entry %s without dismissing other features", async (index) => {
+    const old = NEW_FEATURE_NOTICES.protocolFeatureSwitches;
+    const notice = NEW_FEATURE_NOTICES.openai409OmitEncryptedHistory;
+    localStorage.setItem('sub2api:new-feature-notices:v1:41', JSON.stringify([old]));
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+    const badges = () => wrapper.findAllComponents(NewFeatureBadge)
+      .filter(b => b.props('noticeId') === notice)
+      .flatMap(b => b.findAll('[data-testid="new-feature-badge"]'));
+    expect(badges()).toHaveLength(2);
+    expect((wrapper.get('[data-testid="openai-409-omit-encrypted-history-toggle"]').element as HTMLInputElement).checked).toBe(false);
+    await badges()[index]!.trigger('click');
+    expect(badges()).toHaveLength(0);
+    expect(updateSettings).not.toHaveBeenCalled();
+    wrapper.unmount();
+    const refreshed = mountView();
+    await flushPromises();
+    expect(refreshed.findAllComponents(NewFeatureBadge)
+      .filter(b => b.props('noticeId') === old || b.props('noticeId') === notice)
+      .flatMap(b => b.findAll('[data-testid="new-feature-badge"]'))).toHaveLength(0);
+    const later = mount(NewFeatureBadge, { props: { noticeId: 'fixture-next-409-beta-notice', userId: 41 }, global: { plugins: [createPinia()] } });
+    expect(later.find('[data-testid="new-feature-badge"]').exists()).toBe(true);
+  });
+
+  it("loads and saves the 409 encrypted history omission Beta", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_409_omit_encrypted_history_enabled: true,
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const sourceURLToggle = wrapper.get(
+      '[data-testid="openai-409-omit-encrypted-history-toggle"]',
+    );
+    expect((sourceURLToggle.element as HTMLInputElement).checked).toBe(true);
+
+    await sourceURLToggle.setValue(false);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(payload.openai_409_omit_encrypted_history_enabled).toBe(false);
+  });
+
+  it("loads and saves the 400 encrypted history omission Beta", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      openai_400_omit_encrypted_history_enabled: true,
+      openai_409_omit_encrypted_history_enabled: false,
+    });
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const sourceURLToggle = wrapper.get(
+      '[data-testid="openai-400-omit-encrypted-history-toggle"]',
+    );
+    expect((sourceURLToggle.element as HTMLInputElement).checked).toBe(true);
+
+    await sourceURLToggle.setValue(false);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    const payload = updateSettings.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(payload.openai_400_omit_encrypted_history_enabled).toBe(false);
+    expect(payload.openai_409_omit_encrypted_history_enabled).toBe(false);
+  });
+
   it("loads and saves the OpenAI Responses first-token metric mode", async () => {
     getSettings.mockResolvedValueOnce({
       ...baseSettingsResponse,
@@ -2569,6 +2647,22 @@ describe("admin SettingsView payment visible method controls", () => {
       weightedModeText.indexOf("调度权值覆盖"),
     );
     expect(weightedModeText).toContain("计费倍率");
+  });
+
+  it("uses saved global fees for providers until settings are successfully saved", async () => {
+    getSettings.mockResolvedValue({ ...baseSettingsResponse, payment_recharge_fee_rate: 2.5 });
+    const wrapper = mountView();
+    await flushPromises();
+    await openPaymentTab(wrapper);
+    expect(wrapper.findComponent(PaymentProviderDialog).props("globalFeeRate")).toBe(2.5);
+    expect(wrapper.findComponent(PaymentProviderList).props("globalFeeRate")).toBe(2.5);
+    await wrapper.get('[data-testid="payment-global-fee-rate"]').setValue("5");
+    expect(wrapper.findComponent(PaymentProviderDialog).props("globalFeeRate")).toBe(2.5);
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({ payment_recharge_fee_rate: 5 }));
+    expect(wrapper.findComponent(PaymentProviderDialog).props("globalFeeRate")).toBe(5);
+    expect(wrapper.findComponent(PaymentProviderList).props("globalFeeRate")).toBe(5);
   });
 
   it("passes translated upload and remove labels to the payment help image uploader", async () => {

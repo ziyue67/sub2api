@@ -230,6 +230,8 @@ func IsGPT61SolModelSpelling(model string) bool {
 
 // IsGPT61TerraModelSpelling recognizes the published model and local effort/compact
 // spellings. Invalid effort suffixes remain identifiable for request validation.
+// IsGPT61TerraModelSpelling also recognizes invalid effort suffixes so request
+// validation can reject them before alias normalization loses the selection.
 func IsGPT61TerraModelSpelling(model string) bool {
 	canonical := CanonicalizeOpenAIModelAliasSpelling(model)
 	if canonical == "gpt-6.1-terra" {

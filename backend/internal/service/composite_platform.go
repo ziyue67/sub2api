@@ -118,6 +118,8 @@ func DetectModelPlatform(model string) (string, bool) {
 			return PlatformDeepseek, true
 		case "minimax":
 			return PlatformMiniMax, true
+		case "qwen", "dashscope":
+			return PlatformQwen, true
 		case "mistral":
 			return PlatformMistral, true
 		case "typesafe", "jev":
@@ -160,6 +162,9 @@ func DetectModelPlatform(model string) (string, bool) {
 		strings.HasPrefix(normalized, "kimi-"),
 		strings.HasPrefix(normalized, "moonshot-"):
 		return PlatformKimi, true
+	case normalized == "qwen", strings.HasPrefix(normalized, "qwen-"),
+		len(normalized) > 4 && strings.HasPrefix(normalized, "qwen") && normalized[4] >= '0' && normalized[4] <= '9':
+		return PlatformQwen, true
 	case strings.HasPrefix(normalized, "glm-"):
 		return PlatformZhipu, true
 	case strings.HasPrefix(normalized, "mistral-"),

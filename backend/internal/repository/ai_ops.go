@@ -200,8 +200,10 @@ func readAIOpsAccounts(ctx context.Context, tx *sql.Tx, ids []int64) (map[int64]
 // dedup key prevents retries/log duplication becoming fictitious sample size;
 // recovered failover rows, business rejections, 429/529 and client cancels are
 // deliberately excluded from automatic fault evidence.
-var aiOpsEvidenceSQL = `WITH successes AS (
- SELECT u.request_id,u.model,COALESCE(u.reasoning_effort,'') AS effort,
+// A final failure wins over a conflicting completed usage trace for the same
+// request: partial billable output must not add a second, successful sample.
+var aiOpsEvidenceSQL = `WITH success_candidates AS (
+ SELECT u.request_id,u.api_key_id,u.model,COALESCE(u.reasoning_effort,'') AS effort,
  t.detail->'protocol_decision'->>'upstream' AS protocol,
  CASE WHEN u.input_tokens+u.cache_read_tokens<4000 THEN 'small' WHEN u.input_tokens+u.cache_read_tokens<32000 THEN 'medium' ELSE 'large' END AS input_bucket,
  CASE WHEN u.cache_read_tokens>0 THEN 'cached' ELSE 'uncached' END AS cache_bucket,
@@ -219,13 +221,18 @@ var aiOpsEvidenceSQL = `WITH successes AS (
  AND COALESCE(u.image_count,0)=0 AND COALESCE(u.image_output_tokens,0)=0 AND COALESCE(u.billing_mode,'token') NOT IN ('image','video')
 ), failures AS (
  SELECT DISTINCT ON (COALESCE(NULLIF(request_id,''),'error:'||id::text))
- request_id,model FROM ops_error_logs o WHERE account_id=$1 AND created_at>=$2 AND created_at<$3
+ request_id,client_request_id,api_key_id,model FROM ops_error_logs o WHERE account_id=$1 AND created_at>=$2 AND created_at<$3
  AND NOT is_count_tokens AND NOT ` + opsBusinessLimitedSQL("o") + ` AND ` + opsEffectiveOwnerSQL("o") + `='provider'
  AND NOT ` + opsExplicitRequestRejectionSQL("o", "400, 404, 413, 422, 500, 502, 503", append(append([]string{}, service.OpsContextLimitRejectionNeedles...), service.OpsModelCapabilityRejectionNeedles...)) + `
- AND status_code>=400 AND error_type<>'client_canceled'
+ AND (status_code>=400 OR error_type='transport_error') AND error_type<>'client_canceled'
  AND COALESCE(NULLIF(upstream_status_code,0),status_code) NOT IN (429,529)
- AND (COALESCE(NULLIF(upstream_status_code,0),status_code)>=500 OR error_phase IN ('connect','transport'))
+ AND (COALESCE(NULLIF(upstream_status_code,0),status_code)>=500 OR error_phase IN ('connect','transport') OR error_type='transport_error')
  ORDER BY COALESCE(NULLIF(request_id,''),'error:'||id::text),created_at DESC,id DESC
+), successes AS (
+ SELECT s.* FROM success_candidates s
+ WHERE NOT EXISTS (SELECT 1 FROM failures f WHERE f.api_key_id=s.api_key_id AND (
+   (f.request_id<>'' AND (f.request_id=s.request_id OR 'local:'||f.request_id=s.request_id))
+   OR (f.client_request_id<>'' AND 'client:'||f.client_request_id=s.request_id)))
 )
  SELECT (SELECT COUNT(*) FROM successes),(SELECT COUNT(*) FROM failures),
  (SELECT COUNT(*) FROM successes WHERE model<>'' AND effort<>'' AND protocol IN ('http','ws')),
@@ -590,6 +597,54 @@ func saveAIOpsAction(ctx context.Context, tx *sql.Tx, a service.AIOpsAction) err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE ai_ops_actions SET status=$2,data=$3,updated_at=$4 WHERE id=$1`, a.ID, a.Status, string(raw), a.UpdatedAt)
 	return err
+}
+
+// Cancellation uses the same global transaction and proposal row lock as apply.
+// It only revokes a frozen proposal; an existing action requires its own rollback.
+func (r *accountRepository) CancelAIOpsProposal(ctx context.Context, id, digest string, actorID int64) (service.AIOpsProposal, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return service.AIOpsProposal{}, service.ErrAIOpsBlocked
+	}
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	tx, err := r.aiOpsTx(ctx)
+	if err != nil {
+		return service.AIOpsProposal{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	proposal, err := readAIOpsProposal(ctx, tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return proposal, service.ErrAIOpsConflict
+	}
+	if err != nil {
+		return proposal, err
+	}
+	if digest == "" || proposal.Digest != digest {
+		return proposal, service.ErrAIOpsConflict
+	}
+	if proposal.Status == "cancelled" {
+		return proposal, tx.Commit()
+	}
+	if proposal.Status != "ready" && proposal.Status != "blocked" {
+		return proposal, service.ErrAIOpsConflict
+	}
+	var applied bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ai_ops_actions WHERE proposal_id=$1)`, id).Scan(&applied); err != nil {
+		return proposal, err
+	}
+	if applied {
+		return proposal, service.ErrAIOpsConflict
+	}
+	now := time.Now().UTC()
+	proposal.Status, proposal.CancelledAt, proposal.CancelledBy = "cancelled", &now, actorID
+	raw, err := json.Marshal(proposal)
+	if err != nil {
+		return proposal, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE ai_ops_proposals SET status='cancelled',data=$2 WHERE id=$1`, id, string(raw)); err != nil {
+		return proposal, err
+	}
+	return proposal, tx.Commit()
 }
 
 func (r *accountRepository) ApplyAIOps(ctx context.Context, id, digest string, actorID int64, automatic bool) (service.AIOpsAction, error) {

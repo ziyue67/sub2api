@@ -41,10 +41,11 @@ func reusableQualityConfig(source *PelicanTestConfig) (*PelicanTestConfig, error
 		action = QualityActionObserveOnly
 	}
 	policy := &QualityPolicy{
+		OAuth401MaxRounds:    q.OAuth401MaxRounds,
 		TriggerOnUpstream5xx: q.TriggerOnUpstream5xx, ExpectedAnswer: q.ExpectedAnswer,
 		Action: action, RemoveGroupIDs: append([]int64(nil), q.RemoveGroupIDs...),
 		RemoveModels: append([]string(nil), q.RemoveModels...), RecoveryConcurrency: q.RecoveryConcurrency,
-		AutoRestore: q.AutoRestore,
+		AutoRestore: q.AutoRestore, RetestRestMinutes: q.RetestRestMinutes,
 	}
 	if q.Judge != nil {
 		judge := *q.Judge
@@ -71,6 +72,9 @@ func reusableQualityConfig(source *PelicanTestConfig) (*PelicanTestConfig, error
 	}
 	if action == QualityActionObserveOnly {
 		policy.AutoRestore = false
+	}
+	if !policy.UsesRetestRest() {
+		policy.RetestRestMinutes = 0
 	}
 	if source.QuestionKind == OpenAICodexStateProbeQuestionKind {
 		policy.Judge = nil
