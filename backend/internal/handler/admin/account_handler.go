@@ -227,6 +227,7 @@ type CheckMixedChannelRequest struct {
 
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
+	ModerationScopeEligible bool `json:"moderation_scope_eligible"`
 	*dto.Account
 	simpleMode         bool                         `json:"-"`
 	CurrentConcurrency int                          `json:"current_concurrency"`
@@ -244,6 +245,7 @@ type AccountWithConcurrency struct {
 // for lite=1. It embeds dto.AccountListItem instead of the full dto.Account,
 // so groups/account_groups never appear in the list payload.
 type AccountListItemWithConcurrency struct {
+	ModerationScopeEligible bool `json:"moderation_scope_eligible"`
 	*dto.AccountListItem
 	CurrentConcurrency int                          `json:"current_concurrency"`
 	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
@@ -414,9 +416,10 @@ func (h *AccountHandler) isSimpleMode() bool {
 
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
-		Account:            dto.AccountForObserver(ctx, h.accountResponseFromService(account)),
-		simpleMode:         h.isSimpleMode(),
-		CurrentConcurrency: 0,
+		Account:                 dto.AccountForObserver(ctx, h.accountResponseFromService(account)),
+		ModerationScopeEligible: service.ModerationUpstreamAccountEligible(account),
+		simpleMode:              h.isSimpleMode(),
+		CurrentConcurrency:      0,
 	}
 	if account == nil {
 		return item
@@ -880,11 +883,12 @@ func (h *AccountHandler) List(c *gin.Context) {
 			}
 		}
 		item := AccountWithConcurrency{
-			Account:            accountResponse,
-			simpleMode:         h.isSimpleMode(),
-			CurrentConcurrency: concurrencyCounts[acc.ID],
-			SchedulerScore:     schedulerScores[acc.ID],
-			SchedulerScores:    schedulerGroupScores[acc.ID],
+			Account:                 accountResponse,
+			ModerationScopeEligible: service.ModerationUpstreamAccountEligible(acc),
+			simpleMode:              h.isSimpleMode(),
+			CurrentConcurrency:      concurrencyCounts[acc.ID],
+			SchedulerScore:          schedulerScores[acc.ID],
+			SchedulerScores:         schedulerGroupScores[acc.ID],
 		}
 
 		// 添加窗口费用（仅当启用时）
@@ -931,15 +935,16 @@ func (h *AccountHandler) List(c *gin.Context) {
 		for i := range result {
 			item := result[i]
 			compact[i] = AccountListItemWithConcurrency{
-				AccountListItem:    dto.AccountListItemFromAccount(item.Account),
-				CurrentConcurrency: item.CurrentConcurrency,
-				SchedulerScore:     item.SchedulerScore,
-				SchedulerScores:    item.SchedulerScores,
-				CurrentWindowCost:  item.CurrentWindowCost,
-				ActiveSessions:     item.ActiveSessions,
-				CurrentRPM:         item.CurrentRPM,
-				RPMPaused:          item.RPMPaused,
-				RPMResetAt:         item.RPMResetAt,
+				AccountListItem:         dto.AccountListItemFromAccount(item.Account),
+				ModerationScopeEligible: item.ModerationScopeEligible,
+				CurrentConcurrency:      item.CurrentConcurrency,
+				SchedulerScore:          item.SchedulerScore,
+				SchedulerScores:         item.SchedulerScores,
+				CurrentWindowCost:       item.CurrentWindowCost,
+				ActiveSessions:          item.ActiveSessions,
+				CurrentRPM:              item.CurrentRPM,
+				RPMPaused:               item.RPMPaused,
+				RPMResetAt:              item.RPMResetAt,
 			}
 		}
 		etag := buildAccountsListETag(compact, total, page, pageSize, platform, accountType, status, search, true)
@@ -1427,9 +1432,11 @@ type batchTestAccountEvent struct {
 }
 
 type PelicanTestRequest struct {
-	ModelID         string `json:"model_id"`
-	Prompt          string `json:"prompt"`
-	ReasoningEffort string `json:"reasoning_effort"`
+	PromptMode      string                   `json:"prompt_mode"`
+	PelicanQuestion *service.PelicanQuestion `json:"pelican_question"`
+	ModelID         string                   `json:"model_id"`
+	Prompt          string                   `json:"prompt"`
+	ReasoningEffort string                   `json:"reasoning_effort"`
 }
 
 type SyncFromCRSRequest struct {
@@ -1590,6 +1597,16 @@ func (h *AccountHandler) BatchTest(c *gin.Context) {
 	}
 }
 
+// PreparePelicanQuestion allocates a comparison round without contacting an upstream.
+func (h *AccountHandler) PreparePelicanQuestion(c *gin.Context) {
+	cfg, err := service.NewPelicanQuestion()
+	if err != nil {
+		response.InternalError(c, "Unable to prepare pelican question")
+		return
+	}
+	response.Success(c, cfg)
+}
+
 // PelicanTest handles the dedicated Pelican HTML-generation test stream.
 // POST /api/v1/admin/accounts/:id/pelican-test
 func (h *AccountHandler) PelicanTest(c *gin.Context) {
@@ -1602,6 +1619,17 @@ func (h *AccountHandler) PelicanTest(c *gin.Context) {
 	var req PelicanTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if req.PromptMode == service.PelicanPromptModeRandom {
+		cfg, err := service.ResolveManualPelicanQuestion(req.PelicanQuestion)
+		if err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+		req.Prompt = cfg.ActualPrompt
+	} else if req.PromptMode != "" && req.PromptMode != "custom" {
+		response.BadRequest(c, "Invalid pelican prompt mode")
 		return
 	}
 	if err := h.accountTestService.TestPelicanAccountConnection(c, accountID, req.ModelID, req.Prompt, req.ReasoningEffort); err != nil {

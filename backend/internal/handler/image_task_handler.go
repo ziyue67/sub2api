@@ -78,7 +78,11 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
 		bodyLog := requestLogger(c, "handler.image_task.create")
-		if handleRequestBodyReadError(c, bodyLog, err) {
+		if middleware2.RejectRequestBodyReadError(c, "handler.image_task_handler", err) {
+			return
+		}
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			imageTaskJSONError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
 		status, message := requestBodyReadFailure(bodyLog, c.Request, err)
@@ -241,6 +245,14 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 	if err := taskCtx.Request.Context().Err(); err != nil && len(body) == 0 {
 		h.failTask(taskID, http.StatusGatewayTimeout, imageTaskErrorPayload("timeout_error", "image generation task timed out"))
 		return
+	}
+	// JSON whitespace keepalives may commit 200 before a local policy denial.
+	// The worker's semantic result is independent of that transport status.
+	if status, ok := taskCtx.Get(upstreamAuditFailureStatusKey); ok {
+		if code, ok := status.(int); ok && code >= 400 {
+			h.failTask(taskID, code, extractImageTaskError(body))
+			return
+		}
 	}
 	statusCode := recorder.Code
 	if statusCode == 0 {

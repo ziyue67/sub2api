@@ -29,6 +29,9 @@ func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {
 }
 
 func (c *Coordinator) Check(ctx context.Context, req Request) (decision Decision) {
+	if req.NoBodyRetention {
+		ctx = service.WithRecoveredContextPrivacy(ctx)
+	}
 	if c == nil {
 		return allowDecision(nil, nil)
 	}
@@ -72,7 +75,7 @@ func (c *Coordinator) Check(ctx context.Context, req Request) (decision Decision
 		req.GroupName = req.PenaltyContext.OriginalGroupName
 	}
 	mode := ModeOff
-	if c.prompt != nil {
+	if c.prompt != nil && !req.SkipPrompt {
 		mode = c.prompt.EffectiveMode()
 	}
 	switch mode {

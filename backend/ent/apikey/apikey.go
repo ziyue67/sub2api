@@ -43,6 +43,8 @@ const (
 	FieldReasoningEffort = "reasoning_effort"
 	// FieldAllowLongContext holds the string denoting the allow_long_context field in the database.
 	FieldAllowLongContext = "allow_long_context"
+	// FieldContextTokenLimit holds the string denoting the context_token_limit field in the database.
+	FieldContextTokenLimit = "context_token_limit"
 	// FieldLastUsedAt holds the string denoting the last_used_at field in the database.
 	FieldLastUsedAt = "last_used_at"
 	// FieldIPWhitelist holds the string denoting the ip_whitelist field in the database.
@@ -121,6 +123,7 @@ var Columns = []string{
 	FieldModelMapping,
 	FieldReasoningEffort,
 	FieldAllowLongContext,
+	FieldContextTokenLimit,
 	FieldLastUsedAt,
 	FieldIPWhitelist,
 	FieldIPBlacklist,
@@ -182,6 +185,10 @@ var (
 	ReasoningEffortValidator func(string) error
 	// DefaultAllowLongContext holds the default value on creation for the "allow_long_context" field.
 	DefaultAllowLongContext bool
+	// DefaultContextTokenLimit holds the default value on creation for the "context_token_limit" field.
+	DefaultContextTokenLimit int
+	// ContextTokenLimitValidator is a validator for the "context_token_limit" field. It is called by the builders before save.
+	ContextTokenLimitValidator func(int) error
 	// DefaultQuota holds the default value on creation for the "quota" field.
 	DefaultQuota float64
 	// DefaultQuotaUsed holds the default value on creation for the "quota_used" field.
@@ -261,6 +268,11 @@ func ByReasoningEffort(opts ...sql.OrderTermOption) OrderOption {
 // ByAllowLongContext orders the results by the allow_long_context field.
 func ByAllowLongContext(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldAllowLongContext, opts...).ToFunc()
+}
+
+// ByContextTokenLimit orders the results by the context_token_limit field.
+func ByContextTokenLimit(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldContextTokenLimit, opts...).ToFunc()
 }
 
 // ByLastUsedAt orders the results by the last_used_at field.

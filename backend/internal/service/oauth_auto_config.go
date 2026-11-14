@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"time"
 
@@ -18,34 +20,65 @@ const AutoConfigConcurrencyExtraKey = "auto_config_concurrency"
 
 // Initial account fields, BPS defaults, model billing and concurrency upgrades are independent.
 type OAuthAutoConfig struct {
-	OpenAITwoFAAdmission  OpenAITwoFAAdmissionConfig `json:"openai_two_fa_admission"`
-	OpenAITOTPRotateOn429 bool                       `json:"openai_totp_rotate_on_429"`
-	QualityRule           *OAuthInitialQualityRule   `json:"quality_rule,omitempty"`
-	ModelMappings         []OAuthModelMappingRule    `json:"model_mappings"`
-	SelectedModels        []string                   `json:"selected_models"`
-	ModelBilling          ModelBillingConfig         `json:"model_billing"`
-	ExcelBPS              ExcelBPSDefaults           `json:"excel_bps"`
-	UpdatedAt             time.Time                  `json:"updated_at"`
-	Enabled               bool                       `json:"enabled"`
-	Platform              string                     `json:"platform"`
-	Priority              int                        `json:"priority"`
-	LoadFactor            int                        `json:"load_factor"`
-	Concurrency           int                        `json:"concurrency"`
-	GroupIDs              []int64                    `json:"group_ids"`
-	UpgradeEnabled        bool                       `json:"upgrade_enabled"`
-	UpgradeGroupIDs       []int64                    `json:"upgrade_group_ids"`
-	SuccessesPerStep      int                        `json:"successes_per_step"`
-	UpgradeStep           int                        `json:"upgrade_step"`
-	MaxConcurrency        int                        `json:"max_concurrency"`
-	CooldownSeconds       int                        `json:"cooldown_seconds"`
-	CostMultiplier        float64                    `json:"cost_multiplier"`
-	Revision              string                     `json:"revision"`
+	OpenAIAPIKeyFallback                           OpenAIAPIKeyFallbackConfig `json:"openai_apikey_fallback"`
+	DegradationAction                              OAuthDegradationConfig     `json:"degradation_action"`
+	OpenAITwoFAAdmission                           OpenAITwoFAAdmissionConfig `json:"openai_two_fa_admission"`
+	OpenAITOTPRotateOn429                          bool                       `json:"openai_totp_rotate_on_429"`
+	OpenAIDisableSchedulingOn429                   bool                       `json:"openai_disable_scheduling_on_429"`
+	OpenAIDisableSchedulingOn4297dThresholdPercent float64                    `json:"openai_disable_scheduling_on_429_7d_threshold_percent"`
+	OpenAIWSMode                                   *string                    `json:"openai_ws_mode,omitempty"`
+	OpenAIWSSSEAcceleration                        *bool                      `json:"openai_ws_sse_acceleration,omitempty"`
+	QualityRule                                    *OAuthInitialQualityRule   `json:"quality_rule,omitempty"`
+	ModelMappings                                  []OAuthModelMappingRule    `json:"model_mappings"`
+	SelectedModels                                 []string                   `json:"selected_models"`
+	ModelBilling                                   ModelBillingConfig         `json:"model_billing"`
+	ExcelBPS                                       ExcelBPSDefaults           `json:"excel_bps"`
+	UpdatedAt                                      time.Time                  `json:"updated_at"`
+	Enabled                                        bool                       `json:"enabled"`
+	Platform                                       string                     `json:"platform"`
+	Priority                                       int                        `json:"priority"`
+	LoadFactor                                     int                        `json:"load_factor"`
+	Concurrency                                    int                        `json:"concurrency"`
+	GroupIDs                                       []int64                    `json:"group_ids"`
+	UpgradeEnabled                                 bool                       `json:"upgrade_enabled"`
+	UpgradeGroupIDs                                []int64                    `json:"upgrade_group_ids"`
+	SuccessesPerStep                               int                        `json:"successes_per_step"`
+	UpgradeStep                                    int                        `json:"upgrade_step"`
+	MaxConcurrency                                 int                        `json:"max_concurrency"`
+	CooldownSeconds                                int                        `json:"cooldown_seconds"`
+	CostMultiplier                                 float64                    `json:"cost_multiplier"`
+	Revision                                       string                     `json:"revision"`
+}
+
+func (c *OAuthAutoConfig) UnmarshalJSON(data []byte) error {
+	type configJSON OAuthAutoConfig
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if raw, exists := fields[OpenAIDisableSchedulingOn4297dThresholdExtraKey]; exists && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return errors.New("7d scheduling threshold must be a number")
+	}
+	return json.Unmarshal(data, (*configJSON)(c))
 }
 
 func DefaultOAuthAutoConfig() OAuthAutoConfig {
-	return OAuthAutoConfig{OpenAITwoFAAdmission: DefaultOpenAITwoFAAdmissionConfig(), ModelMappings: defaultOAuthModelMappings(PlatformOpenAI), ModelBilling: DefaultModelBillingConfig(), ExcelBPS: DefaultExcelBPSDefaults(), Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, CostMultiplier: 0.07, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
+	wsMode, wsSSEAcceleration := OpenAIWSIngressModeCtxPool, false
+	return OAuthAutoConfig{OpenAIAPIKeyFallback: DefaultOpenAIAPIKeyFallbackConfig(), OpenAIDisableSchedulingOn4297dThresholdPercent: DefaultOpenAIDisableSchedulingOn4297dThresholdPercent, DegradationAction: DefaultOAuthDegradationConfig(), OpenAIWSMode: &wsMode, OpenAIWSSSEAcceleration: &wsSSEAcceleration, OpenAITwoFAAdmission: DefaultOpenAITwoFAAdmissionConfig(), ModelMappings: defaultOAuthModelMappings(PlatformOpenAI), ModelBilling: DefaultModelBillingConfig(), ExcelBPS: DefaultExcelBPSDefaults(), Platform: PlatformOpenAI, Priority: 50, LoadFactor: 1, Concurrency: 3, CostMultiplier: 0.07, GroupIDs: []int64{}, UpgradeGroupIDs: []int64{}, SuccessesPerStep: 20, UpgradeStep: 1, MaxConcurrency: 100, CooldownSeconds: 60}
 }
 func ValidateOAuthAutoConfig(c OAuthAutoConfig) error {
+	if err := c.OpenAIAPIKeyFallback.Validate(); err != nil {
+		return err
+	}
+	if threshold := c.OpenAIDisableSchedulingOn4297dThresholdPercent; math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 || threshold > 100 {
+		return infraerrors.BadRequest("AUTO_CONFIG_INVALID", "7d scheduling threshold must be a finite number between 0 and 100")
+	}
+	if err := c.DegradationAction.Validate(); err != nil {
+		return err
+	}
+	if err := validateOAuthInitialWSMode(c.OpenAIWSMode); err != nil {
+		return err
+	}
 	if err := c.OpenAITwoFAAdmission.Validate(); err != nil {
 		return infraerrors.BadRequest("AUTO_CONFIG_ADMISSION_INVALID", err.Error())
 	}
@@ -112,6 +145,8 @@ func GetOAuthAutoConfig(ctx context.Context, repo SettingRepository) (OAuthAutoC
 	if raw != "" {
 		// Legacy settings keep their routing until mappings are explicitly saved.
 		c.ModelMappings = nil
+		// Absent WS fields leave imported transport settings unchanged until saved.
+		c.OpenAIWSMode, c.OpenAIWSSSEAcceleration = nil, nil
 		if err = json.Unmarshal([]byte(raw), &c); err != nil {
 			return c, err
 		}
@@ -147,6 +182,7 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 	input.Extra = maps.Clone(input.Extra)
 	delete(input.Extra, "auto_config_initial_revision")
 	delete(input.Extra, OpenAITwoFAAdmissionExtraKey)
+	delete(input.Extra, OAuthDegradationActionExtraKey)
 	// Global initialization is an administrator policy. Observers explicitly
 	// choose their own groups and must not inherit global groups or field overrides.
 	if _, observer := ObserverGroupIDs(ctx); observer {
@@ -195,6 +231,9 @@ func (s *adminServiceImpl) ApplyOAuthAutoConfig(ctx context.Context, input *Crea
 	input.Extra[AccountCostMultiplierExtraKey] = c.CostMultiplier
 	if input.Platform == PlatformOpenAI {
 		input.Extra[OpenAITOTPRotateOn429ExtraKey] = c.OpenAITOTPRotateOn429
+		input.Extra[OpenAIDisableSchedulingOn429ExtraKey] = c.OpenAIDisableSchedulingOn429
+		input.Extra[OpenAIDisableSchedulingOn4297dThresholdExtraKey] = c.OpenAIDisableSchedulingOn4297dThresholdPercent
+		applyOAuthInitialWS(input.Extra, c)
 	}
 	return nil
 }
@@ -209,6 +248,9 @@ func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAuto
 		c.ModelMappings = []OAuthModelMappingRule{}
 	}
 	if err := ValidateOAuthAutoConfig(c); err != nil {
+		return c, err
+	}
+	if err := s.validateOpenAIAPIKeyFallbackAccounts(ctx, c.OpenAIAPIKeyFallback); err != nil {
 		return c, err
 	}
 	if c.QualityRule != nil {
@@ -226,6 +268,9 @@ func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAuto
 	// Existing scopes may reference a group deleted/disabled since saving. Keep
 	// those stable IDs; only newly selected IDs must resolve to active groups.
 	if err := s.validateModelBillingGroupSelections(ctx, c.ModelBilling); err != nil {
+		return c, err
+	}
+	if err := s.validateDegradationGroupSelections(ctx, c.DegradationAction); err != nil {
 		return c, err
 	}
 
@@ -266,18 +311,58 @@ func (s *AccountOpsService) SaveOAuthAutoConfig(ctx context.Context, c OAuthAuto
 			return c, err
 		}
 	}
+	expectedRevision := c.Revision
 	c.Revision = uuid.NewString()
 	c.UpdatedAt = time.Now().UTC()
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return c, err
 	}
-	if err = s.settings.Set(ctx, SettingKeyOAuthAutoConfig, string(raw)); err != nil {
+	if cas, ok := s.settings.(interface {
+		CompareAndSetOAuthAutoConfig(context.Context, string, string) error
+	}); ok {
+		err = cas.CompareAndSetOAuthAutoConfig(ctx, string(raw), expectedRevision)
+	} else {
+		current, readErr := GetOAuthAutoConfig(ctx, s.settings)
+		if readErr != nil {
+			return c, readErr
+		}
+		if current.Revision != expectedRevision {
+			return c, infraerrors.Conflict("AUTO_CONFIG_CONFLICT", "automatic configuration changed; reload before saving")
+		}
+		err = s.settings.Set(ctx, SettingKeyOAuthAutoConfig, string(raw))
+	}
+	if err != nil {
 		return c, err
 	}
 	s.autoConfig.Store(c)
 	s.autoBlocked.Store(false)
 	return c, nil
+}
+
+func (s *AccountOpsService) validateDegradationGroupSelections(ctx context.Context, cfg OAuthDegradationConfig) error {
+	if !cfg.LimitGroups {
+		return nil
+	}
+	current, err := GetOAuthAutoConfig(ctx, s.settings)
+	if err != nil {
+		return err
+	}
+	for _, id := range cfg.GroupIDs {
+		// Keep saved IDs even if the group has since been disabled or removed.
+		// Removing it from this template must not restore an applied restriction.
+		if slices.Contains(current.DegradationAction.GroupIDs, id) {
+			continue
+		}
+		group, err := s.autoGroups.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if group == nil || group.Status != StatusActive {
+			return infraerrors.BadRequest("OAUTH_DEGRADATION_GROUP_INVALID", "select active groups to remove after degradation")
+		}
+	}
+	return nil
 }
 
 func (s *AccountOpsService) validateModelBillingGroupSelections(ctx context.Context, cfg ModelBillingConfig) error {
@@ -316,24 +401,27 @@ func (s *AccountOpsService) validateModelBillingGroupSelections(ctx context.Cont
 }
 
 type AccountConcurrencyResult struct {
-	Reset     bool
-	AccountID int64
-	StartedAt time.Time
-	Success   bool
+	// Transport failures interrupt the success streak but do not prove capacity exhaustion.
+	FailureCategory string
+	Reset           bool
+	AccountID       int64
+	StartedAt       time.Time
+	Success         bool
 }
 type AccountConcurrencyRepository interface {
 	RecordConcurrencyResult(context.Context, AccountConcurrencyResult, OAuthAutoConfig) error
 }
 type AutoConfigConcurrencyState struct {
-	Revision      string     `json:"revision"`
-	Concurrency   int        `json:"concurrency"`
-	Successes     int        `json:"successes"`
-	Required      int        `json:"required"`
-	Maximum       int        `json:"maximum"`
-	Step          int        `json:"step"`
-	PausedUntil   time.Time  `json:"paused_until"`
-	LastUpgradeAt *time.Time `json:"last_upgrade_at,omitempty"`
-	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
+	DegradationHold bool       `json:"degradation_hold,omitempty"`
+	Revision        string     `json:"revision"`
+	Concurrency     int        `json:"concurrency"`
+	Successes       int        `json:"successes"`
+	Required        int        `json:"required"`
+	Maximum         int        `json:"maximum"`
+	Step            int        `json:"step"`
+	PausedUntil     time.Time  `json:"paused_until"`
+	LastUpgradeAt   *time.Time `json:"last_upgrade_at,omitempty"`
+	LastFailureAt   *time.Time `json:"last_failure_at,omitempty"`
 	// RecoveryTarget is a quality-rule-owned ceiling. Native success ramping
 	// may advance only up to this captured pre-quarantine value.
 	RecoveryTarget int `json:"recovery_target,omitempty"`
@@ -341,6 +429,9 @@ type AutoConfigConcurrencyState struct {
 
 // AdvanceConcurrency is pure. A fresh cycle starts after a rule/manual change.
 func AdvanceConcurrency(state AutoConfigConcurrencyState, current int, c OAuthAutoConfig, result AccountConcurrencyResult, now time.Time) (AutoConfigConcurrencyState, int) {
+	if state.DegradationHold {
+		return state, current
+	}
 	if state.Revision != c.Revision || state.Concurrency != current {
 		state = AutoConfigConcurrencyState{Revision: c.Revision, Concurrency: current}
 	}
@@ -354,7 +445,9 @@ func AdvanceConcurrency(state AutoConfigConcurrencyState, current int, c OAuthAu
 	if !result.Success {
 		state.Successes = 0
 		state.LastFailureAt = &now
-		state.PausedUntil = now.Add(time.Duration(c.CooldownSeconds) * time.Second)
+		if result.FailureCategory != "transport_error" {
+			state.PausedUntil = now.Add(time.Duration(c.CooldownSeconds) * time.Second)
+		}
 		return state, current
 	}
 	if current <= 0 || current >= maximum || result.StartedAt.Before(state.PausedUntil) {
@@ -440,6 +533,7 @@ func (s *AccountOpsService) AutoConfigBlocked() bool { return s.autoBlocked.Load
 func (s *AccountOpsService) runAutoConfig(ctx context.Context) {
 	defer s.wg.Done()
 	s.refreshAutoConfig(ctx)
+	s.evaluateOAuthDegradation(ctx)
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -450,6 +544,7 @@ func (s *AccountOpsService) runAutoConfig(ctx context.Context) {
 			s.processConcurrencyResult(r)
 		case <-ticker.C:
 			s.refreshAutoConfig(ctx)
+			s.evaluateOAuthDegradation(ctx)
 		}
 	}
 }

@@ -296,3 +296,13 @@ python backend/scripts/e2e-bps-ignore-images.py --expect ignore --stream --outpu
 - 两个账号测试弹窗都会显示模型目录加载失败原因、重新加载按钮和凭据运维入口。部分模型走 BPS 时，仅保留从原生目录取得、且配置为原生路由的模型，不用原生能力冒充 BPS 能力。
 
 没有数据库迁移，新增 Extra 中的 `openai_excel_bps_authorization_pending` 运行态标记。回退旧二进制前应先关闭仍在准备中的 BPS 开关：旧版本不识别该标记，会立即尝试 BPS；已经保存的 Excel 授权不会因回滚撤销。上线验收仍需用获准的账号分别确认模型目录和一次最小生成请求；离线测试不能证明上游登录安全验证已经解除。
+
+## CPA 0.5.31 请求契约对齐（#812）
+
+BPS 请求现在从**本次实际发送的 bearer**中提取 `chatgpt_user_id` / `user_id`，补充 `X-Openai-Account-User-Id`。不使用客户端传入的同名头，也不以父账号可能保留的 Codex 用户字段覆盖 Excel grant；无法提取时保持该头缺省。JWT 解码用于投影已选凭据的身份，不表示本地完成签名验证。
+
+Responses 的 `service_tier` 在 BPS 转换前仍经过既有管理员 Fast 策略，过滤和拒绝继续生效。由于当前 BPS Responses 端点拒绝该字段（已复现 `priority`、`auto` 返回 422），转换器校验 `auto`、`default`、`priority` 及兼容别名 `fast`，但不把该字段发送给 BPS；缺省/null 同样不发送，其他值仍返回 400。分组强制 Fast、全局 `force_priority` 以及缺省层级的强制规则均不能绕过该端点限制，BPS 路径不能承诺执行 priority。最终发送层级保持缺省，不能仅凭原始请求或管理员设置把未执行的 priority 记为 Fast 计费；上游终态实际声明的层级仍独立记录。原生 OpenAI OAuth 路径的层级、路由提示和计费行为不受此转换限制影响。
+
+模型映射后的真实 model、`model_selection=explicit`、xhigh 等现有强度、授权身份在工具修正请求中保持一致。上游声明的 Luna 等模型仍如实传回并记录，不能改名成请求的 Astra。目录 allowed、HTTP 200、priority、请求模型保持均不能独立证明模型能力或 Team 二轮账号“不降智”。
+
+实现依据是固定 CPA/BPS 0.5.31 发布物的静态请求契约，[核验与差异记录见 #812](https://github.com/ranxi2001/sub2api/issues/812)，使用现有原生 Go adapter 独立实现，没有加载第三方二进制或复制打包源码。CI 使用虚构 token 和假上游验证请求/响应及管理员策略；真实二轮账号、质量题组和长期保持能力尚未验收。本改动无数据库迁移，也未新增默认 Fast 开关。

@@ -1,4 +1,16 @@
 export default {
+  "directEditHint": "Edit a group directly, or select groups for bulk editing",
+  "manageGroups": "Manage groups",
+  "failureSettingsSummary": "Request failure alerts and repeat interval",
+  "lastKnownBalance": "Last balance {value} {unit} (reference only)",
+  "collectionDisabled": "Automatic collection is off. Alert rules do not fetch balances.",
+  "enableCollection": "Enable collection and refresh",
+  "refreshBalance": "Refresh balance",
+  "balanceUnsupportedHint": "The upstream did not provide usable balance data. Check its balance query support.",
+  "balancePendingHint": "No fresh data is available for threshold checks. Try refreshing the balance.",
+  "collectionGloballyDisabled": "Global upstream collection is off. Enable it in account management first.",
+  "balanceRefreshFailed": "No valid balance was received. Check upstream support and account settings.",
+
   "workspaceTitle": "Account notifications and thresholds",
   "smartTitle": "Smart operations",
   "title": "Account operations",
@@ -220,6 +232,10 @@ export default {
   ,"groupLabel": "Group"
   ,"accountGroup": "Account group"
   ,"groupMemberCount": "{count} members"
+  ,"editGroupMembers": "Edit members"
+  ,"searchGroupMembers": "Search members by name or ID"
+  ,"groupSelectionHint": "Selections stay selected across searches and pages. Selecting an account from another group moves it to this group when you save. Cancel discards unsaved changes."
+  ,"groupMemberLimit": "A group can contain at most {count} accounts. Narrow the filters before selecting all matches."
   ,"selectedGroups": "{count} account groups selected"
   ,"selectGroup": "Select {name}"
   ,"selectVisibleGroups": "Select all visible account groups"

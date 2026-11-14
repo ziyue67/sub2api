@@ -320,7 +320,7 @@ func (s *OpenAIGatewayService) OpenAIImageSizeTierUnsupported(
 		if requestedModel != "" && !accounts[i].IsModelSupported(requestedModel) {
 			continue
 		}
-		if !accountSupportsOpenAICapabilities(&accounts[i], requiredCapability, requiredImageCapability) {
+		if !accountSupportsOpenAICapabilities(ctx, &accounts[i], requiredCapability, requiredImageCapability) {
 			continue
 		}
 		hasModelSupport = true

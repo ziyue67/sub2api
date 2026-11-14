@@ -27,8 +27,9 @@ const {default:Page}=new URLSearchParams(location.search).has('baseline')?await 
 import {i18n,loadLocaleMessages} from '/src/i18n/index.ts';
 import {defaultExcelBPSDefaults} from '/src/utils/excelBPSDefaults.ts';
 import {defaultOpenAITwoFAAdmissionConfig} from '/src/utils/openaiTwoFAAdmission.ts';
+import {defaultOpenAIAPIKeyFallbackConfig} from '/src/utils/openaiAPIKeyFallback.ts';
 import '/src/style.css';
-window.fixture={enabled:true,platform:'openai',priority:50,load_factor:1,concurrency:3,cost_multiplier:0.07,group_ids:[5],upgrade_enabled:false,upgrade_group_ids:[],successes_per_step:20,upgrade_step:1,max_concurrency:100,cooldown_seconds:60,revision:'synthetic',excel_bps:defaultExcelBPSDefaults(),openai_two_fa_admission:defaultOpenAITwoFAAdmissionConfig(),model_mappings:[],model_billing:{enabled:false,rules:[]},selected_models:null};
+window.fixture={enabled:true,platform:'openai',priority:50,load_factor:1,concurrency:3,cost_multiplier:0.07,group_ids:[5],upgrade_enabled:false,upgrade_group_ids:[],successes_per_step:20,upgrade_step:1,max_concurrency:100,cooldown_seconds:60,revision:'synthetic',excel_bps:defaultExcelBPSDefaults(),openai_two_fa_admission:defaultOpenAITwoFAAdmissionConfig(),openai_apikey_fallback:defaultOpenAIAPIKeyFallbackConfig(),openai_disable_scheduling_on_429_7d_threshold_percent:98,model_mappings:[],model_billing:{enabled:false,rules:[]},selected_models:null};
 const lang=new URLSearchParams(location.search).get('lang')||'zh';await loadLocaleMessages(lang);i18n.global.locale.value=lang;
 createApp(Page).use(i18n).use(createPinia()).mount('#app');</script>`
 process.chdir(frontend) // Tailwind/PostCSS resolve the actual frontend config.
@@ -54,7 +55,8 @@ const server = await createServer({
   { find: 'vue-i18n', replacement: 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js' }
  ] },
  server: { host: '127.0.0.1', port: 4183, strictPort: true },
- optimizeDeps: { include: ['vue', 'pinia', 'vue-i18n', 'axios'] }
+ // This fixture injects its HTML; unrelated repository HTML cannot load its virtual modules during dep scanning.
+ optimizeDeps: { entries: [], include: ['vue', 'pinia', 'vue-i18n', 'axios'] }
 })
 await server.listen()
 const browser = await chromium.launch({ headless: true })
@@ -62,7 +64,7 @@ const errors = [], external = [], saves = [], requests = []
 let saved
 const groups = [{ id: 5, name: 'OpenAI 示例组', platform: 'openai', status: 'active' }, { id: 6, name: 'Anthropic 示例组', platform: 'anthropic', status: 'active' }]
 try {
- const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
+ const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, timezoneId: 'UTC' })
  await context.route('**/*', async route => {
   const url = new URL(route.request().url())
   if (url.origin !== 'http://127.0.0.1:4183') { external.push(url.origin); return route.abort() }
@@ -73,6 +75,12 @@ try {
    if (route.request().method() === 'PUT') { saved = route.request().postDataJSON(); saves.push(structuredClone(saved)) }
    data = saved ?? await route.request().frame().evaluate(() => window.fixture)
   } else if (url.pathname === '/api/v1/admin/groups/all') data = groups
+  else if (url.pathname === '/api/v1/admin/accounts') {
+   assert.equal(route.request().method(), 'GET')
+   // This page's account GET is the fallback picker: paused raw-active keys must reach its local eligibility filter.
+   assert.deepEqual(Object.fromEntries(url.searchParams), { page: '1', page_size: '100', platform: 'openai', type: 'apikey', lite: '1', sort_by: 'id', sort_order: 'asc', timezone: 'UTC' })
+   data = { items: [], page: 1, page_size: 100, pages: 1, total: 0 }
+  }
   else if (url.pathname === '/api/v1/admin/groups') data = { items: groups, page: 1, page_size: 100, pages: 1, total: 2 }
   else if (url.pathname === '/api/v1/admin/account-quality-plans') data = []
   else if (url.pathname === '/api/v1/admin/account-ops/auto-config/events') data = { items: [], has_more: false }
@@ -91,11 +99,27 @@ try {
  assert.equal(await page.getByTestId('initial-model-selection').count(), 0)
  await page.getByTestId('initial-enabled').locator('xpath=ancestor::section').screenshot({ path: path.join(output, 'before-initial-template-zh.png') })
  await open()
+ await page.getByTestId('apikey-fallback-loading').waitFor({ state: 'detached' })
+ assert.equal(await page.getByTestId('apikey-fallback-accounts-error').count(), 0)
+ assert.equal(await page.getByTestId('apikey-fallback-enabled').isChecked(), false)
+ assert(requests.some(request => request.path === '/api/v1/admin/accounts' && request.method === 'GET'))
  const scope = page.getByTestId('initial-model-selection')
  const initialSection = page.getByTestId('initial-enabled').locator('xpath=ancestor::section')
  const rotation = page.getByTestId('totp-rotate-on-429')
+ const disableScheduling = page.getByTestId('disable-scheduling-on-429')
  assert.equal(await rotation.isChecked(), false)
+ assert.equal(await disableScheduling.isChecked(), false)
  await initialSection.screenshot({ path: path.join(output, '429-off-desktop-zh.png') })
+ // The scheduling policy is independent of credential rotation. Exercise the
+ // real checkbox, API payload and reloaded page; do not infer this from labels.
+ await disableScheduling.check()
+ await save()
+ assert.equal(saved.openai_disable_scheduling_on_429, true)
+ assert.equal(saved.openai_totp_rotate_on_429, false)
+ await page.reload({ waitUntil: 'networkidle' })
+ assert.equal(await disableScheduling.isChecked(), true)
+ assert.equal(await rotation.isChecked(), false)
+ await initialSection.screenshot({ path: path.join(output, 'scheduling429-only-desktop-zh.png') })
  assert.equal(await page.getByTestId('model-selection-enabled').isChecked(), false)
  await scope.screenshot({ path: path.join(output, 'unset-desktop-zh.png') })
  await page.getByTestId('model-selection-enabled').check()
@@ -104,6 +128,7 @@ try {
  await save()
  assert(saved.selected_models.includes('gpt-6.1-sol')); assert(!saved.selected_models.includes('gpt-6-luna'))
  assert.equal(saved.openai_totp_rotate_on_429, true)
+ assert.equal(saved.openai_disable_scheduling_on_429, true)
  await initialSection.screenshot({ path: path.join(output, '429-and-selection-desktop-zh.png') })
  await scope.screenshot({ path: path.join(output, 'excluded-luna-desktop-zh.png') })
  await page.setViewportSize({ width: 390, height: 1000 })
@@ -112,8 +137,17 @@ try {
  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
  await page.reload({ waitUntil: 'networkidle' })
  assert.equal(await rotation.isChecked(), true)
+ assert.equal(await disableScheduling.isChecked(), true)
  assert.equal(await scope.locator('[data-model="gpt-6-luna"]').isChecked(), false)
  await initialSection.screenshot({ path: path.join(output, '429-reloaded-mobile-zh.png') })
+ await disableScheduling.uncheck()
+ await save()
+ assert.equal(saved.openai_disable_scheduling_on_429, false)
+ assert.equal(saved.openai_totp_rotate_on_429, true)
+ await page.reload({ waitUntil: 'networkidle' })
+ assert.equal(await disableScheduling.isChecked(), false)
+ assert.equal(await rotation.isChecked(), true)
+ await disableScheduling.check()
  await page.getByTestId('model-selection-none').click()
  await page.getByTestId('model-selection-empty').waitFor()
  await save(); assert.deepEqual(saved.selected_models, [])
@@ -121,6 +155,7 @@ try {
  await page.getByTestId('model-selection-enabled').uncheck(); await save(); assert.equal(saved.selected_models, null)
  await page.getByTestId('platform').selectOption('anthropic')
  assert.equal(await rotation.count(), 0)
+ assert.equal(await disableScheduling.count(), 0)
  await page.getByTestId('initial-group-6').check()
  await page.getByTestId('model-selection-enabled').check()
  assert.equal(await scope.locator('[data-model="gpt-6-luna"]').count(), 0)
@@ -129,11 +164,23 @@ try {
  await page.getByTestId('model-selection-add').click(); await save()
  assert(saved.selected_models.includes('custom-model'))
  assert.equal(saved.openai_totp_rotate_on_429, false)
+ assert.equal(saved.openai_disable_scheduling_on_429, false)
  await page.setViewportSize({ width: 1280, height: 1000 })
  await open('?lang=en')
  await scope.screenshot({ path: path.join(output, 'anthropic-custom-desktop-en.png') })
+ await page.getByTestId('platform').selectOption('openai')
+ await page.getByTestId('initial-group-5').check()
+ assert.equal(await disableScheduling.isChecked(), false)
+ await disableScheduling.check()
+ await save()
+ assert.equal(saved.openai_disable_scheduling_on_429, true)
+ assert.equal(saved.openai_totp_rotate_on_429, false)
+ await initialSection.screenshot({ path: path.join(output, 'scheduling429-only-desktop-en.png') })
+ await page.setViewportSize({ width: 390, height: 1000 })
+ await initialSection.screenshot({ path: path.join(output, 'scheduling429-only-mobile-en.png') })
+ assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
  assert.deepEqual(errors, []); assert.deepEqual(external, [])
- await fs.writeFile(path.join(output, 'verification.json'), JSON.stringify({ head, baselineSHA, synthetic: true, actualPage: 'AutoConfigView.vue', actualComponent: 'OAuthInitialModelSelection.vue', cssRoot: frontend, checks: ['old template before screenshot', 'unset', 'select catalog and exclude Luna', 'save and reload', 'empty explicitly denies all', 'turn off null', '429 opt-in and model selection save/reload together', '429 desktop/mobile screenshots', 'platform switch clears both options', 'custom exact name', 'desktop and mobile', 'no horizontal overflow', 'zh and en', 'no external requests'], requests, saves, errors, external }, null, 2))
+ await fs.writeFile(path.join(output, 'verification.json'), JSON.stringify({ head, baselineSHA, synthetic: true, actualPage: 'AutoConfigView.vue', actualComponent: 'OAuthInitialModelSelection.vue', cssRoot: frontend, checks: ['old template before screenshot', 'unset', 'select catalog and exclude Luna', 'save and reload', 'empty explicitly denies all', 'turn off null', '429 scheduling policy independent of rotation; both save/reload together', '429 scheduling opt-out preserves rotation after reload', '429 desktop/mobile screenshots', 'platform switch clears both 429 policies', 'custom exact name', 'desktop and mobile', 'no horizontal overflow', 'zh and en', 'no external requests'], requests, saves, errors, external }, null, 2))
 } catch (error) {
  await fs.writeFile(path.join(output, 'failure.json'), JSON.stringify({ head, error: String(error), errors, external, requests }, null, 2)); throw error
 } finally { await browser.close(); await server.close(); await fs.rm(baselinePath, { force: true }) }

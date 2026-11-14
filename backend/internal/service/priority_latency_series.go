@@ -14,6 +14,7 @@ type PriorityLatencySeriesQuery struct {
 	Model              string
 	GroupID            *int64
 	Since              time.Time
+	Until              time.Time
 	BucketMinutes      int
 	LatencyPercentile  int
 	LatencyMeasurement string
@@ -59,6 +60,8 @@ type PriorityLatencyAccountSeries struct {
 }
 
 type PriorityLatencySeries struct {
+	ConfigRevision     string                         `json:"config_revision"`
+	TargetTTFTMs       int                            `json:"target_ttft_ms,omitempty"`
 	At                 time.Time                      `json:"at"`
 	Model              string                         `json:"model"`
 	GroupID            *int64                         `json:"group_id"`
@@ -118,7 +121,7 @@ func (s *OpenAIGatewayService) PriorityLatencySeries(ctx context.Context, minute
 	for _, row := range rows {
 		byAccount[row.AccountID] = append(byAccount[row.AccountID], row)
 	}
-	series := &PriorityLatencySeries{At: snapshot.At, Model: snapshot.Model, GroupID: group, BucketMinutes: bucketMinutes, LatencyPercentile: cfg.LatencyPercentile, LatencyMeasurement: cfg.LatencyMeasurement, Accounts: make([]PriorityLatencyAccountSeries, 0, len(ids))}
+	series := &PriorityLatencySeries{ConfigRevision: snapshot.ConfigRevision, At: snapshot.At, Model: snapshot.Model, GroupID: group, BucketMinutes: bucketMinutes, LatencyPercentile: cfg.LatencyPercentile, LatencyMeasurement: cfg.LatencyMeasurement, Accounts: make([]PriorityLatencyAccountSeries, 0, len(ids))}
 	for _, id := range ids {
 		score := summary[id]
 		account := PriorityLatencyAccountSeries{

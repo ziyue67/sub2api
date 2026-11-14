@@ -67,7 +67,7 @@ func (r *accountRepository) RecordConcurrencyResult(ctx context.Context, event s
 	if err = json.Unmarshal(extra, &state); err != nil {
 		return err
 	}
-	if state.Concurrency != 0 && state.Concurrency != current {
+	if !state.DegradationHold && state.Concurrency != 0 && state.Concurrency != current {
 		// A manual change starts a fresh cycle; old in-flight samples cannot fill it.
 		state = service.AutoConfigConcurrencyState{Revision: actual.Revision, Concurrency: current, PausedUntil: time.Now().UTC().Add(time.Duration(actual.CooldownSeconds) * time.Second)}
 	}
@@ -76,7 +76,7 @@ func (r *accountRepository) RecordConcurrencyResult(ctx context.Context, event s
 	}
 	now := time.Now().UTC()
 	// Repeated failures within one cooldown do not flood history.
-	logFailure := !event.Success && (state.Revision != actual.Revision || state.LastFailureAt == nil || !now.Before(state.PausedUntil) || state.Successes > 0)
+	logFailure := !event.Success && event.FailureCategory != "transport_error" && (state.Revision != actual.Revision || state.LastFailureAt == nil || !now.Before(state.PausedUntil) || state.Successes > 0)
 	state, next := service.AdvanceConcurrency(state, current, actual, event, now)
 	encoded, err := json.Marshal(state)
 	if err != nil {

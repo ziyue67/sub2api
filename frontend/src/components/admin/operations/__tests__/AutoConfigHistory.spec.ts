@@ -31,6 +31,20 @@ beforeEach(() => {
 })
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 describe('AutoConfigHistory', () => {
+  it('shows only the applied degradation actions and reads legacy events as concurrency plus models', async () => {
+    const legacy = event(13, 'degradation_applied')
+    legacy.details.degradation = { revision:'legacy',models:['gpt-6-luna'],threshold_percent:50,degradation_percent:60,quality_samples:10,window_start:'start',window_end:'end',concurrency_cap:6 }
+    const groupsOnly = event(14, 'degradation_applied')
+    groupsOnly.details.degradation = { ...legacy.details.degradation,limit_concurrency:false,limit_models:false,limit_groups:true,models:null,group_ids:[5,6],removed_group_ids:[5] }
+    vi.mocked(getAutoConfigEvents).mockResolvedValue({ items:[groupsOnly,legacy],has_more:false })
+    const w = render(); await flushPromises()
+    const rows = w.findAll('[data-testid=history-row]')
+    expect(rows[0].text()).toContain('所选分组：#5 / #6；实际移出：#5')
+    expect(rows[0].text()).not.toContain('并发 5 → 6')
+    expect(rows[0].text()).not.toContain('模型：')
+    expect(rows[1].text()).toContain('并发 5 → 6')
+    expect(rows[1].text()).toContain('模型：gpt-6-luna')
+  })
   it('renders initial mappings and the saved mapping template', async () => {
     const initial = event(11, 'initial_applied')
     initial.details.model_mapping = { 'gpt-5.4': 'gpt-5.5' }
@@ -125,4 +139,13 @@ describe('AutoConfigHistory', () => {
     state.auth.user.role = 'user'; render(); await flushPromises()
     expect(getAutoConfigEvents).not.toHaveBeenCalled()
   })
+})
+
+it('shows HTTP evidence without presenting absent probe verdicts as a threshold breach', async () => {
+ const e=event(15,'degradation_applied')
+ e.details.degradation={revision:'fixture',models:[],threshold_percent:9,degradation_percent:0,quality_samples:0,window_start:'start',window_end:'end',concurrency_cap:6,trigger_reason:'upstream_429',upstream_error:{source:'process_local_http_responses',total:25,failures:20,rate_limited:16,percent:80,observed_since:'start',window_complete:false},upstream_error_threshold_percent:80,upstream_429_share_threshold_percent:80}
+ vi.mocked(getAutoConfigEvents).mockResolvedValue({items:[e],has_more:false})
+ const w=render();await flushPromises()
+ expect(w.text()).toContain('错误 20/25');expect(w.text()).toContain('429 16/20')
+ expect(w.text()).not.toContain('0% ≥ 9%')
 })

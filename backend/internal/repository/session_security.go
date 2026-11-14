@@ -60,7 +60,7 @@ redis.call('DEL', KEYS[1])
 return 1
 `)
 
-func (c *refreshTokenCache) ConsumeRefreshToken(ctx context.Context, hash string) (bool, error) {
+func (c *refreshTokenCache) ConsumeRefreshTokenForRotation(ctx context.Context, hash string) (bool, error) {
 	n, err := consumeRefreshScript.Run(ctx, c.rdb, []string{refreshTokenKey(hash), "auth:rotated-refresh:" + hash}).Int()
 	return n == 1, err
 }

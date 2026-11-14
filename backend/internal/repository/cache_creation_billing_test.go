@@ -16,12 +16,21 @@ func TestCacheCreationBillingPersistence(t *testing.T) {
 	prepared := prepareUsageLogInsert(&service.UsageLog{CacheCreationBilling: audit})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 	columns := strings.Split(usageLogSelectColumns, ", ")
-	require.Equal(t, "cache_creation_billing", columns[len(columns)-2])
-	require.Equal(t, "queue_timing", columns[len(columns)-1])
-	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
+	// usageLogSelectColumns 以 id 开头，比 usageLogInsertArgTypes 多一列；
+	// 尾部列序：cache_creation_billing, queue_timing, platform。
+	require.Equal(t, "cache_creation_billing", columns[len(columns)-3])
+	require.Equal(t, "queue_timing", columns[len(columns)-2])
+	require.Equal(t, "platform", columns[len(columns)-1])
+	// prepared.args 中 cache_creation_billing 是唯一包含 version/enabled 的 JSON 字符串。
+	var encoded string
+	for _, arg := range prepared.args {
+		if str, isStr := arg.(string); isStr && strings.Contains(str, `"original_creation_tokens"`) {
+			encoded = str
+			break
+		}
+	}
+	require.NotEmpty(t, encoded, "cache_creation_billing must be serialized into args")
 	var decoded service.CacheCreationBillingAudit
-	encoded, ok := prepared.args[len(prepared.args)-2].(string)
-	require.True(t, ok)
 	require.NoError(t, json.Unmarshal([]byte(encoded), &decoded))
 	require.Equal(t, *audit, decoded)
 	require.Nil(t, nullCacheCreationBillingJSON(nil))
@@ -37,10 +46,10 @@ type cacheBillingScanner struct{ encoded string }
 
 func (s cacheBillingScanner) Scan(dest ...any) error {
 	// Go zero values already satisfy every field; set only cache_creation_billing
-	// (queue_timing 现在是最后一列，审计值在它前一位)。
-	audit, ok := dest[len(dest)-2].(*sql.NullString)
+	// (尾部列序：cache_creation_billing, queue_timing, platform，审计值在倒数第三位)。
+	audit, ok := dest[len(dest)-3].(*sql.NullString)
 	if !ok {
-		return fmt.Errorf("expected audit destination *sql.NullString, got %T", dest[len(dest)-2])
+		return fmt.Errorf("expected audit destination *sql.NullString, got %T", dest[len(dest)-3])
 	}
 	*audit = sql.NullString{Valid: true, String: s.encoded}
 	return nil

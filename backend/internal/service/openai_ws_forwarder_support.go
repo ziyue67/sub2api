@@ -140,7 +140,7 @@ func (s *OpenAIGatewayService) performOpenAIWSGeneratePrewarm(
 		if eventType == "error" {
 			errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(message)
 			prewarmModel, _ := reqBody["model"].(string)
-			s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), message, errCodeRaw, errTypeRaw, errMsgRaw, prewarmModel)
+			s.persistOpenAIWSRateLimitSignal(openAI429LeaseObservation(ctx, lease), account, lease.HandshakeHeaders(), message, errCodeRaw, errTypeRaw, errMsgRaw, prewarmModel)
 			errMsg := strings.TrimSpace(errMsgRaw)
 			if errMsg == "" {
 				errMsg = "OpenAI websocket prewarm error"
@@ -316,6 +316,38 @@ func openAIWSPayloadTransientStatus(payload []byte) int {
 	}
 }
 
+// openAIWSForwardStreamPhaseContext stamps the temp-unsched phase for a websocket
+// event. Before any client output, the default pre-stream phase still lets every
+// rule match. After output has started, legacy mid-stream statuses keep their
+// historical behavior and generic 500/502 failures require an explicit after_stream rule.
+func openAIWSForwardStreamPhaseContext(ctx context.Context, outputStarted bool, payload []byte) context.Context {
+	if !outputStarted {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return withTempUnschedStreamPhase(ctx, openAIWSOutputStartedStreamPhase(payload))
+}
+
+func openAIWSOutputStartedStreamPhase(payload []byte) tempUnschedStreamPhase {
+	message := extractOpenAISSEErrorMessage(payload)
+	switch openAIStreamFailureStatus(payload, message) {
+	case http.StatusUnauthorized, http.StatusTooManyRequests, http.StatusServiceUnavailable, 529:
+		return tempUnschedPhaseMidStreamLegacy
+	case http.StatusForbidden:
+		if openAIStream403AccountFailure(payload, message) {
+			return tempUnschedPhaseMidStreamLegacy
+		}
+	}
+	switch openAIWSPayloadTransientStatus(payload) {
+	case http.StatusUnauthorized, http.StatusTooManyRequests, http.StatusServiceUnavailable, 529:
+		return tempUnschedPhaseMidStreamLegacy
+	default:
+		return tempUnschedPhaseMidStreamOptIn
+	}
+}
+
 func (s *OpenAIGatewayService) handleOpenAIWSTerminalTransientFailure(ctx context.Context, account *Account, canonicalModel string, headers http.Header, payload []byte) string {
 	eventType, _, _ := parseOpenAIWSEventEnvelope(payload)
 	terminalEvent := normalizeOpenAIWSTerminalEvent(eventType)
@@ -335,6 +367,7 @@ func (s *OpenAIGatewayService) handleOpenAIWSErrorEventTransientFailure(ctx cont
 	status := openAIWSPayloadTransientStatus(payload)
 	if status != 0 {
 		if status == http.StatusTooManyRequests {
+			ctx = context.WithValue(ctx, openAI429WeeklyHeadersKey{}, headers)
 			headers = openAIWSSemantic429Headers(account, canonicalModel, headers)
 		}
 		s.handleOpenAIAccountUpstreamError(ctx, account, status, headers, payload, canonicalModel)
@@ -350,13 +383,13 @@ func (s *OpenAIGatewayService) handleOpenAIWSFailureAccountSideEffects(ctx conte
 	s.rateLimitService.observeQualityStatus(ctx, account, status)
 	switch status {
 	case http.StatusUnauthorized, http.StatusTooManyRequests, 529:
-		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
+		s.handleOpenAIStreamTerminalAccountSideEffectsWithContext(ctx, account, payload, message, headers, canonicalModel)
 		return true
 	case http.StatusForbidden:
 		if !openAIStream403AccountFailure(payload, message) {
 			return false
 		}
-		s.handleOpenAIStreamTerminalAccountSideEffects(nil, account, payload, message, headers, canonicalModel)
+		s.handleOpenAIStreamTerminalAccountSideEffectsWithContext(ctx, account, payload, message, headers, canonicalModel)
 		return true
 	}
 
@@ -786,7 +819,10 @@ func (s *OpenAIGatewayService) persistOpenAIWSRateLimitSignal(ctx context.Contex
 	// 非空 responseBody 表示已建立连接后收到的语义错误事件；握手响应头
 	// 可能只是成功连接时的全局快照，不能用于普通模型的 429 账号级限流。
 	// 实际拨号 HTTP 429 使用 nil responseBody，必须保留响应头。
+	// 保留调用方从真实输出状态传入的 stream phase；有事件体并不代表已输出
+	// （例如 prewarm），不能在此把所有语义 429 一律视为流前或流中。
 	if len(responseBody) > 0 {
+		ctx = context.WithValue(ctx, openAI429WeeklyHeadersKey{}, headers)
 		headers = openAIWSSemantic429Headers(account, model, headers)
 	}
 	s.handleOpenAIAccountUpstreamError(ctx, account, http.StatusTooManyRequests, headers, responseBody, model)

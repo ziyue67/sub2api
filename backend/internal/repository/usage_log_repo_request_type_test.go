@@ -103,11 +103,13 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
+			log.CacheCreation30mTokens,
+			log.CacheCreation12hTokens,
 			sqlmock.AnyArg(), // tool_surcharges
 			createdAt,
 			nil,              // cache_creation_billing
 			sqlmock.AnyArg(), // queue_timing
-
+			sql.NullString{}, // platform
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
 
@@ -203,11 +205,13 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
+			log.CacheCreation30mTokens,
+			log.CacheCreation12hTokens,
 			sqlmock.AnyArg(), // tool_surcharges
 			createdAt,
 			nil,              // cache_creation_billing
 			sqlmock.AnyArg(), // queue_timing
-
+			sql.NullString{}, // platform
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
 
@@ -288,8 +292,8 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	prepared := prepareUsageLogInsert(log)
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-5])
-	require.Equal(t, true, prepared.args[len(prepared.args)-5])
+	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-6])
+	require.Equal(t, true, prepared.args[len(prepared.args)-6])
 	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4])
 	require.Nil(t, prepared.args[len(prepared.args)-4])
 	require.Equal(t, int16(service.RequestTypeStream), prepared.args[30])
@@ -994,11 +998,13 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
 			false, // native_compaction_v2
+			0,     // cache_creation_30m_tokens
+			0,     // cache_creation_12h_tokens
 			sql.NullString{Valid: true, String: `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225,"account_cost":0.03}]`}, // tool_surcharges
 			now,
 			sql.NullString{}, // cache_creation_billing
 			sql.NullString{}, // queue_timing
-
+			sql.NullString{}, // platform
 		}})
 		require.NoError(t, err)
 		require.Equal(t, 2, log.ImageCount)
@@ -1082,11 +1088,13 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
+			0,                 // cache_creation_30m_tokens
+			0,                 // cache_creation_12h_tokens
 			sql.NullString{},  // tool_surcharges
 			now,
 			sql.NullString{}, // cache_creation_billing
 			sql.NullString{}, // queue_timing
-
+			sql.NullString{}, // platform
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -1150,11 +1158,13 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			true,              // native_compaction_v2
+			0,                 // cache_creation_30m_tokens
+			0,                 // cache_creation_12h_tokens
 			sql.NullString{},  // tool_surcharges
 			now,
 			sql.NullString{}, // cache_creation_billing
 			sql.NullString{}, // queue_timing
-
+			sql.NullString{}, // platform
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)
@@ -1219,11 +1229,13 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
+			0,                 // cache_creation_30m_tokens
+			0,                 // cache_creation_12h_tokens
 			sql.NullString{},  // tool_surcharges
 			now,
 			sql.NullString{}, // cache_creation_billing
 			sql.NullString{}, // queue_timing
-
+			sql.NullString{}, // platform
 		}})
 		require.NoError(t, err)
 		require.NotNil(t, log.ServiceTier)

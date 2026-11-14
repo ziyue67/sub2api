@@ -519,6 +519,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyGrokCrossClientModelMapEnabled] = strconv.FormatBool(settings.GrokCrossClientModelMapEnabled)
 	updates[SettingKeyGrokDefaultBaseURLMode] = normalizeGrokDefaultBaseURLMode(settings.GrokDefaultBaseURLMode)
 	updates[SettingKeyGrokVideoSourceURLEnabled] = strconv.FormatBool(settings.GrokVideoSourceURLEnabled)
+	updates[SettingKeyOpenAI409OmitEncryptedHistoryEnabled] = strconv.FormatBool(settings.OpenAI409OmitEncryptedHistoryEnabled)
+	updates[SettingKeyOpenAI400OmitEncryptedHistoryEnabled] = strconv.FormatBool(settings.OpenAI400OmitEncryptedHistoryEnabled)
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)

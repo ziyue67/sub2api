@@ -139,7 +139,10 @@ user-traffic-pending/
 docs/*
 !docs/image-request-archive.md
 !docs/ai-ops-codex.md
+!docs/reauth-identity-validation.md
 !docs/openai-context-limit-errors.md
+!docs/openai-agent-continuation.md
+!docs/encrypted-agent-owner-policy.md
 !docs/stream-timing.md
 !docs/openai-sse-delivery.md
 !docs/user-traffic.md
@@ -152,7 +155,9 @@ docs/*
 !docs/registration-email-alias-block.md
 !docs/openai-ws-sse-acceleration.md
 !docs/openai-ultrafast-billing.md
+!docs/openai-oauth-relay-fast-billing.md
 !docs/openai-ws-mode.md
+!docs/oauth-initial-ws.md
 !docs/openai-outbound-identity.md
 !docs/openai-2fa-dual-oauth.md
 !docs/openai-siwc.md
@@ -166,7 +171,11 @@ docs/*
 !docs/BEPUSDT_PAYMENT.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
+<<<<<<< HEAD
 !docs/PRISM_BRIDGE_RESEARCH_CN.md
+=======
+>>>>>>> upstream/main
+!docs/OPENAI_IMAGES_CODEX.md
 !docs/BATCH_IMAGE_MVP.md
 !docs/COMPOSITE_GROUPS.md
 !docs/PLUGIN_DEVELOPMENT.md
@@ -183,6 +192,7 @@ docs/*
 !docs/codex-credits.md
 !docs/account-token-guard.md
 !docs/priority-scheduling.md
+!docs/scheduler-publication-contention.md
 !docs/astra-account-scheduling.md
 !docs/legal/
 !docs/legal/*.md
@@ -228,6 +238,7 @@ issues/
 !docs/astra-candy-beta.md
 !docs/api-key-model-policy.md
 !docs/api-key-long-context-control.md
+!docs/api-key-usage-date-range.md
 
 # PR screenshots belong in PR attachments; retain text evidence in docs/screenshots.
 !docs/screenshots/

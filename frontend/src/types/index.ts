@@ -826,6 +826,7 @@ export interface ApiKey {
   model_mapping?: Record<string, string>
   reasoning_effort?: string
   allow_long_context?: boolean
+  context_token_limit?: number
 }
 
 export interface ApiKeyGroupRoute {
@@ -1148,6 +1149,11 @@ export interface GeminiCredentials {
 
 export type TempUnschedulableScope = 'account' | 'model'
 
+// before_stream：仅流开始前的 HTTP 错误。
+// after_stream：流开始前和流开始后都可以，包括中途 502。
+// 省略时后端保持旧行为：中途 401/403/429/503/529 仍可触发，中途 502 不触发。
+export type TempUnschedulableStreamTiming = 'before_stream' | 'after_stream'
+
 export interface TempUnschedulableRule {
   error_code: number
   keywords: string[]
@@ -1155,6 +1161,13 @@ export interface TempUnschedulableRule {
   description: string
   // 作用范围：account 暂停整个账号，model 只冷却本次请求的模型；缺省时 401 按 account、其余按 model 处理。
   scope?: TempUnschedulableScope
+  // credentials JSON 键 stream_timing。
+  stream_timing?: TempUnschedulableStreamTiming
+  // credentials JSON 键 trigger_count。省略或小于 1 时按 1 次处理。
+  trigger_count?: number
+  // credentials JSON 键 trigger_window_minutes。从第一次匹配起累计次数的时间窗口。
+  // 与 duration_minutes 相互独立。省略或小于 1 时按 1 分钟处理。
+  trigger_window_minutes?: number
 }
 
 export interface TempUnschedulableState {
@@ -1490,6 +1503,7 @@ export interface GrokModelDiagnostics {
 }
 
 export interface Account {
+  moderation_scope_eligible?: boolean
   upstream_channel_binding?: import('@/api/admin/upstreamChannels').ChannelBinding
  excel_bps_credential_state?: ExcelBPSCredentialState
   id: number
@@ -2114,6 +2128,8 @@ export interface UsageLog {
   cache_read_tokens: number
   cache_creation_5m_tokens: number
   cache_creation_1h_tokens: number
+  cache_creation_30m_tokens?: number
+  cache_creation_12h_tokens?: number
 
   input_cost: number
   output_cost: number
@@ -2577,6 +2593,7 @@ export interface UserErrorRequest {
 }
 
 export interface UserErrorRequestDetail extends UserErrorRequest {
+  reset_reason?: string
   error_body: string
   upstream_status_code?: number
 }
@@ -2877,6 +2894,8 @@ export interface QualityBPSPolicy {
 }
 export interface QualityPolicy {
   trigger_on_upstream_5xx?: boolean
+  // OAuth quality rules only: 0 or missing disables automatic rule cleanup.
+  oauth_401_max_rounds?: number
   admission?: import('@/utils/openaiTwoFAAdmission').OpenAITwoFAAdmissionConfig
   judge?: QualityJudgeConfig
   expected_answer: string
@@ -2884,6 +2903,7 @@ export interface QualityPolicy {
   remove_group_ids: number[]
   remove_models?: string[]
   recovery_concurrency?: number
+  retest_rest_minutes?: number
   auto_restore: boolean
   bps?: QualityBPSPolicy
 }
@@ -2904,7 +2924,19 @@ export interface QualityRestoreDiagnostic {
   current_concurrency?: number
 }
 
+export interface PelicanQuestion {
+  id: string
+  version: string
+  round_id: string
+  source: string
+  prompt: string
+  criteria: string[]
+}
+
 export interface PelicanTestConfig {
+  prompt_mode?: 'custom' | 'random'
+  pelican_question?: PelicanQuestion
+  actual_prompt?: string
   // Optional display name, persisted with the rule's editable configuration.
   rule_name?: string
   quality_restore_diagnostic?: QualityRestoreDiagnostic

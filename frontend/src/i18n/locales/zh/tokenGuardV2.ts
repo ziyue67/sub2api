@@ -1,6 +1,15 @@
 export default {
   operationFailure: {
-  manual: {"busy": "已有操作正在进行，请等待完成后查看原任务。", "worker": "重登服务不可用，请检查 Worker 状态。", "configuration": "请先保存完整登录配置。", "encryption": "请先启用凭据加密。", "changed": "账号凭据或任务已变化，请刷新列表并人工核对。"},
+  manual: {
+    busy: '已有巡检正在进行，请等待完成后查看结果。',
+    taskBusy: '该账号已有重登、授权或未完成的 2FA 任务，请查看原任务；涉及 2FA 时，到「2FA 管理」确认状态并完成恢复。',
+    totpBusy: '该账号有未完成的 2FA 任务，请先到「2FA 管理」完成验证或恢复，再编辑登录配置。',
+    budgetBusy: '重登预算或巡检状态已变化，或仍有任务未完成。请刷新并查看原任务；涉及 2FA 时，到「2FA 管理」完成恢复后再恢复预算。',
+    worker: '重登服务不可用，请检查 Worker 状态。',
+    configuration: '请先保存完整登录配置。',
+    encryption: '请先启用凭据加密。',
+    changed: '账号凭据或任务已变化，请刷新列表并人工核对。'
+  },
   refreshAttempt: '最近刷新失败尝试（可能已被后续重试恢复）',
   "details": "查看本次异常详情",
   "code": "安全短码",
@@ -36,6 +45,22 @@ export default {
   }
 },
   reloginBudgetCount: '重登失败预算：{count}/{limit}',
+  lastInspectionFailure: '上次巡检异常（历史记录）',
+  automationStates: {
+    paused: '自动巡检已暂停',
+    disabled: '自动重登已关闭，巡检继续',
+    configuration: '登录配置不完整，无法自动重登',
+    queued: '重登任务已排队',
+    running: '正在重登，等待任务完成',
+    verifying: '新凭据已保存，等待后续巡检验证',
+    cooldown: '自动重登冷却至 {until}',
+    blocked: '自动恢复暂不可用，请查看服务状态与异常详情',
+    waiting: '鉴权失败确认：{count}/{limit}，等待下一次巡检',
+    scheduled: '已达到重登阈值，等待自动处理',
+    healthy: '最近巡检鉴权通过',
+    retryInspection: '等待下一次巡检重试',
+    inspectionPending: '等待首次巡检'
+  },
   reloginBudgetExhausted: '自动重登预算已耗尽，巡检继续',
   reloginBackoffUntil: '重登冷却至',
   resumeReloginBudget: '恢复预算（不立即重登）',

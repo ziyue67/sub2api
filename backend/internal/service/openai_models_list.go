@@ -261,8 +261,8 @@ func projectAccountModelAliases(body []byte, account *Account, group *Group, cod
 			continue
 		}
 		target, matched := account.ResolveMappedModel(id)
-		raw, available := byID[strings.TrimSpace(target)]
 		allowed := matched || (account.IsOpenAIModelMappingAliases() && account.IsModelSupported(id))
+		raw, available := byID[strings.TrimSpace(target)]
 		if !available || !allowed {
 			continue
 		}

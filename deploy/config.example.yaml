@@ -9,6 +9,10 @@ runtime:
   # Optional direct origin for this process's temporary BPS image capabilities.
   # Empty keeps the shared setting. Must resolve to this node, not a shared LB.
   image_relay_owner_origin: ""
+  # Seconds to wait for Pod response headers after writing a forwarded request.
+  # 0 adds no forwarding deadline; the request context and Pod upstream budgets apply.
+  # Allowed 0..86400; restart required. Signed health probes keep their separate 3s budget.
+  serverless_response_header_timeout: 0
   # Opt-in native store=false WS safety gate; no node routing or replay.
   # Each process must use a unique, stable node_id; boot identity is generated.
   ws_node_owner:
@@ -311,6 +315,10 @@ gateway:
   # stream timeouts and token-refresh cooldowns are unchanged. Existing cooldowns and admin pauses are not cleared.
   # With shared egress still broken, later requests retry it: this does not repair DNS/proxies or guarantee faster models.
   disable_openai_transport_error_cooldown: false
+  # Optional cross-account attempt for complete, delivered encrypted agent history.
+  # 默认严格；true 不保证密文兼容，不解除权限/额度/并发和交付安全检查。
+  # 所有节点统一配置、排空旧 WS 后重启；详见 docs/encrypted-agent-owner-policy.md。
+  disable_encrypted_agent_owner_binding: false
   # Grok text Responses first-byte timeout (seconds, 0=disabled; default 120)
   # Grok 文本 Responses 首字节超时时间（秒，0=禁用；默认 120）
   grok_response_header_timeout: 120
@@ -337,12 +345,17 @@ gateway:
   # Per-instance ingress allocation budget. Unreferenced intermediates are released after each phase.
   # Final bodies (and still-referenced preread buffers) remain charged until the handler returns.
   # Include all concurrent long-lived requests and upload/decode workspace; see EDGE_SECURITY.md.
-  # 实例级请求体分配预算；超出返回 503 + Retry-After，0 禁用。按容器内存预留业务/GC空间。
-  request_body_memory_budget_bytes: 1073741824
+  # Unset (default): 1/4 of the memory limit (min of RAM, cgroup limit, GOMEMLIMIT), at least 1 GiB.
+  # 实例级请求体分配预算；超出返回 503 + Retry-After，0 禁用。
+  # 不配置时自动取内存上限（物理内存/cgroup 限额/GOMEMLIMIT 的最小值）的 1/4，最低 1GiB；显式配置后不再自适应。
+  # request_body_memory_budget_bytes: 1073741824
   # Individual socket read/write idle deadlines, not the entire SSE lifetime; 0 disables.
   # 上传单次读取、下游单次写入/flush 超时（秒），不会限制正常长流的总时长；0 禁用。
   request_body_read_timeout_seconds: 120
   downstream_write_timeout_seconds: 120
+  # Shared ingress buffer budget; final bodies stay reserved throughout long responses.
+  # Unset: 1/4 of min(RAM, cgroup limit, GOMEMLIMIT), at least 1 GiB.
+  # 显式值含 0 保留；0 禁用。未设置时按内存自动计算；参见 EDGE_SECURITY.md。
   # Pure-text endpoint body limit (embeddings and alpha/search), default 32 MiB.
   # 纯文本端点请求体上限（embeddings、alpha/search），默认 32 MiB。
   text_max_body_size: 33554432
@@ -569,6 +582,10 @@ gateway:
       upstream_cost: 0.0
   # OpenAI 高级调度器补充配置
   openai_scheduler:
+    # 指定分组的 OpenAI 文本会话严格固定账号。默认空；不改变其他分组。
+    # 已绑定账号满载时等待，停用/失败时返回错误，不跨账号回退；需稳定 session_id/prompt_cache_key。
+    # 绑定沿用 sticky_session_ttl_seconds；配置在所有处理该分组请求的节点保持一致。
+    strict_session_affinity_group_ids: []
     # 是否允许 session_hash sticky 在账号健康度恶化时临时逃逸；false 可一键回退旧行为
     sticky_escape_enabled: true
     # TTFT EWMA 超过该阈值（毫秒）时跳过 sticky，默认 15s，避免轻微抖动就逃逸

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -17,6 +18,16 @@ import (
 // A read deadline on HTTP/1 also cancels the request context, so a body read
 // timeout is left to requestBodyReadFailure (408) instead of being reported as
 // a client that went away (499).
+// extractMaxBytesError distinguishes the per-request size cap from other read
+// failures so callers can answer 413 instead of a generic 400.
+func extractMaxBytesError(err error) (*http.MaxBytesError, bool) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return maxErr, true
+	}
+	return nil, false
+}
+
 func handleRequestBodyReadError(c *gin.Context, reqLog *zap.Logger, err error) bool {
 	if err != nil && !pkghttputil.IsRequestBodyReadTimeout(err) && failoverClientGone(c) {
 		logRequestBodyReadFailure(reqLog, pkghttputil.DescribeRequestBodyReadFailure(c.Request, err))

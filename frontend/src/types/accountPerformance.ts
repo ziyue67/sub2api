@@ -16,6 +16,7 @@ export interface PerformanceConfig {
  upstream_error: PerformanceBounds
 }
 export interface UpstreamHTTPErrorEvidence {
+ rate_limited?: number
  percent: number | null
  failures: number
  total: number
@@ -26,6 +27,8 @@ export interface UpstreamHTTPErrorEvidence {
 export interface AccountPerformance {
  upstream_error?: UpstreamHTTPErrorEvidence
  account_id: number
+ avg_cache_percent?: number | null
+ cache_samples?: number
  avg_tps: number | null
  degradation_percent: number | null
  avg_ttft_ms: number | null

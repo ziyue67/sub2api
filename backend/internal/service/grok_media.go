@@ -657,6 +657,10 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	contentType string,
 ) (*OpenAIForwardResult, error) {
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	startTime := time.Now()
 	if account == nil {
 		return nil, fmt.Errorf("grok account is required")

@@ -47,7 +47,11 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	// Read request body
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
-		if handleRequestBodyReadError(c, reqLog, err) {
+		if middleware2.RejectRequestBodyReadError(c, "handler.gateway_handler_responses", err) {
+			return
+		}
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			h.responsesErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
 		status, message := requestBodyReadFailure(reqLog, c.Request, err)
@@ -349,6 +353,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
+		}
+		if service.IsUpstreamModerationDenied(err) {
+			return
 		}
 
 		// 提交 usage 记录。成功路径与"流中断但 Forward 已观测到 usage 的部分结果"

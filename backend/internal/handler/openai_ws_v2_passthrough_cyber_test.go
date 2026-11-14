@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/testutil"
@@ -17,6 +18,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type openAIWSPassthroughHandlerHarness struct {
@@ -29,6 +33,7 @@ type openAIWSPassthroughHandlerHarness struct {
 	apiKey         *service.APIKey
 	finalHeaders   <-chan http.Header
 	usageLogs      <-chan *service.UsageLog
+	requestLogs    *observer.ObservedLogs
 }
 
 // 上游变参形式：newOpenAIWSPassthroughHandlerHarness(t, url, overrides...)。
@@ -50,6 +55,15 @@ func newOpenAIWSPassthroughHandlerHarnessWithOptions(t *testing.T, upstreamURL s
 
 func newOpenAIWSPassthroughHandlerHarnessWithCache(t *testing.T, upstreamURL string, clientHeaders http.Header, extraSettings map[string]string, gatewayCache service.GatewayCache, configure ...func(*service.Account, *config.Config, *service.HTTPUpstream, *service.AccountRepository)) *openAIWSPassthroughHandlerHarness {
 	t.Helper()
+	return newOpenAIWSPassthroughHandlerHarnessWithKey(t, upstreamURL, clientHeaders, extraSettings, gatewayCache, nil, configure...)
+}
+
+func newOpenAIWSPassthroughHandlerHarnessWithKey(t *testing.T, upstreamURL string, clientHeaders http.Header, extraSettings map[string]string, gatewayCache service.GatewayCache, configureKey func(*service.APIKey), configure ...func(*service.Account, *config.Config, *service.HTTPUpstream, *service.AccountRepository)) *openAIWSPassthroughHandlerHarness {
+	return newOpenAIWSPassthroughHandlerHarnessWithAudit(t, upstreamURL, clientHeaders, extraSettings, gatewayCache, configureKey, nil, configure...)
+}
+
+func newOpenAIWSPassthroughHandlerHarnessWithAudit(t *testing.T, upstreamURL string, clientHeaders http.Header, extraSettings map[string]string, gatewayCache service.GatewayCache, configureKey func(*service.APIKey), configureHandler func(*OpenAIGatewayHandler), configure ...func(*service.Account, *config.Config, *service.HTTPUpstream, *service.AccountRepository)) *openAIWSPassthroughHandlerHarness {
+	t.Helper()
 	if gatewayCache == nil {
 		gatewayCache = testutil.NewRedisGatewayCache(t)
 	}
@@ -64,7 +78,6 @@ func newOpenAIWSPassthroughHandlerHarnessWithCache(t *testing.T, upstreamURL str
 	}
 	settingRepo := &contentModerationHandlerSettingRepo{values: settings}
 	moderationRepo := &contentModerationHandlerTestRepo{}
-	moderationSvc := service.NewContentModerationService(settingRepo, moderationRepo, nil, nil, nil, nil, nil, nil)
 	settingSvc := service.NewSettingService(settingRepo, nil)
 
 	groupID := int64(4301)
@@ -108,6 +121,7 @@ func newOpenAIWSPassthroughHandlerHarnessWithCache(t *testing.T, upstreamURL str
 	if accountRepo == nil {
 		accountRepo = &openAIWSUsageHandlerAccountRepoStub{account: account}
 	}
+	moderationSvc := service.NewContentModerationService(settingRepo, moderationRepo, nil, nil, nil, nil, nil, nil, accountRepo)
 	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 8)}
 	billingCacheSvc := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	gatewaySvc := service.NewOpenAIGatewayService(
@@ -137,10 +151,24 @@ func newOpenAIWSPassthroughHandlerHarnessWithCache(t *testing.T, upstreamURL str
 		GroupID: &groupID,
 		User:    &service.User{ID: 1751, Status: service.StatusActive},
 	}
+	if configureHandler != nil {
+		configureHandler(h)
+	}
+	if configureKey != nil {
+		configureKey(apiKey)
+	}
 	finalHeaders := make(chan http.Header, 4)
 	handlerDone := make(chan struct{}, 4)
+	requestCore, requestLogs := observer.New(zap.WarnLevel)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		// Observe the real handler error boundary without replacing its logger
+		// or changing the client-visible close frame.
+		base := logger.FromContext(c.Request.Context())
+		observed := base.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+			return zapcore.NewTee(core, requestCore)
+		}))
+		c.Request = c.Request.WithContext(logger.IntoContext(c.Request.Context(), observed))
 		c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: apiKey.User.ID, Concurrency: 1})
 		c.Next()
@@ -170,6 +198,7 @@ func newOpenAIWSPassthroughHandlerHarnessWithCache(t *testing.T, upstreamURL str
 		apiKey:         apiKey,
 		finalHeaders:   finalHeaders,
 		usageLogs:      usageRepo.created,
+		requestLogs:    requestLogs,
 	}
 }
 
