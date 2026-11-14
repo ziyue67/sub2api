@@ -9,6 +9,7 @@ on:
         default: BOTH
         description: Fixed baseline RED and exact candidate GREEN
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/handler/openai_409_shadow*'
       - 'backend/internal/handler/openai_gateway_handler.go'

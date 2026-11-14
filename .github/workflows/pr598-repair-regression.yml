@@ -4,6 +4,7 @@ on:
   push:
     branches: [feat/priority-scheduling-latency-sticky]
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/service/priority*'
       - 'backend/internal/repository/priority*'
