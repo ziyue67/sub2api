@@ -171,7 +171,10 @@ docs/*
 !docs/BEPUSDT_PAYMENT.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
+<<<<<<< HEAD
 !docs/PRISM_BRIDGE_RESEARCH_CN.md
+=======
+>>>>>>> upstream/main
 !docs/OPENAI_IMAGES_CODEX.md
 !docs/BATCH_IMAGE_MVP.md
 !docs/COMPOSITE_GROUPS.md

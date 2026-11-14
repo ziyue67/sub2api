@@ -455,27 +455,6 @@ func (_u *UsageLogUpdate) AddCacheCreation1hTokens(v int) *UsageLogUpdate {
 	return _u
 }
 
-// SetImageOutputTokens sets the "image_output_tokens" field.
-func (_u *UsageLogUpdate) SetImageOutputTokens(v int) *UsageLogUpdate {
-	_u.mutation.ResetImageOutputTokens()
-	_u.mutation.SetImageOutputTokens(v)
-	return _u
-}
-
-// SetNillableImageOutputTokens sets the "image_output_tokens" field if the given value is not nil.
-func (_u *UsageLogUpdate) SetNillableImageOutputTokens(v *int) *UsageLogUpdate {
-	if v != nil {
-		_u.SetImageOutputTokens(*v)
-	}
-	return _u
-}
-
-// AddImageOutputTokens adds value to the "image_output_tokens" field.
-func (_u *UsageLogUpdate) AddImageOutputTokens(v int) *UsageLogUpdate {
-	_u.mutation.AddImageOutputTokens(v)
-	return _u
-}
-
 // SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
 func (_u *UsageLogUpdate) SetCacheCreation30mTokens(v int) *UsageLogUpdate {
 	_u.mutation.ResetCacheCreation30mTokens()
@@ -1361,12 +1340,6 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedCacheCreation1hTokens(); ok {
 		_spec.AddField(usagelog.FieldCacheCreation1hTokens, field.TypeInt, value)
 	}
-	if value, ok := _u.mutation.ImageOutputTokens(); ok {
-		_spec.SetField(usagelog.FieldImageOutputTokens, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.AddedImageOutputTokens(); ok {
-		_spec.AddField(usagelog.FieldImageOutputTokens, field.TypeInt, value)
-	}
 	if value, ok := _u.mutation.CacheCreation30mTokens(); ok {
 		_spec.SetField(usagelog.FieldCacheCreation30mTokens, field.TypeInt, value)
 	}
@@ -2132,27 +2105,6 @@ func (_u *UsageLogUpdateOne) SetNillableCacheCreation1hTokens(v *int) *UsageLogU
 // AddCacheCreation1hTokens adds value to the "cache_creation_1h_tokens" field.
 func (_u *UsageLogUpdateOne) AddCacheCreation1hTokens(v int) *UsageLogUpdateOne {
 	_u.mutation.AddCacheCreation1hTokens(v)
-	return _u
-}
-
-// SetImageOutputTokens sets the "image_output_tokens" field.
-func (_u *UsageLogUpdateOne) SetImageOutputTokens(v int) *UsageLogUpdateOne {
-	_u.mutation.ResetImageOutputTokens()
-	_u.mutation.SetImageOutputTokens(v)
-	return _u
-}
-
-// SetNillableImageOutputTokens sets the "image_output_tokens" field if the given value is not nil.
-func (_u *UsageLogUpdateOne) SetNillableImageOutputTokens(v *int) *UsageLogUpdateOne {
-	if v != nil {
-		_u.SetImageOutputTokens(*v)
-	}
-	return _u
-}
-
-// AddImageOutputTokens adds value to the "image_output_tokens" field.
-func (_u *UsageLogUpdateOne) AddImageOutputTokens(v int) *UsageLogUpdateOne {
-	_u.mutation.AddImageOutputTokens(v)
 	return _u
 }
 
@@ -3070,12 +3022,6 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.AddedCacheCreation1hTokens(); ok {
 		_spec.AddField(usagelog.FieldCacheCreation1hTokens, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.ImageOutputTokens(); ok {
-		_spec.SetField(usagelog.FieldImageOutputTokens, field.TypeInt, value)
-	}
-	if value, ok := _u.mutation.AddedImageOutputTokens(); ok {
-		_spec.AddField(usagelog.FieldImageOutputTokens, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.CacheCreation30mTokens(); ok {
 		_spec.SetField(usagelog.FieldCacheCreation30mTokens, field.TypeInt, value)

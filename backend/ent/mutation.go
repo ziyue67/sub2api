@@ -56069,8 +56069,6 @@ type UsageLogMutation struct {
 	addcache_creation_5m_tokens  *int
 	cache_creation_1h_tokens     *int
 	addcache_creation_1h_tokens  *int
-	image_output_tokens          *int
-	addimage_output_tokens       *int
 	cache_creation_30m_tokens    *int
 	addcache_creation_30m_tokens *int
 	cache_creation_12h_tokens    *int
@@ -57306,62 +57304,6 @@ func (m *UsageLogMutation) AddedCacheCreation1hTokens() (r int, exists bool) {
 func (m *UsageLogMutation) ResetCacheCreation1hTokens() {
 	m.cache_creation_1h_tokens = nil
 	m.addcache_creation_1h_tokens = nil
-}
-
-// SetImageOutputTokens sets the "image_output_tokens" field.
-func (m *UsageLogMutation) SetImageOutputTokens(i int) {
-	m.image_output_tokens = &i
-	m.addimage_output_tokens = nil
-}
-
-// ImageOutputTokens returns the value of the "image_output_tokens" field in the mutation.
-func (m *UsageLogMutation) ImageOutputTokens() (r int, exists bool) {
-	v := m.image_output_tokens
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldImageOutputTokens returns the old "image_output_tokens" field's value of the UsageLog entity.
-// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *UsageLogMutation) OldImageOutputTokens(ctx context.Context) (v int, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldImageOutputTokens is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldImageOutputTokens requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldImageOutputTokens: %w", err)
-	}
-	return oldValue.ImageOutputTokens, nil
-}
-
-// AddImageOutputTokens adds i to the "image_output_tokens" field.
-func (m *UsageLogMutation) AddImageOutputTokens(i int) {
-	if m.addimage_output_tokens != nil {
-		*m.addimage_output_tokens += i
-	} else {
-		m.addimage_output_tokens = &i
-	}
-}
-
-// AddedImageOutputTokens returns the value that was added to the "image_output_tokens" field in this mutation.
-func (m *UsageLogMutation) AddedImageOutputTokens() (r int, exists bool) {
-	v := m.addimage_output_tokens
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// ResetImageOutputTokens resets all changes to the "image_output_tokens" field.
-func (m *UsageLogMutation) ResetImageOutputTokens() {
-	m.image_output_tokens = nil
-	m.addimage_output_tokens = nil
 }
 
 // SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
@@ -59140,10 +59082,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 53)
-	if m.platform != nil {
-		fields = append(fields, usagelog.FieldPlatform)
-	}
+	fields := make([]string, 0, 49)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -59206,9 +59145,6 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.cache_creation_1h_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation1hTokens)
-	}
-	if m.image_output_tokens != nil {
-		fields = append(fields, usagelog.FieldImageOutputTokens)
 	}
 	if m.cache_creation_30m_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation30mTokens)
@@ -59352,8 +59288,6 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.CacheCreation5mTokens()
 	case usagelog.FieldCacheCreation1hTokens:
 		return m.CacheCreation1hTokens()
-	case usagelog.FieldImageOutputTokens:
-		return m.ImageOutputTokens()
 	case usagelog.FieldCacheCreation30mTokens:
 		return m.CacheCreation30mTokens()
 	case usagelog.FieldCacheCreation12hTokens:
@@ -59467,8 +59401,6 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldCacheCreation5mTokens(ctx)
 	case usagelog.FieldCacheCreation1hTokens:
 		return m.OldCacheCreation1hTokens(ctx)
-	case usagelog.FieldImageOutputTokens:
-		return m.OldImageOutputTokens(ctx)
 	case usagelog.FieldCacheCreation30mTokens:
 		return m.OldCacheCreation30mTokens(ctx)
 	case usagelog.FieldCacheCreation12hTokens:
@@ -59691,13 +59623,6 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCacheCreation1hTokens(v)
-		return nil
-	case usagelog.FieldImageOutputTokens:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetImageOutputTokens(v)
 		return nil
 	case usagelog.FieldCacheCreation30mTokens:
 		v, ok := value.(int)
@@ -59938,9 +59863,6 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addcache_creation_1h_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation1hTokens)
 	}
-	if m.addimage_output_tokens != nil {
-		fields = append(fields, usagelog.FieldImageOutputTokens)
-	}
 	if m.addcache_creation_30m_tokens != nil {
 		fields = append(fields, usagelog.FieldCacheCreation30mTokens)
 	}
@@ -60014,8 +59936,6 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedCacheCreation5mTokens()
 	case usagelog.FieldCacheCreation1hTokens:
 		return m.AddedCacheCreation1hTokens()
-	case usagelog.FieldImageOutputTokens:
-		return m.AddedImageOutputTokens()
 	case usagelog.FieldCacheCreation30mTokens:
 		return m.AddedCacheCreation30mTokens()
 	case usagelog.FieldCacheCreation12hTokens:
@@ -60107,13 +60027,6 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddCacheCreation1hTokens(v)
-		return nil
-	case usagelog.FieldImageOutputTokens:
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.AddImageOutputTokens(v)
 		return nil
 	case usagelog.FieldCacheCreation30mTokens:
 		v, ok := value.(int)
@@ -60479,9 +60392,6 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldCacheCreation1hTokens:
 		m.ResetCacheCreation1hTokens()
-		return nil
-	case usagelog.FieldImageOutputTokens:
-		m.ResetImageOutputTokens()
 		return nil
 	case usagelog.FieldCacheCreation30mTokens:
 		m.ResetCacheCreation30mTokens()

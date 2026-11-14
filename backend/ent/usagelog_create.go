@@ -295,20 +295,6 @@ func (_c *UsageLogCreate) SetNillableCacheCreation1hTokens(v *int) *UsageLogCrea
 	return _c
 }
 
-// SetImageOutputTokens sets the "image_output_tokens" field.
-func (_c *UsageLogCreate) SetImageOutputTokens(v int) *UsageLogCreate {
-	_c.mutation.SetImageOutputTokens(v)
-	return _c
-}
-
-// SetNillableImageOutputTokens sets the "image_output_tokens" field if the given value is not nil.
-func (_c *UsageLogCreate) SetNillableImageOutputTokens(v *int) *UsageLogCreate {
-	if v != nil {
-		_c.SetImageOutputTokens(*v)
-	}
-	return _c
-}
-
 // SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
 func (_c *UsageLogCreate) SetCacheCreation30mTokens(v int) *UsageLogCreate {
 	_c.mutation.SetCacheCreation30mTokens(v)
@@ -797,10 +783,6 @@ func (_c *UsageLogCreate) defaults() {
 		v := usagelog.DefaultCacheCreation1hTokens
 		_c.mutation.SetCacheCreation1hTokens(v)
 	}
-	if _, ok := _c.mutation.ImageOutputTokens(); !ok {
-		v := usagelog.DefaultImageOutputTokens
-		_c.mutation.SetImageOutputTokens(v)
-	}
 	if _, ok := _c.mutation.CacheCreation30mTokens(); !ok {
 		v := usagelog.DefaultCacheCreation30mTokens
 		_c.mutation.SetCacheCreation30mTokens(v)
@@ -946,9 +928,6 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.CacheCreation1hTokens(); !ok {
 		return &ValidationError{Name: "cache_creation_1h_tokens", err: errors.New(`ent: missing required field "UsageLog.cache_creation_1h_tokens"`)}
-	}
-	if _, ok := _c.mutation.ImageOutputTokens(); !ok {
-		return &ValidationError{Name: "image_output_tokens", err: errors.New(`ent: missing required field "UsageLog.image_output_tokens"`)}
 	}
 	if _, ok := _c.mutation.CacheCreation30mTokens(); !ok {
 		return &ValidationError{Name: "cache_creation_30m_tokens", err: errors.New(`ent: missing required field "UsageLog.cache_creation_30m_tokens"`)}
@@ -1136,10 +1115,6 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CacheCreation1hTokens(); ok {
 		_spec.SetField(usagelog.FieldCacheCreation1hTokens, field.TypeInt, value)
 		_node.CacheCreation1hTokens = value
-	}
-	if value, ok := _c.mutation.ImageOutputTokens(); ok {
-		_spec.SetField(usagelog.FieldImageOutputTokens, field.TypeInt, value)
-		_node.ImageOutputTokens = value
 	}
 	if value, ok := _c.mutation.CacheCreation30mTokens(); ok {
 		_spec.SetField(usagelog.FieldCacheCreation30mTokens, field.TypeInt, value)
@@ -1767,24 +1742,6 @@ func (u *UsageLogUpsert) UpdateCacheCreation1hTokens() *UsageLogUpsert {
 // AddCacheCreation1hTokens adds v to the "cache_creation_1h_tokens" field.
 func (u *UsageLogUpsert) AddCacheCreation1hTokens(v int) *UsageLogUpsert {
 	u.Add(usagelog.FieldCacheCreation1hTokens, v)
-	return u
-}
-
-// SetImageOutputTokens sets the "image_output_tokens" field.
-func (u *UsageLogUpsert) SetImageOutputTokens(v int) *UsageLogUpsert {
-	u.Set(usagelog.FieldImageOutputTokens, v)
-	return u
-}
-
-// UpdateImageOutputTokens sets the "image_output_tokens" field to the value that was provided on create.
-func (u *UsageLogUpsert) UpdateImageOutputTokens() *UsageLogUpsert {
-	u.SetExcluded(usagelog.FieldImageOutputTokens)
-	return u
-}
-
-// AddImageOutputTokens adds v to the "image_output_tokens" field.
-func (u *UsageLogUpsert) AddImageOutputTokens(v int) *UsageLogUpsert {
-	u.Add(usagelog.FieldImageOutputTokens, v)
 	return u
 }
 
@@ -2798,27 +2755,6 @@ func (u *UsageLogUpsertOne) AddCacheCreation1hTokens(v int) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateCacheCreation1hTokens() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheCreation1hTokens()
-	})
-}
-
-// SetImageOutputTokens sets the "image_output_tokens" field.
-func (u *UsageLogUpsertOne) SetImageOutputTokens(v int) *UsageLogUpsertOne {
-	return u.Update(func(s *UsageLogUpsert) {
-		s.SetImageOutputTokens(v)
-	})
-}
-
-// AddImageOutputTokens adds v to the "image_output_tokens" field.
-func (u *UsageLogUpsertOne) AddImageOutputTokens(v int) *UsageLogUpsertOne {
-	return u.Update(func(s *UsageLogUpsert) {
-		s.AddImageOutputTokens(v)
-	})
-}
-
-// UpdateImageOutputTokens sets the "image_output_tokens" field to the value that was provided on create.
-func (u *UsageLogUpsertOne) UpdateImageOutputTokens() *UsageLogUpsertOne {
-	return u.Update(func(s *UsageLogUpsert) {
-		s.UpdateImageOutputTokens()
 	})
 }
 
@@ -4087,27 +4023,6 @@ func (u *UsageLogUpsertBulk) AddCacheCreation1hTokens(v int) *UsageLogUpsertBulk
 func (u *UsageLogUpsertBulk) UpdateCacheCreation1hTokens() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheCreation1hTokens()
-	})
-}
-
-// SetImageOutputTokens sets the "image_output_tokens" field.
-func (u *UsageLogUpsertBulk) SetImageOutputTokens(v int) *UsageLogUpsertBulk {
-	return u.Update(func(s *UsageLogUpsert) {
-		s.SetImageOutputTokens(v)
-	})
-}
-
-// AddImageOutputTokens adds v to the "image_output_tokens" field.
-func (u *UsageLogUpsertBulk) AddImageOutputTokens(v int) *UsageLogUpsertBulk {
-	return u.Update(func(s *UsageLogUpsert) {
-		s.AddImageOutputTokens(v)
-	})
-}
-
-// UpdateImageOutputTokens sets the "image_output_tokens" field to the value that was provided on create.
-func (u *UsageLogUpsertBulk) UpdateImageOutputTokens() *UsageLogUpsertBulk {
-	return u.Update(func(s *UsageLogUpsert) {
-		s.UpdateImageOutputTokens()
 	})
 }
 

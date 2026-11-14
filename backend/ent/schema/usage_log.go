@@ -90,9 +90,6 @@ func (UsageLog) Fields() []ent.Field {
 			Default(0),
 		field.Int("cache_creation_1h_tokens").
 			Default(0),
-		field.Int("image_output_tokens").
-			Default(0).
-			Comment("图片输出 token 数（output_tokens 的子集，用于图片生成计费与排行榜）"),
 		field.Int("cache_creation_30m_tokens").
 			Default(0),
 		field.Int("cache_creation_12h_tokens").

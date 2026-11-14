@@ -165,11 +165,6 @@ func CacheCreation1hTokens(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation1hTokens, v))
 }
 
-// ImageOutputTokens applies equality check predicate on the "image_output_tokens" field. It's identical to ImageOutputTokensEQ.
-func ImageOutputTokens(v int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldEQ(FieldImageOutputTokens, v))
-}
-
 // CacheCreation30mTokens applies equality check predicate on the "cache_creation_30m_tokens" field. It's identical to CacheCreation30mTokensEQ.
 func CacheCreation30mTokens(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCacheCreation30mTokens, v))
@@ -1393,46 +1388,6 @@ func CacheCreation1hTokensLT(v int) predicate.UsageLog {
 // CacheCreation1hTokensLTE applies the LTE predicate on the "cache_creation_1h_tokens" field.
 func CacheCreation1hTokensLTE(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldCacheCreation1hTokens, v))
-}
-
-// ImageOutputTokensEQ applies the EQ predicate on the "image_output_tokens" field.
-func ImageOutputTokensEQ(v int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldEQ(FieldImageOutputTokens, v))
-}
-
-// ImageOutputTokensNEQ applies the NEQ predicate on the "image_output_tokens" field.
-func ImageOutputTokensNEQ(v int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldNEQ(FieldImageOutputTokens, v))
-}
-
-// ImageOutputTokensIn applies the In predicate on the "image_output_tokens" field.
-func ImageOutputTokensIn(vs ...int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldIn(FieldImageOutputTokens, vs...))
-}
-
-// ImageOutputTokensNotIn applies the NotIn predicate on the "image_output_tokens" field.
-func ImageOutputTokensNotIn(vs ...int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldNotIn(FieldImageOutputTokens, vs...))
-}
-
-// ImageOutputTokensGT applies the GT predicate on the "image_output_tokens" field.
-func ImageOutputTokensGT(v int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldGT(FieldImageOutputTokens, v))
-}
-
-// ImageOutputTokensGTE applies the GTE predicate on the "image_output_tokens" field.
-func ImageOutputTokensGTE(v int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldGTE(FieldImageOutputTokens, v))
-}
-
-// ImageOutputTokensLT applies the LT predicate on the "image_output_tokens" field.
-func ImageOutputTokensLT(v int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldLT(FieldImageOutputTokens, v))
-}
-
-// ImageOutputTokensLTE applies the LTE predicate on the "image_output_tokens" field.
-func ImageOutputTokensLTE(v int) predicate.UsageLog {
-	return predicate.UsageLog(sql.FieldLTE(FieldImageOutputTokens, v))
 }
 
 // CacheCreation30mTokensEQ applies the EQ predicate on the "cache_creation_30m_tokens" field.
