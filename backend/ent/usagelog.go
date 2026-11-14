@@ -67,6 +67,10 @@ type UsageLog struct {
 	CacheCreation1hTokens int `json:"cache_creation_1h_tokens,omitempty"`
 	// 图片输出 token 数（output_tokens 的子集，用于图片生成计费与排行榜）
 	ImageOutputTokens int `json:"image_output_tokens,omitempty"`
+	// CacheCreation30mTokens holds the value of the "cache_creation_30m_tokens" field.
+	CacheCreation30mTokens int `json:"cache_creation_30m_tokens,omitempty"`
+	// CacheCreation12hTokens holds the value of the "cache_creation_12h_tokens" field.
+	CacheCreation12hTokens int `json:"cache_creation_12h_tokens,omitempty"`
 	// InputCost holds the value of the "input_cost" field.
 	InputCost float64 `json:"input_cost,omitempty"`
 	// OutputCost holds the value of the "output_cost" field.
@@ -212,7 +216,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case usagelog.FieldInputCost, usagelog.FieldOutputCost, usagelog.FieldCacheCreationCost, usagelog.FieldCacheReadCost, usagelog.FieldTotalCost, usagelog.FieldActualCost, usagelog.FieldRateMultiplier, usagelog.FieldAccountRateMultiplier:
 			values[i] = new(sql.NullFloat64)
-		case usagelog.FieldID, usagelog.FieldUserID, usagelog.FieldAPIKeyID, usagelog.FieldAccountID, usagelog.FieldChannelID, usagelog.FieldGroupID, usagelog.FieldSubscriptionID, usagelog.FieldInputTokens, usagelog.FieldOutputTokens, usagelog.FieldCacheCreationTokens, usagelog.FieldCacheReadTokens, usagelog.FieldCacheCreation5mTokens, usagelog.FieldCacheCreation1hTokens, usagelog.FieldImageOutputTokens, usagelog.FieldBillingType, usagelog.FieldDurationMs, usagelog.FieldFirstTokenMs, usagelog.FieldQueueWaitMs, usagelog.FieldImageCount, usagelog.FieldVideoCount, usagelog.FieldVideoDurationSeconds:
+		case usagelog.FieldID, usagelog.FieldUserID, usagelog.FieldAPIKeyID, usagelog.FieldAccountID, usagelog.FieldChannelID, usagelog.FieldGroupID, usagelog.FieldSubscriptionID, usagelog.FieldInputTokens, usagelog.FieldOutputTokens, usagelog.FieldCacheCreationTokens, usagelog.FieldCacheReadTokens, usagelog.FieldCacheCreation5mTokens, usagelog.FieldCacheCreation1hTokens, usagelog.FieldImageOutputTokens, usagelog.FieldCacheCreation30mTokens, usagelog.FieldCacheCreation12hTokens, usagelog.FieldBillingType, usagelog.FieldDurationMs, usagelog.FieldFirstTokenMs, usagelog.FieldQueueWaitMs, usagelog.FieldImageCount, usagelog.FieldVideoCount, usagelog.FieldVideoDurationSeconds:
 			values[i] = new(sql.NullInt64)
 		case usagelog.FieldRequestID, usagelog.FieldModel, usagelog.FieldRequestedModel, usagelog.FieldUpstreamModel, usagelog.FieldUpstreamResponseModel, usagelog.FieldModelMappingChain, usagelog.FieldBillingTier, usagelog.FieldBillingMode, usagelog.FieldUserAgent, usagelog.FieldIPAddress, usagelog.FieldImageSize, usagelog.FieldImageInputSize, usagelog.FieldImageOutputSize, usagelog.FieldImageSizeSource, usagelog.FieldVideoResolution:
 			values[i] = new(sql.NullString)
@@ -380,6 +384,18 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field image_output_tokens", values[i])
 			} else if value.Valid {
 				_m.ImageOutputTokens = int(value.Int64)
+			}
+		case usagelog.FieldCacheCreation30mTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_creation_30m_tokens", values[i])
+			} else if value.Valid {
+				_m.CacheCreation30mTokens = int(value.Int64)
+			}
+		case usagelog.FieldCacheCreation12hTokens:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field cache_creation_12h_tokens", values[i])
+			} else if value.Valid {
+				_m.CacheCreation12hTokens = int(value.Int64)
 			}
 		case usagelog.FieldInputCost:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
@@ -711,6 +727,12 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("image_output_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.ImageOutputTokens))
+	builder.WriteString(", ")
+	builder.WriteString("cache_creation_30m_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CacheCreation30mTokens))
+	builder.WriteString(", ")
+	builder.WriteString("cache_creation_12h_tokens=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CacheCreation12hTokens))
 	builder.WriteString(", ")
 	builder.WriteString("input_cost=")
 	builder.WriteString(fmt.Sprintf("%v", _m.InputCost))

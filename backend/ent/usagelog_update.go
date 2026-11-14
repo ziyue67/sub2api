@@ -456,6 +456,48 @@ func (_u *UsageLogUpdate) AddImageOutputTokens(v int) *UsageLogUpdate {
 	return _u
 }
 
+// SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
+func (_u *UsageLogUpdate) SetCacheCreation30mTokens(v int) *UsageLogUpdate {
+	_u.mutation.ResetCacheCreation30mTokens()
+	_u.mutation.SetCacheCreation30mTokens(v)
+	return _u
+}
+
+// SetNillableCacheCreation30mTokens sets the "cache_creation_30m_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableCacheCreation30mTokens(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetCacheCreation30mTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheCreation30mTokens adds value to the "cache_creation_30m_tokens" field.
+func (_u *UsageLogUpdate) AddCacheCreation30mTokens(v int) *UsageLogUpdate {
+	_u.mutation.AddCacheCreation30mTokens(v)
+	return _u
+}
+
+// SetCacheCreation12hTokens sets the "cache_creation_12h_tokens" field.
+func (_u *UsageLogUpdate) SetCacheCreation12hTokens(v int) *UsageLogUpdate {
+	_u.mutation.ResetCacheCreation12hTokens()
+	_u.mutation.SetCacheCreation12hTokens(v)
+	return _u
+}
+
+// SetNillableCacheCreation12hTokens sets the "cache_creation_12h_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableCacheCreation12hTokens(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetCacheCreation12hTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheCreation12hTokens adds value to the "cache_creation_12h_tokens" field.
+func (_u *UsageLogUpdate) AddCacheCreation12hTokens(v int) *UsageLogUpdate {
+	_u.mutation.AddCacheCreation12hTokens(v)
+	return _u
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_u *UsageLogUpdate) SetInputCost(v float64) *UsageLogUpdate {
 	_u.mutation.ResetInputCost()
@@ -1294,6 +1336,18 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.AddedImageOutputTokens(); ok {
 		_spec.AddField(usagelog.FieldImageOutputTokens, field.TypeInt, value)
 	}
+	if value, ok := _u.mutation.CacheCreation30mTokens(); ok {
+		_spec.SetField(usagelog.FieldCacheCreation30mTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedCacheCreation30mTokens(); ok {
+		_spec.AddField(usagelog.FieldCacheCreation30mTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CacheCreation12hTokens(); ok {
+		_spec.SetField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedCacheCreation12hTokens(); ok {
+		_spec.AddField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
 	}
@@ -2048,6 +2102,48 @@ func (_u *UsageLogUpdateOne) SetNillableImageOutputTokens(v *int) *UsageLogUpdat
 // AddImageOutputTokens adds value to the "image_output_tokens" field.
 func (_u *UsageLogUpdateOne) AddImageOutputTokens(v int) *UsageLogUpdateOne {
 	_u.mutation.AddImageOutputTokens(v)
+	return _u
+}
+
+// SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
+func (_u *UsageLogUpdateOne) SetCacheCreation30mTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetCacheCreation30mTokens()
+	_u.mutation.SetCacheCreation30mTokens(v)
+	return _u
+}
+
+// SetNillableCacheCreation30mTokens sets the "cache_creation_30m_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableCacheCreation30mTokens(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetCacheCreation30mTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheCreation30mTokens adds value to the "cache_creation_30m_tokens" field.
+func (_u *UsageLogUpdateOne) AddCacheCreation30mTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.AddCacheCreation30mTokens(v)
+	return _u
+}
+
+// SetCacheCreation12hTokens sets the "cache_creation_12h_tokens" field.
+func (_u *UsageLogUpdateOne) SetCacheCreation12hTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetCacheCreation12hTokens()
+	_u.mutation.SetCacheCreation12hTokens(v)
+	return _u
+}
+
+// SetNillableCacheCreation12hTokens sets the "cache_creation_12h_tokens" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableCacheCreation12hTokens(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetCacheCreation12hTokens(*v)
+	}
+	return _u
+}
+
+// AddCacheCreation12hTokens adds value to the "cache_creation_12h_tokens" field.
+func (_u *UsageLogUpdateOne) AddCacheCreation12hTokens(v int) *UsageLogUpdateOne {
+	_u.mutation.AddCacheCreation12hTokens(v)
 	return _u
 }
 
@@ -2918,6 +3014,18 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.AddedImageOutputTokens(); ok {
 		_spec.AddField(usagelog.FieldImageOutputTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CacheCreation30mTokens(); ok {
+		_spec.SetField(usagelog.FieldCacheCreation30mTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedCacheCreation30mTokens(); ok {
+		_spec.AddField(usagelog.FieldCacheCreation30mTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CacheCreation12hTokens(); ok {
+		_spec.SetField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedCacheCreation12hTokens(); ok {
+		_spec.AddField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
