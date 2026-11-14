@@ -375,6 +375,7 @@ describe('admin AccountsView lite account list', () => {
     await flushPromises()
     expect(wrapper.find('[data-account-name]').exists()).toBe(true)
     expect(wrapper.find('progress').exists()).toBe(false)
+  })
 
   it('keeps existing rows mounted and busy while a manual list refresh is pending', async () => {
     const wrapper = mountView()
