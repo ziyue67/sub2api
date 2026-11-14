@@ -22,6 +22,7 @@ func TestGLMReasoningEffortPolicyPreservesNoneAndMinimal(t *testing.T) {
 							normalized, normalizationChanged := NormalizeGLMOpenAIReasoningEffort(body, model)
 							require.False(t, normalizationChanged)
 							got, changed, err := ApplyOpenAIReasoningEffortPolicyFromContext(ctx, normalized)
+							got, changed, err := applyOpenAIReasoningEffortPolicyForGLMFromContext(ctx, body, model)
 							require.NoError(t, err)
 							require.False(t, changed)
 							require.Equal(t, body, got)

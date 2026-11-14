@@ -48,7 +48,11 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 
 	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
-		if handleRequestBodyReadError(c, reqLog, err) {
+		if middleware2.RejectRequestBodyReadError(c, "handler.openai_embeddings", err) {
+			return
+		}
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
 		status, message := requestBodyReadFailure(reqLog, c.Request, err)

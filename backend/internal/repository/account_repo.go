@@ -104,12 +104,13 @@ func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]a
 	}
 	_, seedExists := extra["codex_fingerprint_seed"]
 	_, admissionExists := extra[service.OpenAITwoFAAdmissionExtraKey]
-	if !seedExists && !admissionExists {
+	_, degradationExists := extra[service.OAuthDegradationActionExtraKey]
+	if !seedExists && !admissionExists && !degradationExists {
 		return extra
 	}
 	stripped := make(map[string]any, len(extra)-1)
 	for key, value := range extra {
-		if key == "codex_fingerprint_seed" || key == service.OpenAITwoFAAdmissionExtraKey {
+		if key == "codex_fingerprint_seed" || key == service.OpenAITwoFAAdmissionExtraKey || key == service.OAuthDegradationActionExtraKey {
 			continue
 		}
 		stripped[key] = value
@@ -171,6 +172,8 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 		return service.ErrAccountNilInput
 	}
 
+	account.Extra = copyJSONMap(account.Extra)
+	delete(account.Extra, service.OAuthDegradationActionExtraKey)
 	builder := client.Account.Create().
 		SetName(account.Name).
 		SetNillableNotes(account.Notes).
@@ -622,6 +625,8 @@ func (r *accountRepository) updateAccount(
 
 	account.UpdatedAt = updated.UpdatedAt
 	account.Schedulable = updated.Schedulable
+	account.Status = updated.Status
+	account.ErrorMessage = derefString(updated.ErrorMessage)
 	// 普通账号编辑（如 model_mapping / credentials）也需要立即刷新单账号快照，
 	// 否则网关在 outbox worker 延迟或异常时仍可能读到旧配置。
 	if contextTx == nil {
@@ -649,7 +654,12 @@ func (r *accountRepository) updateLockedAccount(
 	}
 
 	schedulable := account.Schedulable
-	if account.Status == service.StatusError {
+	// OAuth authentication failures are blocked by status, not by the persistent
+	// scheduling switch. An ordinary edit of an errored account must preserve the
+	// current switch rather than overwrite it with the caller's stale snapshot.
+	preserveOAuthErrorScheduling := account.Status == service.StatusError &&
+		account.Platform == service.PlatformOpenAI && account.Type == service.AccountTypeOAuth
+	if account.Status == service.StatusError && !preserveOAuthErrorScheduling {
 		schedulable = false
 	}
 
@@ -662,10 +672,14 @@ func (r *accountRepository) updateLockedAccount(
 		SetExtra(extra).
 		SetConcurrency(account.Concurrency).
 		SetPriority(account.Priority).
-		SetStatus(account.Status).
-		SetErrorMessage(account.ErrorMessage).
 		SetAutoPauseOnExpired(account.AutoPauseOnExpired)
-	if !accounttimer.PreserveSchedulable(ctx) || account.Status == service.StatusError {
+	// A settings form may have read active before a concurrent 401 committed.
+	// OpenAI OAuth SetError now preserves the scheduling switch, so retaining
+	// the current status/error is the persistent authentication fence.
+	if !service.PreserveAccountStatus(ctx) || account.Platform != service.PlatformOpenAI || account.Type != service.AccountTypeOAuth {
+		builder.SetStatus(account.Status).SetErrorMessage(account.ErrorMessage)
+	}
+	if !preserveOAuthErrorScheduling && (!accounttimer.PreserveSchedulable(ctx) || account.Status == service.StatusError) {
 		builder.SetSchedulable(schedulable)
 	}
 
@@ -795,7 +809,7 @@ func lockAndMergeAccountProbeExtra(
 			),
 			extra -> 'opencode_go_usage_auto_refresh',
 			extra -> 'opencode_go_usage_snapshot',
-			COALESCE(extra, '{}'::jsonb)
+			COALESCE(extra, '{}'::jsonb),concurrency
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -826,6 +840,7 @@ func lockAndMergeAccountProbeExtra(
 		currentOpenCodeAutoRefresh     []byte
 		currentOpenCodeSnapshot        []byte
 		currentExtraJSON               []byte
+		currentConcurrency             int
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -841,7 +856,7 @@ func lockAndMergeAccountProbeExtra(
 		&opencodeGroupIdentityUnchanged,
 		&currentOpenCodeAutoRefresh,
 		&currentOpenCodeSnapshot,
-		&currentExtraJSON,
+		&currentExtraJSON, &currentConcurrency,
 	); err != nil {
 		return nil, err
 	}
@@ -899,6 +914,13 @@ func lockAndMergeAccountProbeExtra(
 	// Isolation is server-owned. A normal save must use the latest value read
 	// under this row lock, including absence after a legitimate restoration.
 	// Never revive, erase or replace it from a client/service snapshot.
+	delete(extra, service.OAuthDegradationActionExtraKey)
+	if state, exists := currentExtra[service.OAuthDegradationActionExtraKey]; exists {
+		if extra == nil {
+			extra = make(map[string]any)
+		}
+		extra[service.OAuthDegradationActionExtraKey] = state
+	}
 	delete(extra, service.QualityModelIsolationKey)
 	if isolation, exists := currentExtra[service.QualityModelIsolationKey]; exists {
 		if extra == nil {
@@ -928,6 +950,14 @@ func lockAndMergeAccountProbeExtra(
 	}
 	delete(extra, service.AutoConfigConcurrencyExtraKey)
 	if state, ok := currentExtra[service.AutoConfigConcurrencyExtraKey]; ok {
+		if extra == nil {
+			extra = make(map[string]any)
+		}
+		if account.Concurrency != currentConcurrency {
+			// Native manual edits take over from degradation. Old successful
+			// requests cannot carry their progress into the new setting.
+			state = service.AutoConfigConcurrencyState{Concurrency: account.Concurrency}
+		}
 		extra[service.AutoConfigConcurrencyExtraKey] = state
 	}
 	for _, key := range []string{
@@ -1198,8 +1228,9 @@ func (r *accountRepository) UpdateCredentials(ctx context.Context, id int64, cre
 // account still has the credential snapshot captured before protocol login.
 // Re-authentication may take several minutes; the expected-value guard keeps a
 // concurrent manual edit or token refresh from being overwritten by a stale
-// callback. Successful swaps also restore the account's active/schedulable
-// state and clear transient scheduling quarantine.
+// callback. Successful swaps also restore the account's active state and clear
+// transient scheduling quarantine. The persistent scheduling switch is left
+// unchanged: authentication failures do not own manual, 429 or admission pauses.
 func (r *accountRepository) ApplyOpenAIOAuthReauth(
 	ctx context.Context,
 	taskID int64,
@@ -1217,6 +1248,7 @@ func (r *accountRepository) ApplyOpenAIOAuthReauth(
 	}
 	extra = copyJSONMap(extra)
 	delete(extra, service.OpenAITwoFAAdmissionExtraKey)
+	delete(extra, service.OAuthDegradationActionExtraKey)
 	extraJSON, err := json.Marshal(normalizeJSONMap(extra))
 	if err != nil {
 		return false, err
@@ -1246,7 +1278,6 @@ func (r *accountRepository) ApplyOpenAIOAuthReauth(
 			expires_at = COALESCE($14::timestamptz, a.expires_at),
 			status = $5,
 			error_message = '',
-			schedulable = CASE WHEN a.extra ? 'openai_two_fa_admission' THEN a.schedulable ELSE TRUE END,
 			rate_limited_at = NULL,
 			rate_limit_reset_at = NULL,
 			overload_until = NULL,
@@ -1819,12 +1850,21 @@ func (r *accountRepository) BatchUpdateLastUsed(ctx context.Context, updates map
 }
 
 func (r *accountRepository) SetError(ctx context.Context, id int64, errorMsg string) error {
-	_, err := r.client.Account.Update().
-		Where(dbaccount.IDEQ(id)).
-		SetStatus(service.StatusError).
-		SetErrorMessage(errorMsg).
-		SetSchedulable(false).
-		Save(ctx)
+	if scoped := r.accountTransactionScope(ctx); scoped != r {
+		return scoped.SetError(ctx, id, errorMsg)
+	}
+	// Error status already excludes OpenAI OAuth accounts from scheduling. Keep
+	// their persistent switch so successful re-authentication can restore a
+	// previously enabled account without reopening a manual or 429 pause. Read
+	// the switch in the UPDATE itself to preserve concurrent scheduling changes.
+	_, err := r.sql.ExecContext(ctx, `
+		UPDATE accounts
+		SET status = $2,
+			error_message = $3,
+			schedulable = CASE WHEN platform = $4 AND type = $5 THEN schedulable ELSE FALSE END,
+			updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id, service.StatusError, errorMsg, service.PlatformOpenAI, service.AccountTypeOAuth)
 	if err != nil {
 		return err
 	}
@@ -2228,6 +2268,13 @@ func (r *accountRepository) AddToGroup(ctx context.Context, accountID, groupID i
 	if err := lockLiveGroups(ctx, client, []int64{groupID}); err != nil {
 		return err
 	}
+	allowed, err := lockOAuthDegradationGroupBindings(ctx, client, accountID, []int64{groupID})
+	if err != nil {
+		return err
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
 	_, err = client.AccountGroup.Create().
 		SetAccountID(accountID).
 		SetGroupID(groupID).
@@ -2298,10 +2345,6 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 	if adminaccess.FromContext(ctx) != nil {
 		return r.scopedAdminBindGroups(ctx, accountID, groupIDs)
 	}
-	existingGroupIDs, err := r.loadAccountGroupIDs(ctx, accountID)
-	if err != nil {
-		return err
-	}
 	// 使用事务保证删除旧绑定与创建新绑定的原子性
 	tx, err := r.client.Tx(ctx)
 	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
@@ -2320,6 +2363,15 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		return err
 	}
 
+	groupIDs, err = lockOAuthDegradationGroupBindings(ctx, txClient, accountID, groupIDs)
+	if err != nil {
+		return err
+	}
+	existingGroupIDs, err := loadAccountGroupIDsWithClient(ctx, txClient, accountID)
+	if err != nil {
+		return err
+	}
+
 	// 绑定关系是整体删除重建的；仍保留的分组要沿用原有的模型限制，否则每次改分组都会把它清掉。
 	existingAllowedModels, err := loadAccountGroupAllowedModels(ctx, txClient, accountID)
 	if err != nil {
@@ -2334,13 +2386,6 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		return err
 	}
 
-	if len(groupIDs) == 0 {
-		if tx != nil {
-			return tx.Commit()
-		}
-		return nil
-	}
-
 	builders := make([]*dbent.AccountGroupCreate, 0, len(groupIDs))
 	for i, groupID := range groupIDs {
 		builder := txClient.AccountGroup.Create().
@@ -2353,18 +2398,21 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 		builders = append(builders, builder)
 	}
 
-	if _, err := txClient.AccountGroup.CreateBulk(builders...).Save(ctx); err != nil {
-		return err
+	if len(builders) > 0 {
+		if _, err := txClient.AccountGroup.CreateBulk(builders...).Save(ctx); err != nil {
+			return err
+		}
 	}
 
+	payload := buildSchedulerGroupPayload(mergeGroupIDs(existingGroupIDs, groupIDs))
+	if err := enqueueSchedulerOutbox(ctx, txClient, service.SchedulerOutboxEventAccountGroupsChanged, &accountID, nil, payload); err != nil {
+		return err
+	}
 	if tx != nil {
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-	}
-	payload := buildSchedulerGroupPayload(mergeGroupIDs(existingGroupIDs, groupIDs))
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountGroupsChanged, &accountID, nil, payload); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue bind groups failed: account=%d err=%v", accountID, err)
+		r.syncSchedulerAccountSnapshotDetached(ctx, accountID)
 	}
 	return nil
 }
@@ -2432,6 +2480,18 @@ func (r *accountRepository) SetGroupAllowedModels(ctx context.Context, accountID
 }
 
 // loadAccountGroupAllowedModels 读取账号各分组绑定上已设置的模型限制，只返回有限制的分组。
+func loadAccountGroupIDsWithClient(ctx context.Context, client *dbent.Client, accountID int64) ([]int64, error) {
+	entries, err := client.AccountGroup.Query().Where(dbaccountgroup.AccountIDEQ(accountID)).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(entries))
+	for _, entry := range entries {
+		ids = append(ids, entry.GroupID)
+	}
+	return ids, nil
+}
+
 func loadAccountGroupAllowedModels(ctx context.Context, client *dbent.Client, accountID int64) (map[int64][]string, error) {
 	entries, err := client.AccountGroup.Query().
 		Where(dbaccountgroup.AccountIDEQ(accountID)).
@@ -3741,7 +3801,7 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 				" AND COALESCE(btrim("+credentialPlaceholder+"::jsonb ->> 'account_mode') <> 'zen', true) IS NOT TRUE")
 	}
 
-	if len(updates.Extra) > 0 || len(updates.ExcelBPSAuthorizationPending) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
+	if updates.Concurrency != nil || len(updates.Extra) > 0 || len(updates.ExcelBPSAuthorizationPending) > 0 || len(ollamaGroupIdentityChanges) > 0 || len(opencodeGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || updates.EnsureCodexFingerprintSeed {
 		extraExpression := "COALESCE(extra, '{}'::jsonb)"
 		if len(updates.Extra) > 0 {
 			payload, err := json.Marshal(updates.Extra)
@@ -3865,6 +3925,11 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			extraExpression = "CASE WHEN id=ANY($" + itoa(idx) + "::bigint[]) THEN (" + extraExpression + ") || '{\"openai_excel_bps_authorization_pending\":true}'::jsonb ELSE (" + extraExpression + ") - 'openai_excel_bps_authorization_pending' END"
 			args = append(args, pq.Array(pendingIDs))
 			idx++
+		}
+		if updates.Concurrency != nil {
+			// An explicit native concurrency save releases only this upgrade
+			// hold. The degradation history remains immutable audit data.
+			extraExpression = "(" + extraExpression + ") - 'auto_config_concurrency'"
 		}
 		setClauses = append(setClauses, "extra = "+extraExpression)
 	}

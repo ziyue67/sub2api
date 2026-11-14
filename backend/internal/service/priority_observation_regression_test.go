@@ -29,7 +29,8 @@ func TestPriorityObservationResponsesEndpoint(t *testing.T) {
 	require.Equal(t, "/v1/responses", evidence.Endpoint)
 	svc.priorityScheduling.latestInput = newPrioritySnapshotInput(req, DefaultPrioritySchedulingConfig(), []openAIAccountCandidateScore{{account: account}}, time.Now())
 	snapshot := svc.PrioritySchedulingSnapshot()
-	require.Equal(t, int64(1), snapshot.Candidates[0].Successes)
+	require.Zero(t, snapshot.Candidates[0].Successes, "passive endpoint evidence must not substitute for account performance")
+	require.Nil(t, snapshot.Candidates[0].Performance)
 }
 
 type observationQueryReader struct {
@@ -42,7 +43,7 @@ func (r *observationQueryReader) ReadPrioritySchedulingSignals(_ context.Context
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.queries = append(r.queries, q)
-	return map[int64]PrioritySchedulingSignal{1: {Samples: 6, P90TTFTMs: 1234}}, nil
+	return map[int64]PrioritySchedulingSignal{1: withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 6, P90TTFTMs: 1234})}, nil
 }
 
 func TestPriorityObservationPublicHistoryModel(t *testing.T) {
@@ -108,7 +109,7 @@ func TestPriorityObservationCompletedCallFreshness(t *testing.T) {
 	// The reader now represents completed, persisted usage; no live/in-flight
 	// timing is injected into the cache and nil TTFT stays unknown.
 	reader.mu.Lock()
-	reader.signal = map[int64]PrioritySchedulingSignal{1: {Samples: 1, P90TTFTMs: 1200, LatencyUnknownSamples: 1, ProfitSamples: 2}}
+	reader.signal = map[int64]PrioritySchedulingSignal{1: withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 1, P90TTFTMs: 1200, LatencyUnknownSamples: 1, ProfitSamples: 2})}
 	reader.mu.Unlock()
 	require.Eventually(t, func() bool { return svc.priorityHistory(req, cfg, pool).signals[1].Samples == 1 }, time.Second, time.Millisecond)
 	var wg sync.WaitGroup
@@ -133,8 +134,8 @@ func TestPriorityObservationStickyPenaltyAndExpiry(t *testing.T) {
 	cfg.GroupIDs = []int64{group}
 	badAt := time.Now().Add(-time.Minute)
 	reader := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{
-		1: {Samples: 20, P90TTFTMs: 20000, LatestBadLatencyAt: &badAt, QualitySamples: 10, QualityPassed: 10},
-		2: {Samples: 20, P90TTFTMs: 500, QualitySamples: 10, QualityPassed: 10},
+		1: withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 20000, LatestBadLatencyAt: &badAt, QualitySamples: 10, QualityPassed: 10}),
+		2: withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualitySamples: 10, QualityPassed: 10}),
 	}}
 	svc := priorityGateway(cfg, reader)
 	pool := []openAIAccountCandidateScore{priorityCandidate(1, .1, 0), priorityCandidate(2, 1, 0)}
@@ -154,9 +155,9 @@ func TestPriorityObservationStickyPenaltyAndExpiry(t *testing.T) {
 	req := OpenAIAccountScheduleRequest{Platform: PlatformOpenAI, GroupID: &group, RequestedModel: "gpt-test", HistoryModel: "public-alias", InboundEndpoint: "/v1/responses", UseUpstreamTokenCost: true}
 	require.Eventually(t, func() bool { return svc.priorityHistory(req, cfg, pool).ready() }, time.Second, time.Millisecond)
 	ctx := WithPrioritySchedulingObservation(context.Background(), &group, "public-alias", "/v1/responses")
-	selectTurn := func(previous string, excluded map[int64]struct{}) (*AccountSelectionResult, OpenAIAccountScheduleDecision) {
+	selectTurn := func(session, previous string, excluded map[int64]struct{}) (*AccountSelectionResult, OpenAIAccountScheduleDecision) {
 		t.Helper()
-		selection, decision, err := svc.SelectAccountWithSchedulerForCapability(ctx, &group, previous, "sticky-penalty", "gpt-test", excluded, OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, true, PlatformOpenAI)
+		selection, decision, err := svc.SelectAccountWithSchedulerForCapability(ctx, &group, previous, session, "gpt-test", excluded, OpenAIUpstreamTransportAny, OpenAIEndpointCapabilityChatCompletions, false, false, true, PlatformOpenAI)
 		require.NoError(t, err)
 		require.NotNil(t, selection)
 		if selection.ReleaseFunc != nil {
@@ -164,15 +165,15 @@ func TestPriorityObservationStickyPenaltyAndExpiry(t *testing.T) {
 		}
 		return selection, decision
 	}
-	selected, decision := selectTurn("", nil)
+	selected, decision := selectTurn("sticky-penalty", "", nil)
 	require.Equal(t, int64(2), selected.Account.ID, "ordinary sticky cannot bypass measured penalty even with EWMA escape disabled")
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
-	require.Equal(t, int64(1), cache.sessionBindings["openai:sticky-penalty"], "one turn does not erase durable affinity")
+	require.Equal(t, int64(2), cache.sessionBindings["openai:sticky-penalty"], "an admitted replacement becomes the session's durable affinity")
 	// A separate weighted shortcut must not undo the scored selection policy.
 	weightedReq := req
 	weightedReq.StickyWeighted = true
 	weightedReq.StickyAccountID = 1
-	weightedReq.SessionHash = "sticky-penalty"
+	weightedReq.SessionHash = "weighted-penalty"
 	scheduler := &defaultOpenAIAccountScheduler{service: svc, stats: svc.openaiAccountStats}
 	fallback, fallbackErr := scheduler.tryFallbackToWeightedSticky(ctx, weightedReq)
 	require.NoError(t, fallbackErr)
@@ -186,14 +187,14 @@ func TestPriorityObservationStickyPenaltyAndExpiry(t *testing.T) {
 		require.False(t, scheduler.shouldYieldPriorityLatencySticky(ownerReq, pool[0].account))
 	}
 	// No global ban: the same slow account remains fallback capacity.
-	selected, _ = selectTurn("", map[int64]struct{}{2: {}})
+	selected, _ = selectTurn("penalty-fallback", "", map[int64]struct{}{2: {}})
 	require.Equal(t, int64(1), selected.Account.ID)
 	// Provider response ownership wins, even during the measured penalty.
 	require.NoError(t, svc.getOpenAIWSStateStore().BindResponseAccount(ctx, group, "resp_penalty_owner", 1, time.Hour))
-	selected, decision = selectTurn("resp_penalty_owner", nil)
+	selected, decision = selectTurn("penalty-owner", "resp_penalty_owner", nil)
 	require.Equal(t, int64(1), selected.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerPreviousResponse, decision.Layer)
-	// Re-reading old data does not renew its ten-minute duration.
+	// An old timestamp alone does not recover the shared rolling mean.
 	svc.priorityScheduling.mu.Lock()
 	entry := svc.priorityScheduling.entries[priorityHistoryKey(req, cfg)]
 	expired := time.Now().Add(-11 * time.Minute)
@@ -201,12 +202,27 @@ func TestPriorityObservationStickyPenaltyAndExpiry(t *testing.T) {
 	signal.LatestBadLatencyAt = &expired
 	entry.signals[1] = signal
 	svc.priorityScheduling.mu.Unlock()
-	selected, decision = selectTurn("", nil)
-	require.Equal(t, int64(1), selected.Account.ID)
+	selected, decision = selectTurn("sticky-penalty", "", nil)
+	require.Equal(t, int64(2), selected.Account.ID, "expiry must not move the escaped session back to its previous account")
 	require.Equal(t, openAIAccountScheduleLayerSessionSticky, decision.Layer)
+	require.Equal(t, int64(2), cache.sessionBindings["openai:sticky-penalty"])
+	// A newly observed healthy mean restores the fallback without moving the
+	// escaped session back to its former owner.
+	svc.priorityScheduling.mu.Lock()
+	signal = entry.signals[1]
+	signal.Performance = cloneAccountPerformance(signal.Performance)
+	recoveredTTFT := 500.0
+	signal.Performance.AvgTTFTMs = &recoveredTTFT
+	entry.signals[1] = signal
+	svc.priorityScheduling.mu.Unlock()
+	selected, _ = selectTurn("penalty-recovered", "", map[int64]struct{}{2: {}})
+	require.Equal(t, int64(1), selected.Account.ID, "the recovered account remains available to a new session")
 	fallback, fallbackErr = scheduler.tryFallbackToWeightedSticky(ctx, weightedReq)
 	require.NoError(t, fallbackErr)
-	require.NotNil(t, fallback, "expiry also restores the weighted sticky fallback")
+	require.NotNil(t, fallback, "a recovered shared mean restores the weighted sticky fallback")
+	require.Equal(t, int64(1), fallback.Account.ID)
+	require.Equal(t, int64(1), cache.sessionBindings["openai:weighted-penalty"])
+	require.Equal(t, int64(2), cache.sessionBindings["openai:sticky-penalty"], "recovery in another session must not undo the replacement binding")
 	if fallback.ReleaseFunc != nil {
 		fallback.ReleaseFunc()
 	}
@@ -269,4 +285,13 @@ func TestPriorityObservationScopeCompatibility(t *testing.T) {
 	other := int64(12)
 	req.GroupID = &other
 	require.False(t, priorityApplies(cfg, req))
+}
+
+// Compatibility helper for passive transport collector regressions.
+func (s *defaultOpenAIAccountScheduler) priorityErrorEvidence(req OpenAIAccountScheduleRequest, c PrioritySchedulingConfig, id int64, now time.Time) PriorityErrorEvidence {
+	key := priorityRequestAttemptKey(req, id)
+	if s.stats == nil {
+		return PriorityErrorEvidence{WindowMinutes: c.ErrorRateWindowMinutes, PriorSamples: max(1, c.ErrorRatePriorSamples), ObservedAt: now, Endpoint: key.endpoint}
+	}
+	return s.stats.attempts.snapshot(key, now, c.ErrorRateWindowMinutes, c.ErrorRatePriorSamples)
 }

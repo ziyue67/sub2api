@@ -272,6 +272,9 @@
         </div>
       </div>
 
+      <QwenPlatformNotice :user-id="authStore.user?.id" />
+      <QwenCacheSettings v-if="form.platform === 'qwen'" v-model:session-cache="qwenSessionCache" v-model:strict-affinity="qwenStrictAffinity" :user-id="authStore.user?.id" @base-url="setQwenBaseUrl" />
+
       <!-- Account Type Selection (Anthropic) -->
       <div v-if="form.platform === 'anthropic'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
@@ -4403,6 +4406,9 @@
 </template>
 
 <script setup lang="ts">
+import QwenPlatformNotice from '@/components/common/QwenPlatformNotice.vue'
+import QwenCacheSettings from './QwenCacheSettings.vue'
+import { applyQwenCacheSettings } from './qwenCacheSettings'
 import OpenAIRequestTimezoneField from '@/components/account/OpenAIRequestTimezoneField.vue'
 import ExtraImageModelsField from '@/components/account/ExtraImageModelsField.vue'
 import { parseExtraImageModels } from '@/utils/extraImageModels'
@@ -4719,6 +4725,7 @@ const openaiTwoFA = ref(false)
 const openaiBPSOAuth = ref(false)
 const bpsOAuthModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const isOpenAIBPSOAuth = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiBPSOAuth.value)
+// Includes unresolved login ownership while the importer is paused for Retry.
 const twoFABusy = ref(false)
 const isOpenAITwoFA = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiTwoFA.value)
 // 「降智后自动开启 BPS」：OpenAI OAuth / 2FA 添加时可选，账号建好后按这里的设置给每个新账号建一条质量运维规则。
@@ -5048,6 +5055,12 @@ const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
 const headerOverrideEnabled = ref(false)
+const qwenSessionCache = ref(false)
+const qwenStrictAffinity = ref(false)
+const setQwenBaseUrl = (value: string) => {
+  apiKeyBaseUrl.value = value
+  adaptiveBaseUrls.value.chat_completions = value
+}
 const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 
 // Grok OAuth：自定义上游地址（base_url 仅改写转发端点，OAuth 授权/刷新不受影响）
@@ -5500,7 +5513,7 @@ watch(
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
         .catch(() => { tlsFingerprintProfiles.value = [] })
       // Modal opened - fill related models
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = form.platform === 'qwen' ? [] : [...getModelsByPlatform(form.platform)]
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -5715,7 +5728,7 @@ watch(
   [modelRestrictionMode, () => form.platform],
   ([newMode]) => {
     if (newMode === 'whitelist') {
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = form.platform === 'qwen' ? [] : [...getModelsByPlatform(form.platform)]
     }
   }
 )
@@ -5987,20 +6000,29 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
 
 const initialChannelId = ref(0), initialChannelConfirmed = ref(false)
 const pendingChannelCreations = new Map<string, unknown>()
-async function runChannelCreation<T>(kind: string, payload: unknown, operation: () => Promise<T>, ids: (value: T) => number[], atomic = false): Promise<T> {
+async function runChannelCreation<T>(kind: string, payload: unknown, operation: () => Promise<T>, ids: (value: T) => number[], atomic = false, signal?: AbortSignal): Promise<T> {
+ signal?.throwIfAborted()
  if (!initialChannelId.value) return operation()
  if (!initialChannelConfirmed.value) throw new Error(t('upstreamEntities.confirmCreate'))
  const target = initialChannelId.value, key = JSON.stringify([kind, target, payload])
  let result = pendingChannelCreations.get(key) as T | undefined
  if (!result) { result = await operation(); pendingChannelCreations.set(key, result) }
+ signal?.throwIfAborted()
  const accounts = ids(result)
  for (let i = 0; i < accounts.length; i += 100) {
   const batch = accounts.slice(i, i + 100)
-  const current = await readChannelBindings(batch)
+  signal?.throwIfAborted()
+  const current = await (signal ? readChannelBindings(batch, { signal }) : readChannelBindings(batch))
+  signal?.throwIfAborted()
   if (current.length !== batch.length || current.some(b => b.channel_id !== target && (atomic || b.channel_id !== 0))) throw new Error(t('upstreamEntities.createReadbackFailed'))
   const unbound = current.filter(b => b.channel_id === 0)
-  if (unbound.length) await bindChannelAccounts(target, unbound)
-  const readback = await readChannelBindings(batch)
+  if (unbound.length) {
+    if (signal) await bindChannelAccounts(target, unbound, { signal })
+    else await bindChannelAccounts(target, unbound)
+  }
+  signal?.throwIfAborted()
+  const readback = await (signal ? readChannelBindings(batch, { signal }) : readChannelBindings(batch))
+  signal?.throwIfAborted()
   if (readback.length !== batch.length || readback.some(b => b.channel_id !== target)) throw new Error(t('upstreamEntities.createReadbackFailed'))
  }
  pendingChannelCreations.delete(key)
@@ -6010,12 +6032,12 @@ function createAccountWithUpstream(payload: CreateAccountRequest) {
  const selected = initialChannelId.value > 0 ? { upstream_channel_id: initialChannelId.value, confirm_upstream_channel_binding: initialChannelConfirmed.value } : {}
  return runChannelCreation('account', payload, () => adminAPI.accounts.create({ ...payload, ...selected }), a => [a.id], true)
 }
-function importWithUpstream(payload: UpstreamImportRequest) {
- return runChannelCreation('import', payload, () => adminAPI.accounts.importCodexSession(payload), result => {
+function importWithUpstream(payload: UpstreamImportRequest, signal?: AbortSignal) {
+ return runChannelCreation('import', payload, () => signal ? adminAPI.accounts.importCodexSession(payload, { signal }) : adminAPI.accounts.importCodexSession(payload), result => {
   const ids = (result.items || []).filter(item => item.action === 'created' && item.account_id).map(item => item.account_id!)
   if (initialChannelId.value && ids.length !== result.created) throw new Error(t('upstreamEntities.createReadbackFailed'))
   return ids
- })
+ }, false, signal)
 }
 function createPATWithUpstream(payload: UpstreamPATRequest) { return runChannelCreation('pat', payload, () => adminAPI.accounts.createOpenAICodexPAT(payload), a => [a.id]) }
 function createGrokWithUpstream(payload: Parameters<typeof adminAPI.grok.createFromSSO>[0]) {
@@ -6083,6 +6105,8 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  qwenSessionCache.value = false
+  qwenStrictAffinity.value = false
   initialChannelId.value = 0
   initialChannelConfirmed.value = false
   pendingChannelCreations.clear()
@@ -6755,6 +6779,8 @@ const handleSubmit = async () => {
     } else {
       delete credentials.api_base_urls
     }
+  if (form.platform === 'qwen') {
+    applyQwenCacheSettings(credentials, qwenSessionCache.value, qwenStrictAffinity.value)
   }
 
   // Add model mapping if configured（OpenAI 开启自动透传时不应用）
@@ -7229,9 +7255,11 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
 }
 
 // 账号已建好后再建规则；规则失败只提示，不影响账号本身。
-const createAutoBPSRules = async (accountIds: number[]) => {
+const createAutoBPSRules = async (accountIds: number[], signal?: AbortSignal) => {
+  signal?.throwIfAborted()
   if (!autoBPSAvailable.value || accountIds.length === 0) return
-  const { failed, error } = await autoBPS.createFor(accountIds)
+  const { failed, error } = await autoBPS.createFor(accountIds, signal)
+  signal?.throwIfAborted()
   if (failed.length > 0) {
     appStore.showWarning(t('admin.accounts.openai.autoBPSCreateFailed', { count: failed.length, error: error || t('common.error') }), 8000)
   }
@@ -7385,7 +7413,8 @@ const isAgentIdentityImportContent = (content: string) => {
 }
 
 // Reuse Session import normalization and identity deduplication after 2FA login.
-const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount): Promise<'created' | 'skipped'> => {
+const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount, signal?: AbortSignal): Promise<'created' | 'skipped'> => {
+  signal?.throwIfAborted()
   const credentialExtras = buildOpenAICodexImportCredentialExtras()
   if (credentialExtras === null) throw new Error('invalid_account_settings')
   const result = await importWithUpstream({
@@ -7405,10 +7434,11 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     extra: withAccountExtraSettings(buildOpenAICodexImportExtra()),
     update_existing: false,
     skip_existing: true
-  })
+  }, signal)
+  signal?.throwIfAborted()
   if (result.failed > 0) throw new Error('import_failed')
   if (result.created > 0) {
-    await createAutoBPSRules(createdImportAccountIds(result))
+    await createAutoBPSRules(createdImportAccountIds(result), signal)
   }
   const accountIds = [...new Set((result.items ?? [])
     .filter(item => item.action === 'created' || item.action === 'skipped')
@@ -7416,13 +7446,17 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     .filter((id): id is number => typeof id === 'number' && id > 0))]
   if (!accountIds.length) throw new Error('import_missing_account_id')
   for (const accountId of accountIds) {
-    await createTokenGuardV2Account({
+    signal?.throwIfAborted()
+    const enrollment = {
       account_id: accountId, login_email: login.email,
-      credential_mode: 'password_totp', proxy_source: 'account',
+      credential_mode: 'password_totp' as const, proxy_source: 'account' as const,
       password: login.password, totp_secret: login.mfa_secret,
       enabled: true, auto_relogin_enabled: true
-    })
+    }
+    if (signal) await createTokenGuardV2Account(enrollment, { signal })
+    else await createTokenGuardV2Account(enrollment)
   }
+  signal?.throwIfAborted()
   if (result.created > 0) {
     emit('created')
     return 'created'

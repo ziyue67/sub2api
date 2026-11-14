@@ -1427,9 +1427,11 @@ type batchTestAccountEvent struct {
 }
 
 type PelicanTestRequest struct {
-	ModelID         string `json:"model_id"`
-	Prompt          string `json:"prompt"`
-	ReasoningEffort string `json:"reasoning_effort"`
+	PromptMode      string                   `json:"prompt_mode"`
+	PelicanQuestion *service.PelicanQuestion `json:"pelican_question"`
+	ModelID         string                   `json:"model_id"`
+	Prompt          string                   `json:"prompt"`
+	ReasoningEffort string                   `json:"reasoning_effort"`
 }
 
 type SyncFromCRSRequest struct {
@@ -1590,6 +1592,16 @@ func (h *AccountHandler) BatchTest(c *gin.Context) {
 	}
 }
 
+// PreparePelicanQuestion allocates a comparison round without contacting an upstream.
+func (h *AccountHandler) PreparePelicanQuestion(c *gin.Context) {
+	cfg, err := service.NewPelicanQuestion()
+	if err != nil {
+		response.InternalError(c, "Unable to prepare pelican question")
+		return
+	}
+	response.Success(c, cfg)
+}
+
 // PelicanTest handles the dedicated Pelican HTML-generation test stream.
 // POST /api/v1/admin/accounts/:id/pelican-test
 func (h *AccountHandler) PelicanTest(c *gin.Context) {
@@ -1602,6 +1614,17 @@ func (h *AccountHandler) PelicanTest(c *gin.Context) {
 	var req PelicanTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if req.PromptMode == service.PelicanPromptModeRandom {
+		cfg, err := service.ResolveManualPelicanQuestion(req.PelicanQuestion)
+		if err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+		req.Prompt = cfg.ActualPrompt
+	} else if req.PromptMode != "" && req.PromptMode != "custom" {
+		response.BadRequest(c, "Invalid pelican prompt mode")
 		return
 	}
 	if err := h.accountTestService.TestPelicanAccountConnection(c, accountID, req.ModelID, req.Prompt, req.ReasoningEffort); err != nil {

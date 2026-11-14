@@ -8,17 +8,84 @@ on:
 permissions:
   contents: read
 
+env:
+  EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
+  pelican-round-evidence:
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/issue795-round-evidence-followup-20261112'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Assert exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: GREEN candidate regressions with fake upstream and real PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pelican-evidence"
+          git rev-parse HEAD HEAD^{tree} > "$RUNNER_TEMP/pelican-evidence/candidate.txt"
+          git diff --exit-code
+          cd backend
+          go test -race -tags=unit ./internal/service -run '^Test(Pelican|Intelligence|LegacyCandy|ScheduledPlanContains)' -count=1 -v -timeout=10m 2>&1 | tee "$RUNNER_TEMP/pelican-evidence/green-service.log"
+          go test -tags=integration ./internal/repository -run '^TestPelican(GroupTestRepo_|SchedulePersistenceLeaseAndRetention|HistoryReturnsEveryRetainedOutputAcrossAccounts)' -count=1 -v -timeout=10m 2>&1 | tee "$RUNNER_TEMP/pelican-evidence/green-repository.log"
+          grep -q -- '--- PASS: TestPelicanScheduledActualPromptMatchesSentPayload' "$RUNNER_TEMP/pelican-evidence/green-service.log"
+          grep -q -- '--- PASS: TestPelicanGroupTestRepo_StaleNominalRoundCannotClaimLaterRound' "$RUNNER_TEMP/pelican-evidence/green-repository.log"
+      - name: RED old production sources in isolated worktree retaining candidate regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          original=b5990096ae10a0b2481182f2ac45812effacda22
+          git fetch --no-tags --depth=1 origin "$original"
+          git worktree add --detach "$RUNNER_TEMP/pelican-red" "$EXPECTED_HEAD_SHA"
+          cd "$RUNNER_TEMP/pelican-red"
+          for target in backend/internal/service/pelican_scheduled.go backend/internal/repository/pelican_group_tests_repo.go; do
+            git rev-parse "$original:$target" >> "$RUNNER_TEMP/pelican-evidence/original-blobs.txt"
+            git show "$original:$target" > "$target"
+          done
+          git diff --stat > "$RUNNER_TEMP/pelican-evidence/red-diff.txt"
+          cd backend
+          set +e
+          go test -tags=unit ./internal/service -run '^TestPelicanScheduledActualPromptMatchesSentPayload$' -count=1 -v -timeout=10m > "$RUNNER_TEMP/pelican-evidence/red-service.log" 2>&1
+          service_status=$?
+          go test -tags=integration ./internal/repository -run '^TestPelicanGroupTestRepo_StaleNominalRoundCannotClaimLaterRound$' -count=1 -v -timeout=10m > "$RUNNER_TEMP/pelican-evidence/red-repository.log" 2>&1
+          repository_status=$?
+          set -e
+          cat "$RUNNER_TEMP/pelican-evidence/red-service.log"
+          cat "$RUNNER_TEMP/pelican-evidence/red-repository.log"
+          test "$service_status" -ne 0
+          test "$repository_status" -ne 0
+          ! grep -Eiq 'build failed|no tests to run|undefined:|--- SKIP:' "$RUNNER_TEMP/pelican-evidence/red-service.log" "$RUNNER_TEMP/pelican-evidence/red-repository.log"
+          grep -q -- '--- FAIL: TestPelicanScheduledActualPromptMatchesSentPayload/custom' "$RUNNER_TEMP/pelican-evidence/red-service.log"
+          grep -q 'saved actual prompt must match sent payload including delivery contract' "$RUNNER_TEMP/pelican-evidence/red-service.log"
+          grep -q -- '--- FAIL: TestPelicanGroupTestRepo_StaleNominalRoundCannotClaimLaterRound' "$RUNNER_TEMP/pelican-evidence/red-repository.log"
+          grep -q 'stale nominal round must not claim a later due round' "$RUNNER_TEMP/pelican-evidence/red-repository.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pelican-round-evidence-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/pelican-evidence/
+
   shell:
     # These are syntax checks plus fixtures-only script tests: nothing here needs
     # Apple hardware. macos-15 runners regularly fail to be acquired under hosted
     # capacity pressure ("job was not acquired by Runner of type hosted"), which
     # turned this gate red for infra reasons, so keep it on the Ubuntu pool.
     runs-on: ubuntu-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
       - name: Check deployment scripts
         run: |
           /bin/bash -n deploy/install.sh deploy/install-mihomo-codex.sh deploy/migrate-mihomo-managed.sh
@@ -35,6 +102,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
       - name: Check Docker Compose simple mode environment
         run: /bin/sh deploy/tests/docker-compose-simple-mode-env-test.sh
       - name: Check Docker Compose trusted proxy environment
@@ -61,6 +130,7 @@ jobs:
           exit 1
       - name: Install Redis for isolated snapshot adapter checks
         run: |
+          bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends redis-server
@@ -114,14 +184,20 @@ jobs:
         run: make test-unit
       - name: Integration tests
         working-directory: backend
+        env:
+          # Keep real network timing fixtures isolated from other package/DB workloads.
+          # Every integration package and its existing assertions still run.
+          GOFLAGS: '-p=1'
         run: make test-integration
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUB2API_SUPPLEMENTARY_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
@@ -144,6 +220,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
@@ -185,6 +263,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
       - uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
@@ -210,6 +290,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: red
+      - name: Assert exact candidate head
+        working-directory: red
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
       - uses: actions/setup-go@v6
         with:
           go-version-file: red/backend/go.mod
@@ -249,11 +332,13 @@ jobs:
           grep -Eq "$diagnostic" "$RUNNER_TEMP/pr612-red.log"
 
   release-helpers:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUB2API_SUPPLEMENTARY_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -288,11 +373,13 @@ jobs:
       - run: python -m unittest discover -s deploy/connection-diagnostics -p 'test_collect.py'
 
   prism-adapter:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SUB2API_SUPPLEMENTARY_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact candidate head
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'

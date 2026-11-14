@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/imageeditcompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -804,6 +805,21 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx, s.openAIImageDrainTimeout())
 	defer releaseUpstreamCtx()
 
+	if imageeditcompat.Enabled(account.GetOpenAIBaseURL(), parsed.Endpoint, account.ID, os.Getenv("SUB2API_IMAGE_EDIT_FORM_ACCOUNT_IDS")) {
+		forwardBody, forwardContentType, err = imageeditcompat.Convert(forwardBody, forwardContentType, func(ref string) ([]byte, error) {
+			encoded, fetchErr := s.fetchOpenAIImageURLBase64(ctx, account, ref)
+			if fetchErr != nil {
+				// Download errors may embed signed reference URLs. Do not expose
+				// them through the forwarding error log or client response.
+				return nil, fmt.Errorf("image reference download failed")
+			}
+			return base64.StdEncoding.DecodeString(encoded)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("image edit form compatibility: %w", err)
+		}
+	}
+
 	token, _, err := s.GetAccessToken(upstreamCtx, account)
 	if err != nil {
 		return nil, err
@@ -821,6 +837,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
+		if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, "", err); handled {
+			return nil, resetErr
+		}
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -895,6 +914,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if parsed.Stream && isEventStreamResponse(resp.Header) {
 		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil)
 		if err != nil {
+			if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, resp.Header.Get("x-request-id"), err); handled {
+				err = resetErr
+			}
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
 					RequestID:        resp.Header.Get("x-request-id"),
@@ -938,6 +960,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	} else {
 		nonStreamUsage, nonStreamCount, nonStreamSizes, err := s.handleOpenAIImagesNonStreamingResponse(upstreamCtx, resp, c, account, parsed)
 		if err != nil {
+			if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, resp.Header.Get("x-request-id"), err); handled {
+				err = resetErr
+			}
 			return nil, err
 		}
 		usage = nonStreamUsage

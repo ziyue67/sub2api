@@ -1248,7 +1248,11 @@ func (c CodexWSAnchorConfig) Validate() error {
 }
 
 type GatewayConfig struct {
-	UpstreamRouting upstreamroute.Config `mapstructure:"upstream_routing"`
+	// DisableEncryptedAgentOwnerBinding permits completed opaque agent history
+	// on another normally eligible native Responses account. Delivery fences,
+	// response pointers, authorization and no-replay protections still apply.
+	DisableEncryptedAgentOwnerBinding bool                 `mapstructure:"disable_encrypted_agent_owner_binding"`
+	UpstreamRouting                   upstreamroute.Config `mapstructure:"upstream_routing"`
 	// PrismBrowser is the server-managed browser-session adapter for prism.openai.com.
 	// Account settings only select this route; cookies, sandbox state and the adapter
 	// API key remain outside account credentials.
@@ -1754,6 +1758,9 @@ func (w GatewayOpenAIWSSchedulerScoreWeights) IsValid() bool {
 
 // GatewayOpenAISchedulerConfig OpenAI 高级调度器配置。
 type GatewayOpenAISchedulerConfig struct {
+	// StrictSessionAffinityGroupIDs pins text sessions in these groups to one
+	// account for the sticky TTL, including failures and capacity pressure.
+	StrictSessionAffinityGroupIDs []int64 `mapstructure:"strict_session_affinity_group_ids"`
 	// StickyEscapeEnabled: 是否允许 session_hash sticky 在账号健康度劣化时临时逃逸
 	StickyEscapeEnabled bool `mapstructure:"sticky_escape_enabled"`
 	// StickyEscapeTTFTMs: TTFT EWMA 超过该阈值时跳过 sticky
@@ -2404,6 +2411,7 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 }
 
 func setDefaults() {
+	viper.SetDefault("gateway.disable_encrypted_agent_owner_binding", false)
 	viper.SetDefault("gateway.upstream_routing.enabled", false)
 	viper.SetDefault("runtime.role", RuntimeRoleFull)
 	viper.SetDefault("runtime.node_id", "")
@@ -2422,6 +2430,7 @@ func setDefaults() {
 	viper.SetDefault("runtime.serverless_endpoint", "")
 	viper.SetDefault("runtime.serverless_region", "")
 	viper.SetDefault("runtime.serverless_secret", "")
+	viper.SetDefault("runtime.serverless_response_header_timeout", 0)
 	viper.SetDefault("server.graceful_shutdown_timeout", 5)
 	viper.SetDefault("server.shutdown_drain_delay", 0)
 	viper.SetDefault("run_mode", RunModeStandard)
@@ -3097,6 +3106,7 @@ func setEnvReachableDefaults() {
 	// disable sticky escape, so register the effective default instead. An
 	// explicit false in config or env still wins.
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_enabled", true)
+	viper.SetDefault("gateway.openai_scheduler.strict_session_affinity_group_ids", []int64{})
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_error_rate", 0.0)
 	viper.SetDefault("gateway.openai_scheduler.sticky_escape_ttft_ms", 0)
 
@@ -3833,6 +3843,10 @@ func (c *Config) Validate() error {
 	if c.Idempotency.CleanupBatchSize <= 0 {
 		return fmt.Errorf("idempotency.cleanup_batch_size must be positive")
 	}
+	if c.Gateway.RequestBodyMemoryBudgetBytes < 0 {
+		return fmt.Errorf("gateway.request_body_memory_budget_bytes must not be negative")
+	}
+
 	if c.Gateway.MaxBodySize <= 0 {
 		return fmt.Errorf("gateway.max_body_size must be positive")
 	}
@@ -4147,6 +4161,14 @@ func (c *Config) Validate() error {
 	}
 	if totalWeightSum := weights.TotalWeightSum(); math.IsNaN(totalWeightSum) || math.IsInf(totalWeightSum, 0) {
 		return fmt.Errorf("gateway.openai_ws.scheduler_score_weights total-weight sum must be finite")
+	}
+	if len(c.Gateway.OpenAIScheduler.StrictSessionAffinityGroupIDs) > 100 {
+		return fmt.Errorf("gateway.openai_scheduler.strict_session_affinity_group_ids supports at most 100 groups")
+	}
+	for _, id := range c.Gateway.OpenAIScheduler.StrictSessionAffinityGroupIDs {
+		if id <= 0 {
+			return fmt.Errorf("gateway.openai_scheduler.strict_session_affinity_group_ids must contain positive IDs")
+		}
 	}
 	if c.Gateway.OpenAIScheduler.StickyEscapeTTFTMs <= 0 {
 		return fmt.Errorf("gateway.openai_scheduler.sticky_escape_ttft_ms must be positive")

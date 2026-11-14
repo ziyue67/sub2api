@@ -28,7 +28,8 @@ export interface TokenGuardV2LoginConfig {
 
 export interface TokenGuardV2Task {
   failure?: CredentialOperationFailure
-  diagnostic?: { engine?: TokenGuardV2Engine; stage: string; reason: string; elapsed_ms: number; exit_code?: number; http_status?: number }
+  diagnostic?: { engine?: TokenGuardV2Engine; stage: string; reason: string; elapsed_ms: number; exit_code?: number; http_status?: number
+    identity?: Record<'account' | 'user' | 'email', { stored_present: boolean; present: boolean; matches: boolean }> }
   id: number
   account_id: number
   status: string
@@ -116,8 +117,8 @@ export async function saveTokenGuardV2Rules(input: TokenGuardV2Rules): Promise<T
   return (await apiClient.put('/admin/account-ops/token-guard-v2/rules', input)).data
 }
 
-export async function createTokenGuardV2Account(input: SaveTokenGuardV2Account): Promise<TokenGuardV2Account> {
-  return (await apiClient.post('/admin/account-ops/token-guard-v2/accounts', input)).data
+export async function createTokenGuardV2Account(input: SaveTokenGuardV2Account, options?: { signal?: AbortSignal }): Promise<TokenGuardV2Account> {
+  return (await apiClient.post('/admin/account-ops/token-guard-v2/accounts', input, options)).data
 }
 
 export async function updateTokenGuardV2Account(accountId: number, input: SaveTokenGuardV2Account): Promise<TokenGuardV2Account> {

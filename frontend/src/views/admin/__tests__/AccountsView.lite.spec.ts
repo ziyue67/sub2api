@@ -76,6 +76,7 @@ vi.mock('vue-i18n', async () => {
 
 const DataTableStub = defineComponent({
   props: { data: { type: Array, default: () => [] }, columns: { type: Array, default: () => [] }, loading: Boolean },
+  props: { data: { type: Array, default: () => [] }, loading: Boolean, columns: { type: Array, default: () => [] } },
   emits: ['sort'],
   template: `
     <div>
@@ -374,6 +375,35 @@ describe('admin AccountsView lite account list', () => {
     await flushPromises()
     expect(wrapper.find('[data-account-name]').exists()).toBe(true)
     expect(wrapper.find('progress').exists()).toBe(false)
+
+  it('keeps existing rows mounted and busy while a manual list refresh is pending', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const row = wrapper.get('[data-account-name="compact row"]').element
+    let finish: (value: unknown) => void = () => {}
+    listAccounts.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await wrapper.get('[data-test="manual-refresh"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.getComponent(DataTableStub).props('loading')).toBe(false)
+    expect(wrapper.get('[data-account-name="compact row"]').element).toBe(row)
+    expect(wrapper.find('[aria-busy="true"]').attributes()).toHaveProperty('inert')
+    finish({ items: [{ ...listRow, name: 'updated row' }], total: 1, page: 1, page_size: 20, pages: 1 })
+    await flushPromises()
+    expect(wrapper.get('[data-account-name="updated row"]').element).toBe(row)
+    expect(wrapper.find('[aria-busy="true"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('still shows initial loading when no rows are available', async () => {
+    let finish: (value: unknown) => void = () => {}
+    listAccounts.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = mountView()
+    await flushPromises()
+    expect(wrapper.getComponent(DataTableStub).props('loading')).toBe(true)
+    finish({ items: [listRow], total: 1, page: 1, page_size: 20, pages: 1 })
+    await flushPromises()
+    wrapper.unmount()
+  })
 
   it('keeps existing rows mounted and busy while a manual list refresh is pending', async () => {
     const wrapper = mountView()

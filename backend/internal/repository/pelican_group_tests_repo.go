@@ -7,11 +7,11 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type pelicanGroupTestRepository struct {
+	configuredTimezone
 	db *sql.DB
 }
 
@@ -40,7 +40,7 @@ LEFT JOIN LATERAL (
 ) r ON true`
 
 func (r *pelicanGroupTestRepository) ListPlans(ctx context.Context) ([]*service.PelicanGroupTestPlan, error) {
-	rows, err := r.db.QueryContext(ctx, pelicanGroupTestPlanSelect+` ORDER BY g.sort_order ASC, g.id ASC, p.id ASC`, timezone.Now().Format(time.DateOnly))
+	rows, err := r.db.QueryContext(ctx, pelicanGroupTestPlanSelect+` ORDER BY g.sort_order ASC, g.id ASC, p.id ASC`, r.groupUsageDate(time.Now()))
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (r *pelicanGroupTestRepository) ListPlans(ctx context.Context) ([]*service.
 }
 
 func (r *pelicanGroupTestRepository) GetPlan(ctx context.Context, id int64) (*service.PelicanGroupTestPlan, error) {
-	plan, err := scanPelicanGroupTestPlan(r.db.QueryRowContext(ctx, pelicanGroupTestPlanSelect+` WHERE p.id = $2`, timezone.Now().Format(time.DateOnly), id))
+	plan, err := scanPelicanGroupTestPlan(r.db.QueryRowContext(ctx, pelicanGroupTestPlanSelect+` WHERE p.id = $2`, r.groupUsageDate(time.Now()), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -102,7 +102,7 @@ func (r *pelicanGroupTestRepository) ListDue(ctx context.Context, now time.Time)
 	rows, err := r.db.QueryContext(ctx, pelicanGroupTestPlanSelect+`
  WHERE p.enabled = true AND p.next_run_at <= $2 AND (p.running_until IS NULL OR p.running_until < $2)
  AND g.deleted_at IS NULL AND g.status = $3
- ORDER BY p.next_run_at ASC, p.id ASC`, now.In(timezone.Location()).Format(time.DateOnly), now, service.StatusActive)
+ ORDER BY p.next_run_at ASC, p.id ASC`, r.groupUsageDate(now), now, service.StatusActive)
 	if err != nil {
 		return nil, err
 	}
@@ -125,9 +125,11 @@ func (r *pelicanGroupTestRepository) Claim(ctx context.Context, plan *service.Pe
 		result, err = r.db.ExecContext(ctx, `UPDATE pelican_group_test_plans SET running_until = $3
  WHERE id = $1 AND (running_until IS NULL OR running_until < $2)`, plan.ID, now, until)
 	} else {
+		// Claim/Finish leave updated_at unchanged. Bind the listed nominal
+		// round too, so a delayed snapshot cannot consume a later due round.
 		result, err = r.db.ExecContext(ctx, `UPDATE pelican_group_test_plans SET running_until = $3, next_run_at = $4
- WHERE id = $1 AND enabled = true AND next_run_at <= $2 AND (running_until IS NULL OR running_until < $2) AND updated_at = $5`,
-			plan.ID, now, until, *next, plan.UpdatedAt)
+ WHERE id = $1 AND enabled = true AND next_run_at <= $2 AND (running_until IS NULL OR running_until < $2) AND updated_at = $5 AND next_run_at = $6`,
+			plan.ID, now, until, *next, plan.UpdatedAt, plan.NextRunAt)
 	}
 	if err != nil {
 		return false, err
@@ -170,7 +172,7 @@ func (r *pelicanGroupTestRepository) CreateResult(ctx context.Context, result *s
 ) SELECT id, created_at FROM saved`,
 		result.PlanID, accountID, result.AccountName, attempts, result.Status, result.ResponseText, result.ErrorMessage,
 		result.LatencyMs, marshalPelicanConfig(result.PelicanConfig), result.StartedAt, result.FinishedAt,
-		result.CostUSD, result.CostIncomplete, result.FinishedAt.In(timezone.Location()).Format(time.DateOnly)).Scan(&saved.ID, &saved.CreatedAt); err != nil {
+		result.CostUSD, result.CostIncomplete, r.groupUsageDate(result.FinishedAt)).Scan(&saved.ID, &saved.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &saved, nil

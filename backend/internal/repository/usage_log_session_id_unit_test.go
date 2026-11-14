@@ -32,6 +32,7 @@ func newSessionIDUsageLog(sessionID *string) *service.UsageLog {
 // arg slice / arg-type table so the five INSERT column lists stay in sync. session_id
 // is immediately before native_compaction_v2; tool_surcharges follows it and
 // created_at precedes the final cache_creation_billing audit.
+// is immediately before native_compaction_v2; created_at, queue_timing and platform follow.
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	sessionID := "sess-persisted-123"
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(&sessionID))
@@ -42,6 +43,7 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	// Tail order: native_compaction_v2, cache_creation_30m, cache_creation_12h,
 	// tool_surcharges, created_at, cache_creation_billing, queue_timing.
 	// session_id sits 7 slots before the end.
+	// session_id precedes native_compaction_v2, both TTL counters, created_at, queue_timing and platform.
 	sessionArg := prepared.args[len(prepared.args)-7]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)

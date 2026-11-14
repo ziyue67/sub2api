@@ -23,11 +23,30 @@ describe('NewFeatureBadge', () => {
 
 
   it.each([
+    ['admin usage platform', NEW_FEATURE_NOTICES.adminUsagePlatform],
+    ['user ID copy', NEW_FEATURE_NOTICES.userIdCopy],
+    ['Antigravity usage query', NEW_FEATURE_NOTICES.antigravityUsageQuery],
+    ['OpenAI cache write TTL', NEW_FEATURE_NOTICES.openaiCacheWriteTTL12h],
+    ['EasyPay refund code', NEW_FEATURE_NOTICES.easyPayRefundSuccessCode],
+    ['payment provider fees', NEW_FEATURE_NOTICES.paymentProviderFees],
+    ['settings save dock', NEW_FEATURE_NOTICES.settingsSaveDock],
+    ['VIP automatic credit email', NEW_FEATURE_NOTICES.vipAutoCreditEmail],
+    ['priority account performance', NEW_FEATURE_NOTICES.priorityAccountPerformance],
+    ['priority cache weight', NEW_FEATURE_NOTICES.priorityCacheWeight],
+    ['dashboard account concurrency', NEW_FEATURE_NOTICES.dashboardAccountConcurrency],
     ['key risk', NEW_FEATURE_NOTICES.keyRisk],
+    ['key source restrictions', NEW_FEATURE_NOTICES.keyRiskSources],
+    ['API key usage dates', NEW_FEATURE_NOTICES.apiKeyUsageDateRange],
     ['pricing transfer', NEW_FEATURE_NOTICES.channelPricingTransfer],
     ['stream event timing', NEW_FEATURE_NOTICES.streamFirstEventTiming],
     ['Mistral budget usage', NEW_FEATURE_NOTICES.mistralBudgetUsage],
+    ['Qwen platform', NEW_FEATURE_NOTICES.qwenPlatform],
     ['image header timeout groups', NEW_FEATURE_NOTICES.openaiImageHeaderTimeoutGroups],
+    ['profit operations time ranges', NEW_FEATURE_NOTICES.profitOperationsTimeRanges],
+    ['quality retest rest', NEW_FEATURE_NOTICES.qualityRetestRest],
+    ['OAuth 401 quality cleanup', NEW_FEATURE_NOTICES.qualityOAuth401Cleanup],
+    ['AI operations proposal cancellation', NEW_FEATURE_NOTICES.aiOpsProposalCancel],
+    ['400 encrypted history recovery', NEW_FEATURE_NOTICES.openai400OmitEncryptedHistory],
   ])('keeps %s dismissal shared and persistent across feature announcements', async (_feature, noticeId) => {
     const pinia = createPinia()
     setActivePinia(pinia)

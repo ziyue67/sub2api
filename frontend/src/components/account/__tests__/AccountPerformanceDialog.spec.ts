@@ -102,11 +102,11 @@ describe('Account performance dialog',()=>{
   first.unmount();second.unmount();wrappers=[]
   const reloadedPinia=createPinia()
   const reopened=await open('en',41,reloadedPinia)
-  expect(reopened.find('[data-testid="new-feature-badge"]').exists()).toBe(false)
+  expect(reopened.find('[data-threshold="upstream_error"] [data-testid="new-feature-badge"]').exists()).toBe(false)
   await reopened.setProps({noticeUserId:42})
   expect(reopened.get('[data-threshold="upstream_error"]').find('[data-testid="new-feature-badge"]').exists()).toBe(true)
   await reopened.setProps({noticeUserId:41})
-  expect(reopened.find('[data-testid="new-feature-badge"]').exists()).toBe(false)
+  expect(reopened.find('[data-threshold="upstream_error"] [data-testid="new-feature-badge"]').exists()).toBe(false)
   const future=mount(NewFeatureBadge,{props:{noticeId:C,userId:41},global:{plugins:[reloadedPinia,createI18n({legacy:false,locale:'en',messages:{en}})]}})
   wrappers.push(future)
   expect(future.find('[data-testid="new-feature-badge"]').exists()).toBe(true)
@@ -127,7 +127,7 @@ describe('Account performance dialog',()=>{
   expect(w.emitted('updated')).toBeUndefined()
  })
  it('uses Chinese probe-round wording and never presents absent samples as zero',async()=>{
-  const w=await open('zh');expect(w.text()).toContain('探针轮次降智率');expect(w.text()).toContain('并非全部业务请求')
+  const w=await open('zh');expect(w.text()).toContain('降智率');expect(w.text()).toContain('并非全部业务请求')
   expect(w.findAll('[data-metric]').every(r=>r.text().includes('未采集'))).toBe(true)
  })
  it.each(['en','zh'])('shows the actual response window in metric labels, bounds and semantics in %s',async(locale)=>{

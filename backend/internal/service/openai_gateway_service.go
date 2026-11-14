@@ -128,6 +128,8 @@ var codexCLIOnlyDebugHeaderWhitelist = []string{
 
 // OpenAICodexUsageSnapshot represents Codex API usage limits from response headers
 type OpenAICodexUsageSnapshot struct {
+	// Preserve invalid raw weekly provenance across legacy normalization.
+	invalidWeekly429            bool
 	PrimaryUsedPercent          *float64 `json:"primary_used_percent,omitempty"`
 	PrimaryResetAfterSeconds    *int     `json:"primary_reset_after_seconds,omitempty"`
 	PrimaryWindowMinutes        *int     `json:"primary_window_minutes,omitempty"`
@@ -522,6 +524,7 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
+	agentMessageRecovery    openAIAgentRecoveryState
 	groupAntiDistillation   *GroupAntiDistillationService
 	smartProtocolHistory    openAISmartProtocolHistory
 	requestTimezoneEgress   openAIRequestTimezoneEgress
@@ -529,6 +532,7 @@ type OpenAIGatewayService struct {
 	stopAstraSetup          func()
 	codexWSAnchors          codexWSAnchorStore
 	priorityScheduling      prioritySchedulingState
+	priorityAnalysis        priorityAnalysisFlights
 	excelBPSRecoveryMu      sync.Mutex
 	excelBPSRecoveryCancel  context.CancelFunc
 	excelBPSRecoveryDone    chan struct{}
@@ -881,6 +885,7 @@ func (s *OpenAIGatewayService) CloseOpenAIWSPool() {
 	if s == nil {
 		return
 	}
+	s.priorityAnalysis.close()
 	s.codexSnapshotMu.Lock()
 	s.codexSnapshotClosed = true
 	throttle := s.codexSnapshotThrottle
@@ -1094,6 +1099,10 @@ func resolveOpenAIWSFallbackErrorResponse(err error) (statusCode int, errType st
 }
 
 func (s *OpenAIGatewayService) writeOpenAIWSFallbackErrorResponse(c *gin.Context, account *Account, wsErr error) bool {
+	var incomplete *OpenAIWSSSEIncompleteError
+	if errors.As(wsErr, &incomplete) {
+		return s.writeOpenAIWSSSEIncomplete(c, account, incomplete)
+	}
 	if c == nil || c.Writer == nil || c.Writer.Written() {
 		return false
 	}

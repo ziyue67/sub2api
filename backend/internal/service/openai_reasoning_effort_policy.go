@@ -455,7 +455,7 @@ func WithOpenAIReasoningEffortPolicy(ctx context.Context, maxEffort string, mapp
 
 // WithOpenAIReasoningEffortPolicyForMessages preserves ordinary bridge defaults,
 // but retains ceilings and none mappings for explicitly disabled thinking.
-func WithOpenAIReasoningEffortPolicyForMessages(ctx context.Context, body []byte, maxEffort string, mappings []ReasoningEffortMapping, overLimit string) context.Context {
+func WithOpenAIReasoningEffortPolicyForMessages(ctx context.Context, body []byte, maxEffort string, mappings []ReasoningEffortMapping, overLimit string, requestModels ...string) context.Context {
 	effort := gjson.GetBytes(body, "output_config.effort")
 	if effort.Type != gjson.String || strings.TrimSpace(effort.String()) == "" {
 		if gjson.GetBytes(body, "thinking.type").String() != "disabled" {
@@ -469,7 +469,7 @@ func WithOpenAIReasoningEffortPolicyForMessages(ctx context.Context, body []byte
 		}
 		mappings = noneMappings
 	}
-	return WithOpenAIReasoningEffortPolicy(ctx, maxEffort, mappings, overLimit)
+	return WithOpenAIReasoningEffortPolicy(ctx, maxEffort, mappings, overLimit, requestModels...)
 }
 
 // ApplyOpenAIReasoningEffortPolicyFromContext applies a policy previously bound
@@ -493,6 +493,14 @@ type apiKeyForcedReasoningEffortContextKey struct{}
 func WithAPIKeyOpenAIReasoningEffortPolicy(ctx context.Context, forced, maxEffort string, mappings []ReasoningEffortMapping, overLimit string, requestModels ...string) context.Context {
 	ctx = WithOpenAIReasoningEffortPolicy(ctx, maxEffort, mappings, overLimit, requestModels...)
 	return context.WithValue(ctx, apiKeyForcedReasoningEffortContextKey{}, forced)
+}
+
+// The caller normalizes native GLM effort before applying the configured policy.
+// A mapped downgrade is final: normalizing it again can raise low to high and
+// reject a ceiling that the configured value already satisfies. Keep fixed-key
+// precedence and model-scoped mappings in the shared policy implementation.
+func applyOpenAIReasoningEffortPolicyForGLMFromContext(ctx context.Context, body []byte, _ string) ([]byte, bool, error) {
+	return ApplyOpenAIReasoningEffortPolicyFromContext(ctx, body)
 }
 
 func mapReasoningEffort(raw string, mappings []ReasoningEffortMapping, requestModel string) (string, bool) {

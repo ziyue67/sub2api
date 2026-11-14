@@ -303,7 +303,7 @@ func (h *OpenAIGatewayHandler) GrokVoice(c *gin.Context, endpoint string) {
 			return
 		}
 		bodyLog := requestLogger(c, "handler.openai_gateway.grok_voice", zap.String("endpoint", endpoint))
-		if handleRequestBodyReadError(c, bodyLog, err) {
+		if middleware2.RejectRequestBodyReadError(c, "handler.grok_audio", err) {
 			return
 		}
 		status, message := requestBodyReadFailure(bodyLog, c.Request, err)

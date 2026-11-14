@@ -394,6 +394,11 @@ func isJSONControlByte(b byte) bool {
 	return b < 0x20 || b == 0x7f
 }
 
+func appendJSONUnicodeEscape(dst []byte, b byte) []byte {
+	const hex = "0123456789abcdef"
+	return append(dst, '\\', 'u', '0', '0', hex[b>>4], hex[b&0x0f])
+}
+
 func hasJSONControlBytes(body []byte) bool {
 	const ones, high = uint64(0x0101010101010101), uint64(0x8080808080808080)
 	for len(body) >= 8 {
@@ -412,9 +417,4 @@ func hasJSONControlBytes(body []byte) bool {
 		}
 	}
 	return false
-}
-
-func appendJSONUnicodeEscape(dst []byte, b byte) []byte {
-	const hex = "0123456789abcdef"
-	return append(dst, '\\', 'u', '0', '0', hex[b>>4], hex[b&0x0f])
 }

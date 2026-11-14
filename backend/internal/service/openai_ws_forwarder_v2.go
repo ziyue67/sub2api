@@ -15,9 +15,31 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
+	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
+
+func validateOpenAIWSRegionalPayload(ctx context.Context, value any) error {
+	if regionalMeterAttemptFrom(ctx) == nil {
+		return nil
+	}
+	// The accelerated writer consumes these exact encoded bytes. Marshaling
+	// this named byte slice again would validate a base64 string instead.
+	raw, prepared := value.(openAIWSPreparedJSON)
+	if prepared {
+		if !json.Valid(raw) {
+			return errors.New("invalid prepared websocket JSON payload")
+		}
+	} else {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		raw = encoded
+	}
+	return regionalMeterValidatePayload(ctx, raw)
+}
 
 func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	ctx context.Context,
@@ -520,14 +542,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		return nil, err
 	}
 	sendRequest := func(value any) error {
-		if regionalMeterAttemptFrom(ctx) != nil {
-			raw, err := json.Marshal(value)
-			if err != nil {
-				return err
-			}
-			if err = regionalMeterValidatePayload(ctx, raw); err != nil {
-				return err
-			}
+		if err := validateOpenAIWSRegionalPayload(ctx, value); err != nil {
+			return err
 		}
 		if err := regionalMeterBeforeSend(ctx); err != nil {
 			return err
@@ -595,6 +611,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 	bufferedStreamEvents := make([][]byte, 0, 4)
 	flushEarlyEvents := reqStream && decision.Reason == openAIOAuthWSSSEAccelerationReason
+	bufferedControlMetadataBytes := 0
 	eventCount := 0
 	tokenEventCount := 0
 	terminalEventCount := 0
@@ -602,6 +619,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	flushedBufferedEventCount := 0
 	firstEventType := ""
 	lastEventType := ""
+	nextSequenceNumber := int64(0)
 	upstreamTerminalEvent := ""
 	clientDisconnected := false
 	clientDisconnectDrainStartedAt := time.Time{}
@@ -666,6 +684,16 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			return nil
 		}
 		return result
+	}
+	partialResultWithUsage := func() *OpenAIForwardResult {
+		if !openAIUsageHasTokens(usage) && usage.ImageCacheReadTokens <= 0 && imageCounter.Count() == 0 {
+			return nil
+		}
+		partial := resultWithUsage()
+		partial.streamReadIncomplete = true
+		partial.ImageCount = imageCounter.Count()
+		partial.ImageOutputSizes = imageCounter.Sizes()
+		return partial
 	}
 
 	var flusher http.Flusher
@@ -814,6 +842,18 @@ readLoop:
 		if readErr != nil {
 			lease.MarkBroken()
 			closeStatus, closeReason := summarizeOpenAIWSReadCloseError(readErr)
+			if flushEarlyEvents && terminalEventCount == 0 && !clientDisconnected && !errors.Is(readErr, context.Canceled) {
+				incomplete := &OpenAIWSSSEIncompleteError{
+					Stage: "awaiting_terminal", CloseCode: int(coderws.CloseStatus(readErr)),
+					EventCount: eventCount, TokenEventCount: tokenEventCount, TerminalEventCount: terminalEventCount,
+					RequestWritten: true, DownstreamCommitted: c.Writer.Written(), cause: readErr, responseID: responseID, model: originalModel,
+					nextSequenceNumber: nextSequenceNumber,
+				}
+				// No raw close reason or event body enters this diagnostic path.
+				logOpenAIWSModeInfo("stream_incomplete account_id=%d stage=awaiting_terminal close_code=%d events=%d token_events=%d terminal_events=%d request_written=true downstream_committed=%v",
+					account.ID, incomplete.CloseCode, eventCount, tokenEventCount, terminalEventCount, incomplete.DownstreamCommitted)
+				return partialResultWithUsage(), incomplete
+			}
 			logOpenAIWSModeInfo(
 				"read_fail account_id=%d conn_id=%s wrote_downstream=%v close_status=%s close_reason=%s cause=%s events=%d token_events=%d terminal_events=%d buffered_pending=%d buffered_flushed=%d first_event=%s last_event=%s",
 				account.ID,
@@ -852,6 +892,18 @@ readLoop:
 		}
 		responseModelObserver.ObserveOpenAI(message, eventType)
 		eventCount++
+		if int64(eventCount) > nextSequenceNumber {
+			nextSequenceNumber = int64(eventCount)
+		}
+		if sequence := gjson.GetBytes(message, "sequence_number"); sequence.Type == gjson.Number {
+			// Keep the synthetic terminal after observed events without allowing
+			// an overflowing peer integer to wrap into a negative sequence.
+			if value := sequence.Int(); value >= 0 && value < int64(^uint64(0)>>1) {
+				if value+1 > nextSequenceNumber {
+					nextSequenceNumber = value + 1
+				}
+			}
+		}
 		if firstEventType == "" {
 			firstEventType = eventType
 		}
@@ -881,7 +933,7 @@ readLoop:
 			}
 			requesttiming.Output(ctx, startsSemanticOutput, openAIStreamDataStartsVisibleOutput(string(message), eventType), responseTerminal)
 		}
-		if firstTokenMs == nil && startsSemanticOutput {
+		if firstTokenMs == nil && openAIWSFirstTokenEventFunc(s.openAITTFTMode(ctx))(eventType, message) {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
 		}
@@ -922,9 +974,15 @@ readLoop:
 		}
 
 		if eventType == "error" {
-			s.handleOpenAIWSErrorEventTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+			if flushEarlyEvents && len(bufferedStreamEvents) > 0 {
+				// Before metadata buffering this response was already committed.
+				// Preserve that failure boundary instead of introducing a new
+				// account failover for a request the provider already received.
+				flushBufferedStreamEvents("error_event")
+			}
+			s.handleOpenAIWSErrorEventTransientFailure(openAI429LeaseObservation(ctx, lease), account, mappedModel, lease.HandshakeHeaders(), message)
 			errCodeRaw, errTypeRaw, errMsgRaw := parseOpenAIWSErrorEventFields(message)
-			s.persistOpenAIWSRateLimitSignal(ctx, account, lease.HandshakeHeaders(), message, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
+			s.persistOpenAIWSRateLimitSignal(openAI429LeaseObservation(ctx, lease), account, lease.HandshakeHeaders(), message, errCodeRaw, errTypeRaw, errMsgRaw, mappedModel)
 			errMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(errMsgRaw))
 			if errMsg == "" {
 				errMsg = "Upstream websocket error"
@@ -1003,6 +1061,18 @@ readLoop:
 		}
 
 		if reqStream {
+			// Only these two control events may be held back in the accelerated
+			// HTTP path. Keep the existing response.created/tool/unknown-event
+			// early flush contract. Bound memory and conservatively commit when
+			// either limit is reached; buffering never grants replay safety.
+			if flushEarlyEvents && !wroteDownstream && isOpenAIWSSSEControlMetadata(eventType) &&
+				len(bufferedStreamEvents) < openAIWSSSEMetadataMaxEvents &&
+				len(message) <= openAIWSSSEMetadataMaxBytes-bufferedControlMetadataBytes {
+				bufferedStreamEvents = append(bufferedStreamEvents, append([]byte(nil), message...))
+				bufferedControlMetadataBytes += len(message)
+				bufferedEventCount++
+				continue
+			}
 			// 默认缓冲首 token 前的事件，保留既有的早期错误处理窗口。
 			// 显式开启 HTTP SSE 加速时立即刷出，之后不再重放请求。
 			// Preserve the legacy flush boundary independently of semantic timing.
@@ -1037,7 +1107,7 @@ readLoop:
 			if !clientDisconnected {
 				markOpenAIWSClientVisibleFailure(c, eventType, message)
 			}
-			upstreamTerminalEvent = s.handleOpenAIWSTerminalTransientFailure(ctx, account, mappedModel, lease.HandshakeHeaders(), message)
+			upstreamTerminalEvent = s.handleOpenAIWSTerminalTransientFailure(openAI429LeaseObservation(ctx, lease), account, mappedModel, lease.HandshakeHeaders(), message)
 			// A terminal event must be the final JSON document in its WS message.
 			// Ignore any tail for the completed client turn, but never reuse the
 			// ambiguous upstream connection for another request.
@@ -1047,6 +1117,9 @@ readLoop:
 	}
 
 	if clientDisconnected && terminalEventCount == 0 {
+		if flushEarlyEvents {
+			return partialResultWithUsage(), fmt.Errorf("openai ws stream incomplete after client disconnect: %w", context.Canceled)
+		}
 		return resultWithUsage(), fmt.Errorf("openai ws stream incomplete after client disconnect: %w", context.Canceled)
 	}
 	if !reqStream {

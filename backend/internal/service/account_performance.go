@@ -61,6 +61,8 @@ type AccountPerformance struct {
 	AvgTPS             *float64               `json:"avg_tps"`
 	DegradationPercent *float64               `json:"degradation_percent"`
 	AvgTTFTMs          *float64               `json:"avg_ttft_ms"`
+	AvgCachePercent    *float64               `json:"avg_cache_percent"`
+	CacheSamples       int                    `json:"cache_samples"`
 	TPSSamples         int                    `json:"tps_samples"`
 	TTFTSamples        int                    `json:"ttft_samples"`
 	QualitySamples     int                    `json:"quality_samples"`
@@ -72,6 +74,45 @@ type AccountPerformance struct {
 	Reason             string                 `json:"reason"`
 	WindowStart        time.Time              `json:"window_start"`
 	WindowEnd          time.Time              `json:"window_end"`
+}
+
+// Snapshot callers own the returned evidence; do not expose cache pointers.
+func cloneAccountPerformance(in *AccountPerformance) *AccountPerformance {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	clone := func(p *float64) *float64 {
+		if p == nil {
+			return nil
+		}
+		value := *p
+		return &value
+	}
+	out.AvgTPS, out.AvgTTFTMs, out.DegradationPercent = clone(in.AvgTPS), clone(in.AvgTTFTMs), clone(in.DegradationPercent)
+	out.AvgCachePercent = clone(in.AvgCachePercent)
+	out.UpstreamError.Percent = clone(in.UpstreamError.Percent)
+	for _, bounds := range []*PerformanceBounds{&out.Config.TPS, &out.Config.TTFT, &out.Config.Degradation, &out.Config.UpstreamError} {
+		bounds.Min, bounds.Max = clone(bounds.Min), clone(bounds.Max)
+	}
+	if in.PausedAt != nil {
+		value := *in.PausedAt
+		out.PausedAt = &value
+	}
+	return &out
+}
+
+// Shared validation for display evidence and scheduling. Unknown is not zero.
+func validPerformanceMetric(value *float64) bool {
+	return value != nil && !math.IsNaN(*value) && !math.IsInf(*value, 0) && *value >= 0
+}
+
+func performanceUpstreamErrorRate(e upstreamstats.Evidence) *float64 {
+	if e.Source != "process_local_http_responses" || e.Total <= 0 || e.Failures < 0 || e.Failures > e.Total || !validPerformanceMetric(e.Percent) || *e.Percent > 100 {
+		return nil
+	}
+	value := float64(e.Failures) / float64(e.Total)
+	return &value
 }
 
 func (m AccountPerformance) Breaches() []string {

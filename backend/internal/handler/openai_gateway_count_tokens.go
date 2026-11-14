@@ -42,7 +42,11 @@ func (h *OpenAIGatewayHandler) ResponsesInputTokens(c *gin.Context) {
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
-		if handleRequestBodyReadError(c, reqLog, err) {
+		if middleware2.RejectRequestBodyReadError(c, "handler.openai_gateway_count_tokens", err) {
+			return
+		}
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			h.errorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
 		status, message := requestBodyReadFailure(reqLog, c.Request, err)
@@ -142,7 +146,11 @@ func (h *OpenAIGatewayHandler) GrokCountTokens(c *gin.Context) {
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
 		bodyLog := requestLogger(c, "handler.openai_gateway.grok_count_tokens")
-		if handleRequestBodyReadError(c, bodyLog, err) {
+		if middleware2.RejectRequestBodyReadError(c, "handler.openai_gateway.grok_count_tokens", err) {
+			return
+		}
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			h.anthropicErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
 		status, message := requestBodyReadFailure(bodyLog, c.Request, err)
@@ -213,7 +221,11 @@ func (h *OpenAIGatewayHandler) CountTokens(c *gin.Context) {
 
 	body, err := readLenientJSONRequestBodyWithPrealloc(c.Request, h.cfg)
 	if err != nil {
-		if handleRequestBodyReadError(c, reqLog, err) {
+		if middleware2.RejectRequestBodyReadError(c, "handler.openai_gateway_count_tokens", err) {
+			return
+		}
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			h.anthropicErrorResponse(c, http.StatusRequestEntityTooLarge, "invalid_request_error", buildBodyTooLargeMessage(maxErr.Limit))
 			return
 		}
 		status, message := requestBodyReadFailure(reqLog, c.Request, err)
