@@ -79,11 +79,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import {
-  getLast24HourRange,
-  hasTimeComponent,
-  parseRangeBoundary
-} from '@/utils/dateRange'
+import { parseRangeBoundary } from '@/utils/dateRange'
 
 interface DatePreset {
   labelKey: string
