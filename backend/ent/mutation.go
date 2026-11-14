@@ -59082,7 +59082,10 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 49)
+	fields := make([]string, 0, 52)
+	if m.platform != nil {
+		fields = append(fields, usagelog.FieldPlatform)
+	}
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
