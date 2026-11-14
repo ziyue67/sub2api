@@ -319,6 +319,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			forwarded, forwardErr = h.gatewayService.ForwardImages(rpmAdmission.forwardContext(requestCtx, account), c, account, body, parsed, channelMapping.MappedModel)
 			return forwarded, forwardErr
 		}()
+		if service.IsUpstreamModerationDenied(err) {
+			return
+		}
 		if h.handleOpenAIRPMForwardError(c, err, streamStarted, false) {
 			return
 		}

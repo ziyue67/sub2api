@@ -494,6 +494,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			capture.FinishWithError(c, result, err)
 			return result, err
 		}()
+		if service.IsUpstreamModerationDenied(err) {
+			return
+		}
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)

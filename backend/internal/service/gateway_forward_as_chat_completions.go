@@ -42,6 +42,11 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	}()
 
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	startTime := time.Now()
 
 	// 1. Parse Chat Completions request

@@ -25,6 +25,10 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	managed := account != nil && account.HasManagedOpenAIConnections()
 	if account != nil && account.Platform == PlatformOpenAI && s.excelOAuthReauth != nil {
 		if repo, ok := s.excelOAuthReauth.repo.(OpenAIAuthConnectionRepository); ok {

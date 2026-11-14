@@ -44,6 +44,11 @@ func (s *GatewayService) ForwardAsResponses(
 	}()
 
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	startTime := time.Now()
 
 	normalizedBody, normalized, err := normalizeOpenAIResponsesLegacyIngressWithConfig(s.cfg, body)

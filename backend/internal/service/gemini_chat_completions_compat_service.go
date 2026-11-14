@@ -28,6 +28,10 @@ func (s *GeminiMessagesCompatService) ForwardAsChatCompletions(
 	body []byte,
 ) (*ForwardResult, error) {
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	startTime := time.Now()
 
 	var ccReq apicompat.ChatCompletionsRequest

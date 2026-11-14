@@ -62,6 +62,10 @@ func (s *AntigravityGatewayService) ForwardAsChatCompletions(
 	_ *ParsedRequest,
 ) (*ForwardResult, error) {
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateAntigravityCompatAccount(c, account); err != nil {
 		return nil, err
 	}
@@ -110,6 +114,10 @@ func (s *AntigravityGatewayService) ForwardAsResponses(
 	_ *ParsedRequest,
 ) (*ForwardResult, error) {
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateAntigravityCompatAccount(c, account); err != nil {
 		return nil, err
 	}
