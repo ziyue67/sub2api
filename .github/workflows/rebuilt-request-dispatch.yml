@@ -1,6 +1,7 @@
 name: Rebuilt request dispatch
 on:
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/service/openai_409_omit_history*'
       - 'backend/internal/service/openai_agent_message_recovery.go'

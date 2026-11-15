@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     services:
       postgres:
@@ -149,7 +149,7 @@ jobs:
 
   before-ui:
     if: github.sha == '59d409b49df3dd90815a054cb6dffdd405c06c3e'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -185,7 +185,7 @@ jobs:
           path: ${{ runner.temp }}/mature-before-evidence/
 
   provider-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
@@ -295,7 +295,7 @@ jobs:
           path: ${{ runner.temp }}/mature-ui-evidence/
 
   qq-network:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -354,7 +354,7 @@ jobs:
 
   account-before:
     if: github.sha == 'a51c3e8d8e61c897a3a2aad9dd1cdc7d9b114c56'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -382,7 +382,7 @@ jobs:
           path: ${{ runner.temp }}/account-before-evidence/
 
   candidate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
       postgres:
@@ -647,7 +647,7 @@ jobs:
           key: mature-go-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}-${{ github.job }}-${{ github.sha }}
 
   after-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -693,7 +693,7 @@ jobs:
           path: ${{ runner.temp }}/after-evidence/
 
   race:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       GOMAXPROCS: '2'
@@ -726,7 +726,7 @@ jobs:
           key: mature-go-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}-race-${{ github.sha }}
 
   wiring:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
