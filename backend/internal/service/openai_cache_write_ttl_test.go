@@ -95,8 +95,6 @@ func TestOpenAICacheWriteTTLRecordUsage(t *testing.T) {
 				totalCost := cacheCost + 3*0.65/1e6 + 5*3.25/1e6
 				assert.InDelta(t, cacheCost, log.CacheCreationCost, 1e-12)
 				assert.InDelta(t, totalCost, log.TotalCost, 1e-12)
-				assert.InDelta(t, totalCost*0.5, log.ActualCost, 1e-12)
-				assert.InDelta(t, totalCost*0.5, userRepo.lastAmount, 1e-12)
 				assert.InDelta(t, QuantizeUsageBillingAmount(totalCost*0.5), log.ActualCost, 1e-12)
 				assert.InDelta(t, QuantizeUsageBillingAmount(totalCost*0.5), userRepo.lastAmount, 1e-12)
 				require.NotNil(t, log.AccountStatsCost)

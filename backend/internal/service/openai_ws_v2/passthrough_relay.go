@@ -1555,7 +1555,7 @@ func (s *relayState) startsFirstToken(eventType string, message []byte) bool {
 	if s.isFirstTokenEvent != nil {
 		return !isTerminalEvent(eventType) && s.isFirstTokenEvent(eventType, message)
 	}
-	return isTokenEvent(eventType) || openai.ResponseStartsSemanticOutput(message, eventType)
+	return openai.ResponseStartsSemanticOutput(message, eventType)
 }
 
 func isTokenEvent(eventType string) bool {

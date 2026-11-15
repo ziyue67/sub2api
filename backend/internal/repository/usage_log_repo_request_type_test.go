@@ -292,10 +292,10 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	prepared := prepareUsageLogInsert(log)
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-6])
-	require.Equal(t, true, prepared.args[len(prepared.args)-6])
-	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-4])
-	require.Nil(t, prepared.args[len(prepared.args)-4])
+	require.Equal(t, "boolean", usageLogInsertArgTypes[usageInsertColumnIndex(t, "native_compaction_v2")])
+	require.Equal(t, true, prepared.args[usageInsertColumnIndex(t, "native_compaction_v2")])
+	require.Equal(t, "jsonb", usageLogInsertArgTypes[usageInsertColumnIndex(t, "tool_surcharges")])
+	require.Nil(t, prepared.args[usageInsertColumnIndex(t, "tool_surcharges")])
 	require.Equal(t, int16(service.RequestTypeStream), prepared.args[30])
 	require.Equal(t, service.RequestTypeStream, log.RequestType)
 	require.True(t, log.Stream)
@@ -344,7 +344,7 @@ func TestPrepareUsageLogInsert_PersistsToolSurchargesJSON(t *testing.T) {
 		}},
 	})
 
-	encoded, ok := prepared.args[len(prepared.args)-4].(string)
+	encoded, ok := prepared.args[usageInsertColumnIndex(t, "tool_surcharges")].(string)
 	require.True(t, ok)
 	require.JSONEq(t, `[{"name":"web_search","count":3,"price":10,"rate_multiplier":0.75,"cost":0.0225,"account_cost":0.03}]`, encoded)
 }

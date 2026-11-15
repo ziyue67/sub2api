@@ -184,7 +184,7 @@ func TestHTTP2CCMultilineEventBufferBounded(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	state := (&OpenAIGatewayService{cfg: rawChatCompletionsTestConfig()}).scanCCStream(c,
 		&http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(source)}, rawChatCompletionsTestAccount(), "test", "synthetic", time.Now(), func(*apicompat.ChatCompletionsChunk) { t.Error("fragments must not emit chunks") })
-	require.EqualError(t, state.Err, "upstream error event exceeds size limit")
+	require.ErrorIs(t, state.Err, errSSETransportLimit, "the transport line cap must reject fragments before the larger byte cap")
 	_, marked := GetOpsStreamError(c)
 	require.False(t, marked)
 	require.False(t, state.SawDone)

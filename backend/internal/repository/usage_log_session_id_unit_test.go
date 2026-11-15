@@ -28,11 +28,8 @@ func newSessionIDUsageLog(sessionID *string) *service.UsageLog {
 	}
 }
 
-// TestPrepareUsageLogInsert_SessionIDArgWiring pins the session_id column to the
-// arg slice / arg-type table so the five INSERT column lists stay in sync. session_id
-// is immediately before native_compaction_v2; tool_surcharges follows it and
-// created_at precedes the final cache_creation_billing audit.
-// is immediately before native_compaction_v2; created_at, queue_timing and platform follow.
+// TestPrepareUsageLogInsert_SessionIDArgWiring pins session_id and neighboring
+// columns to the SELECT/INSERT contract without assuming a fixed tail offset.
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	sessionID := "sess-persisted-123"
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(&sessionID))
@@ -40,21 +37,17 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes),
 		"prepared args must match the arg-type table length")
 
-	// Tail order: native_compaction_v2, cache_creation_30m, cache_creation_12h,
-	// tool_surcharges, created_at, cache_creation_billing, queue_timing.
-	// session_id sits 7 slots before the end.
-	// session_id precedes native_compaction_v2, both TTL counters, created_at, queue_timing and platform.
-	sessionArg := prepared.args[len(prepared.args)-7]
+	sessionArg := prepared.args[usageInsertColumnIndex(t, "session_id")]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.True(t, ns.Valid)
 	require.Equal(t, sessionID, ns.String)
 
-	require.Equal(t, "text", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-7],
+	require.Equal(t, "text", usageLogInsertArgTypes[usageInsertColumnIndex(t, "session_id")],
 		"session_id arg type must be text")
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-6],
+	require.Equal(t, "boolean", usageLogInsertArgTypes[usageInsertColumnIndex(t, "native_compaction_v2")],
 		"native_compaction_v2 arg type must be boolean")
-	require.Equal(t, "jsonb", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-3],
+	require.Equal(t, "jsonb", usageLogInsertArgTypes[usageInsertColumnIndex(t, "tool_surcharges")],
 		"tool_surcharges arg type must be jsonb")
 }
 
@@ -62,14 +55,14 @@ func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
 // persisted as SQL NULL rather than an empty string.
 func TestPrepareUsageLogInsert_SessionIDNullWhenAbsent(t *testing.T) {
 	prepared := prepareUsageLogInsert(newSessionIDUsageLog(nil))
-	sessionArg := prepared.args[len(prepared.args)-7]
+	sessionArg := prepared.args[usageInsertColumnIndex(t, "session_id")]
 	ns, ok := sessionArg.(sql.NullString)
 	require.True(t, ok, "session_id arg should be a sql.NullString, got %T", sessionArg)
 	require.False(t, ns.Valid, "absent session id must be NULL, not empty string")
 
 	empty := ""
 	preparedEmpty := prepareUsageLogInsert(newSessionIDUsageLog(&empty))
-	nsEmpty := preparedEmpty.args[len(preparedEmpty.args)-7].(sql.NullString)
+	nsEmpty := preparedEmpty.args[usageInsertColumnIndex(t, "session_id")].(sql.NullString)
 	require.False(t, nsEmpty.Valid, "empty session id must also be NULL")
 }
 

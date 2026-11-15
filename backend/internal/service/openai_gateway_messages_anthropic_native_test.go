@@ -180,6 +180,7 @@ func TestNativeAnthropicPassthroughStreamPropagatesCumulativeWebSearchUsage(t *t
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
 		``,
+		``, // Dispatch the final SSE event with a complete blank-line delimiter.
 	}, "\n")
 	response := &http.Response{
 		StatusCode: http.StatusOK,
