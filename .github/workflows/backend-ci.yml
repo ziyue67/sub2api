@@ -79,7 +79,6 @@ jobs:
     # capacity pressure ("job was not acquired by Runner of type hosted"), which
     # turned this gate red for infra reasons, so keep it on the Ubuntu pool.
     runs-on: ubuntu-latest
-    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v6
         with:
