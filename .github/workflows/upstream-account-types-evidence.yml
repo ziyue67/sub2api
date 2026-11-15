@@ -12,8 +12,7 @@ permissions:
   contents: read
 jobs:
   rendered-before-after:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -42,7 +41,7 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/frontend/node_modules" "$RUNNER_TEMP/account-types-base/frontend/node_modules"
       - name: Install isolated browser
         run: |
-          npm install --prefix "$RUNNER_TEMP/account-types-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/account-types-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/account-types-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Render originals and exercise account type filtering
         env:

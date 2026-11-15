@@ -6,8 +6,7 @@ permissions:
   contents: read
 jobs:
   unit:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       GOMAXPROCS: '2'
@@ -61,8 +60,7 @@ jobs:
           name: oauth-degradation-unit-${{ github.event_name }}-${{ github.run_id }}
           path: evidence/
   timezone-race:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       GOMAXPROCS: '2'
@@ -122,8 +120,7 @@ jobs:
           name: oauth-degradation-timezone-race-${{ github.run_id }}
           path: evidence/
   postgres:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       GOMAXPROCS: '2'
@@ -169,8 +166,7 @@ jobs:
           name: oauth-degradation-postgres-${{ github.event_name }}-${{ github.run_id }}
           path: evidence/
   integration-race:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       CI: 'true'
@@ -260,8 +256,7 @@ jobs:
           name: oauth-degradation-integration-race-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/
   ui:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
@@ -311,7 +306,7 @@ jobs:
           pnpm --dir frontend exec eslint src/components/admin/operations/OAuthDegradationCard.vue src/utils/oauthDegradation.ts src/views/admin/AutoConfigView.vue src/api/admin/autoConfig.ts src/components/admin/operations/AutoConfigHistory.vue 2>&1 | tee evidence/lint.log
       - name: Isolated browser dependencies
         run: |
-          npm install --prefix "$RUNNER_TEMP/oauth-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/oauth-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/oauth-browser/node_modules/.bin/playwright" install --with-deps chromium
       - run: git fetch --no-tags --depth=1 origin 1411d0fc6e1fca51d4b657c21837cd74c87bf84e
       - name: Real Vue and project CSS before and after (fixture only)

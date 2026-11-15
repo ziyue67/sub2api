@@ -21,7 +21,7 @@ permissions:
 jobs:
   regression:
     name: ${{ matrix.mode }} / PG18 + independent Redis
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false

@@ -10,8 +10,7 @@ concurrency:
 jobs:
   generated:
     if: github.head_ref == 'fix/queue-wait-ttft'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       GOMAXPROCS: '2'
@@ -42,8 +41,7 @@ jobs:
 
   behavior:
     if: github.head_ref == 'fix/queue-wait-ttft'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
       GOMAXPROCS: '2'
@@ -127,8 +125,7 @@ jobs:
 
   ui:
     if: github.head_ref == 'fix/queue-wait-ttft'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -156,7 +153,7 @@ jobs:
           (cd frontend && pnpm test:run src/components/admin/usage/__tests__/UsageTable.spec.ts src/components/admin/usage/__tests__/UsageTimingDialog.spec.ts && pnpm build) 2>&1 | tee "$RUNNER_TEMP/pr610-ui.log"
       - name: Isolated synthetic browser
         run: |
-          npm install --prefix "$RUNNER_TEMP/pr610-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/pr610-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/pr610-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Bilingual before/after table and dialog, desktop/mobile interactions
         env:

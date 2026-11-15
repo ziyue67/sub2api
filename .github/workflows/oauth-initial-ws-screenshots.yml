@@ -14,8 +14,7 @@ concurrency:
 
 jobs:
   screenshots:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -33,7 +32,7 @@ jobs:
       - run: pnpm --dir frontend install --frozen-lockfile
       - name: Prepare isolated screenshot browser
         run: |
-          npm install --prefix "$RUNNER_TEMP/oauth-ws-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/oauth-ws-browser" --no-save --ignore-scripts playwright@1.65.1
           node "$RUNNER_TEMP/oauth-ws-browser/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Capture actual component with fictional data
         env:

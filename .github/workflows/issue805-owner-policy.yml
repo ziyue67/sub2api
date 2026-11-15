@@ -6,6 +6,7 @@ on:
     paths:
       - 'backend/**'
       - '.github/scripts/prepare-moderation-red-fixtures.sh'
+      - '.github/scripts/prepare-replay-red-fixtures.sh'
       - '.github/workflows/issue805-owner-policy.yml'
   workflow_dispatch:
 
@@ -87,7 +88,7 @@ jobs:
           # baseline. The readable/task-rebuild fixtures import its settings and
           # usage helpers. Exclude this exact dependency set only in the old
           # Issue805 RED; GREEN and each feature's own TDD job retain them.
-          for omission_test in backend/internal/handler/openai_409_omit_history_test.go backend/internal/handler/openai_409_readable_continuation_test.go backend/internal/handler/openai_409_http_rebuild_test.go backend/internal/handler/openai_409_shadow_http_test.go backend/internal/handler/openai_409_shadow_race_test.go backend/internal/handler/openai_409_ws_rebuild_test.go backend/internal/handler/openai_409_ws_oracle_test.go backend/internal/handler/openai_400_omit_history_test.go; do
+          for omission_test in backend/internal/handler/openai_409_omit_history_test.go backend/internal/handler/openai_409_readable_continuation_test.go backend/internal/handler/openai_409_http_rebuild_test.go backend/internal/handler/openai_409_shadow_http_test.go backend/internal/handler/openai_409_shadow_race_test.go backend/internal/handler/openai_409_ws_rebuild_test.go backend/internal/handler/openai_409_ws_oracle_test.go backend/internal/handler/openai_400_omit_history_test.go backend/internal/handler/openai_issue854_continuation_test.go backend/internal/handler/openai_issue854_upstream_test.go backend/internal/handler/openai_issue854_postgres_test.go; do
             git cat-file -e "$EXPECTED_HEAD_SHA:$omission_test"
             rm -- "$omission_test"
             test ! -e "$omission_test"
@@ -95,6 +96,7 @@ jobs:
           done
           # The pinned HTTP2 exclusion helper above already handles the handler
           # fixture absent from this baseline; do not remove it a second time.
+          bash "$GITHUB_WORKSPACE/.github/scripts/prepare-replay-red-fixtures.sh" "$baseline" . "$EXPECTED_HEAD_SHA" | tee "$RUNNER_TEMP/issue805-evidence/replay-fixtures.txt"
           bash "$GITHUB_WORKSPACE/.github/scripts/prepare-moderation-red-fixtures.sh" "$baseline" . "$EXPECTED_HEAD_SHA" | tee "$RUNNER_TEMP/issue805-evidence/moderation-fixtures.txt"
           # The selected regression and its shared harness must remain exact
           # candidate blobs. The clean GREEN checkout retains all new tests.

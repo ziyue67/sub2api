@@ -22,6 +22,7 @@ on:
       - '.github/scripts/exclude-later-http2-red-fixtures.sh'
       - 'backend/internal/service/openai_gateway_passthrough.go'
       - '.github/scripts/prepare-moderation-red-fixtures.sh'
+      - '.github/scripts/prepare-replay-red-fixtures.sh'
       - '.github/workflows/ws-readable-continuation.yml'
 permissions:
   contents: read
@@ -100,6 +101,7 @@ jobs:
           if [ "$PHASE" = RED ]; then
             bash "$GITHUB_WORKSPACE/.github/scripts/exclude-later-400-red-fixtures.sh" "$BASELINE_SHA" . "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/transport-400-exclusions.txt"
             bash "$GITHUB_WORKSPACE/.github/scripts/exclude-later-http2-red-fixtures.sh" "$BASELINE_SHA"
+            bash "$GITHUB_WORKSPACE/.github/scripts/prepare-replay-red-fixtures.sh" "$BASELINE_SHA" . "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/transport-replay-fixtures.txt"
             bash "$GITHUB_WORKSPACE/.github/scripts/prepare-moderation-red-fixtures.sh" "$BASELINE_SHA" . "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/transport-moderation-fixtures.txt"
           fi
           for target in backend/internal/handler/openai_409_ws_rebuild_test.go backend/internal/service/openai_ws_agent_recovery.go backend/internal/handler/openai_gateway_handler.go; do
@@ -166,6 +168,7 @@ jobs:
           if [ "$PHASE" = RED ]; then
             bash .github/scripts/exclude-later-400-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/review-400-exclusions.txt"
             bash .github/scripts/exclude-later-http2-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA"
+            bash .github/scripts/prepare-replay-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/review-replay-fixtures.txt"
             bash .github/scripts/prepare-moderation-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/review-moderation-fixtures.txt"
           fi
           for target in backend/internal/handler/openai_409_ws_rebuild_test.go backend/internal/handler/openai_409_ws_oracle_test.go backend/internal/handler/openai_gateway_handler.go backend/internal/service/openai_ws_http_bridge.go backend/internal/service/openai_ws_forwarder_payload.go; do
@@ -202,11 +205,17 @@ jobs:
           if [ "$PHASE" = RED ]; then
             bash .github/scripts/exclude-later-400-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/residual-400-exclusions.txt"
             bash .github/scripts/exclude-later-http2-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA"
+            bash .github/scripts/prepare-replay-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/residual-replay-fixtures.txt"
             bash .github/scripts/prepare-moderation-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/residual-moderation-fixtures.txt"
             # The service test package also compiles unrelated fixtures added by
             # newer production. Match their historical APIs in this disposable
             # RED only; keep every selected 409/ticket test and all GREEN tests.
-            for target in backend/internal/service/temp_unsched_pending_test.go backend/internal/service/temp_unsched_stream_timing_test.go backend/internal/service/temp_unsched_ws_forward_test.go backend/internal/service/openai_auth_connection_status_test.go backend/internal/service/openai_auth_connections_account_type_test.go backend/internal/service/account_ops_balance_test.go backend/internal/service/openai_excel_bps_bridge_failure_test.go backend/internal/service/quality_5xx_immediate_test.go; do
+            # PR855 route-evidence types and later production BPS search APIs
+            # are absent in this baseline. Their unselected tests follow the
+            # pinned historical APIs too; the selected ticket oracle stays current.
+            # BPS search is already excluded with blob/contract proofs by the
+            # shared helpers above, so do not inspect/remove it a second time.
+            for target in backend/internal/service/temp_unsched_pending_test.go backend/internal/service/temp_unsched_stream_timing_test.go backend/internal/service/temp_unsched_ws_forward_test.go backend/internal/service/openai_auth_connection_status_test.go backend/internal/service/openai_auth_connections_account_type_test.go backend/internal/service/account_ops_balance_test.go backend/internal/service/openai_excel_bps_bridge_failure_test.go backend/internal/service/quality_5xx_immediate_test.go backend/internal/service/openai_ws_agent_recovery_test.go; do
               candidate_blob=$(git rev-parse "$CANDIDATE_SHA:$target")
               test "$(git hash-object "$tested_tree/$target")" = "$candidate_blob"
               if git cat-file -e "$baseline:$target" 2>/dev/null; then
@@ -264,6 +273,8 @@ jobs:
           git -C "$tested_tree" diff --exit-code "$CANDIDATE_SHA" -- 'backend/**/*_test.go'
           if [ "$PHASE" = RED ]; then
             bash .github/scripts/exclude-later-400-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/namespace-400-exclusions.txt"
+            bash .github/scripts/prepare-mature-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/namespace-mature-fixtures.txt"
+            bash .github/scripts/prepare-replay-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/namespace-replay-fixtures.txt"
             bash .github/scripts/prepare-moderation-red-fixtures.sh "$baseline" "$tested_tree" "$CANDIDATE_SHA" | tee "$RUNNER_TEMP/ws-evidence/namespace-moderation-fixtures.txt"
           fi
           for target in backend/internal/handler/openai_409_ws_rebuild_test.go backend/internal/handler/openai_409_ws_oracle_test.go backend/internal/service/openai_ws_agent_recovery.go; do

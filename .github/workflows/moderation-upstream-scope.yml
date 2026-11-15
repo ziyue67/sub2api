@@ -10,8 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   behavioral-red:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
@@ -44,8 +43,7 @@ jobs:
           name: moderation-scope-red-${{ github.sha }}
           path: ${{ runner.temp }}/moderation-scope
   ui-evidence:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -66,7 +64,7 @@ jobs:
           pnpm --dir frontend run build
       - name: Isolated browser
         run: |
-          npm install --prefix "$RUNNER_TEMP/scope-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/scope-browser" --no-save --ignore-scripts playwright@1.65.1
           node "$RUNNER_TEMP/scope-browser/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Render actual baseline settings
         env:
@@ -79,8 +77,7 @@ jobs:
           name: moderation-scope-ui-${{ github.sha }}
           path: ${{ runner.temp }}/moderation-scope-ui
   backend-green:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
@@ -105,8 +102,7 @@ jobs:
           name: moderation-scope-green-${{ github.sha }}
           path: ${{ runner.temp }}/moderation-scope-green
   postgres-persistence:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6

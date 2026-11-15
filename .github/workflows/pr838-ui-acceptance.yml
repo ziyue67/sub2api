@@ -16,8 +16,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   administration:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       CANDIDATE: ${{ github.event.pull_request.head.sha }}
@@ -68,7 +67,7 @@ jobs:
             fi
           done
           printf '%s\n' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' 'Acquire::Retries "2";' | sudo tee /etc/apt/apt.conf.d/99-sub2api-ci-timeouts >/dev/null
-          npm install --prefix "$RUNNER_TEMP/pr838-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/pr838-browser" --no-save --ignore-scripts playwright@1.65.1
           node "$RUNNER_TEMP/pr838-browser/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Build complete before and after applications with project Vite and CSS
         run: node .github/scripts/pr838-ui-build.mjs

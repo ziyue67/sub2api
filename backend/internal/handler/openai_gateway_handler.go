@@ -901,6 +901,15 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 	}
 
+	// Normalize the finite replay metadata before either immutable body copy or
+	// the recovery digest is frozen. Each attempt derives from these same bytes.
+	if prepared, err := h.gatewayService.PrepareOpenAIAgentReplayBody(body); err != nil {
+		h.handleOpenAIAgentRecoveryError(c, err, streamStarted)
+		return
+	} else {
+		body = prepared
+	}
+
 	// 解析渠道级模型映射
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 	seedOpenAIForwardImageIntentHint(c, channelMapping.Mapped, imageIntent)
@@ -1282,6 +1291,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		// 从不可变的 canonical forwardBody 派生本次尝试 body 并整块剔除上游私有的加密
 		// reasoning item（含耦合的 id/summary），避免非透传上游 400 拒绝 Kiro reasoning 形态。
 		attemptBody := h.deriveOpenAIForwardAttemptBody(reqLog, forwardBody, account, &passthroughFailoverState)
+		if h.cfg != nil && h.cfg.Gateway.DisableEncryptedAgentOwnerBinding {
+			// Account-specific builders/retries never own the frozen source slice.
+			attemptBody = append([]byte(nil), attemptBody...)
+		}
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
@@ -3411,6 +3424,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	bindOpenAIPriorityObservation(c, apiKey.GroupID, reqModel, firstMessage)
 	ctx = c.Request.Context()
 	setOpsEndpointContext(c, "", int16(service.RequestTypeWSV2))
+	service.BeginOpsStreamTurn(c, 1)
 
 	// Connection-wide audit identity survives proxy restarts/failover, whose
 	// transport-local turn counters restart at 1. Replays keep the current
@@ -3580,7 +3594,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	ctx = h.gatewayService.WithOpenAIWSAgentRecovery(ctx, c, firstMessage, sessionHash, wsForwardModel)
 	ctx = service.WithOpenAIGuardianParentAffinity(ctx, c, firstMessage, reqModel)
 	if next, clean, changed, rebuildErr := h.gatewayService.PrepareOpenAI409ReadableContinuation(ctx, c, firstMessage, sessionHash, wsForwardModel); rebuildErr != nil {
-		h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, rebuildErr)
+		h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, rebuildErr, c)
 		return
 	} else if changed {
 		ctx, firstMessage, previousResponseID = next, clean, ""
@@ -3589,6 +3603,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0
+	opsTurnOffset := 0
 	var forbiddenBudget grokForbiddenFailoverBudget
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -3597,6 +3612,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var rpmAdmission openAIRPMAdmission
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
+	initialDispatchStarted := false
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
 		if !service.OpenAIWSAgentRecoveryCanRetry(ctx) {
 			return false
@@ -3709,7 +3725,47 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			requestPlatform,
 		)
 		if err != nil {
-			if h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, err) {
+			if !initialDispatchStarted && requestPlatform == service.PlatformOpenAI &&
+				switchCount < maxAccountSwitches && service.OpenAIWSInitialOwnerCanRebuild(err) {
+				next, clean, changed, rebuildErr := h.gatewayService.RebuildOpenAIWSUnsentTurn(ctx, c, wsAttemptMessage, sessionHash, wsForwardModel)
+				if rebuildErr != nil {
+					h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, rebuildErr, c)
+					return
+				}
+				if changed {
+					c.Request = c.Request.WithContext(next)
+					permissions := openAIWSQueueTurnPermissions(reqModel, clean)
+					permissions.Models = service.APIKeyModelCandidates(apiKey, permissions.Models)
+					next = service.WithAPIKeyQueueRequestPermissions(next, permissions)
+					if authErr := h.concurrencyHelper.RevalidateTurnAuth(next); authErr != nil {
+						closeOpenAIWSAdmissionError(wsConn, reqLog, "openai.websocket_rebuild_auth_rejected", authErr)
+						return
+					}
+					if billingErr := h.checkRegionalBillingEligibility(next, apiKey, subscription); billingErr != nil {
+						closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "billing check failed")
+						return
+					}
+					if contextErr := h.gatewayService.CheckAPIKeyLongContext(next, apiKey, clean, reqModel, wsRouteModel, wsForwardModel); contextErr != nil {
+						rejectAPIKeyLongContextWS(wsConn, contextErr)
+						return
+					}
+					if decision := h.checkSecurityAuditStage(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, clean, "first_turn"); decision != nil && !decision.AllowNextStage {
+						writeSecurityAuditWSError(next, wsConn, decision)
+						closeOpenAIClientWS(wsConn, securityAuditWSCloseStatus(decision), securityAuditWSCloseReason(decision))
+						return
+					}
+					// Existing first-turn hooks still enforce client identity, selected
+					// account moderation, permissions, slots and final payload checks.
+					setCyberTurnBody(1, clean, firstIdentityDecision.effective)
+					ctx = service.ResetOpenAIWSReadableProviderSession(next, c)
+					c.Request = c.Request.WithContext(ctx)
+					wsAttemptMessage, previousResponseID, previousResponseCanMove = clean, "", true
+					firstTurnQueuePermissions = permissions
+					switchCount++
+					continue
+				}
+			}
+			if h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, err, c) {
 				return
 			}
 			if errors.Is(err, service.ErrPriorityLatencyUnavailable) {
@@ -3987,7 +4043,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					moderationLogicalTurn++
 				}
 				c.Set(securityAuditWSTurnContextKey, moderationLogicalTurn)
-				service.BeginOpsStreamTurn(c, turn)
+				service.BeginOpsStreamTurn(c, opsTurnOffset+turn)
 				// 连接级 cyber session gate 也在 BeforeRequest 先执行，使 native 与
 				// passthrough ingress 都能在 BeforeTurn 及上游写入前无副作用地拒绝。
 				// BeforeTurn 中保留同一检查作为防御式兜底。
@@ -4344,6 +4400,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 			// Carry that frame's timestamps into the new ingress attempt too.
 			hooks.InitialTurnStartedAt = firstTurnStartedAt
 			hooks.InitialFrameArrivedAt = firstFrameArrivedAt
+			initialDispatchStarted = true
 			err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks)
 			if err == nil {
 				reqLog.Info("openai.websocket_ingress_closed", zap.Int64("account_id", account.ID))
@@ -4354,6 +4411,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// transport, never the connection's warmup or a failed generation.
 				releaseTurnSlots()
 				if switchCount >= maxAccountSwitches || !service.OpenAIWSIngressCanFailover(ctx, c) {
+					if h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, err, c) {
+						return
+					}
 					closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account eligibility changed; continuation budget exhausted")
 					return
 				}
@@ -4384,10 +4444,13 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				next, clean, changed, rebuildErr := h.gatewayService.RebuildOpenAIWSUnsentTurn(ctx, c, raw, sessionHash, currentForwardModel)
 				if rebuildErr != nil {
-					h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, rebuildErr)
+					h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, rebuildErr, c)
 					return
 				}
 				if !changed {
+					if h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, err, c) {
+						return
+					}
 					closeOpenAIClientWS(wsConn, coderws.StatusTryAgainLater, "account eligibility changed; reconnect with complete context")
 					return
 				}
@@ -4438,8 +4501,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				reqModel, wsRouteModel, wsForwardModel = currentModel, currentRouteModel, currentForwardModel
 				channelMappingWS = mapping
+				opsTurnOffset += turn - 1
 				wsAttemptMessage, previousResponseID, previousResponseCanMove = clean, "", true
-				failedAccountIDs[account.ID] = struct{}{}
+				if !service.OpenAIWSUnsentTurnKeepsAccount(err) {
+					failedAccountIDs[account.ID] = struct{}{}
+				}
 				switchCount++
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				if !ensureUserSlotHeld() {
@@ -4447,6 +4513,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				}
 				reqLog.Info("openai.websocket_readable_continuation", zap.Bool("context_loss", true), zap.Int("switch_count", switchCount))
 				break
+			}
+			if h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, err, c) {
+				releaseTurnSlots()
+				return
 			}
 			if isOpenAIRPMError(err) {
 				releaseTurnSlots()
@@ -4923,6 +4993,11 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
+	if code, message, ok := service.OpenAIUpstreamRecoveryRateLimit(statusCode, responseBody); ok {
+		service.SetOpsUpstreamError(c, statusCode, message, "")
+		h.handleStreamingAwareErrorWithCode(c, statusCode, "rate_limit_error", code, message, streamStarted, false)
+		return
+	}
 	// 使用默认的错误映射
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
@@ -5388,6 +5463,16 @@ func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failover
 		}
 	}
 
+	if failoverErr != nil {
+		if code, safeMessage, ok := service.OpenAIUpstreamRecoveryRateLimit(failoverErr.StatusCode, failoverErr.ResponseBody); ok {
+			errorCode, message = code, safeMessage
+			payload, _ := json.Marshal(gin.H{"type": "error", "status": intendedStatus,
+				"error": gin.H{"type": errorType, "code": errorCode, "message": message}})
+			writeCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+			_ = service.WriteCapturedWSClient(writeCtx, conn, coderws.MessageText, payload)
+			cancel()
+		}
+	}
 	service.MarkOpsStreamFailure(c, errorType, errorCode, message, intendedStatus)
 	closeOpenAIClientWS(conn, closeStatus, message)
 }

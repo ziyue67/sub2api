@@ -12,8 +12,7 @@ permissions:
   contents: read
 jobs:
   screenshots:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -30,7 +29,7 @@ jobs:
       - run: pnpm --dir frontend install --frozen-lockfile
       - name: Install isolated screenshot browser
         run: |
-          npm install --prefix "$RUNNER_TEMP/pr-ui-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/pr-ui-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/pr-ui-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Fetch immutable before baseline
         run: git fetch --no-tags --depth=1 origin 1c3882e935a01b376f9aefdf844863125fff7c2b

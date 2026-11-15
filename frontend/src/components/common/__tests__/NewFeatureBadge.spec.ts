@@ -23,10 +23,18 @@ describe('NewFeatureBadge', () => {
 
 
   it.each([
+    ['BPS account search', NEW_FEATURE_NOTICES.bpsAccountSearch],
+    ['mature providers', NEW_FEATURE_NOTICES.matureProviders],
+    ['provider key import', NEW_FEATURE_NOTICES.matureProviderImport],
+    ['QQ community', NEW_FEATURE_NOTICES.qqCommunity],
+    ['QQ reward coupons', NEW_FEATURE_NOTICES.qqRewardCoupons],
     ['moderation upstream scope', NEW_FEATURE_NOTICES.moderationUpstreamAccountScope],
     ['admin usage platform', NEW_FEATURE_NOTICES.adminUsagePlatform],
     ['user ID copy', NEW_FEATURE_NOTICES.userIdCopy],
     ['Antigravity usage query', NEW_FEATURE_NOTICES.antigravityUsageQuery],
+    ['account operations multiple recipients', NEW_FEATURE_NOTICES.accountOpsMultipleEmails],
+    ['account operations provider balance', NEW_FEATURE_NOTICES.accountOpsProviderBalance],
+    ['account operations OAuth lifecycle', NEW_FEATURE_NOTICES.accountOpsOAuthLifecycle],
     ['OpenAI cache write TTL', NEW_FEATURE_NOTICES.openaiCacheWriteTTL12h],
     ['EasyPay refund code', NEW_FEATURE_NOTICES.easyPayRefundSuccessCode],
     ['payment provider fees', NEW_FEATURE_NOTICES.paymentProviderFees],

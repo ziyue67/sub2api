@@ -1106,6 +1106,7 @@ func ProvideAPIKeyServiceWithGroupProtection(
 // ProviderSet is the Wire provider set for all services
 var ProviderSet = wire.NewSet(
 	ProvideImageArchiveService,
+	ProvideQQBotService,
 	ProvideAutoCreditEmailWorker,
 	ProvideAccountPerformanceService,
 	ProvideRequestCaptureManager,

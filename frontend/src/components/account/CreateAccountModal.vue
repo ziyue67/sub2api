@@ -1575,6 +1575,13 @@
 
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
       <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
+        <div v-if="!authStore.isObserver" class="flex flex-wrap items-center gap-2">
+          <button type="button" class="btn btn-secondary" :aria-pressed="!providerImportMode" @click="providerImportMode = false">{{ t('matureProviders.manual') }}</button>
+          <button type="button" data-testid="provider-import-mode" class="btn btn-secondary" :aria-pressed="providerImportMode" @click="providerImportMode = true; apiKeyValue = ''; upstreamBillingAutoProbeEnabled = false">{{ t('matureProviders.useProvider') }}</button>
+          <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.matureProviderImport" :user-id="authStore.user?.id" />
+        </div>
+        <MatureProviderImport v-if="providerImportMode && !authStore.isObserver" :platform="form.platform" @select="providerSelection = $event" />
+        <template v-if="!providerImportMode">
         <div
           v-if="
             !(isMultiProtocolPlatform && apiProtocol === 'adaptive') &&
@@ -1658,6 +1665,7 @@
           <p v-if="apiKeyHint" class="input-hint">{{ apiKeyHint }}</p>
         </div>
 
+        </template>
         <!-- 上游倍率自动探测：全部 API-key 平台可用（所在区块已限定 apikey 类型） -->
         <div
           class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
@@ -1670,6 +1678,7 @@
           </div>
           <Toggle
             v-model="upstreamBillingAutoProbeEnabled"
+            :disabled="providerImportMode"
             data-testid="upstream-billing-auto-probe"
             :aria-label="t('admin.accounts.upstreamBilling.autoProbe')"
           />
@@ -4532,6 +4541,7 @@ import type { CodexSessionImportRequest as UpstreamImportRequest, OpenAICodexPAT
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import MatureProviderImport, { type ProviderSelection } from './MatureProviderImport.vue'
 import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
 import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
@@ -4809,6 +4819,7 @@ const submitting = ref(false)
 const accountCategory = ref<'oauth-based' | 'apikey' | 'bedrock' | 'service_account'>('oauth-based') // UI selection for account category
 const addMethod = ref<AddMethod>('oauth') // For oauth-based: 'oauth' or 'setup-token'
 const apiKeyBaseUrl = ref('https://api.anthropic.com')
+const providerImportMode = ref(false), providerSelection = ref<ProviderSelection | null>(null)
 const apiKeyValue = ref('')
 const upstreamBillingAutoProbeEnabled = ref(true)
 
@@ -6148,6 +6159,12 @@ async function runChannelCreation<T>(kind: string, payload: unknown, operation: 
  return result
 }
 function createAccountWithUpstream(payload: CreateAccountRequest) {
+ if (providerImportMode.value && payload.type === 'apikey' && providerSelection.value) {
+   const credentials = { ...payload.credentials }
+   delete credentials.api_key
+   delete credentials.base_url
+   payload = { ...payload, credentials, ...providerSelection.value, upstream_billing_probe_enabled: false }
+ }
  const selected = initialChannelId.value > 0 ? { upstream_channel_id: initialChannelId.value, confirm_upstream_channel_binding: initialChannelConfirmed.value } : {}
  return runChannelCreation('account', payload, () => adminAPI.accounts.create({ ...payload, ...selected }), a => [a.id], true)
 }
@@ -6261,6 +6278,8 @@ const resetForm = () => {
   openAIApiProtocol.value = ''
   openAIAdaptiveBaseUrls.value = defaultOpenAIAdaptiveBaseUrls()
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
+  providerImportMode.value = false
+  providerSelection.value = null
   apiKeyValue.value = ''
   upstreamRequestIdHeader.value = ''
   upstreamBillingAutoProbeEnabled.value = true
@@ -6812,7 +6831,8 @@ const handleSubmit = async () => {
   }
 
   // For apikey type, create directly
-  if (!apiKeyValue.value.trim()) {
+  if (providerImportMode.value && !providerSelection.value) { appStore.showError(t('matureProviders.selectKeyRequired')); return }
+  if (!providerImportMode.value && !apiKeyValue.value.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
     return
   }
@@ -8310,4 +8330,5 @@ const handleCookieAuth = async (sessionKey: string) => {
     oauth.loading.value = false
   }
 }
+watch(() => [form.platform, form.type], () => { providerSelection.value = null; if (form.type !== 'apikey') providerImportMode.value = false })
 </script>

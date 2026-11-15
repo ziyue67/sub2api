@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   regression:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
@@ -167,7 +167,7 @@ jobs:
           retention-days: 14
 
   shared-storage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6

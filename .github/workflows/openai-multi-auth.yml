@@ -13,8 +13,7 @@ permissions:
 jobs:
   red:
     if: github.head_ref == 'feat/openai-multi-auth-connections' || github.ref_name == 'feat/openai-multi-auth-connections'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -49,8 +48,7 @@ jobs:
           path: ${{ runner.temp }}/issue594-red.log
   review-red:
     if: github.head_ref == 'feat/openai-multi-auth-connections' || github.ref_name == 'feat/openai-multi-auth-connections'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -95,8 +93,7 @@ jobs:
 
   lease-proof-red:
     if: github.head_ref == 'feat/openai-multi-auth-connections' || github.ref_name == 'feat/openai-multi-auth-connections'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -145,8 +142,7 @@ jobs:
 
   green:
     needs: [red, review-red, lease-proof-red]
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -187,8 +183,7 @@ jobs:
           path: ${{ runner.temp }}/issue594-*.log
   ui:
     needs: red
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -232,8 +227,7 @@ jobs:
             ${{ runner.temp }}/issue594-*.log
   i18n-lock-candidate:
     if: github.head_ref == 'feat/openai-multi-auth-connections' || github.ref_name == 'feat/openai-multi-auth-connections'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

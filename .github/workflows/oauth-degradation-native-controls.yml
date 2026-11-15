@@ -25,8 +25,7 @@ concurrency:
 
 jobs:
   unit:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       GOMAXPROCS: '2'
@@ -74,8 +73,7 @@ jobs:
           retention-days: 14
 
   postgres:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     # Same images as integration_harness_test.go. Provision before the race
     # binary starts; keep its migrations, real connections and all regressions.
@@ -148,8 +146,7 @@ jobs:
           retention-days: 14
 
   frontend:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -176,7 +173,7 @@ jobs:
           pnpm --dir frontend typecheck 2>&1 | tee evidence/typecheck.log
       - name: Install isolated browser for synthetic settings preview
         run: |
-          npm install --prefix "$RUNNER_TEMP/quality429-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/quality429-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/quality429-browser/node_modules/.bin/playwright" install --with-deps chromium
           git fetch --no-tags --depth=1 origin 90549fe897d6187d8251af44c9ece5230d2a83f4
       - name: Render independent conditions before and after

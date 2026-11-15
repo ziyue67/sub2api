@@ -10,8 +10,7 @@ concurrency:
 jobs:
   backend:
     if: github.head_ref == 'feat/issue603-latency-observability'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GOMAXPROCS: '2'
@@ -192,8 +191,7 @@ jobs:
           retention-days: 14
   ui:
     if: github.head_ref == 'feat/issue603-latency-observability'
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       BASELINE: ec007920de042797299fc7cf2c034ad24c136462
@@ -248,7 +246,7 @@ jobs:
           (cd frontend && pnpm build) 2>&1 | tee "$RUNNER_TEMP/issue603-ui-build.log"
       - name: Install isolated browser for actual usage page screenshots
         run: |
-          npm install --prefix "$RUNNER_TEMP/issue603-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/issue603-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/issue603-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Render exact baseline and head with offline synthetic data
         env:

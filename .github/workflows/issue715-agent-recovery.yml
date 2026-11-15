@@ -56,9 +56,10 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD
           original=6df0cd5bb0ce4d774d34004008f9dd661d236468
+          bash .github/scripts/historical-recovery-timezone-callers.sh
           targets=(backend/internal/service/openai_codex_model_metadata.go backend/internal/service/openai_codex_models_service.go backend/internal/service/openai_excel_bps_models_manifest.go)
           git fetch --no-tags --depth=1 origin "$original"
-          trap 'git restore --source=HEAD -- "${targets[@]}"; git diff --exit-code' EXIT
+          trap 'git restore --source=HEAD -- "${targets[@]}" backend/internal/service/openai_request_timezone_egress.go backend/internal/service/openai_ws_client.go; git diff --exit-code' EXIT
           git restore --source="$original" -- "${targets[@]}"
           for target in "${targets[@]}"; do
             expected=$(git rev-parse "$original:$target")
@@ -72,7 +73,7 @@ jobs:
           set -e
           cat "$RUNNER_TEMP/issue715-red.log"
           test "$result" -ne 0
-          ! grep -Eq 'build failed|no tests to run|undefined:|panic:' "$RUNNER_TEMP/issue715-red.log"
+          if grep -Eq 'build failed|no tests to run|undefined:|panic:' "$RUNNER_TEMP/issue715-red.log"; then exit 1; fi
           grep -q -- '--- FAIL: TestIssue715BridgeDoesNotAdvertiseEncryptedAgent' "$RUNNER_TEMP/issue715-red.log"
           grep -q 'bridge must not create unreadable encrypted tasks' "$RUNNER_TEMP/issue715-red.log"
           grep -q -- '--- FAIL: TestIssue715FetchedAndPinnedBridgeCapabilities' "$RUNNER_TEMP/issue715-red.log"
@@ -97,12 +98,19 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD
           original=6df0cd5bb0ce4d774d34004008f9dd661d236468
+          bash .github/scripts/historical-recovery-timezone-callers.sh
           targets=(backend/internal/handler/openai_gateway_handler.go backend/internal/service/openai_account_scheduler.go backend/internal/service/openai_gateway_forward.go backend/internal/service/openai_gateway_response_handling.go backend/internal/service/openai_gateway_service.go backend/internal/service/openai_ws_forwarder_ingress.go backend/internal/service/openai_ws_v2_passthrough_adapter.go backend/internal/service/openai_ws_http_bridge.go backend/internal/service/openai_ws_pool.go)
           added=(backend/internal/service/openai_agent_message_recovery.go backend/internal/service/openai_agent_message_recovery_cache.go backend/internal/service/openai_agent_message_delivery.go backend/internal/repository/gateway_cache_agent_recovery.go backend/internal/repository/gateway_cache_agent_shadow_epoch.go backend/internal/service/openai_ws_agent_recovery.go backend/internal/service/openai_agent_message_recovery_wait.go backend/internal/service/openai_ws_search_activation.go backend/internal/service/openai_409_omit_history.go backend/internal/service/openai_409_readable_shadow.go backend/internal/repository/gateway_cache_readable_shadow.go backend/internal/service/openai_400_omit_history.go backend/internal/service/openai_history_omission.go)
           # The exact original gateway struct predates analysis admission state.
-          added+=(backend/internal/service/openai_ws_readable_continuation.go)
+          added+=(backend/internal/service/openai_ws_readable_continuation.go backend/internal/service/openai_agent_replay_metadata.go)
+          handler_compat=aa8e596e6d6f3e4648d6beba73b39b240dd5357a
+          handler_leaf=backend/internal/handler/openai_agent_message_recovery.go
           # Pin this unrelated leaf to its pre-admission version, preserving all
           # Issue715 business-chain blobs and the retained handler regressions.
+          # Issue842 compatibility-body callers depend on the later recovery
+          # helper. Keep its exact pre-Issue842 blob in this historical assembly.
+          metadata_compat=aa8e596e6d6f3e4648d6beba73b39b240dd5357a
+          metadata_leaf=backend/internal/service/openai_gateway_request_body.go
           analysis_compat=e395038e98fbc5a0c44944f0edcfbfe714570f71
           analysis_leaf=backend/internal/service/priority_analysis.go
           # The restored usage struct also predates the 30m/12h counters.
@@ -115,10 +123,14 @@ jobs:
           weekly_compat=f895ea743f34a4c4ab6c9d01c01e13c931625a6e
           weekly_leaves=(backend/internal/service/openai_disable_scheduling_429.go backend/internal/service/openai_gateway_passthrough.go backend/internal/service/openai_plugin_transport.go backend/internal/service/openai_quota_service.go backend/internal/service/openai_quota_usage_snapshot.go backend/internal/service/openai_ws_forwarder_support.go backend/internal/service/openai_ws_forwarder_v2.go)
           git fetch --no-tags --depth=1 origin "$original"
+          git fetch --no-tags --depth=1 origin "$metadata_compat"
           git fetch --no-tags --depth=1 origin "$analysis_compat"
           git fetch --no-tags --depth=1 origin "$billing_compat"
-          trap 'git restore --source=HEAD -- "${targets[@]}" "${added[@]}" "$analysis_leaf" "$billing_leaf" "${weekly_leaves[@]}"; git diff --exit-code' EXIT
+          trap 'git restore --source=HEAD -- "${targets[@]}" "${added[@]}" "$analysis_leaf" "$billing_leaf" "${weekly_leaves[@]}" "$handler_leaf" "$metadata_leaf" backend/internal/service/openai_request_timezone_egress.go backend/internal/service/openai_ws_client.go; git diff --exit-code' EXIT
           git restore --source="$original" -- "${targets[@]}"
+          git restore --source="$metadata_compat" -- "$metadata_leaf"
+          test "$(git hash-object "$metadata_leaf")" = "$(git rev-parse "$metadata_compat:$metadata_leaf")"
+          echo "compatibility_leaf_baseline=$metadata_compat path=$metadata_leaf blob=$(git hash-object "$metadata_leaf")"
           git restore --source="$analysis_compat" -- "$analysis_leaf"
           git restore --source="$billing_compat" -- "$billing_leaf"
           git fetch --no-tags --depth=1 origin "$weekly_compat"
@@ -137,6 +149,10 @@ jobs:
           actual=$(git hash-object "$analysis_leaf")
           echo "compatibility_leaf_baseline=$analysis_compat path=$analysis_leaf expected_blob=$expected tested_blob=$actual"
           test "$expected" = "$actual"
+          git fetch --no-tags --depth=1 origin "$handler_compat"
+          git restore --source="$handler_compat" -- "$handler_leaf"
+          test "$(git hash-object "$handler_leaf")" = "$(git rev-parse "$handler_compat:$handler_leaf")"
+          echo "handler_compatibility_baseline=$handler_compat path=$handler_leaf"
           rm -- "${added[@]}"
           for target in "${targets[@]}"; do
             expected=$(git rev-parse "$original:$target")
@@ -151,7 +167,7 @@ jobs:
           set -e
           cat "$RUNNER_TEMP/issue715-recovery-red.log"
           test "$result" -ne 0
-          ! grep -Eq 'build failed|no tests to run|undefined:|panic:' "$RUNNER_TEMP/issue715-recovery-red.log"
+          if grep -Eq 'build failed|no tests to run|undefined:|panic:' "$RUNNER_TEMP/issue715-recovery-red.log"; then exit 1; fi
           grep -q -- '--- FAIL: TestIssue715HTTPResumesSameTaskAcrossTwoTurns/false' "$RUNNER_TEMP/issue715-recovery-red.log"
           grep -q -- '--- FAIL: TestIssue715HTTPResumesSameTaskAcrossTwoTurns/true' "$RUNNER_TEMP/issue715-recovery-red.log"
           grep -q 'same task and tool context must survive route drift' "$RUNNER_TEMP/issue715-recovery-red.log"
@@ -173,9 +189,10 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD
           original=18b7c0a4f5f4306a9c92f9715f08164f520df457
+          bash .github/scripts/historical-recovery-timezone-callers.sh
           target=backend/internal/service/openai_gateway_response_handling.go
           git fetch --no-tags --depth=1 origin "$original"
-          trap 'git restore --source=HEAD -- "$target"; git diff --exit-code' EXIT
+          trap 'git restore --source=HEAD -- "$target" backend/internal/service/openai_request_timezone_egress.go backend/internal/service/openai_ws_client.go; git diff --exit-code' EXIT
           git restore --source="$original" -- "$target"
           expected=$(git rev-parse "$original:$target")
           actual=$(git hash-object "$target")
@@ -187,7 +204,7 @@ jobs:
           set -e
           cat "$RUNNER_TEMP/issue715-delivery-red.log"
           test "$result" -ne 0
-          ! grep -Eq 'build failed|no tests to run|undefined:|panic:' "$RUNNER_TEMP/issue715-delivery-red.log"
+          if grep -Eq 'build failed|no tests to run|undefined:|panic:' "$RUNNER_TEMP/issue715-delivery-red.log"; then exit 1; fi
           grep -q -- '--- FAIL: TestIssue715HTTPFailedDeliveryNeverGrantsOwner/json/error' "$RUNNER_TEMP/issue715-delivery-red.log"
           grep -q -- '--- FAIL: TestIssue715HTTPFailedDeliveryNeverGrantsOwner/aggregate/error' "$RUNNER_TEMP/issue715-delivery-red.log"
           grep -q 'failed downstream delivery must not grant a successful owner' "$RUNNER_TEMP/issue715-delivery-red.log"
@@ -209,9 +226,10 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD
           original=b6d780f1a4fee66c2930219dfe9e400b8f0279de
+          bash .github/scripts/historical-recovery-timezone-callers.sh
           target=backend/internal/service/openai_gateway_response_handling.go
           git fetch --no-tags --depth=1 origin "$original"
-          trap 'git restore --source=HEAD -- "$target"; git diff --exit-code' EXIT
+          trap 'git restore --source=HEAD -- "$target" backend/internal/service/openai_request_timezone_egress.go backend/internal/service/openai_ws_client.go; git diff --exit-code' EXIT
           git restore --source="$original" -- "$target"
           expected=$(git rev-parse "$original:$target")
           actual=$(git hash-object "$target")
@@ -223,7 +241,7 @@ jobs:
           set -e
           cat "$RUNNER_TEMP/issue715-generated-red.log"
           test "$result" -ne 0
-          ! grep -Eq 'build failed|no tests to run|undefined:|panic:' "$RUNNER_TEMP/issue715-generated-red.log"
+          if grep -Eq 'build failed|no tests to run|undefined:|panic:' "$RUNNER_TEMP/issue715-generated-red.log"; then exit 1; fi
           grep -q -- '--- FAIL: TestIssue715HTTPGeneratedTaskReturnsToItsProducer/generated-json' "$RUNNER_TEMP/issue715-generated-red.log"
           grep -q -- '--- FAIL: TestIssue715HTTPGeneratedTaskReturnsToItsProducer/generated-stream-items' "$RUNNER_TEMP/issue715-generated-red.log"
           grep -q 'newly generated task must return to its producer before any prior successful input' "$RUNNER_TEMP/issue715-generated-red.log"
@@ -245,6 +263,7 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD
           original=242f5b0892a59d95005099e6294262b066bd2f8b
+          bash .github/scripts/historical-recovery-timezone-callers.sh
           targets=(backend/internal/service/openai_agent_message_recovery.go backend/internal/service/openai_agent_message_recovery_cache.go backend/internal/repository/gateway_cache_agent_recovery.go backend/internal/service/openai_gateway_forward.go backend/internal/service/openai_gateway_response_handling.go)
           added=backend/internal/service/openai_agent_message_delivery.go
           ws_original=a575df898ccd0876c4c0eb1559da38cedfdfe99d
@@ -252,6 +271,8 @@ jobs:
           # Neither helper exists on the restored historical socket structure.
           ws_added=(backend/internal/service/openai_ws_agent_recovery.go backend/internal/service/openai_ws_search_activation.go)
           ws_added+=(backend/internal/service/openai_ws_readable_continuation.go)
+          handler_compat=aa8e596e6d6f3e4648d6beba73b39b240dd5357a
+          handler_leaf=backend/internal/handler/openai_agent_message_recovery.go
           # The historical recovery request predates Issue758 cooldown state.
           # Keep the exact delivery-defect blobs above, and pin only this
           # scheduling compatibility leaf to the pre-Issue758 production base.
@@ -260,17 +281,28 @@ jobs:
           wait_added=backend/internal/service/openai_agent_message_recovery_wait.go
           # The Beta helper depends on fields absent in this historical recovery struct.
           omission_added=(backend/internal/service/openai_409_omit_history.go backend/internal/service/openai_409_readable_shadow.go backend/internal/repository/gateway_cache_readable_shadow.go backend/internal/repository/gateway_cache_agent_shadow_epoch.go backend/internal/service/openai_400_omit_history.go backend/internal/service/openai_history_omission.go)
+          omission_added+=(backend/internal/service/openai_agent_replay_metadata.go)
+          metadata_compat=aa8e596e6d6f3e4648d6beba73b39b240dd5357a
+          metadata_leaf=backend/internal/service/openai_gateway_request_body.go
           git fetch --no-tags --depth=1 origin "$original"
           git fetch --no-tags --depth=1 origin "$ws_original"
           git fetch --no-tags --depth=1 origin "$scheduler_compat"
-          trap 'git restore --source=HEAD -- "${targets[@]}" "$added" "${ws_targets[@]}" "${ws_added[@]}" "$scheduler_leaf" "$wait_added" "${omission_added[@]}"; git diff --exit-code' EXIT
+          git fetch --no-tags --depth=1 origin "$metadata_compat"
+          trap 'git restore --source=HEAD -- "${targets[@]}" "$added" "${ws_targets[@]}" "${ws_added[@]}" "$scheduler_leaf" "$wait_added" "${omission_added[@]}" "$handler_leaf" "$metadata_leaf" backend/internal/service/openai_request_timezone_egress.go backend/internal/service/openai_ws_client.go; git diff --exit-code' EXIT
           git restore --source="$original" -- "${targets[@]}"
           git restore --source="$ws_original" -- "${ws_targets[@]}"
+          git restore --source="$metadata_compat" -- "$metadata_leaf"
+          test "$(git hash-object "$metadata_leaf")" = "$(git rev-parse "$metadata_compat:$metadata_leaf")"
+          echo "compatibility_leaf_baseline=$metadata_compat path=$metadata_leaf blob=$(git hash-object "$metadata_leaf")"
           git restore --source="$scheduler_compat" -- "$scheduler_leaf"
           expected=$(git rev-parse "$scheduler_compat:$scheduler_leaf")
           actual=$(git hash-object "$scheduler_leaf")
           echo "compatibility_leaf_baseline=$scheduler_compat path=$scheduler_leaf expected_blob=$expected tested_blob=$actual"
           test "$expected" = "$actual"
+          git fetch --no-tags --depth=1 origin "$handler_compat"
+          git restore --source="$handler_compat" -- "$handler_leaf"
+          test "$(git hash-object "$handler_leaf")" = "$(git rev-parse "$handler_compat:$handler_leaf")"
+          echo "handler_compatibility_baseline=$handler_compat path=$handler_leaf"
           rm -- "$added" "${ws_added[@]}" "$wait_added" "${omission_added[@]}"
           for target in "${omission_added[@]}"; do
             test ! -e "$target"
@@ -289,7 +321,7 @@ jobs:
           set -e
           cat "$RUNNER_TEMP/issue715-first-delivery-red.log"
           test "$result" -ne 0
-          ! grep -Eq 'build failed|no tests to run|undefined:|panic:|DATA RACE|fixture barrier not reached' "$RUNNER_TEMP/issue715-first-delivery-red.log"
+          if grep -Eq 'build failed|no tests to run|undefined:|panic:|DATA RACE|fixture barrier not reached' "$RUNNER_TEMP/issue715-first-delivery-red.log"; then exit 1; fi
           for format in generated-json generated-stream generated-stream-items; do
             grep -q -- "--- FAIL: TestIssue715HTTPFirstDeliveryCrossNodeBarrier/$format" "$RUNNER_TEMP/issue715-first-delivery-red.log"
           done
@@ -312,9 +344,10 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD
           original=d91d890049a9bd8bd0e414f30b0cb3b5bcc0f06e
+          bash .github/scripts/historical-recovery-timezone-callers.sh
           target=backend/internal/service/openai_ws_forwarder_ingress.go
           git fetch --no-tags --depth=1 origin "$original"
-          trap 'git restore --source=HEAD -- "$target"; git diff --exit-code' EXIT
+          trap 'git restore --source=HEAD -- "$target" backend/internal/service/openai_request_timezone_egress.go backend/internal/service/openai_ws_client.go; git diff --exit-code' EXIT
           git restore --source="$original" -- "$target"
           expected=$(git rev-parse "$original:$target")
           actual=$(git hash-object "$target")
@@ -326,9 +359,15 @@ jobs:
           set -e
           cat "$RUNNER_TEMP/issue715-ws-bridge-sequence-red.log"
           test "$result" -ne 0
-          ! grep -Eq 'build failed|no tests to run|undefined:|panic:|DATA RACE|--- SKIP:' "$RUNNER_TEMP/issue715-ws-bridge-sequence-red.log"
+          if grep -Eq 'build failed|no tests to run|undefined:|panic:|DATA RACE|--- SKIP:' "$RUNNER_TEMP/issue715-ws-bridge-sequence-red.log"; then exit 1; fi
           grep -q -- '--- FAIL: TestIssue715WSGeneratedTaskContinuation/http_bridge/cross-node=false' "$RUNNER_TEMP/issue715-ws-bridge-sequence-red.log"
-          grep -q 'generated WS task must continue without rebuilding the session' "$RUNNER_TEMP/issue715-ws-bridge-sequence-red.log"
+          # PR855 returns the safe structured refusal before the close. The
+          # unchanged oracle now reaches its content assertion (instead of the
+          # socket-read assertion). Require that exact business failure after
+          # the first continuation completed; do not accept arbitrary errors.
+          grep -q 'generated opaque WS task and tool result must return to producer' "$RUNNER_TEMP/issue715-ws-bridge-sequence-red.log"
+          grep -q 'encrypted_agent_recovery_wire_changed' "$RUNNER_TEMP/issue715-ws-bridge-sequence-red.log"
+          grep -q 'ingress_ws_http_bridge_turn_completed.*turn=2' "$RUNNER_TEMP/issue715-ws-bridge-sequence-red.log"
 
   red-ws-wire:
     runs-on: ubuntu-latest
@@ -347,6 +386,7 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD
           original=e7f54240d83765c90a98e961ad5e33b0fa35ab56
+          bash .github/scripts/historical-recovery-timezone-callers.sh
           target=backend/internal/service/openai_ws_agent_recovery.go
           caller=backend/internal/service/openai_ws_forwarder_ingress.go
           passthrough=backend/internal/service/openai_ws_v2_passthrough_adapter.go
@@ -354,7 +394,7 @@ jobs:
           # Manager fields and readable-payload methods live together. Restore
           # both transport callers with that manager; retain candidate tests and
           # standalone admission/principal helpers required by current HTTP.
-          trap 'git restore --source=HEAD -- "$target" "$caller" "$passthrough"; git diff --exit-code' EXIT
+          trap 'git restore --source=HEAD -- "$target" "$caller" "$passthrough" backend/internal/service/openai_request_timezone_egress.go backend/internal/service/openai_ws_client.go; git diff --exit-code' EXIT
           git restore --source="$original" -- "$target" "$caller" "$passthrough"
           expected=$(git rev-parse "$original:$target")
           actual=$(git hash-object "$target")
@@ -375,7 +415,7 @@ jobs:
           set -e
           cat "$RUNNER_TEMP/issue715-ws-wire-red.log"
           test "$result" -ne 0
-          ! grep -Eq 'build failed|no tests to run|undefined:|panic:|--- SKIP:' "$RUNNER_TEMP/issue715-ws-wire-red.log"
+          if grep -Eq 'build failed|no tests to run|undefined:|panic:|--- SKIP:' "$RUNNER_TEMP/issue715-ws-wire-red.log"; then exit 1; fi
           grep -q -- '--- FAIL: TestIssue715WSBridgeValidatesBuiltPayload' "$RUNNER_TEMP/issue715-ws-wire-red.log"
           grep -q 'bridge must validate actual built HTTP body before granting opaque task admission' "$RUNNER_TEMP/issue715-ws-wire-red.log"
 
@@ -426,13 +466,14 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD
           original=a575df898ccd0876c4c0eb1559da38cedfdfe99d
+          bash .github/scripts/historical-recovery-timezone-callers.sh
           targets=(backend/internal/handler/openai_gateway_handler.go backend/internal/service/openai_ws_forwarder_ingress.go backend/internal/service/openai_ws_v2_passthrough_adapter.go backend/internal/service/openai_ws_http_bridge.go backend/internal/service/openai_ws_pool.go)
           # Search activation references fields absent in this pool. Retain the
           # standalone recovery helpers needed by current HTTP code; the pinned
           # pre-WS handler/transports never call them or publish WS ownership.
           added=(backend/internal/service/openai_ws_search_activation.go)
           git fetch --no-tags --depth=1 origin "$original"
-          trap 'git restore --source=HEAD -- "${targets[@]}" "${added[@]}"; git diff --exit-code' EXIT
+          trap 'git restore --source=HEAD -- "${targets[@]}" "${added[@]}" backend/internal/service/openai_request_timezone_egress.go backend/internal/service/openai_ws_client.go; git diff --exit-code' EXIT
           git restore --source="$original" -- "${targets[@]}"
           rm -- "${added[@]}"
           for target in "${targets[@]}"; do
@@ -451,7 +492,7 @@ jobs:
           set -e
           cat "$RUNNER_TEMP/issue715-ws-red.log"
           test "$result" -ne 0
-          ! grep -Eq 'build failed|no tests to run|undefined:|panic:|DATA RACE|--- SKIP:' "$RUNNER_TEMP/issue715-ws-red.log"
+          if grep -Eq 'build failed|no tests to run|undefined:|panic:|DATA RACE|--- SKIP:' "$RUNNER_TEMP/issue715-ws-red.log"; then exit 1; fi
           for mode in ctx_pool passthrough http_bridge; do
             grep -q -- "--- FAIL: TestIssue715WSGeneratedTaskContinuation/$mode/cross-node=true" "$RUNNER_TEMP/issue715-ws-red.log"
           done
@@ -517,7 +558,7 @@ jobs:
           test "$issue715_diag_samples" -gt 0
           test "$(grep -c '^=== RUN   TestOpsOutputTPSQueryDeadline$' "$issue715_diag_dir/test.log")" -eq 20
           test "$(grep -c '^--- PASS: TestOpsOutputTPSQueryDeadline ' "$issue715_diag_dir/test.log")" -eq 20
-          ! grep -En '^--- (FAIL|SKIP):|panic:|\[build failed\]|\[no tests to run\]|skipping integration tests' "$issue715_diag_dir/test.log"
+          if grep -En '^--- (FAIL|SKIP):|panic:|\[build failed\]|\[no tests to run\]|skipping integration tests' "$issue715_diag_dir/test.log"; then exit 1; fi
       - uses: actions/upload-artifact@v6
         if: always()
         with:

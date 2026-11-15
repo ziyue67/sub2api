@@ -92,6 +92,11 @@ func prismBrowserResponsesURL(baseURL string) string {
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, resultErr error) {
+	preparedCtx, preparedBody, prepareErr := s.prepareOpenAIAgentOAuthReplay(ctx, account, body)
+	if prepareErr != nil {
+		return nil, prepareErr
+	}
+	ctx, body = preparedCtx, preparedBody
 
 	defer func() {
 		if result != nil && c != nil {
@@ -123,7 +128,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	defer func() { resultErr = regionalMeterFinishForward(ctx, result, resultErr, finishMeter) }()
 	ctx = s.withRequestTimezoneEgress(ctx, account)
-	body = s.normalizeRequestTimezone(ctx, account, body, "http")
+	if r := openAIAgentRecoveryFromContext(ctx); r == nil || !r.omittedHistory {
+		body = s.normalizeRequestTimezone(ctx, account, body, "http")
+	}
 	if astraSchedulingAppliesToRequest(s.cfg.AstraRouting(ctx), account, gjson.GetBytes(body, "model").String(), getOpenAIGroupIDFromContext(c)) {
 		if err := s.checkAstraSchedulingRoute(ctx, account); err != nil {
 			return nil, err
@@ -175,6 +182,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	clearOpenAIResponsesNamespaceNames(c)
 	setCodexToolNameReverse(c, nil)
 	rememberOpenAIResponsesClientInstructions(c, body)
+	var projectionErr error
+	ctx, body, projectionErr = s.prepareOpenAI409HTTPProjection(ctx, c, account, body)
+	if projectionErr != nil {
+		return nil, projectionErr
+	}
+	if projected := openAIAgentRecoveryFromContext(ctx); projected != openAIAgentRecoveryFromContext(c.Request.Context()) {
+		// Response observers use gin's context, while final send checks use ctx.
+		// Both must see the same delivery fence for this attempt. Restore only
+		// the recovery value afterwards, keeping unrelated context additions.
+		originalRecovery := openAIAgentRecoveryFromContext(c.Request.Context())
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), openAIAgentRecoveryContextKey{}, projected))
+		defer func() {
+			c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), openAIAgentRecoveryContextKey{}, originalRecovery))
+		}()
+	}
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
 		return nil, err
 	}
@@ -330,7 +352,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
-	passthroughEnabled := account.IsOpenAIPassthroughEnabled()
+	passthroughEnabled := account.IsOpenAIPassthroughEnabled() && !openAI409UsesNativeAPIKey(ctx, account)
 	compactPath := isOpenAIResponsesCompactPath(c)
 	body, err = normalizeOpenAIResponsesNamespaces(c, account, body, wsDecision.Transport, passthroughEnabled, compactPath)
 	if err != nil {
@@ -376,7 +398,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			body = normalized
 			originalBody = normalized
 		}
-		if normalized, changed, normalizeErr := normalizeOpenAIAPIKeyStoreFalseReasoningReplay(body, isOpenAIResponsesCompactPath(c)); normalizeErr != nil {
+		if normalized, changed, normalizeErr := normalizeOpenAIAPIKeyStoreFalseReasoningReplayProtected(body, isOpenAIResponsesCompactPath(c), s.preserveOpenAIAgentHistory(body)); normalizeErr != nil {
 			return nil, normalizeErr
 		} else if changed {
 			body = normalized
@@ -410,7 +432,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
-		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplay(body)
+		normalizedReasoningBody, reasoningChanged, reasoningErr := normalizeOpenAIResponsesReasoningContentReplayProtected(body, s.preserveOpenAIAgentHistory(body))
 		if reasoningErr != nil {
 			return nil, fmt.Errorf("normalize OpenAI Responses reasoning content replay: %w", reasoningErr)
 		}
@@ -761,7 +783,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				IsCompact:                           isCompactRequest,
 				SkipDefaultInstructions:             true,
 				PreserveToolCallIDs:                 true,
-				PreserveReadableReplay:              readableReplay,
+				PreserveReadableReplay:              readableReplay || openAIAgentRecoveryPreservesHistory(ctx),
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
 				ResponsesLite:                       responsesLite,
 			})
@@ -772,7 +794,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				IsCodexCLI:                          isCodexCLI,
 				IsCompact:                           isCompactRequest,
 				SkipDefaultInstructions:             readableReplay,
-				PreserveReadableReplay:              readableReplay,
+				PreserveReadableReplay:              readableReplay || openAIAgentRecoveryPreservesHistory(ctx),
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
 				ResponsesLite:                       responsesLite,
 			})

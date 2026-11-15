@@ -20,8 +20,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   postgres-boundaries:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
@@ -58,8 +57,7 @@ jobs:
         working-directory: backend
         run: go test -tags=integration ./internal/repository -run '^TestChannelOperations' -count=1 -v
   frontend-workflow:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -81,7 +79,7 @@ jobs:
         run: pnpm --dir frontend run build
       - name: Isolated browser for synthetic UI acceptance
         run: |
-          npm install --prefix "$RUNNER_TEMP/channel-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/channel-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/channel-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Actual page screenshots and mutation confirmation
         env:
