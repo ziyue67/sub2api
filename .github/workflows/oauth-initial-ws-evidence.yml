@@ -22,8 +22,7 @@ permissions:
   contents: read
 jobs:
   rendered-before-after:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -52,7 +51,7 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/frontend/node_modules" "$RUNNER_TEMP/oauth-ws-base/frontend/node_modules"
       - name: Install isolated browser
         run: |
-          npm install --prefix "$RUNNER_TEMP/oauth-ws-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/oauth-ws-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/oauth-ws-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Render originals and exercise actual form save
         env:
@@ -71,8 +70,7 @@ jobs:
           path: ${{ runner.temp }}/oauth-ws-evidence
           if-no-files-found: error
   fallback-before-after:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       SOURCE_BASE: 8545bf9ffac5a870ade18fbe7c4b61a48755c8db
@@ -106,7 +104,7 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/frontend/node_modules" "$RUNNER_TEMP/fallback-base/frontend/node_modules"
       - name: Install isolated screenshot browser
         run: |
-          npm install --prefix "$RUNNER_TEMP/fallback-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/fallback-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/fallback-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Render real fallback controls and CSS with synthetic API data
         env:

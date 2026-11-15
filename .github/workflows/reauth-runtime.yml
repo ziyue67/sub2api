@@ -53,7 +53,7 @@ jobs:
 
   deployment:
     needs: package
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine

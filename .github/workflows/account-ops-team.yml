@@ -17,7 +17,7 @@ permissions:
   contents: read
 jobs:
   backend:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -32,7 +32,7 @@ jobs:
       - run: go test -tags=integration ./internal/repository -run '^TestAccountOpsProviderSnapshot' -count=1 -v -timeout=10m
         working-directory: backend
   frontend:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
@@ -52,7 +52,7 @@ jobs:
       - run: pnpm --dir frontend run build
       - name: Install screenshot browser
         run: |
-          npm install --prefix "$RUNNER_TEMP/ops-team-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/ops-team-browser" --no-save --ignore-scripts playwright@1.65.1
           node "$RUNNER_TEMP/ops-team-browser/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Render actual components with synthetic provider and account data
         env:

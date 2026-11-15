@@ -19,8 +19,7 @@ permissions:
   contents: read
 jobs:
   admission:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
       GOMAXPROCS: '2'
@@ -75,8 +74,7 @@ jobs:
           path: evidence/
           retention-days: 14
   selection-ui:
-    # 固定 24.04：ubuntu-latest 已滚动到 26.04，Playwright 1.56 尚不支持该发行版
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -104,7 +102,7 @@ jobs:
       - name: Install isolated mock browser
         run: |
           bash .github/scripts/ci-ubuntu-mirrors.sh
-          npm install --prefix "$RUNNER_TEMP/oauth-browser" --no-save --ignore-scripts playwright@1.56.1
+          npm install --prefix "$RUNNER_TEMP/oauth-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/oauth-browser/node_modules/.bin/playwright" install --with-deps chromium
       - run: git fetch --no-tags --depth=1 origin 7eb2e271acdc4b36d62f1b542b16b5abb5b1bb09
       - name: Real Vue desktop and mobile interactions with synthetic APIs
