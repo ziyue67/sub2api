@@ -2061,8 +2061,16 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 			logger.LegacyPrintf("service.auth", "[Auth] Refresh token already consumed, possible reuse attack")
 			return nil, s.revokeRotatedRefresh(ctx, tokenHash)
 		}
-	} else if err := s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash); err != nil {
-		return nil, ErrServiceUnavailable
+	} else {
+		// Legacy stores must also consume atomically: concurrent refreshes may
+		// have validated the same token before either reaches this point.
+		consumed, err := s.refreshTokenCache.ConsumeRefreshToken(ctx, tokenHash)
+		if errors.Is(err, ErrRefreshTokenNotFound) || (err == nil && consumed == nil) {
+			return nil, ErrRefreshTokenInvalid
+		}
+		if err != nil {
+			return nil, ErrServiceUnavailable
+		}
 	}
 
 	// 生成新的Token对，保持同一个家族ID

@@ -129,10 +129,8 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
-	// 合并后的尾部列序：upstream_request_id, session_id, native_compaction_v2,
-	// cache_creation_30m_tokens, cache_creation_12h_tokens, tool_surcharges,
-	// created_at, cache_creation_billing, queue_timing。
-	idx := len(prepared.args) - 9
+	// Resolve the column explicitly so new trailing fields cannot shift this assertion.
+	idx := usageInsertColumnIndex(t, "upstream_request_id")
 	arg, ok := prepared.args[idx].(sql.NullString)
 	require.True(t, ok, "upstream_request_id arg should be sql.NullString, got %T", prepared.args[idx])
 	require.True(t, arg.Valid)

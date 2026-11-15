@@ -11,6 +11,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// usageInsertColumnIndex keeps wiring assertions tied to the persisted column,
+// rather than to a moving offset from the end of the argument list.
+func usageInsertColumnIndex(t *testing.T, name string) int {
+	t.Helper()
+	columns := strings.Split(usageLogSelectColumns, ",")
+	require.Equal(t, "id", strings.TrimSpace(columns[0]))
+	require.Len(t, columns, len(usageLogInsertArgTypes)+1)
+	for i, column := range columns[1:] {
+		if strings.TrimSpace(column) == name {
+			return i
+		}
+	}
+	t.Fatalf("missing usage insert column %q", name)
+	return -1
+}
+
 func TestCacheCreationBillingPersistence(t *testing.T) {
 	audit := &service.CacheCreationBillingAudit{Version: 1, Enabled: true, Status: "converted", OriginalCreationTokens: 100, Original5mTokens: 100, ConvertedTokens: 100, OriginalCreationCost: 0.0005, BilledCreationCost: 0.0008, ActualCostDelta: 0.000255}
 	prepared := prepareUsageLogInsert(&service.UsageLog{CacheCreationBilling: audit})

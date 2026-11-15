@@ -367,12 +367,9 @@ func TestSelectAccountWithSchedulerForImages_AllPassesQueuedKeepBindingOnReturne
 			require.NoError(t, err)
 			require.Equal(t, int64(81171), selection.Account.ID)
 			require.NotNil(t, selection.WaitPlan)
-			bound, ok := cache.sessionBindings["openai:"+sessionHash]
-			if mode.loadBatch {
-				require.False(t, ok, "a queued selection does not bind the session")
-			} else {
-				require.Equal(t, int64(81171), bound, "eager sequential binding stays on the returned queued account")
-			}
+			require.False(t, selection.Acquired)
+			_, ok := cache.sessionBindings["openai:"+sessionHash]
+			require.False(t, ok, "all scheduler modes bind only after acquiring a slot")
 		})
 	}
 }

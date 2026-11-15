@@ -5681,7 +5681,7 @@ func (h *OpenAIGatewayHandler) rejectIfCyberSessionBlocked(c *gin.Context, apiKe
 	}
 	// 白名单（log-only）用户跳过既有会话屏蔽查询：风控命中只记日志不拦截。
 	// WebSocket 场景复用连接绑定身份，不重新从 payload 推断（否则继承身份丢失）。
-	key := h.findBlockedCyberSessionForIdentity(c, apiKey, identity)
+	key := h.findBlockedCyberSessionForRequest(c, apiKey, identity, body)
 	if key == "" {
 		return false
 	}

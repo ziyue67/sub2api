@@ -596,9 +596,6 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 				toolMediaParts = append(toolMediaParts, media...)
 			}
 			parts = append(parts, GeminiPart{FunctionResponse: response})
-			if !multimodalToolResults {
-				toolMediaParts = append(toolMediaParts, media...)
-			}
 		}
 	}
 
