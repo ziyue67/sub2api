@@ -1375,6 +1375,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
+			releaseHeld()
 			if !clientDisconnected {
 				if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, requestID, err); handled {
 					return resultWithUsage(), resetErr
@@ -1461,6 +1462,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
+				releaseHeld()
 				if !clientDisconnected {
 					if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, requestID, ev.err); handled {
 						return resultWithUsage(), resetErr

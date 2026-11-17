@@ -137,6 +137,8 @@
           <span v-else class="text-gray-500">{{ t('admin.accounts.openai.codexTurnTicketMissing') }}</span>
           <span v-if="ticket.probe" class="text-gray-400" :title="`${t('admin.accounts.openai.ticketProbe.' + ticket.probe.result)} · HTTP ${ticket.probe.http_status || '—'} · ${new Date(ticket.probe.checked_at).toLocaleString()}${ticket.probe.next_probe_at ? ' · ' + t('admin.accounts.openai.ticketProbeNext') + new Date(ticket.probe.next_probe_at).toLocaleString() : ''}${ticket.standby_expires_at ? ' · ' + t('admin.accounts.openai.ticketStandbyExpires') + new Date(ticket.standby_expires_at).toLocaleString() : ''}`">ⓘ</span>
         </div>
+      </div>
+    </template>
 
     <!-- OpenAI OAuth accounts: single source from /usage API -->
     <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">

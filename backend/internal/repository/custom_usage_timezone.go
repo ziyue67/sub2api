@@ -37,14 +37,6 @@ func (z configuredTimezone) groupUsageTodayStart(at time.Time) time.Time {
 	return z.startOfDay(at).UTC()
 }
 
-func (z configuredTimezone) groupUsageYesterdayStart(at time.Time) time.Time {
-	return z.startOfDay(at).AddDate(0, 0, -1).UTC()
-}
-
 func (z configuredTimezone) groupUsageDate(at time.Time) string {
 	return at.In(z.timezoneLocation()).Format("2006-01-02")
-}
-
-func (z configuredTimezone) parseGroupUsageDate(value string) (time.Time, error) {
-	return time.ParseInLocation("2006-01-02", value, z.timezoneLocation())
 }
