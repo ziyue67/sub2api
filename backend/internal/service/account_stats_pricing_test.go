@@ -1077,7 +1077,7 @@ func TestApplyAccountStatsCost_AddsUpstreamToolCostToCustomModelCost(t *testing.
 	applyAccountStatsCost(
 		context.Background(), usageLog, cs, nil,
 		1, 10, "claude-sonnet-4", "claude-sonnet-4",
-		UsageTokens{InputTokens: 100}, 1.04, time.Time{}, true,
+		UsageTokens{InputTokens: 100}, 1.04, time.Time{}, true, 1,
 	)
 
 	require.NotNil(t, usageLog.AccountStatsCost)
@@ -1107,7 +1107,7 @@ func TestApplyAccountStatsCost_ReplacesUserToolPriceWithUpstreamCost(t *testing.
 			applyAccountStatsCost(
 				context.Background(), usageLog, cs, nil,
 				1, 10, "claude-sonnet-4", "claude-sonnet-4",
-				UsageTokens{InputTokens: 100}, tt.totalCost, time.Time{}, true,
+				UsageTokens{InputTokens: 100}, tt.totalCost, time.Time{}, true, 1,
 			)
 
 			require.NotNil(t, usageLog.AccountStatsCost)

@@ -23,12 +23,12 @@ func TestIssue600NestedIdentityRawAndMapProjection(t *testing.T) {
 			case "connection":
 				a.AuthConnectionID = "11111111-1111-4111-8111-111111111111"
 			}
-			raw, changed, err := applyCodexAccountIdentityClientMetadataRaw(body, a, 77)
+			raw, changed, err := applyCodexAccountIdentityClientMetadataRaw(body, a, 77, "")
 			require.NoError(t, err)
 			require.Equal(t, namespace != "apikey", changed)
 			var mapped map[string]any
 			require.NoError(t, decodeOpenAIJSONUseNumber(body, &mapped))
-			require.Equal(t, changed, applyCodexAccountIdentityClientMetadataMap(mapped, a, 77))
+			require.Equal(t, changed, applyCodexAccountIdentityClientMetadataMap(mapped, a, 77, ""))
 			encoded, err := json.Marshal(mapped)
 			require.NoError(t, err)
 			require.JSONEq(t, string(raw), string(encoded), "map/raw projectors must preserve equivalent schema and scope")
@@ -48,7 +48,7 @@ func TestIssue600NestedIdentityRawAndMapProjection(t *testing.T) {
 			if namespace != "apikey" {
 				b := *a
 				b.AuthConnectionID = "22222222-2222-4222-8222-222222222222"
-				other, _, err := applyCodexAccountIdentityClientMetadataRaw(body, &b, 77)
+				other, _, err := applyCodexAccountIdentityClientMetadataRaw(body, &b, 77, "")
 				require.NoError(t, err)
 				require.NotEqual(t, gjson.GetBytes(raw, "response.client_metadata.thread_id").String(), gjson.GetBytes(other, "response.client_metadata.thread_id").String())
 			}
