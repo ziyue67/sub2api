@@ -1026,6 +1026,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 生图意图只影响能力路由与图片计费，不关门：混合 /v1/responses 请求的
 	// token 计费部分仍受利润门保护，独立图片/视频端点才在门外。
 	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+	if !imageIntent && !needsResponses {
+		pricingCtx = service.WithOpenAITextGroupFailover(pricingCtx, body)
+	}
 	c.Request = c.Request.WithContext(service.WithOpenAIEncryptedReasoningAffinity(pricingCtx, body))
 	c.Request = c.Request.WithContext(h.gatewayService.WithOpenAIAgentMessageRecovery(c.Request.Context(), c, body, sessionHash, forwardModel))
 	// forwardBody 在账号重试循环内按渠道映射重建；闭包需要跨轮次改写它，
