@@ -72,10 +72,6 @@ const props = defineProps<{
   account: Account
 }>()
 
-const emit = defineEmits<{
-  probed: [result: CNProviderQuotaProbeResult]
-}>()
-
 const { t } = useI18n()
 
 const visible = computed(() => cnQuotaCellVisible(props.account))

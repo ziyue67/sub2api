@@ -9428,12 +9428,6 @@
             </div>
           </div>
 
-          <BalanceForecastSettings
-            v-model:enabled="form.balance_forecast_enabled"
-            v-model:threshold-hours="form.balance_forecast_threshold_hours"
-            v-model:max-notifications="form.balance_forecast_max_notifications"
-            :user-id="authStore.user?.id"
-          />
           <!-- Balance Low Notification -->
           <div class="card">
             <div

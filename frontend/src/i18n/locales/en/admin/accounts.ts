@@ -1165,7 +1165,6 @@ export default {
         testModeDefault: 'Default request',
         testModeCompact: 'Compact probe',
         testModeBPSTools: 'BPS tool roundtrip (up to 3 upstream requests)',
-        modelRestrictionDisabledByPassthrough: 'Automatic passthrough is enabled: model whitelist/mapping will not take effect.',
         modelRestrictionDisabledByPassthrough: 'Automatic passthrough ignores model restrictions by default. Enable "Filter passthrough accounts by model" to use them for account selection only.',
       },
       grok: {

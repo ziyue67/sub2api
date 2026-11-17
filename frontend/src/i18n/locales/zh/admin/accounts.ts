@@ -1283,7 +1283,6 @@ export default {
         testModeDefault: '常规请求',
         testModeCompact: 'Compact 探测',
         testModeBPSTools: 'BPS 工具往返（最多 3 次上游请求）',
-        modelRestrictionDisabledByPassthrough: '已开启自动透传：模型白名单/映射不会生效。',
         modelRestrictionDisabledByPassthrough: '自动透传默认忽略模型限制；开启“透传时按账号模型筛选”后，模型限制仅用于筛选候选账号。',
       },
       grok: {
