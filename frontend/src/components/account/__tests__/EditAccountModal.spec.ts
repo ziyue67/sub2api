@@ -452,6 +452,8 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[1]?.[1]?.extra).not.toHaveProperty('anthropic_tool_result_images')
     expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.unrelated).toBe('preserve')
     restored.unmount()
+  })
+
   it.each(['agentIdentity', 'personalAccessToken', 'personal_access_token'])('keeps unsupported %s identities on the existing single proxy selector', async authMode => {
     const account = { ...buildOpenAIOAuthParentAccount(), proxy_id: 45, credentials: { auth_mode: authMode } }
     const wrapper = mountModal(account)
@@ -1381,13 +1383,13 @@ describe('EditAccountModal', () => {
 
     expect(wrapper.findComponent(ModelWhitelistSelectorStub).exists()).toBe(false)
     await wrapper.get('[data-testid="edit-openai-passthrough-model-filter"]').setValue(true)
-    await wrapper.get('[data-testid="rewrite-to-snapshot"]').trigger('click')
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     const payload = updateAccountMock.mock.calls[0]?.[1]
     expect(payload.extra.openai_passthrough).toBe(true)
     expect(payload.extra.openai_passthrough_model_filter).toBe(true)
-    expect(payload.credentials.model_mapping).toEqual({ 'gpt-5.2-2025-12-11': 'gpt-5.2-2025-12-11' })
+    // fork 的 snapshot 重写入口未在此合并，映射保持账号原有形态。
+    expect(payload.credentials.model_mapping).toEqual({ 'gpt-5.2': 'gpt-5.2' })
     expect(payload.group_ids).toEqual([17])
     wrapper.unmount()
   })

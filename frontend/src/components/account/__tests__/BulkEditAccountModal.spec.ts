@@ -306,7 +306,7 @@ describe('BulkEditAccountModal', () => {
     const enableBPS = async (wrapper: ReturnType<typeof mountModal>) => {
       await wrapper.get('#bulk-edit-excel-bps-enabled').setValue(true)
       await wrapper.get('[data-testid="bulk-excel-bps-toggle"]').trigger('click')
-    await flushPromises()
+      await flushPromises()
     }
 
     it.each([
@@ -1472,6 +1472,8 @@ describe('BulkEditAccountModal', () => {
     await flushPromises()
     expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
     expect(showError).toHaveBeenCalledWith('admin.accounts.bulkEdit.noSelection')
+  })
+
   it('can bulk-enable passthrough model filtering and submit an explicit whitelist', async () => {
     const wrapper = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['apikey'] })
     await wrapper.get('#bulk-edit-openai-passthrough-enabled').setValue(true)
