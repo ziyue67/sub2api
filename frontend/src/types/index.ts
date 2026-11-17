@@ -2116,6 +2116,8 @@ export interface ToolSurcharge {
   rate_multiplier: number
   /** Actual user charge after rate_multiplier. */
   cost: number
+}
+
 // Immutable display evidence from the Standard calculation that set actual_cost.
 export type CustomerCacheCostKind = 'read' | 'read_image' | 'write' | 'write_5m' | 'write_1h' | 'write_30m' | 'write_12h'
 export interface CustomerCacheCostDetail {
