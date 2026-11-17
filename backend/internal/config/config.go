@@ -4527,6 +4527,8 @@ type ImageCreatorObjectStorageConfig struct {
 	SecretAccessKey string `mapstructure:"secret_access_key"`
 	Prefix          string `mapstructure:"prefix"`
 	ForcePathStyle  bool   `mapstructure:"force_path_style"`
+}
+
 func (c *Config) OpenAIWSClientHistoryRecoveryEnabled() bool {
 	return c != nil && c.Gateway.OpenAIWS.ClientHistoryRecoveryEnabled
 }
