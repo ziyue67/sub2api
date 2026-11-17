@@ -1588,6 +1588,16 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 	}
 	keys := []string{
 		service.OAuthDegradationActionExtraKey,
+		// ExcelBPS 协议与 403 自愈：元数据投影必须保留，否则候选过滤与恢复判定失效。
+		"openai_excel_bps",
+		"openai_excel_bps_auto_disable_on_403",
+		service.ExcelBPSAutoRecoverOn403Key,
+		service.ExcelBPS403RecoveryIntervalMinutesKey,
+		service.ExcelBPSAutoMoveOn403Key,
+		service.ExcelBPS403TargetGroupIDKey,
+		"openai_excel_bps_mihomo",
+		"openai_excel_bps_models",
+		"model_mapping_mode",
 		// Images candidate authorization runs before full-account hydration.
 		service.ExtraImageModelsKey,
 		service.ExtraImageModelPrefixesKey,
