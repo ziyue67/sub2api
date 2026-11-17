@@ -44,7 +44,11 @@ func supplementUnmappedOpenAIModels(accounts []Account, groupID *int64, models [
 		if account.hasOAuthInitialModelSelection() {
 			continue
 		}
-		if account.Platform != PlatformOpenAI || (!account.IsOpenAIPassthroughEnabled() && !account.IsOpenAIModelMappingAliases() && len(account.GetModelMapping()) != 0) {
+		// 无模型过滤的 passthrough 账号接受任意模型，其默认集不受 mapping 限制；
+		// 仍需按分组白名单过滤，因此走下面的逐模型校验分支。
+		unrestrictedPassthrough := account.IsOpenAIPassthroughEnabled() && !account.IsOpenAIPassthroughModelFilterEnabled()
+		if account.Platform != PlatformOpenAI ||
+			(!unrestrictedPassthrough && !account.IsOpenAIPassthroughEnabled() && !account.IsOpenAIModelMappingAliases() && len(account.GetModelMapping()) != 0) {
 			continue
 		}
 		for _, model := range catalog {

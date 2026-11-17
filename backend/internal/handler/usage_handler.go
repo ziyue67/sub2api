@@ -493,11 +493,12 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if !isObserverUsageRequest(c) {
-		stats.TotalAccountCost = nil
-		stats.UpstreamEndpoints = nil
-		stats.EndpointPaths = nil
+	stats.TotalAccountCost = nil
+	for i := range stats.Endpoints {
+		stats.Endpoints[i].AccountCost = 0
 	}
+	stats.UpstreamEndpoints = nil
+	stats.EndpointPaths = nil
 
 	response.Success(c, stats)
 }

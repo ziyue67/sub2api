@@ -422,6 +422,10 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		return false, nil
 	}
 
+	// Apply 可能在按用户合并的结算通道中排队，结算后的缓存同步使用独立的超时。
+	billingCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
 			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
@@ -958,8 +962,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 				CacheCreation1hTokens: stats1h,
 				ImageOutputTokens:     statsUsage.ImageOutputTokens,
 			},
-			statsTotalCost-cacheStorageCost, pricingAt,
-			accountStatsLongContextPricingEnabled(nil),
+			cost.TotalCost-cacheStorageCost, pricingAt,
+			accountStatsLongContextPricingEnabled(nil), result.upstreamPriceFactor(),
 		)
 		addCacheStorageToAccountStatsCost(usageLog, cacheStorageCost)
 	}
@@ -1137,6 +1141,23 @@ func addCacheStorageToAccountStatsCost(usageLog *UsageLog, storageCost float64) 
 	usageLog.AccountStatsCost = &cost
 }
 
+// upstreamPriceFactorApplies 判断上游端点价格倍数是否作用于本次 token 费用：只作用于默认模型价（LiteLLM/fallback）。
+// 管理员配置的分组价、渠道价视为最终价，不再叠加倍数，与账号统计成本只在默认价档位加价的口径一致。
+func (s *GatewayService) upstreamPriceFactorApplies(ctx context.Context, result *ForwardResult, apiKey *APIKey, billingModel string) bool {
+	if result.upstreamPriceFactor() == 1 {
+		return false
+	}
+	return s.resolveChannelPricing(ctx, billingModel, apiKey) == nil
+}
+
+// applyUpstreamPriceFactor 把上游端点价格倍数作用于按 token 计费的费用，按次等其他计费模式不受影响。
+func applyUpstreamPriceFactor(cost *CostBreakdown, result *ForwardResult) {
+	if cost == nil || (cost.BillingMode != "" && cost.BillingMode != string(BillingModeToken)) {
+		return
+	}
+	applyCostBreakdownMultiplier(cost, result.upstreamPriceFactor())
+}
+
 // calculateRecordUsageCost 根据请求类型计算费用。
 func (s *GatewayService) calculateRecordUsageCost(
 	ctx context.Context,
@@ -1154,6 +1175,7 @@ func (s *GatewayService) calculateRecordUsageCost(
 		// 其余情况仍由渠道/分组 token 定价决定，混合请求不因开关丢掉文本费用。
 		if !imageCountBillingApplies(apiKey, result.ImageEndpoint) {
 			if resolved := s.resolveChannelPricing(ctx, billingModel, apiKey); resolved != nil && resolved.Mode == BillingModeToken {
+				// resolved 来自分组价或渠道价，是管理员配置的最终价，不叠加上游端点价格倍数。
 				return s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
 			}
 		}
@@ -1185,6 +1207,9 @@ func (s *GatewayService) calculateRecordUsageCost(
 		tokenCost = &CostBreakdown{}
 	} else {
 		tokenCost = s.calculateTokenCost(ctx, result, apiKey, billingModel, multiplier, pricingAt)
+		if s.upstreamPriceFactorApplies(ctx, result, apiKey, billingModel) {
+			applyUpstreamPriceFactor(tokenCost, result)
+		}
 	}
 	if result.SearchCount > 0 {
 		price := groupSearchPricePer1kFromAPIKey(apiKey)

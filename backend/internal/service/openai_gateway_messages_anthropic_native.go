@@ -40,6 +40,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaNativeAnthropicEndpoint(
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
 	startTime := time.Now()
+	SetActualOpenAIUpstreamEndpoint(c, "/v1/messages")
 
 	originalModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
 	if originalModel == "" {
@@ -285,6 +286,8 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 	c.Data(resp.StatusCode, contentType, body)
 
 	result := &OpenAIForwardResult{
+		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+		UpstreamResponseServiceTier: observedUpstreamResponseServiceTier(c),
 		RequestID:        resp.Header.Get("x-request-id"),
 		UpstreamHeaders:  resp.Header,
 		Usage:            claudeUsageToOpenAIUsage(usage),
@@ -601,6 +604,9 @@ func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 		usage = &ClaudeUsage{}
 	}
 	result := &OpenAIForwardResult{
+		UpstreamResponseModel: observedUpstreamResponseModel(c),
+		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+		UpstreamResponseServiceTier: observedUpstreamResponseServiceTier(c),
 		RequestID:        resp.Header.Get("x-request-id"),
 		UpstreamHeaders:  resp.Header,
 		Usage:            claudeUsageToOpenAIUsage(usage),
