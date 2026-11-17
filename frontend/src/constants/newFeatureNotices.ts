@@ -4,6 +4,8 @@
  * browser; use a new ID to announce the feature again in a later release.
  */
 export const NEW_FEATURE_NOTICES = {
+  groupFreeUltrafast: 'group-free-ultrafast-initial-announcement',
+  oauthAPIKeyDisposition: 'oauth-initial-apikey-disposition',
   matureProviders: 'mature-provider-operations-initial-announcement',
   matureProviderImport: 'mature-provider-account-import-initial-announcement',
   qqCommunity: 'qq-community-operations-initial-announcement',
@@ -42,7 +44,6 @@ export const NEW_FEATURE_NOTICES = {
   channelPricingTransfer: 'channel-pricing-import-export-initial-announcement',
   channelPricingListActions: 'channel-pricing-list-actions-initial-announcement',
   smartOpsSidebar: 'smart-ops-sidebar-visibility-initial-announcement',
-  balanceForecast: 'balance-exhaustion-forecast-initial-announcement',
   serverlessIPRouting: 'serverless-ip-affinity-primary-fallback-initial-announcement',
   accountUpstreamHTTPErrorRate: 'account-upstream-http-error-rate-initial-announcement',
   accountUpstreamHTTPErrorThreshold: 'account-upstream-http-error-threshold-initial-announcement',
@@ -53,6 +54,7 @@ export const NEW_FEATURE_NOTICES = {
   apiKeyUsageDateRange: 'api-key-usage-date-range-initial-announcement',
   profitOperationsToday: 'profit-operations-today-filter-initial-announcement',
   profitOperationsTimeRanges: 'profit-operations-time-ranges-initial-announcement',
+  userLiveLoad: 'user-live-load-initial-announcement',
   vipAutoCredit: 'vip-auto-credit-initial-announcement',
   vipAutoCreditEmail: 'vip-auto-credit-email',
   oauthInitialTOTPRotation429: 'oauth-initial-totp-rotation-on-429-initial-announcement',
@@ -69,4 +71,6 @@ export const NEW_FEATURE_NOTICES = {
   usageRateCard: 'usage-rpm-tpm-card-initial-announcement',
   tempUnschedStreamCountWindow: 'temp-unsched-stream-timing-count-window',
   bpsAccountSearch: 'bps-account-search-initial-announcement',
+  bpsAccountMultiProxy: 'bps-account-multi-proxy-request-routing',
+  openaiAccountMultiProxy: '2026-11-16-openai-account-multi-proxy',
 } as const

@@ -40,7 +40,6 @@ type AccountQuotaReader interface {
 
 // BalanceNotifyService handles balance and quota threshold notifications.
 type BalanceNotifyService struct {
-	forecast     *BalanceForecastService
 	emailService interface {
 		SendEmail(context.Context, string, string, string) error
 	}

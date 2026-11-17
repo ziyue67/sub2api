@@ -578,6 +578,21 @@
             <PlatformCostCell :usage="getPlatformUsage(row.id, 'antigravity')" />
           </template>
 
+          <template #header-live_usage>
+            <span class="inline-flex items-center gap-1" :title="t('admin.users.liveUsageHint')">
+              {{ t('admin.users.columns.liveUsage') }}
+              <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.userLiveLoad" :user-id="creditAuth.user?.id" compact />
+            </span>
+          </template>
+          <template #cell-live_usage="{ row }">
+            <div class="flex items-start gap-1">
+              <UserLiveUsageCell :user="row" />
+              <span class="md:hidden">
+                <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.userLiveLoad" :user-id="creditAuth.user?.id" compact />
+              </span>
+            </div>
+          </template>
+
           <template #cell-concurrency="{ row }">
             <UserConcurrencyCell
               :current="row.current_concurrency ?? 0"
@@ -837,6 +852,7 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import Select from '@/components/common/Select.vue'
 import { buildApiKeyGroupFilterOptions } from './apiKeyGroupFilterOptions'
 import UserAttributesConfigModal from '@/components/user/UserAttributesConfigModal.vue'
+import UserLiveUsageCell from '@/components/user/UserLiveUsageCell.vue'
 import UserConcurrencyCell from '@/components/user/UserConcurrencyCell.vue'
 import PlatformUsageBreakdown from '@/components/user/PlatformUsageBreakdown.vue'
 import PlatformCostCell from '@/components/user/PlatformCostCell.vue'
@@ -926,6 +942,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'usage_gemini', label: t('admin.users.columns.usageGemini'), sortable: false },
   { key: 'usage_antigravity', label: t('admin.users.columns.usageAntigravity'), sortable: false },
   { key: 'concurrency', label: t('admin.users.columns.concurrency'), sortable: true },
+  { key: 'live_usage', label: t('admin.users.columns.liveUsage'), sortable: false },
   { key: 'status', label: t('admin.users.columns.status'), sortable: true },
   { key: 'last_active_at', label: t('admin.users.columns.lastActive'), sortable: true },
   { key: 'last_used_at', label: t('admin.users.columns.lastUsed'), sortable: true },
@@ -1612,7 +1629,12 @@ const handleAttributesModalClose = async () => {
   loadUsers()
 }
 
+let usersViewActive = true
+let lastUsersLoadAt = 0
+let liveUsageTimer: ReturnType<typeof setInterval> | undefined
+
 const loadUsers = async () => {
+  lastUsersLoadAt = Date.now()
   abortController?.abort()
   const currentAbortController = new AbortController()
   abortController = currentAbortController
@@ -1930,9 +1952,15 @@ const handleScroll = () => {
 
 onMounted(async () => {
   await loadAttributeDefinitions()
+  if (!usersViewActive) return
   loadSavedFilters()
   loadSavedColumns()
   loadUsers()
+  liveUsageTimer = setInterval(() => {
+    if (document.hidden || hiddenColumns.has('live_usage') || loading.value) return
+    if (Date.now() - lastUsersLoadAt < 60_000) return
+    void loadUsers()
+  }, 60_000)
   if (hasVisibleGroupsColumn.value || visibleFilters.has('group')) {
     loadAllGroups()
   }
@@ -1944,6 +1972,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  usersViewActive = false
+  clearInterval(liveUsageTimer)
   document.removeEventListener('click', handleClickOutside)
   window.removeEventListener('scroll', handleScroll, true)
   clearTimeout(searchTimeout)

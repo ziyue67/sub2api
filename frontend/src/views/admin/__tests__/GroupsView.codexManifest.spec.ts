@@ -87,6 +87,7 @@ const sourceGroup = {
   force_openai_fast: false,
   force_openai_ultrafast: false,
   free_openai_fast: false,
+  free_openai_fast: false, free_openai_ultrafast: false,
   model_pricing: [],
   profit_control_enabled: false,
   profit_min_margin: 0,

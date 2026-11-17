@@ -46,12 +46,6 @@
                   class="settings-tab-badge"
                 />
                 <NewFeatureBadge
-                  v-if="tab.key === 'email'"
-                  :notice-id="NEW_FEATURE_NOTICES.balanceForecast"
-                  :user-id="authStore.user?.id"
-                  class="settings-tab-badge"
-                />
-                <NewFeatureBadge
                   v-if="tab.key === 'gateway'"
                   :notice-id="NEW_FEATURE_NOTICES.openai409OmitEncryptedHistory"
                   :user-id="authStore.user?.id"
@@ -9759,7 +9753,6 @@ import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiErro
 import { formatBalanceRechargeMultiplier } from "@/utils/rechargeBonus";
 import { useAppStore, useAuthStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
-import BalanceForecastSettings from "@/components/settings/BalanceForecastSettings.vue";
 import SmartOpsSidebarSettings from "@/components/settings/SmartOpsSidebarSettings.vue";
 import NewFeatureBadge from "@/components/common/NewFeatureBadge.vue";
 import GroupSelector from "@/components/common/GroupSelector.vue";
@@ -10777,9 +10770,6 @@ const form = reactive<SettingsForm>({
   codex_cli_only_allow_app_server_clients: false,
   codex_cli_only_engine_fingerprint_signals: "",
   // 余额、订阅到期与账号限额通知
-  balance_forecast_enabled: false,
-  balance_forecast_threshold_hours: 12,
-  balance_forecast_max_notifications: 3,
   balance_low_notify_enabled: false,
   balance_low_notify_threshold: 0,
   balance_low_notify_recharge_url: "",
@@ -11824,9 +11814,6 @@ async function loadSettings() {
   try {
     const settings = await adminAPI.settings.getSettings();
     savedPaymentFeeRate.value = settings.payment_recharge_fee_rate ?? 0;
-    settings.balance_forecast_enabled ??= false;
-    settings.balance_forecast_threshold_hours ??= 12;
-    settings.balance_forecast_max_notifications ??= 3;
     settings.payment_load_balance_strategy =
       settings.payment_load_balance_strategy || "round-robin";
     // Only assign non-null values from backend (null means unconfigured, keep defaults)
@@ -12110,10 +12097,6 @@ const siteBillingModeHint = computed(() =>
 );
 
 async function saveSettings() {
-  if (!Number.isFinite(form.balance_forecast_threshold_hours) || form.balance_forecast_threshold_hours <= 0 || form.balance_forecast_threshold_hours > 168 || !Number.isInteger(form.balance_forecast_max_notifications) || form.balance_forecast_max_notifications < 1 || form.balance_forecast_max_notifications > 10) {
-    appStore.showError(t('admin.settings.balanceForecast.invalid'));
-    return;
-  }
   saving.value = true;
   try {
     const imageBaseUrl = form.excel_bps_image_base_url.trim();
@@ -12625,9 +12608,6 @@ async function saveSettings() {
       openai_advanced_scheduler_weight_session_sticky:
         form.openai_advanced_scheduler_weight_session_sticky.trim(),
       // 余额、订阅到期与账号限额通知
-      balance_forecast_enabled: form.balance_forecast_enabled,
-      balance_forecast_threshold_hours: form.balance_forecast_threshold_hours,
-      balance_forecast_max_notifications: form.balance_forecast_max_notifications,
       balance_low_notify_enabled: form.balance_low_notify_enabled,
       balance_low_notify_threshold:
         Number(form.balance_low_notify_threshold) || 0,

@@ -1,7 +1,6 @@
 name: Image header timeout acceptance
 on:
-  push:
-    branches: [review/pr714-merge-fixes]
+  workflow_dispatch:
   pull_request:
     branches: [production]
     paths:
@@ -39,7 +38,7 @@ jobs:
           name: image-header-backend-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/image-header-tests.log
   ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

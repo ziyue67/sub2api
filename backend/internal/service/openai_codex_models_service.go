@@ -529,7 +529,7 @@ func newConfiguredCodexModelDescriptor(modelID string) configuredCodexModelDescr
 		descriptor.ServiceTiers = configuredCodexServiceTiersForModel(modelID)
 		if isOpenAICodexReasoningGPTModel(modelID) {
 			defaultReasoningLevel := "medium"
-			if getNormalizedCodexModel(modelID) == "gpt-5.6-sol" || openai.IsGPT61SolModelSpelling(modelID) {
+			if getNormalizedCodexModel(modelID) == "gpt-5.6-sol" || openai.IsGPT61SolModelSpelling(modelID) || normalizeOpenAIGPT62Model(modelID) == "gpt-6.2-sol" {
 				defaultReasoningLevel = "low"
 			}
 			descriptor.DefaultReasoningLevel = &defaultReasoningLevel
@@ -670,7 +670,7 @@ func configuredCodexGPTReasoningLevels(modelID string) []configuredCodexReasonin
 		{Effort: "xhigh", Description: "Extra-high reasoning depth for difficult tasks"},
 	}
 	normalized := getNormalizedCodexModel(modelID)
-	if isOpenAIGPT56Model(modelID) || isOpenAIGPT6Model(modelID) {
+	if isOpenAIGPT56Model(modelID) || isOpenAIGPT6Model(modelID) || normalizeOpenAIGPT62Model(modelID) != "" {
 		levels = append(levels, configuredCodexReasoningLevel{
 			Effort:      "max",
 			Description: "Maximum reasoning depth for complex tasks",
@@ -736,7 +736,7 @@ func isOpenAICodexGPTModel(modelID string) bool {
 
 func isOpenAICodexReasoningGPTModel(modelID string) bool {
 	normalized := canonicalizeOpenAIModelAliasSpelling(modelID)
-	return isOpenAIGPT6Model(normalized) || strings.HasPrefix(normalized, "gpt-5")
+	return isOpenAIGPT6Model(normalized) || normalizeOpenAIGPT62Model(normalized) != "" || strings.HasPrefix(normalized, "gpt-5")
 }
 
 func isOpenAICodexImageInputModel(modelID string) bool {
@@ -1648,6 +1648,7 @@ type openAIModelsRequest struct {
 	credentialAccount   *Account
 	accountConcurrency  int
 	useAPIKeyUpstream   bool
+	requestProxy        bool
 	// Cached bodies have already been converted to their requested format.
 	standardModelsList bool
 }
@@ -1831,7 +1832,13 @@ func (s *OpenAIGatewayService) fetchNativeCodexModelsManifest(ctx context.Contex
 	headers.Set("Version", headerVersion)
 
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
+	requestProxy := account.OpenAIRequestProxyEnabled()
+	if requestProxy {
+		proxyURL, err = resolveOpenAIMaintenanceProxy(ctx, account, s.proxyRepo)
+		if err != nil {
+			return nil, err
+		}
+	} else if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
 
@@ -1844,6 +1851,7 @@ func (s *OpenAIGatewayService) fetchNativeCodexModelsManifest(ctx context.Contex
 		credentialAccount:   credAccount,
 		accountConcurrency:  account.Concurrency,
 		useAPIKeyUpstream:   useAPIKeyUpstream,
+		requestProxy:        requestProxy,
 	}
 	if !useCache {
 		request.headers.Del("If-None-Match")
@@ -2036,7 +2044,9 @@ func (s *OpenAIGatewayService) fetchOpenAIModelsUpstream(ctx context.Context, re
 		resp, err = s.httpUpstream.Do(req, request.proxyURL, request.accountID, request.accountConcurrency)
 	} else {
 		handled := false
-		if s.pluginManager != nil {
+		// Account-selected proxies own this egress; external plugins can supply
+		// their own transport and cannot enforce membership in the saved group.
+		if s.pluginManager != nil && !request.requestProxy {
 			resp, handled, err = s.pluginManager.RoundTripOpenAIOAuth(reqCtx, req, request.proxyURL, request.credentialAccount)
 		}
 		if !handled {
@@ -2676,7 +2686,7 @@ func validateCodexModelsManifestEnvelope(body []byte) error {
 
 func buildOpenAIModelsCacheKey(request openAIModelsRequest) string {
 	hasher := sha256.New()
-	_, _ = fmt.Fprintf(hasher, "%d\n%d\n%t\n%s\n%s\n", request.accountID, request.credentialAccountID, request.standardModelsList, request.proxyURL, request.url)
+	_, _ = fmt.Fprintf(hasher, "%d\n%d\n%t\n%t\n%s\n%s\n", request.accountID, request.credentialAccountID, request.standardModelsList, request.requestProxy, request.proxyURL, request.url)
 	headerNames := make([]string, 0, len(request.headers))
 	for name := range request.headers {
 		headerNames = append(headerNames, name)

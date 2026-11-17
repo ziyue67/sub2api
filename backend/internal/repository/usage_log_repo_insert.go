@@ -93,6 +93,7 @@ var usageLogInsertArgTypes = [...]string{
 	"jsonb",       // cache_creation_billing
 	"jsonb",       // queue_timing
 	"text",        // platform
+	"jsonb",       // customer_cost_details
 }
 
 const (
@@ -300,7 +301,8 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
 			$10, $11,
@@ -767,7 +769,8 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		) AS (VALUES `)
 
 	// Each batch row prepends a synthetic input_index before the usage-log columns.
@@ -1050,7 +1053,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		) AS (VALUES `)
 
 	args := make([]any, 0, len(preparedList)*len(usageLogInsertArgTypes))
@@ -1147,7 +1151,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		)
 		SELECT
 			user_id,
@@ -1218,7 +1223,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		FROM input
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`)
@@ -1297,7 +1303,8 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
 			$10, $11,
@@ -1437,6 +1444,7 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			nullCacheCreationBillingJSON(log.CacheCreationBilling),
 			nullQueueTimingJSON(log.QueueTiming),
 			nullString(&log.Platform),
+			customerCostDetails,
 		},
 	}
 }

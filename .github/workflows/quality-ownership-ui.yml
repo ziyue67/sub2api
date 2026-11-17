@@ -1,7 +1,6 @@
 name: Quality ownership offline UI
 on:
-  push:
-    branches: [fix/quality-template-switch-conflicts]
+  workflow_dispatch:
   pull_request:
     paths:
       - 'frontend/src/components/admin/operations/QualityOwnershipReview.vue'
@@ -11,7 +10,7 @@ permissions:
   contents: read
 jobs:
   screenshot:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6

@@ -1,7 +1,6 @@
 name: Quality Jev exact-head regression
 on:
-  push:
-    branches: [feat/quality-jev-judge]
+  workflow_dispatch:
   pull_request:
     paths:
       - 'backend/internal/service/quality_judge*'
@@ -79,7 +78,7 @@ jobs:
           name: quality-jev-logs-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name }}
           path: ${{ runner.temp }}/quality-jev-*
   offline-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v6

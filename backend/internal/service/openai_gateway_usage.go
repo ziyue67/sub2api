@@ -135,7 +135,7 @@ func openAIUsagePricingAt(input *OpenAIRecordUsageInput) time.Time {
 }
 
 func groupBillsOpenAIFastAtStandard(apiKey *APIKey, account *Account, serviceTier string) bool {
-	if apiKey == nil || apiKey.Group == nil || !apiKey.Group.FreeOpenAIFast {
+	if apiKey == nil || apiKey.Group == nil {
 		return false
 	}
 	if account == nil || !account.IsOpenAI() {
@@ -146,7 +146,9 @@ func groupBillsOpenAIFastAtStandard(apiKey *APIKey, account *Account, serviceTie
 	}
 	switch normalizeBillingServiceTier(serviceTier) {
 	case "priority", "fast":
-		return true
+		return apiKey.Group.FreeOpenAIFast
+	case "ultrafast":
+		return apiKey.Group.FreeOpenAIUltrafast
 	default:
 		return false
 	}
@@ -362,9 +364,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		}
 	}
 
-	// Free Fast changes only the customer charge. Keep priority TotalCost and
+	// Free Fast/UltraFast changes only the customer charge. Keep actual-tier TotalCost and
 	// service_tier for upstream accounting, but evaluate ActualCost once more at
 	// the Standard tier using the same channel, peak, and long-context policy.
+	var customerCostDetails *CustomerCostDetails
 	if groupBillsOpenAIFastAtStandard(apiKey, billingAccount, serviceTier) {
 		standardCost, standardErr := s.calculateOpenAIRecordUsageCost(
 			ctx,
@@ -388,6 +391,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		// usage row instead of dropping it on the Standard re-evaluation.
 		if standardErr == nil && cost != nil && standardCost != nil {
 			cost.ActualCost = standardCost.ActualCost
+			customerCostDetails = newFreeFastCustomerCostDetails(standardCost, multiplier*costModelBillingMultiplier(standardCost))
+			if customerCostDetails != nil && normalizeBillingServiceTier(serviceTier) == "ultrafast" {
+				customerCostDetails.FreeFast = false
+				customerCostDetails.FreeUltrafast = true
+			}
 		}
 	}
 
@@ -453,6 +461,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		s.excelOAuthReauth.recordConnectionUsage(ctx, account.ID, apiKey.ID, result.AuthConnectionID, requestID)
 	}
 	usageLog := &UsageLog{
+		CustomerCostDetails:      customerCostDetails,
 		Platform:                 account.Platform,
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
@@ -503,6 +512,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		factor := float64(1 + result.HeaderTimeoutRetries)
 		cost.TotalCost *= factor
 		cost.ActualCost *= factor
+		if customerCostDetails != nil {
+			customerCostDetails.Multiplier *= factor
+			customerCostDetails.ActualCost *= factor
+		}
 	}
 	if cost != nil {
 		usageLog.InputCost = cost.InputCost

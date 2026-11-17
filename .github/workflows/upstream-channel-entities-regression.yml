@@ -1,7 +1,5 @@
 name: Upstream channel entities regression
 on:
-  push:
-    branches: [feat/profit-url-channel-remarks]
   pull_request:
     paths:
       - '**/upstream_channels*'
@@ -139,7 +137,7 @@ jobs:
             ${{ runner.temp }}/entity-*.log
             ${{ runner.temp }}/entity-cohort-provenance.json
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6

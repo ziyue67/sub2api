@@ -183,6 +183,7 @@ func IsOpsRequestScopedError(c *gin.Context) bool {
 // OpsRecoveryFailure is trusted local compatibility evidence, never populated
 // from an upstream error envelope or client metadata.
 type OpsRecoveryFailure struct {
+	Subreason      string // fixed internal allowlist; not supplied by the client
 	Protocol       string
 	Phase          string
 	RequestWritten *bool // nil means no proof of whether the generation was sent
@@ -568,6 +569,17 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 		ev.AtUnixMs = time.Now().UnixMilli()
 	}
 	ev.Platform = strings.TrimSpace(ev.Platform)
+	// Request-selected exits are independent of the legacy single-proxy binding.
+	// Copy only durable, credential-free lease metadata for this exact account.
+	if value, ok := c.Get(openAIRequestProxyOpsKey); ok {
+		if route, ok := value.(*openAIRequestProxyRoute); ok && route != nil && route.accountID == ev.AccountID {
+			setUnknownOpsUpstreamProxy(&ev)
+			if route.lease.ProxyID > 0 {
+				id := route.lease.ProxyID
+				ev.ProxyID, ev.ProxyName = &id, route.lease.ProxyName
+			}
+		}
+	}
 	normalizeOpsUpstreamProxyAttribution(&ev)
 	ev.UpstreamRequestID = strings.TrimSpace(ev.UpstreamRequestID)
 	ev.UpstreamResponseBody = strings.TrimSpace(redactOpenAIEncryptedDiagnostic(ev.UpstreamResponseBody))

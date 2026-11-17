@@ -584,6 +584,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&cacheCreationBilling,
 		&queueTimingJSON,
 		&platform,
+		&customerCostDetails,
 	); err != nil {
 		return nil, err
 	}

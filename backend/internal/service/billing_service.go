@@ -203,9 +203,10 @@ type UsageTokens struct {
 
 // CostBreakdown 费用明细
 type CostBreakdown struct {
-	modelBillingMultiplier    float64 // Customer-only model surcharge; zero means 1x.
-	InputCost                 float64 // 文本输入费用（不含图片输入，图片输入单独记入 ImageInputCost）
-	ImageInputCost            float64 // 图片输入 token 费用（如 gpt-image-2 图片编辑）
+	customerCacheCosts        []CustomerCacheCostDetail // Display-only evidence from this exact calculation.
+	modelBillingMultiplier    float64                   // Customer-only model surcharge; zero means 1x.
+	InputCost                 float64                   // 文本输入费用（不含图片输入，图片输入单独记入 ImageInputCost）
+	ImageInputCost            float64                   // 图片输入 token 费用（如 gpt-image-2 图片编辑）
 	OutputCost                float64
 	ImageOutputCost           float64
 	CacheCreationCost         float64
@@ -228,6 +229,9 @@ func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.CacheReadCost *= multiplier
 	cost.TotalCost *= multiplier
 	cost.ActualCost *= multiplier
+	for i := range cost.customerCacheCosts {
+		cost.customerCacheCosts[i].UnitPrice *= multiplier
+	}
 }
 
 func isClaudeFable51Model(model string) bool {
@@ -612,6 +616,17 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputThreshold:          272_000,
 		LongContextInputMultiplier:         2,
 		LongContextOutputMultiplier:        1.5,
+	}
+	for _, model := range []string{"gpt-6.2-astra", "gpt-6.2-astra-pro", "gpt-6.2-sol"} {
+		price := gpt62DefaultPricing(model)
+		s.fallbackPrices[model] = &ModelPricing{
+			InputPricePerToken:            price.InputCostPerToken,
+			OutputPricePerToken:           price.OutputCostPerToken,
+			CacheCreationPricePerToken:    price.CacheCreationInputTokenCost,
+			CacheCreation12hPricePerToken: price.CacheCreationInputTokenCost12h,
+			CacheCreationPriceExplicit:    true,
+			CacheReadPricePerToken:        price.CacheReadInputTokenCost,
+		}
 	}
 
 	// GPT-6.1 Terra official rates, 2026-10-26.
@@ -1388,7 +1403,7 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	// OpenAI（GPT-5 / Codex 族）：仅匹配已知型号，避免未知 OpenAI 型号误计价。
 	if normalized := normalizeKnownOpenAICodexModel(modelLower); normalized != "" {
 		switch normalized {
-		case "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna":
+		case "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-6.2-astra-pro", "gpt-6.2-sol":
 			return s.fallbackPrices[normalized]
 		case "gpt-6-astra":
 			return s.fallbackPrices["gpt-6-astra"]
@@ -1563,7 +1578,8 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 				InputPricePerTokenPriority:         litellmPricing.InputCostPerTokenPriority,
 				OutputPricePerToken:                litellmPricing.OutputCostPerToken,
 				OutputPricePerTokenPriority:        litellmPricing.OutputCostPerTokenPriority,
-				CacheCreationPriceExplicit:         (openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model)) && litellmPricing.CacheCreationInputTokenCostExplicit,
+				CacheCreationPriceExplicit:         (openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model) || normalizeOpenAIGPT62Model(model) != "") && litellmPricing.CacheCreationInputTokenCostExplicit,
+				CacheCreation12hPricePerToken:      litellmPricing.CacheCreationInputTokenCost12h,
 				CacheCreationPricePerToken:         litellmPricing.CacheCreationInputTokenCost,
 				CacheCreationPricePerTokenPriority: litellmPricing.CacheCreationInputTokenCostPriority,
 				CacheReadPricePerToken:             litellmPricing.CacheReadInputTokenCost,
@@ -1934,6 +1950,7 @@ func (s *BillingService) computeTokenBreakdown(
 		bd.CacheCreationCost + bd.CacheReadCost
 	bd.ActualCost = bd.TotalCost * rateMultiplier
 	bd.LongContextBillingApplied = baselineCost != nil && bd.ActualCost > baselineCost.ActualCost
+	bd.customerCacheCosts = resolvedCustomerCacheCosts(cacheCreationPricing, tokens, cacheCreationPrice, cacheCreationMultiplier, cacheReadPrice, tierMultiplier)
 
 	return bd
 }

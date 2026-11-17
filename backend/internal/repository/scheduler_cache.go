@@ -1691,6 +1691,19 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_passthrough_model_filter",
 		// 生图尺寸档位在候选过滤阶段按本投影判定，裁掉后受限账号会接到不允许的档位。
 		service.AccountExtraOpenAIImageSizeTiers,
+		"openai_excel_bps",
+		service.ExcelBPSProxyModeKey,
+		service.ExcelBPSProxyIDsKey,
+		service.OpenAIProxyModeKey,
+		service.OpenAIProxyIDsKey,
+		"openai_excel_bps_proxy_source",
+		"openai_excel_bps_auto_disable_on_403",
+		service.ExcelBPSAutoRecoverOn403Key,
+		service.ExcelBPS403RecoveryIntervalMinutesKey,
+		service.ExcelBPSAutoMoveOn403Key,
+		service.ExcelBPS403TargetGroupIDKey,
+		"openai_excel_bps_mihomo",
+		"openai_excel_bps_models",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
 		service.OpenAICodexSkipHarvestExtraKey,
@@ -1723,7 +1736,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 	}
 	filtered := make(map[string]any)
 	for _, key := range keys {
-		if value, ok := extra[key]; ok && (value != nil || key == "openai_excel_bps_models") {
+		if value, ok := extra[key]; ok && (value != nil || key == "openai_excel_bps_models" || key == service.OpenAIProxyModeKey) {
 			if key == service.UpstreamBillingProbeExtraKey {
 				filteredProbe := filterSchedulerUpstreamBillingProbe(value)
 				if filteredProbe == nil {

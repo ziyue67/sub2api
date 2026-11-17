@@ -6,7 +6,6 @@ on:
     paths:
       - 'backend/internal/serverless/**'
       - 'frontend/src/components/settings/ServerlessSettings*'
-      - 'frontend/src/constants/newFeatureNotices.ts'
       - 'frontend/src/views/admin/SettingsView.vue'
       - 'frontend/src/views/admin/__tests__/SettingsView.spec.ts'
       - '.github/scripts/serverless-ip-routing-screenshot.mjs'
@@ -32,7 +31,7 @@ jobs:
         run: go test -race ./internal/serverless -count=1 -timeout=5m
 
   settings:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

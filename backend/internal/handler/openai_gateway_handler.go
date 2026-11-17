@@ -4061,6 +4061,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				if err := h.concurrencyHelper.RevalidateTurnAuth(turnCtx); err != nil {
 					return mapOpenAIWSTurnAdmissionError(err)
 				}
+				service.SetOpenAIWSRecoveryClientModel(c, model)
 				return nil
 			},
 			BeforeRequestWithClientPayload: func(turn int, payload, clientPayload []byte, originalModel string) error {
@@ -4467,7 +4468,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 						return
 					}
 				}
-				next, clean, changed, rebuildErr := h.gatewayService.RebuildOpenAIWSUnsentTurn(ctx, c, raw, sessionHash, currentForwardModel)
+				next, clean, changed, rebuildErr := h.gatewayService.RebuildOpenAIWSUnsentTurn(service.WithOpenAIWSUnsentOwnerProof(ctx, err), c, raw, sessionHash, currentForwardModel)
 				if rebuildErr != nil {
 					h.handleOpenAIWSAgentRecoveryError(ctx, wsConn, rebuildErr, c)
 					return
