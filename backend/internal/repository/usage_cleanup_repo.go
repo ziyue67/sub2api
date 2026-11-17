@@ -16,7 +16,6 @@ import (
 )
 
 type usageCleanupRepository struct {
-	configuredTimezone
 	client *dbent.Client
 	sql    sqlExecutor
 }
