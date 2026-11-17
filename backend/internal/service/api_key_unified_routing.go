@@ -168,7 +168,9 @@ func (s *APIKeyService) nextUnifiedGroup(ctx context.Context, key *APIKey, attem
 	// pass an incompatible group to that handler during an in-request retry.
 	originalAccepts := params.accepts
 	params.accepts = func(candidate *APIKey) bool {
-		return key.Group != nil && candidate.Group.Platform == key.Group.Platform && (originalAccepts == nil || originalAccepts(candidate))
+		compatible := key.Group != nil && candidate.Group != nil && (candidate.Group.Platform == key.Group.Platform ||
+			(params.kind == "token" && compatibleAPIKeyGroupFailover(ctx, key.Group.Platform, candidate.Group.Platform)))
+		return compatible && (originalAccepts == nil || originalAccepts(candidate))
 	}
 	copy := *key
 	copy.requestGroupRouting = &params
