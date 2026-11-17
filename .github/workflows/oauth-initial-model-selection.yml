@@ -3,6 +3,7 @@ on:
   push:
     branches: [feat/oauth-initial-model-selection]
   pull_request:
+    branches: [production]
     paths:
       - 'backend/internal/service/*model*'
       - 'backend/internal/service/oauth_auto_config*'
