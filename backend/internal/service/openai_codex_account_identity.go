@@ -192,16 +192,16 @@ func applyCodexAccountIdentityClientMetadataMap(requestBody map[string]any, acco
 	if requestBody == nil || codexAccountIdentityNamespace(account) == "" {
 		return false
 	}
-	changed := applyCodexAccountIdentitySectionMap(requestBody, account, apiKeyID)
+	changed := applyCodexAccountIdentitySectionMap(requestBody, account, apiKeyID, clientSessionID)
 	if response, ok := requestBody["response"].(map[string]any); ok {
-		if applyCodexAccountIdentitySectionMap(response, account, apiKeyID) {
+		if applyCodexAccountIdentitySectionMap(response, account, apiKeyID, clientSessionID) {
 			changed = true
 		}
 	}
 	return changed
 }
 
-func applyCodexAccountIdentitySectionMap(requestBody map[string]any, account *Account, apiKeyID int64) bool {
+func applyCodexAccountIdentitySectionMap(requestBody map[string]any, account *Account, apiKeyID int64, clientSessionID string) bool {
 	if requestBody == nil || codexAccountIdentityNamespace(account) == "" {
 		return false
 	}
@@ -242,17 +242,26 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 
 	next := body
 	changed := false
-	for _, prefix := range []string{"", "response."} {
-		originalBodySessionID := ""
-		if cm := root.Get(prefix + "client_metadata"); cm.IsObject() {
-			clientMetadata := map[string]any{}
-			if err := decodeOpenAIJSONUseNumber([]byte(cm.Raw), &clientMetadata); err != nil {
-				return body, false, fmt.Errorf("decode client_metadata for account identity: %w", err)
+	originalBodySessionID := ""
+	if cm := gjson.GetBytes(body, "client_metadata"); cm.IsObject() {
+		clientMetadata := map[string]any{}
+		if err := json.Unmarshal([]byte(cm.Raw), &clientMetadata); err != nil {
+			return body, false, fmt.Errorf("decode client_metadata for account identity: %w", err)
+		}
+		originalBodySessionID, _ = clientMetadata["session_id"].(string)
+		metadataChanged := applyCodexAccountIdentityFields(clientMetadata, account, apiKeyID)
+		if applyCodexAccountIdentityEmbeddedMetadata(clientMetadata, account, apiKeyID) {
+			metadataChanged = true
+		}
+		if metadataChanged {
+			raw, err := json.Marshal(clientMetadata)
+			if err != nil {
+				return body, false, fmt.Errorf("encode account-scoped client_metadata: %w", err)
 			}
-			originalBodySessionID, _ = clientMetadata["session_id"].(string)
-			metadataChanged := applyCodexAccountIdentityFields(clientMetadata, account, apiKeyID)
-			if applyCodexAccountIdentityEmbeddedMetadata(clientMetadata, account, apiKeyID) {
-				metadataChanged = true
+			var setErr error
+			next, setErr = sjson.SetRawBytes(next, "client_metadata", raw)
+			if setErr != nil {
+				return body, false, fmt.Errorf("splice account-scoped client_metadata: %w", setErr)
 			}
 			changed = true
 		}
@@ -266,6 +275,8 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 			if err != nil {
 				return body, false, fmt.Errorf("splice account-scoped prompt_cache_key: %w", err)
 			}
+			next = rewritten
+			changed = true
 		}
 	}
 	return next, changed, nil

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // groupUsageRollupSnapshot 是一次汇总水位的快照。
@@ -347,15 +348,15 @@ func beginGroupUsageRollupBuild(ctx context.Context, q sqlExecutor, todayStart t
 		return nil, fmt.Errorf("读取分组用量汇总水位: %w", err)
 	}
 
-	todayDate := r.groupUsageDate(todayStart)
-	timezoneName := r.timezoneLocation().String()
+	todayDate := service.GroupUsageDate(todayStart)
+	timezoneName := service.GroupUsageTimezoneName()
 	timezoneChanged := stateTimezoneName != timezoneName
 	if !timezoneChanged {
 		closedTime, err := service.ParseGroupUsageDate(closedBefore)
 		if err != nil {
 			return nil, fmt.Errorf("解析分组用量汇总水位 %q: %w", closedBefore, err)
 		}
-		todayDateTime, err := r.parseGroupUsageDate(todayDate)
+		todayDateTime, err := service.ParseGroupUsageDate(todayDate)
 		if err != nil {
 			return nil, err
 		}

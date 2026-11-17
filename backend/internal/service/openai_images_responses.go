@@ -1955,140 +1955,142 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		respBody = s.redactAgentIdentitySensitiveBody(upstreamCtx, account, respBody)
 		if direct && !requiresCodexDirectImages(upstreamModel) && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) {
 			return s.forwardOpenAIImagesOAuth(withOpenAIImagesForceResponses(ctx), c, account, parsed, channelMappedModel)
-		if direct && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) {
-			return s.forwardOpenAIImagesOAuth(withOpenAIImagesForceResponses(upstreamCtx), c, account, parsed, channelMappedModel)
-		}
-		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
-			expectedTaskID := account.GetCredential("task_id")
-			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
-				return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
+			if direct && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) {
+				return s.forwardOpenAIImagesOAuth(withOpenAIImagesForceResponses(upstreamCtx), c, account, parsed, channelMappedModel)
 			}
-			return s.forwardOpenAIImagesOAuth(markAgentIdentityTaskRecoveryTried(ctx), c, account, parsed, channelMappedModel)
-		}
-		resp.Body = io.NopCloser(bytes.NewReader(respBody))
-		if !direct && isOpenAIImagesMainModelError(resp.StatusCode, respBody) {
+			if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
+				expectedTaskID := account.GetCredential("task_id")
+				if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
+					return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
+				}
+				return s.forwardOpenAIImagesOAuth(markAgentIdentityTaskRecoveryTried(ctx), c, account, parsed, channelMappedModel)
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			if !direct && isOpenAIImagesMainModelError(resp.StatusCode, respBody) {
+				return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
+			}
+			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+			if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(account),
+					ProxyName:          opsUpstreamProxyName(account),
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
+					Kind:               "failover",
+					Message:            upstreamMsg,
+				})
+				shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, upstreamModel)
+				return nil, s.newOpenAIAccountFailoverError(
+					account,
+					resp.StatusCode,
+					resp.Header,
+					respBody,
+					upstreamMsg,
+					shouldDisable,
+					!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+				)
+			}
 			return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
 		}
-		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
-		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
-			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-				ProxyID:            opsUpstreamProxyID(account),
-				ProxyName:          opsUpstreamProxyName(account),
-				Platform:           account.Platform,
-				AccountID:          account.ID,
-				AccountName:        account.Name,
-				UpstreamStatusCode: resp.StatusCode,
-				UpstreamRequestID:  resp.Header.Get("x-request-id"),
-				UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
-				Kind:               "failover",
-				Message:            upstreamMsg,
-			})
-			shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, upstreamModel)
-			return nil, s.newOpenAIAccountFailoverError(
-				account,
-				resp.StatusCode,
-				resp.Header,
-				respBody,
-				upstreamMsg,
-				shouldDisable,
-				!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
-			)
-		}
-		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
-	}
-	defer func() { _ = resp.Body.Close() }()
+		defer func() { _ = resp.Body.Close() }()
 
-	var (
-		usage            OpenAIUsage
-		imageCount       int
-		imageOutputSizes []string
-		firstTokenMs     *int
-	)
-	// 与 handleOpenAIImagesOAuthResponseError 的比较端同口径：排除非流式 JSON
-	// keepalive 心跳字节，避免 failover 第 2 轮起把上一轮心跳残留误判为已写响应。
-	writerSizeBeforeResponse := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
-	if parsed.Stream {
-		if direct {
-			usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesStreamingResponse(resp, c, startTime, parsed)
-		} else {
-			usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesOAuthStreamingResponse(resp, c, startTime, parsed.ResponseFormat, openAIImagesStreamPrefix(parsed), upstreamModel)
-		}
-		if err != nil {
-			if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, resp.Header.Get("x-request-id"), err); handled {
-				err = resetErr
+		var (
+			usage            OpenAIUsage
+			imageCount       int
+			imageOutputSizes []string
+			firstTokenMs     *int
+		)
+		// 与 handleOpenAIImagesOAuthResponseError 的比较端同口径：排除非流式 JSON
+		// keepalive 心跳字节，避免 failover 第 2 轮起把上一轮心跳残留误判为已写响应。
+		writerSizeBeforeResponse := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
+		if parsed.Stream {
+			if direct {
+				usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesStreamingResponse(resp, c, startTime, parsed)
+			} else {
+				usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesOAuthStreamingResponse(resp, c, startTime, parsed.ResponseFormat, openAIImagesStreamPrefix(parsed), upstreamModel)
 			}
-			if imageCount > 0 {
-				return &OpenAIForwardResult{
-					RequestID:                     resp.Header.Get("x-request-id"),
-					UpstreamHeaders:               resp.Header,
-					Usage:                         usage,
-					Model:                         requestModel,
-					UpstreamModel:                 upstreamModel,
-					UpstreamEndpoint:              upstreamReq.URL.Path,
-					UpstreamResponseModel:         observedUpstreamResponseModel(c),
-					UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-					Stream:                        parsed.Stream,
-					ResponseHeaders:               resp.Header.Clone(),
-					Duration:                      time.Since(startTime),
-					FirstTokenMs:                  firstTokenMs,
-					ImageEndpoint:                 true,
-					ImageCount:                    imageCount,
-					ImageSize:                     parsed.SizeTier,
-					ImageInputSize:                parsed.Size,
-					ImageOutputSizes:              imageOutputSizes,
-				}, err
+			if err != nil {
+				if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, resp.Header.Get("x-request-id"), err); handled {
+					err = resetErr
+				}
+				if imageCount > 0 {
+					return &OpenAIForwardResult{
+						RequestID:                     resp.Header.Get("x-request-id"),
+						UpstreamHeaders:               resp.Header,
+						Usage:                         usage,
+						Model:                         requestModel,
+						UpstreamModel:                 upstreamModel,
+						UpstreamEndpoint:              upstreamReq.URL.Path,
+						UpstreamResponseModel:         observedUpstreamResponseModel(c),
+						UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+						Stream:                        parsed.Stream,
+						ResponseHeaders:               resp.Header.Clone(),
+						Duration:                      time.Since(startTime),
+						FirstTokenMs:                  firstTokenMs,
+						ImageEndpoint:                 true,
+						ImageCount:                    imageCount,
+						ImageSize:                     parsed.SizeTier,
+						ImageInputSize:                parsed.Size,
+						ImageOutputSizes:              imageOutputSizes,
+					}, err
+				}
+				return nil, s.handleOpenAIImagesOAuthResponseError(
+					upstreamCtx,
+					c,
+					account,
+					upstreamModel,
+					safeUpstreamURL(upstreamReq.URL.String()),
+					resp,
+					writerSizeBeforeResponse,
+					err,
+				)
 			}
-			return nil, s.handleOpenAIImagesOAuthResponseError(
-				upstreamCtx,
-				c,
-				account,
-				upstreamModel,
-				safeUpstreamURL(upstreamReq.URL.String()),
-				resp,
-				writerSizeBeforeResponse,
-				err,
-			)
-		}
-	} else {
-		if direct {
-			usage, imageCount, imageOutputSizes, err = s.handleCodexDirectImagesNonStreamingResponse(resp, c, parsed)
 		} else {
-			usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, parsed.ResponseFormat, requestModel)
+			if direct {
+				usage, imageCount, imageOutputSizes, err = s.handleCodexDirectImagesNonStreamingResponse(resp, c, parsed)
+			} else {
+				usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, parsed.ResponseFormat, requestModel)
+			}
+			if err != nil {
+				return nil, s.handleOpenAIImagesOAuthResponseError(
+					upstreamCtx,
+					c,
+					account,
+					upstreamModel,
+					safeUpstreamURL(upstreamReq.URL.String()),
+					resp,
+					writerSizeBeforeResponse,
+					err,
+				)
+			}
 		}
-		if err != nil {
-			return nil, s.handleOpenAIImagesOAuthResponseError(
-				upstreamCtx,
-				c,
-				account,
-				upstreamModel,
-				safeUpstreamURL(upstreamReq.URL.String()),
-				resp,
-				writerSizeBeforeResponse,
-				err,
-			)
-		}
+		imageCount = resolveBillableImageCount(imageCount, parsed.N, imageCountBillingEnabled(getAPIKeyFromContext(c)))
+		return &OpenAIForwardResult{
+			RequestID:                     resp.Header.Get("x-request-id"),
+			UpstreamHeaders:               resp.Header,
+			Usage:                         usage,
+			Model:                         requestModel,
+			UpstreamModel:                 upstreamModel,
+			UpstreamEndpoint:              upstreamReq.URL.Path,
+			UpstreamResponseModel:         observedUpstreamResponseModel(c),
+			UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+			Stream:                        parsed.Stream,
+			ResponseHeaders:               resp.Header.Clone(),
+			Duration:                      time.Since(startTime),
+			FirstTokenMs:                  firstTokenMs,
+			ImageEndpoint:                 true,
+			ImageCount:                    imageCount,
+			ImageSize:                     parsed.SizeTier,
+			ImageInputSize:                parsed.Size,
+			ImageOutputSizes:              imageOutputSizes,
+		}, nil
 	}
-	imageCount = resolveBillableImageCount(imageCount, parsed.N, imageCountBillingEnabled(getAPIKeyFromContext(c)))
-	return &OpenAIForwardResult{
-		RequestID:                     resp.Header.Get("x-request-id"),
-		UpstreamHeaders:               resp.Header,
-		Usage:                         usage,
-		Model:                         requestModel,
-		UpstreamModel:                 upstreamModel,
-		UpstreamEndpoint:              upstreamReq.URL.Path,
-		UpstreamResponseModel:         observedUpstreamResponseModel(c),
-		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-		Stream:                        parsed.Stream,
-		ResponseHeaders:               resp.Header.Clone(),
-		Duration:                      time.Since(startTime),
-		FirstTokenMs:                  firstTokenMs,
-		ImageEndpoint:                 true,
-		ImageCount:                    imageCount,
-		ImageSize:                     parsed.SizeTier,
-		ImageInputSize:                parsed.Size,
-		ImageOutputSizes:              imageOutputSizes,
-	}, nil
+	return nil, fmt.Errorf("openai images oauth forward exhausted all attempts")
 }
 
 const (

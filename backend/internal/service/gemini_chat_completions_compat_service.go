@@ -111,7 +111,6 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 	}
 	geminiReq = ensureGeminiFunctionCallThoughtSignatures(geminiReq)
 	geminiReq = applyGeminiCompatThinkingConfig(geminiReq, claudeBody, mappedModel, clientStream)
-	geminiReq = applyGeminiChatResponseFormat(geminiReq, responseFormat, mappedModel)
 	geminiReq, err = applyGeminiChatResponseFormat(geminiReq, responseFormat, mappedModel)
 	if err != nil {
 		// 排队心跳可能已提交 SSE 响应头，此时使用流内错误，不能追加裸 JSON。

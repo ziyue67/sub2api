@@ -511,6 +511,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		toolSurcharges            sql.NullString
 		platform                  sql.NullString
 		createdAt                 time.Time
+		customerCostDetails       sql.NullString
 	)
 
 	if err := scanner.Scan(

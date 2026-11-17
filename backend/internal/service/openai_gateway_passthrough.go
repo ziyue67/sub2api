@@ -176,12 +176,9 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			reqStream = false
 		}
 
-		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), codexClientSessionID(c))
-		if scopeErr != nil {
-			return nil, scopeErr
-		}
-		if accountScoped {
-			body = accountScopedBody
+		harvestModel := extractOpenAICodexTicketModel(body)
+		if harvestModel == "" {
+			harvestModel = normalizeOpenAICodexTicketModel(reqModel)
 		}
 		if s.harvestPinsCodexIdentity(ctx, account, harvestModel) {
 			stageCodexFingerprintIDs(c, nil)
@@ -191,13 +188,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			}
 			body = pinnedBody
 		} else {
-			accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+			accountScopedBody, scopeErr := s.applyCodexAccountIdentityOrHarvestPinRaw(ctx, account, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), harvestModel, codexClientSessionID(c), body)
 			if scopeErr != nil {
 				return nil, scopeErr
 			}
-			if accountScoped {
-				body = accountScopedBody
-			}
+			body = accountScopedBody
 
 			stageCodexFingerprintIDs(c, nil)
 			// 指纹收敛：与非透传路径同门控（仅 OAuth、legacy compact 形态跳过）。

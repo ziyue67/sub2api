@@ -193,6 +193,8 @@ var (
 		local now = tonumber(redis.call('TIME')[1])
 		redis.call('ZREMRANGEBYSCORE', key, '-inf', now - ttl)
 		return redis.call('ZCARD', key)
+	`)
+
 	// Regional SQL handoffs own these statistics sources. Count/exclude them
 	// atomically on one key, preserving the batch reader's Cluster compatibility.
 	countUserSlotsExcludingScript = redis.NewScript(`

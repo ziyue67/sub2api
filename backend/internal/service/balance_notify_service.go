@@ -567,8 +567,5 @@ func (s *BalanceNotifyService) Stop() {
 	if s == nil {
 		return
 	}
-	if s.forecast != nil {
-		s.forecast.Stop()
-	}
 	s.usageNotifications.stop()
 }

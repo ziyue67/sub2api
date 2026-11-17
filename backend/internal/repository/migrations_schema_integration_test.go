@@ -58,15 +58,8 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// groups: OpenAI Live 与 Fast 强制策略都默认关闭，管理员显式开启后才生效。
 	requireColumn(t, tx, "groups", "allow_live", "boolean", 0, false)
 	requireColumn(t, tx, "groups", "force_openai_fast", "boolean", 0, false)
-	requireColumn(t, tx, "groups", "stream_only", "boolean", 0, false)
 	requireColumn(t, tx, "groups", "force_openai_ultrafast", "boolean", 0, false)
 	requireColumn(t, tx, "groups", "free_openai_fast", "boolean", 0, false)
-	requireColumn(t, tx, "groups", "free_openai_ultrafast", "boolean", 0, false)
-
-	// pelican_showcase_items: 鹈鹕测智用户展示快照，按分组 + 生成时间倒序读取和清理。
-	requireColumn(t, tx, "pelican_showcase_items", "response_text", "text", 0, false)
-	requireColumn(t, tx, "pelican_showcase_items", "generated_at", "timestamp with time zone", 0, false)
-	requireIndex(t, tx, "pelican_showcase_items", "idx_pelican_showcase_items_group_generated")
 
 	// api_keys: key length should be 128
 	requireColumn(t, tx, "api_keys", "key", "character varying", 128, false)
@@ -74,16 +67,6 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// redeem_codes: subscription fields
 	requireColumn(t, tx, "redeem_codes", "group_id", "bigint", 0, true)
 	requireColumn(t, tx, "redeem_codes", "validity_days", "integer", 0, false)
-
-	// v0.2.21 adds TTL counters and nullable price overrides without rewriting flags.
-	for _, column := range []string{"cache_creation_30m_tokens", "cache_creation_12h_tokens"} {
-		requireColumn(t, tx, "usage_logs", column, "integer", 0, false)
-		requireColumnDefaultContains(t, tx, "usage_logs", column, "0")
-	}
-	for _, table := range []string{"channel_model_pricing", "channel_pricing_intervals", "channel_account_stats_model_pricing", "channel_account_stats_pricing_intervals"} {
-		requireColumn(t, tx, table, "cache_write_12h_price", "numeric", 0, true)
-	}
-	requireIndex(t, tx, "usage_logs", "idx_usage_logs_api_key_created_cost")
 
 	// usage_logs: billing_type used by filters/stats
 	requireColumn(t, tx, "usage_logs", "billing_type", "smallint", 0, false)

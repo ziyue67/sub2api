@@ -1363,6 +1363,12 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 	upstreamResponseModel := nullString(log.UpstreamResponseModel)
 	upstreamModelMismatch := nullBool(log.UpstreamModelMismatch)
 	toolSurcharges := nullToolSurchargesJSON(log.ToolSurcharges)
+	var customerCostDetails any
+	if log.CustomerCostDetails != nil {
+		if raw, err := json.Marshal(log.CustomerCostDetails); err == nil {
+			customerCostDetails = string(raw)
+		}
+	}
 
 	var requestIDArg any
 	if requestID != "" {

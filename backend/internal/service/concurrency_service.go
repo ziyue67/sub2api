@@ -737,6 +737,7 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 			MaxConcurrency:    maxConcurrency,
 			MaxConcurrencySet: true,
 		}, nil
+	}
 	if maxConcurrency <= 0 {
 		return s.trackUnlimitedUserSlot(ctx, userID), nil
 	}
