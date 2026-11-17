@@ -760,6 +760,8 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       wrapper.unmount()
       await flushPromises()
     }
+  })
+
   it('can create a passthrough account with model filtering enabled', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
