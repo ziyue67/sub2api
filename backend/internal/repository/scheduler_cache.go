@@ -376,25 +376,14 @@ func (c *schedulerCache) GetSnapshotValues(ctx context.Context, bucket service.S
 func (c *schedulerCache) snapshotEntry(ctx context.Context, bucket service.SchedulerBucket) (*schedulerSnapshotEntry, error) {
 	bucketKey := bucket.String()
 	tagKeys := schedulerSnapshotTagKeys(bucket)
-	// GET preserves wrong-type errors; MGET would silently turn corrupt control
-	// keys into nil. Read every control/revision tag before any memo lookup.
-	pipe := c.rdb.Pipeline()
-	tagCommands := make([]*redis.StringCmd, len(tagKeys))
-	for i, key := range tagKeys {
-		tagCommands[i] = pipe.Get(ctx, key)
-	}
-	_, _ = pipe.Exec(ctx)
-	readyVal, err := tagCommands[0].Result()
-	if errors.Is(err, redis.Nil) || (err == nil && readyVal != "1") {
-		c.dropSnapshotEntry(bucketKey)
-		return nil, false, nil
-	}
+	tags, err := c.rdb.MGet(ctx, tagKeys...).Result()
 	if err != nil {
 		return nil, err
 	}
 	if len(tags) != len(tagKeys) {
 		return nil, fmt.Errorf("unexpected scheduler snapshot tag count: got %d, want %d", len(tags), len(tagKeys))
 	}
+	readyVal, err := schedulerCacheOptionalString(tags[0])
 	if err != nil {
 		return nil, err
 	}
@@ -479,13 +468,10 @@ func (c *schedulerCache) loadSnapshotEntry(ctx context.Context, bucket service.S
 		return nil, err
 	}
 	if len(ids) == 0 {
-		// An active version without its data is incomplete, not an empty pool.
+		// 空快照视为缓存未命中，触发数据库回退查询
+		// 这解决了新分组创建后立即绑定账号时的竞态条件问题
 		c.dropSnapshotEntry(bucketKey)
 		return nil, nil
-	}
-	if len(ids) == 1 && ids[0] == schedulerEmptySnapshotMember {
-		c.dropSnapshotEntry(bucketKey)
-		return []*service.Account{}, true, nil
 	}
 
 	keys := make([]string, 0, len(ids))
@@ -494,7 +480,7 @@ func (c *schedulerCache) loadSnapshotEntry(ctx context.Context, bucket service.S
 		keys = append(keys, schedulerAccountMetaKey(id))
 		lastUsedKeys = append(lastUsedKeys, schedulerLastUsedKey(id))
 	}
-	values, lastUsedValues, err := c.mgetSnapshotFields(ctx, keys, lastUsedKeys)
+	values, err := c.mgetChunked(ctx, keys)
 	if err != nil {
 		return nil, err
 	}

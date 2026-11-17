@@ -269,7 +269,7 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 		if !hit {
 			return nil, useMixed, ErrLocalSchedulerSnapshotUnavailable
 		}
-		return derefAccounts(cached), useMixed, nil
+		return accountValues(cached), useMixed, nil
 	}
 
 	if s.cache != nil {
@@ -2032,4 +2032,18 @@ func (l *fallbackLimiter) Allow() bool {
 	}
 	l.count++
 	return true
+}
+
+// accountValues 把指针切片解引用成值切片，供快照账本按值返回。
+func accountValues(accounts []*Account) []Account {
+	if len(accounts) == 0 {
+		return nil
+	}
+	out := make([]Account, len(accounts))
+	for i, a := range accounts {
+		if a != nil {
+			out[i] = *a
+		}
+	}
+	return out
 }

@@ -551,6 +551,8 @@ func TestParseSSEUsage_WebSearchRequestsAreCumulative(t *testing.T) {
 
 	s.parseSSEUsage(`{"type":"message_delta","usage":{"server_tool_use":{"web_search_requests":3}}}`, usage)
 	require.Equal(t, 3, usage.WebSearchRequests, "message_delta is cumulative and must replace, not add")
+}
+
 func TestSSEEventNeedsJSONParse(t *testing.T) {
 	t.Parallel()
 

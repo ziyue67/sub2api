@@ -99,15 +99,15 @@ type BillingCache interface {
 type ModelPricing struct {
 	// UltrafastMultiplier is model-owned and independent of operator Fast pricing.
 	UltrafastMultiplier                float64
-	InputPricePerToken                 float64            // 每token输入价格 (USD)
-	InputPricePerTokenPriority         float64            // priority service tier 下每token输入价格 (USD)
-	ImageInputPricePerToken            float64            // 图片输入 token 价格 (USD)，用于多模态 embedding 等图文不同价场景；为 0 时回退到 InputPricePerToken
-	ImageCacheReadPricePerToken        float64            // 图片缓存输入价格；无独立价格时沿用缓存读取价
-	OutputPricePerToken                float64            // 每token输出价格 (USD)
-	OutputPricePerTokenPriority        float64            // priority service tier 下每token输出价格 (USD)
-	CacheCreationPricePerToken         float64            // 缓存创建每token价格 (USD)
-	CacheCreationPricePerTokenPriority float64            // priority service tier 下缓存创建每token价格 (USD)
-	CacheCreationPriceExplicit         bool               // 是否由渠道/区间定价显式设定（为 true 时即使 == 0 也不回退）
+	InputPricePerToken                 float64 // 每token输入价格 (USD)
+	InputPricePerTokenPriority         float64 // priority service tier 下每token输入价格 (USD)
+	ImageInputPricePerToken            float64 // 图片输入 token 价格 (USD)，用于多模态 embedding 等图文不同价场景；为 0 时回退到 InputPricePerToken
+	ImageCacheReadPricePerToken        float64 // 图片缓存输入价格；无独立价格时沿用缓存读取价
+	OutputPricePerToken                float64 // 每token输出价格 (USD)
+	OutputPricePerTokenPriority        float64 // priority service tier 下每token输出价格 (USD)
+	CacheCreationPricePerToken         float64 // 缓存创建每token价格 (USD)
+	CacheCreationPricePerTokenPriority float64 // priority service tier 下缓存创建每token价格 (USD)
+	CacheCreationPriceExplicit         bool    // 是否由渠道/区间定价显式设定（为 true 时即使 == 0 也不回退）
 	priceOverrides                     tokenPriceOverrides
 	CacheReadPricePerToken             float64            // 缓存读取每token价格 (USD)
 	CacheReadPricePerTokenPriority     float64            // priority service tier 下缓存读取每token价格 (USD)

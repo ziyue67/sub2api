@@ -183,6 +183,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		if accountScoped {
 			body = accountScopedBody
 		}
+		harvestModel := extractOpenAICodexTicketModel(body)
+		if harvestModel == "" {
+			harvestModel = normalizeOpenAICodexTicketModel(reqModel)
+		}
 		if s.harvestPinsCodexIdentity(ctx, account, harvestModel) {
 			stageCodexFingerprintIDs(c, nil)
 			pinnedBody, pinErr := s.pinHarvestIdentityBodyForModel(ctx, account, harvestModel, body)
@@ -191,7 +195,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			}
 			body = pinnedBody
 		} else {
-			accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c))
+			accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), codexClientSessionID(c))
 			if scopeErr != nil {
 				return nil, scopeErr
 			}

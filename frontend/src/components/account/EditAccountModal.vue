@@ -5371,10 +5371,7 @@ const applyOpenAIModelMappingCredentials = (credentials: Record<string, unknown>
   if (props.account?.type === 'oauth' && !isSparkShadow.value) {
     credentials.model_mapping_mode = openaiModelAliases.value ? 'aliases' : 'whitelist'
   }
-  const shouldApplyModelMapping = !(openaiPassthroughEnabled.value || copilotSDKEnabled.value)
-=======
   const shouldApplyModelMapping = !isOpenAIModelRestrictionDisabled.value
->>>>>>> upstream/main
 
   if (shouldApplyModelMapping) {
     const modelMapping = buildModelRestrictionMapping()

@@ -53,74 +53,73 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 	accountPerformanceSvc := service.NewAccountPerformanceService(nil)
 
 	cleanup := provideCleanup(
-		nil, // provider refresh worker
-		nil, // QQ community worker
-		nil, // balance forecast owner
-		nil, // auto credit email worker
-		nil, // default/full runtime configuration
-		nil, // request capture manager
-		nil, // entClient
-		nil, // redis
-		&service.OpsMetricsCollector{},
-		&service.OpsAggregationService{},
-		&service.OpsAlertEvaluatorService{},
-		&service.OpsCleanupService{},
-		&service.OpsScheduledReportService{},
-		opsSystemLogSinkSvc,
-		nil, // opsService
-		nil, // opsIngressRejectAggregator
-		nil, // apiKeyService
-		nil, // concurrencyService
-		nil, // authCacheInvalidationWorker
-		schedulerSnapshotSvc,
-		tokenRefreshSvc,
-		accountExpirySvc,
-		nil, // cnProviderBalanceCheck
-		codexVersionSyncSvc,
-		claudeCodeVersionSyncSvc,
-		proxyExpirySvc,
-		subscriptionExpirySvc,
-		&service.UsageCleanupService{},
-		idempotencyCleanupSvc,
-		service.NewGeminiCachedContentService(nil, nil, cfg),
-		&service.BatchImageCleanupService{},
-		nil, // imageArchive
-		nil, // batchImageWorker
-		pricingSvc,
-		emailQueueSvc,
-		billingCacheSvc,
-		&service.UsageRecordWorkerPool{},
+		nil, // providerChannels
+		nil, // qqBot
+		service.ProvideBalanceNotifyService(nil, nil, nil, nil, nil, nil, nil), // balanceNotify
+		nil,                                  // autoCreditEmail
+		nil,                                  // cfg
+		nil,                                  // requestCaptures
+		nil,                                  // entClient
+		nil,                                  // rdb
+		&service.OpsMetricsCollector{},       // opsMetricsCollector
+		&service.OpsAggregationService{},     // opsAggregation
+		&service.OpsAlertEvaluatorService{},  // opsAlertEvaluator
+		&service.OpsCleanupService{},         // opsCleanup
+		&service.OpsScheduledReportService{}, // opsScheduledReport
+		opsSystemLogSinkSvc,                  // opsSystemLogSink
+		nil,                                  // opsService
+		nil,                                  // opsIngressReject
+		nil,                                  // apiKeyService
+		nil,                                  // concurrencyService
+		nil,                                  // authCacheInvalidationWorker
+		schedulerSnapshotSvc,                 // schedulerSnapshot
+		tokenRefreshSvc,                      // tokenRefresh
+		accountExpirySvc,                     // accountExpiry
+		nil,                                  // cnProviderBalanceCheck
+		codexVersionSyncSvc,                  // codexVersionSync
+		claudeCodeVersionSyncSvc,             // claudeCodeVersionSync
+		proxyExpirySvc,                       // proxyExpiry
+		subscriptionExpirySvc,                // subscriptionExpiry
+		&service.UsageCleanupService{},       // usageCleanup
+		idempotencyCleanupSvc,                // idempotencyCleanup
+		service.NewGeminiCachedContentService(nil, nil, cfg), // geminiCachedContent
+		&service.BatchImageCleanupService{},                  // batchImageCleanup
+		nil,                                                  // imageArchive
+		nil,                                                  // batchImageWorker
+		pricingSvc,                                           // pricing
+		emailQueueSvc,                                        // emailQueue
+		billingCacheSvc,                                      // billingCache
+		&service.UsageRecordWorkerPool{},                     // usageRecordWorkerPool
+		nil,                                                  // usageBillingLanes
+		service.NewDigestSessionStore(),                      // digestSessions
+		&service.SubscriptionService{},                       // subscriptionService
+		oauthSvc,                                             // oauth
+		openAIOAuthSvc,                                       // openaiOAuth
+		geminiOAuthSvc,                                       // geminiOAuth
+		antigravityOAuthSvc,                                  // antigravityOAuth
+		nil,                                                  // grokOAuth
+		nil,                                                  // openAIGateway
+		nil,                                                  // scheduledTestRunner
+		nil,                                                  // controlledExperiment
+		nil,                                                  // accountOps
+		accountPerformanceSvc,                                // accountPerformance
+		nil,                                                  // accountTokenGuard
+		nil,                                                  // accountTokenGuardV2
+		nil,                                                  // backupSvc
+		nil,                                                  // paymentOrderExpiry
+		nil,                                                  // channelMonitorRunner
+		nil,                                                  // channelMonitorV2Aggregator
+		nil,                                                  // channelMonitorV3Prober
+		nil,                                                  // quotaFlusher
+		nil,                                                  // upstreamBillingProbe
+		nil,                                                  // ollamaCloudUsage
+		nil,                                                  // opencodeGoUsage
+		nil,                                                  // auditLog
+		nil,                                                  // openAIAutoReset
+		nil,                                                  // promptAudit
+		nil,                                                  // pluginManager
+		nil,                                                  // cyberModeration
 
-		nil, // usageBillingLanes
-		service.ProvideBalanceNotifyService(nil, nil, nil, nil),
-		service.NewDigestSessionStore(),
-		&service.SubscriptionService{},
-		oauthSvc,
-		openAIOAuthSvc,
-		geminiOAuthSvc,
-		antigravityOAuthSvc,
-		nil, // grokOAuth
-		nil, // openAIGateway
-		nil, // scheduledTestRunner
-		nil, // controlledExperiment
-		nil, // accountOps
-		accountPerformanceSvc,
-		nil, // accountTokenGuard
-		nil, // accountTokenGuardV2
-		nil, // backupSvc
-		nil, // paymentOrderExpiry
-		nil, // channelMonitorRunner
-		nil, // channelMonitorV2Aggregator
-		nil, // channelMonitorV3Prober
-		nil, // quotaFlusher
-		nil, // upstreamBillingProbe
-		nil, // ollamaCloudUsage
-		nil, // opencodeGoUsage
-		nil, // auditLog
-		nil, // openAIAutoReset
-		nil, // promptAudit
-		nil, // pluginManager
-		nil, // cyberModeration
 	)
 
 	require.NotPanics(t, func() {

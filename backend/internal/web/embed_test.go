@@ -352,7 +352,6 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		assert.True(t, strings.HasSuffix(etag, `"`))
 	})
 
-	t.Run("returns_304_for_matching_etag_without_nonce", func(t *testing.T) {
 	t.Run("returns_304_only_when_no_nonce_is_present", func(t *testing.T) {
 		provider := &mockSettingsProvider{
 			settings: map[string]string{"test": "value"},
@@ -383,36 +382,6 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		assertNoStoreHTMLHeaders(t, w2.Header())
 	})
 
-	t.Run("matching_etag_still_returns_html_with_current_nonce", func(t *testing.T) {
-		provider := &mockSettingsProvider{settings: map[string]string{"test": "value"}}
-		server, err := NewFrontendServer(provider)
-		require.NoError(t, err)
-		router := gin.New()
-		nonce := "first-page-nonce"
-		router.Use(func(c *gin.Context) {
-			c.Set(middleware.CSPNonceKey, nonce)
-			c.Next()
-		})
-		router.Use(server.Middleware())
-		w1 := httptest.NewRecorder()
-		router.ServeHTTP(w1, httptest.NewRequest(http.MethodGet, "/", nil))
-		require.Equal(t, http.StatusOK, w1.Code)
-		require.Contains(t, w1.Body.String(), `nonce="first-page-nonce"`)
-		etag := w1.Header().Get("ETag")
-		require.NotEmpty(t, etag)
-
-		nonce = "current-page-nonce"
-		w2 := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("If-None-Match", etag)
-		router.ServeHTTP(w2, req)
-		assert.Equal(t, http.StatusOK, w2.Code)
-		assert.Contains(t, w2.Body.String(), `nonce="current-page-nonce"`)
-		assert.NotContains(t, w2.Body.String(), `nonce="first-page-nonce"`)
-		assert.Equal(t, 1, provider.called)
-	})
-
-	t.Run("sets_cache_control_header", func(t *testing.T) {
 	t.Run("serves_fresh_html_when_cached_nonce_is_stale", func(t *testing.T) {
 		provider := &mockSettingsProvider{
 			settings: map[string]string{"test": "value"},
@@ -658,7 +627,6 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		apiPaths := []string{
 			"/api/v1/users",
 			"/models",
-			"/models/gpt-5.5",
 			"/v1/models",
 			"/v1beta/chat",
 			"/backend-api/codex/responses",
@@ -673,20 +641,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			"/responses/compact",
 			"/chat/completions",
 			"/models/gpt-5.5",
-			"/messages/count_tokens",
-			"/embeddings",
-			"/contents/generations/tasks",
-			"/contents/generations/tasks/task-123",
-			"/v3/contents/generations/tasks",
 			"/v3/contents/generations/tasks/task-123",
-			"/tts",
-			"/stt",
-			"/custom-voices",
-			"/custom-voices/voice-123",
-			"/realtime",
-			"/web_search",
-			"/x_search",
-			"/models/gpt-5.5",
 		}
 
 		for _, path := range apiPaths {

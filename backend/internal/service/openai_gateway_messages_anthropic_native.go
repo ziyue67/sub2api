@@ -287,18 +287,18 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 
 	result := &OpenAIForwardResult{
 		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-		UpstreamResponseServiceTier: observedUpstreamResponseServiceTier(c),
-		RequestID:        resp.Header.Get("x-request-id"),
-		UpstreamHeaders:  resp.Header,
-		Usage:            claudeUsageToOpenAIUsage(usage),
-		WebSearchCalls:   usage.WebSearchRequests,
-		Model:            originalModel,
-		BillingModel:     billingModel,
-		UpstreamModel:    upstreamModel,
-		UpstreamEndpoint: "/v1/messages",
-		Stream:           false,
-		ReasoningEffort:  reasoningEffort,
-		Duration:         time.Since(startTime),
+		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+		RequestID:                     resp.Header.Get("x-request-id"),
+		UpstreamHeaders:               resp.Header,
+		Usage:                         claudeUsageToOpenAIUsage(usage),
+		WebSearchCalls:                usage.WebSearchRequests,
+		Model:                         originalModel,
+		BillingModel:                  billingModel,
+		UpstreamModel:                 upstreamModel,
+		UpstreamEndpoint:              "/v1/messages",
+		Stream:                        false,
+		ReasoningEffort:               reasoningEffort,
+		Duration:                      time.Since(startTime),
 	}
 	applyObservedUpstreamResponseModel(c, result)
 	return result, nil
@@ -604,22 +604,22 @@ func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 		usage = &ClaudeUsage{}
 	}
 	result := &OpenAIForwardResult{
-		UpstreamResponseModel: observedUpstreamResponseModel(c),
+		UpstreamResponseModel:         observedUpstreamResponseModel(c),
 		UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
-		UpstreamResponseServiceTier: observedUpstreamResponseServiceTier(c),
-		RequestID:        resp.Header.Get("x-request-id"),
-		UpstreamHeaders:  resp.Header,
-		Usage:            claudeUsageToOpenAIUsage(usage),
-		WebSearchCalls:   usage.WebSearchRequests,
-		Model:            originalModel,
-		BillingModel:     billingModel,
-		UpstreamModel:    upstreamModel,
-		UpstreamEndpoint: "/v1/messages",
-		Stream:           true,
-		ReasoningEffort:  reasoningEffort,
-		Duration:         time.Since(startTime),
-		FirstTokenMs:     firstTokenMs,
-		ClientDisconnect: clientDisconnect,
+		UpstreamResponseServiceTier:   observedUpstreamResponseServiceTier(c),
+		RequestID:                     resp.Header.Get("x-request-id"),
+		UpstreamHeaders:               resp.Header,
+		Usage:                         claudeUsageToOpenAIUsage(usage),
+		WebSearchCalls:                usage.WebSearchRequests,
+		Model:                         originalModel,
+		BillingModel:                  billingModel,
+		UpstreamModel:                 upstreamModel,
+		UpstreamEndpoint:              "/v1/messages",
+		Stream:                        true,
+		ReasoningEffort:               reasoningEffort,
+		Duration:                      time.Since(startTime),
+		FirstTokenMs:                  firstTokenMs,
+		ClientDisconnect:              clientDisconnect,
 	}
 	applyObservedUpstreamResponseModel(c, result)
 	return result

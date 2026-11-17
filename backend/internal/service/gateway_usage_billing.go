@@ -423,16 +423,16 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	}
 
 	// Apply 可能在按用户合并的结算通道中排队，结算后的缓存同步使用独立的超时。
-	billingCtx, cancel := detachedBillingContext(ctx)
-	defer cancel()
+	syncCtx, cancelSync := detachedBillingContext(ctx)
+	defer cancelSync()
 
 	if result.APIKeyQuotaExhausted {
 		if invalidator, ok := p.APIKeyService.(apiKeyAuthCacheInvalidator); ok && p.APIKey != nil && p.APIKey.Key != "" {
-			invalidator.InvalidateAuthCacheByKey(billingCtx, p.APIKey.Key)
+			invalidator.InvalidateAuthCacheByKey(syncCtx, p.APIKey.Key)
 		}
 	}
 
-	finalizePostUsageBilling(billingCtx, p, deps, result)
+	finalizePostUsageBilling(syncCtx, p, deps, result)
 	return true, nil
 }
 

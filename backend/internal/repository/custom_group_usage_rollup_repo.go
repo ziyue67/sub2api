@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // groupUsageRollupSnapshot 是一次汇总水位的快照。
@@ -61,7 +62,7 @@ func (r *usageLogRepository) readGroupUsageRollupSnapshot(ctx context.Context, t
 		return invalid, nil
 	}
 
-	tailStart, err := r.parseGroupUsageDate(closedBefore.String)
+	tailStart, err := service.ParseGroupUsageDate(closedBefore.String)
 	if err != nil {
 		// 水位值解析不出来，按无效处理：宁可多扫一次，也不要算错钱。
 		return invalid, nil //nolint:nilerr // 与上面的 valid 判定同语义，均降级为全量重算
@@ -83,11 +84,11 @@ func (r *usageLogRepository) readGroupUsageRollupSnapshot(ctx context.Context, t
 }
 
 func (r *usageLogRepository) getAllGroupUsageSummaryFromRollups(ctx context.Context, todayStart time.Time) (results []usagestats.GroupUsageSummary, err error) {
-	todayStart = r.groupUsageTodayStart(todayStart)
-	yesterdayStart := r.groupUsageYesterdayStart(todayStart)
-	timezoneName := r.timezoneLocation().String()
-	todayDate := r.groupUsageDate(todayStart)
-	yesterdayDate := r.groupUsageDate(yesterdayStart)
+	todayStart = service.GroupUsageTodayStart(todayStart)
+	yesterdayStart := service.GroupUsageYesterdayStart(todayStart)
+	timezoneName := service.GroupUsageTimezoneName()
+	todayDate := service.GroupUsageDate(todayStart)
+	yesterdayDate := service.GroupUsageDate(yesterdayStart)
 
 	state, err := r.readGroupUsageRollupSnapshot(ctx, timezoneName, todayDate)
 	if err != nil {
@@ -347,15 +348,15 @@ func beginGroupUsageRollupBuild(ctx context.Context, q sqlExecutor, todayStart t
 		return nil, fmt.Errorf("读取分组用量汇总水位: %w", err)
 	}
 
-	todayDate := r.groupUsageDate(todayStart)
-	timezoneName := r.timezoneLocation().String()
+	todayDate := service.GroupUsageDate(todayStart)
+	timezoneName := service.GroupUsageTimezoneName()
 	timezoneChanged := stateTimezoneName != timezoneName
 	if !timezoneChanged {
 		closedTime, err := service.ParseGroupUsageDate(closedBefore)
 		if err != nil {
 			return nil, fmt.Errorf("解析分组用量汇总水位 %q: %w", closedBefore, err)
 		}
-		todayDateTime, err := r.parseGroupUsageDate(todayDate)
+		todayDateTime, err := service.ParseGroupUsageDate(todayDate)
 		if err != nil {
 			return nil, err
 		}
