@@ -117,8 +117,6 @@
                   ${{ formatCost(item.cost) }}
                 </td>
               </tr>
-              <tr v-if="enableBreakdown && expandedKey === item.endpoint">
-                <td colspan="5" class="p-0">
               <tr v-if="expandedKey === item.endpoint">
                 <td :colspan="showAccountCost ? 6 : 5" class="p-0">
                   <UserBreakdownSubTable
