@@ -41,11 +41,11 @@ func TestFreeUltrafastCustomerCost(t *testing.T) {
 			}
 			in, out, write, read := 10e-6, 50e-6, 12.5e-6, 1e-6
 			group := &Group{ID: 77, Platform: platform, Hydrated: true, RateMultiplier: .6, FreeOpenAIFast: tc.freeFast,
-				ModelPricing: []ChannelModelPricing{{Models: []string{"gpt-5.4"}, BillingMode: BillingModeToken, InputPrice: &in, OutputPrice: &out, CacheWritePrice: &write, CacheReadPrice: &read}}}
+				ModelPricing: []ChannelModelPricing{{Models: []string{"gpt-6-astra"}, BillingMode: BillingModeToken, InputPrice: &in, OutputPrice: &out, CacheWritePrice: &write, CacheReadPrice: &read}}}
 			require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"FreeOpenAIUltrafast":%t}`, tc.freeUltra)), group))
 			account := &Account{ID: 3020, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: map[string]any{OpenAIResponseTierBillingEnabledKey: tc.responseBilling}}
 			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-				Result: &OpenAIForwardResult{RequestID: "synthetic-ultra-" + tc.name, Model: "gpt-5.4", ServiceTier: &tc.requested, UpstreamResponseServiceTier: tc.observed, Usage: OpenAIUsage{InputTokens: 71, OutputTokens: 19}, Duration: time.Second},
+				Result: &OpenAIForwardResult{RequestID: "synthetic-ultra-" + tc.name, Model: "gpt-6-astra", ServiceTier: &tc.requested, UpstreamResponseServiceTier: tc.observed, Usage: OpenAIUsage{InputTokens: 71, OutputTokens: 19}, Duration: time.Second},
 				APIKey: &APIKey{ID: 1020, GroupID: &group.ID, Group: group}, User: &User{ID: 2020}, Account: account})
 			require.NoError(t, err)
 			log := repo.lastLog
@@ -109,7 +109,8 @@ func TestFreeUltrafastMixedCacheAndLongContext(t *testing.T) {
 			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 				Result: &OpenAIForwardResult{RequestID: "synthetic-ultra-cache-" + name, Model: "gpt-6.2-astra", ServiceTier: &tier, Duration: time.Second,
 					Usage: OpenAIUsage{InputTokens: ordinary + 11 + 13 + 17, OutputTokens: 19, CacheCreationInputTokens: 24, CacheCreation30mInputTokens: 11, CacheCreation12hInputTokens: 13, CacheReadInputTokens: 17}},
-				APIKey: &APIKey{ID: 1020, GroupID: &group.ID, Group: group}, User: &User{ID: 2020}, Account: &Account{ID: 3020, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}})
+				PricingAt: time.Date(2027, 3, 1, 8, 0, 0, 0, time.UTC),
+				APIKey:    &APIKey{ID: 1020, GroupID: &group.ID, Group: group}, User: &User{ID: 2020}, Account: &Account{ID: 3020, Platform: PlatformOpenAI, Type: AccountTypeAPIKey}})
 			require.NoError(t, err)
 			log := repo.lastLog
 			require.NotNil(t, log)

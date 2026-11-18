@@ -93,6 +93,14 @@ export default {
   "fullAccessPhraseHint": "请输入“{phrase}”以确认：",
   "unknownPermission": "未知权限（{id}）",
   "permissions": {
+    "lottery_dread": {
+      "label": "读取抽奖奖池与记录",
+      "category": "财务"
+    },
+    "lottery_dwrite": {
+      "label": "管理抽奖奖池与奖品",
+      "category": "财务"
+    },
     "accounts_didentity_dread": {
       "label": "读取账户邮箱、套餐及创建时间（不含令牌）",
       "category": "账户"

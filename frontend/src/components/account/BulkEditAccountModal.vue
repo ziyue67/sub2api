@@ -450,7 +450,7 @@
           v-if="syncAdminId != null"
           v-show="syncBusy || syncRows.length > 0 || (modelRestrictionMode === 'whitelist' && !isOpenAIModelRestrictionDisabled)"
           :rows="syncRows" :busy="syncBusy" :valid="syncValid" :user-id="syncAdminId"
-          :disabled="submitting || checkingSubmit || showMixedChannelWarning"
+          :disabled="bulkUpdateBusy || showBulkUpdateConfirm || showMixedChannelWarning"
           @run="startWhitelistSync" @stop="stopSync"
         />
         <div

@@ -6,6 +6,8 @@ on:
       - '.github/workflows/account-request-proxy.yml'
       - '.github/scripts/assert-account-proxy-config-switch.py'
       - '.github/scripts/test_account_proxy_config_switch_evidence.py'
+      - '.github/scripts/prepare-ranxi-red-api-compat.py'
+      - '.github/scripts/test_ranxi_red_api_compat.py'
 permissions:
   contents: read
 jobs:
@@ -187,6 +189,7 @@ jobs:
             git show "$baseline:$target" > "$target"
             test "$(git hash-object "$target")" = "$(git rev-parse "$baseline:$target")"
           done
+          python3 .github/scripts/prepare-ranxi-red-api-compat.py "$baseline" . HEAD --target images --fixture backend/internal/service/pr885_independent_refresh_probe_test.go --manifest "$RUNNER_TEMP/refresh-oracle-red-api-compatibility.json"
       - name: Require the unchanged busy-exit oracle to fail behaviorally
         shell: bash
         run: |
@@ -220,5 +223,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: refresh-oracle-red-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/refresh-oracle-red.jsonl
+          path: |
+            ${{ runner.temp }}/refresh-oracle-red.jsonl
+            ${{ runner.temp }}/refresh-oracle-red-api-compatibility.json
           if-no-files-found: error

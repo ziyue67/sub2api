@@ -45,6 +45,12 @@ function fixture(ids: number[], sync: (id: number) => Promise<object>, role = 'a
   return wrapper
 }
 const applied = (id: number) => ({ models: ['fixture-' + id], applied: true, changed: true })
+async function confirmBulkUpdate(wrapper: ReturnType<typeof fixture>) {
+  const confirmation = wrapper.findAllComponents({ name: 'ConfirmDialog' }).find(dialog => dialog.props('show'))
+  expect(confirmation, 'ordinary bulk updates require confirmation before preflight').toBeDefined()
+  confirmation!.vm.$emit('confirm')
+  await flushPromises()
+}
 beforeEach(async () => {
   calls.length = 0
   bulkWrites.length = 0
@@ -101,6 +107,12 @@ describe('batch upstream whitelist', () => {
     await flushPromises()
     await w.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
+    expect(release, 'preflight waits for explicit confirmation').toBeUndefined()
+    expect(bulkWrites).toEqual([])
+    expect(w.get(start).attributes('disabled'), 'confirmation must own the write lock').toBeDefined()
+    await w.get(start).trigger('click')
+    expect(calls).toEqual([])
+    await confirmBulkUpdate(w)
     expect(release).toBeTypeOf('function')
     expect(w.get(start).attributes('disabled'), 'preflight must own the write lock').toBeDefined()
     await w.get(start).trigger('click')
@@ -119,6 +131,7 @@ describe('batch upstream whitelist', () => {
     await flushPromises()
     await w.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
+    await confirmBulkUpdate(w)
     await w.setProps({show:false})
     await w.setProps({show:true,accountIds:[77]})
     release({has_risk:risk})

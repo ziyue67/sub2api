@@ -18,11 +18,6 @@ import {
 } from '@/constants/platformCatalog'
 
 enableAutoUnmount(afterEach)
-import {
-  BUILTIN_PLATFORM_CATALOG,
-  resetPlatformCatalog,
-  setPlatformCatalog
-} from '@/constants/platformCatalog'
 
 const { updateAccountMock, syncUpstreamModelsMock, checkMixedChannelRiskMock, authIsSimpleMode, showErrorMock, showWarningMock } = vi.hoisted(() => ({
   showErrorMock: vi.fn(),
@@ -480,6 +475,7 @@ describe('EditAccountModal', () => {
   })
 
   it('switches API key platform and saves the target form without stale mappings or groups', async () => {
+    authIsSimpleMode.value = false
     const account = { ...buildAccount(), group_ids: [10], extra: { openai_passthrough: true } }
     updateAccountMock.mockReset().mockResolvedValue({ ...account, platform: 'anthropic' })
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })

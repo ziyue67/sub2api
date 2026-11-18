@@ -70,9 +70,9 @@ func TestFreeFastCustomerCostVariants(t *testing.T) {
 				rate = tc.personal
 			}
 			svc := newOpenAIRecordUsageServiceForTest(repo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, rates)
-			// Pin synthetic catalogue evidence: Priority doubles input/output/read,
-			// but NOT writes. The unrelated built-in fallback has different
-			// cache ratios and is not an oracle for the screenshot contract.
+			// Pin synthetic catalogue evidence. The fork's Priority policy
+			// doubles every token component, including writes; the customer
+			// snapshot must still retain each Standard cache TTL price.
 			svc.billingService = NewBillingService(svc.cfg, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
 				"gpt-6.2-astra": {
 					InputCostPerToken: 10e-6, InputCostPerTokenPriority: 20e-6,
@@ -118,7 +118,7 @@ func TestFreeFastCustomerCostVariants(t *testing.T) {
 						OutputTokens: tc.output, CacheCreationInputTokens: tc.write30m + tc.write12h,
 						CacheCreation30mInputTokens: tc.write30m, CacheCreation12hInputTokens: tc.write12h, CacheReadInputTokens: tc.read}},
 				APIKey: &APIKey{ID: 1020, GroupID: &gid, Group: group}, User: &User{ID: 2020},
-				Account: &Account{ID: 3020, Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+				Account: &Account{ID: 3020, Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
 			})
 			require.NoError(t, err)
 			log := repo.lastLog
@@ -197,9 +197,9 @@ func TestFreeFastCustomerCostVariants(t *testing.T) {
 			if tc.name == "exact screenshot" {
 				require.InDelta(t, .1669, log.InputCost, 1e-10)
 				require.InDelta(t, .0136, log.OutputCost, 1e-10)
-				require.InDelta(t, .0149625, log.CacheCreationCost, 1e-10)
+				require.InDelta(t, .029925, log.CacheCreationCost, 1e-10)
 				require.InDelta(t, .074938, log.CacheReadCost, 1e-10)
-				require.InDelta(t, .2704005, log.TotalCost, 1e-10)
+				require.InDelta(t, .285363, log.TotalCost, 1e-10)
 				require.InDelta(t, .07134075, log.ActualCost, 1e-10)
 			}
 			// The persisted evidence must not change when today's group configuration changes.

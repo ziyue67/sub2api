@@ -21,8 +21,8 @@ func TestPlatformChangeDropsLockedProviderMetadataAndKeepsCurrentQuota(t *testin
 	t.Cleanup(func() { _ = client.Close() })
 	mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 		WithArgs(int64(27), service.PlatformAnthropic, service.AccountTypeAPIKey, `{"api_key":"fixture-key"}`, nil).
-		WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "ollama_session", "ollama_auto", "ollama_snapshot", "opencode_group_unchanged", "opencode_auto", "opencode_snapshot", "current_extra", "concurrency"}).
-			AddRow(false, false, true, []byte(`true`), []byte(`true`), []byte(`{"status":"ok"}`), nil, nil, nil, false, nil, nil,
+		WillReturnRows(sqlmock.NewRows([]string{"identity_unchanged", "ollama_group_unchanged", "ollama_proxy_unchanged", "enabled", "rate_sync_enabled", "snapshot", "usage_snapshot", "ollama_session", "ollama_auto", "ollama_snapshot", "opencode_group_unchanged", "opencode_auto", "opencode_snapshot", "current_extra", "concurrency"}).
+			AddRow(false, false, true, []byte(`true`), []byte(`true`), []byte(`{"status":"ok"}`), nil, nil, nil, nil, false, nil, nil,
 				[]byte(`{"quota_used":42,"cost_multiplier":0.5,"grok_observed_models":["old"],"upstream_model_metadata":{"old":{}},"openai_codex_ticket":"old"}`), 3))
 	account := &service.Account{ID: 27, Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "fixture-key"},

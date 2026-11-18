@@ -6,6 +6,8 @@ on:
       - 'backend/internal/handler/openai_409*'
       - '.github/workflows/http-recovery-native-controls.yml'
       - '.github/scripts/http-recovery-native-controls.py'
+      - '.github/scripts/prepare-upstream-v0222-red-fixtures.py'
+      - '.github/scripts/upstream-v0222-red-fixtures.txt'
       - '.github/scripts/prepare-usage-sort-red-fixture.sh'
 permissions:
   contents: read
@@ -39,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           baseline=c115bef917eae22fc2f5a4d0ba6ac6cbe600e8e4
-          git diff --name-only "$baseline" HEAD -- backend | while IFS= read -r target; do
+          git diff --no-renames --name-only "$baseline" HEAD -- backend | while IFS= read -r target; do
             case "$target" in
               *_test.go) continue ;;
               *.go)

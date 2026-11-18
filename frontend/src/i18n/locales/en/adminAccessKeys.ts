@@ -93,6 +93,14 @@ export default {
   "fullAccessPhraseHint": "Type “{phrase}” to confirm:",
   "unknownPermission": "Unknown permission ({id})",
   "permissions": {
+    "lottery_dread": {
+      "label": "Read lottery pools and records",
+      "category": "Finance"
+    },
+    "lottery_dwrite": {
+      "label": "Manage lottery pools and prizes",
+      "category": "Finance"
+    },
     "accounts_didentity_dread": {
       "label": "Read account email, plan, and creation time (no tokens)",
       "category": "Accounts"

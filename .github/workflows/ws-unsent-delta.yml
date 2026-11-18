@@ -4,6 +4,8 @@ on:
     paths:
       - '.github/scripts/prepare-discovery-red-compat.py'
       - '.github/scripts/test_discovery_red_compat.py'
+      - '.github/scripts/prepare-ranxi-red-api-compat.py'
+      - '.github/scripts/test_ranxi_red_api_compat.py'
       - 'backend/internal/service/openai_ws_agent_recovery.go'
       - 'backend/internal/service/openai_ws_forwarder_ingress.go'
       - 'backend/internal/service/openai_ws_readable_continuation.go'
@@ -31,6 +33,8 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      - name: Historical API compatibility adapter self-tests
+        run: python3 -B -m unittest discover -s .github/scripts -p test_ranxi_red_api_compat.py -v
       - name: Redis fixture dependency
         run: |
           if ! command -v redis-server >/dev/null; then
@@ -45,6 +49,7 @@ jobs:
             test "$(git hash-object "$target")" = "$(git rev-parse "2927209f5492d8cb690b83a1964b2f093c19ad7a:$target")"
           done
           python3 .github/scripts/prepare-discovery-red-compat.py 2927209f5492d8cb690b83a1964b2f093c19ad7a . HEAD --target ws --fixture backend/internal/handler/openai_ws_unsent_delta_test.go --manifest "$RUNNER_TEMP/unsent-delta-compatibility.json"
+          python3 .github/scripts/prepare-ranxi-red-api-compat.py 2927209f5492d8cb690b83a1964b2f093c19ad7a . HEAD --target bridge --fixture backend/internal/handler/openai_ws_unsent_delta_test.go --manifest "$RUNNER_TEMP/unsent-delta-api-compatibility.json"
       - name: Same socket, account pause, result delta and next turn
         env:
           PHASE: ${{ matrix.phase }}
@@ -89,6 +94,7 @@ jobs:
           path: |
             ${{ runner.temp }}/unsent-delta*.jsonl
             ${{ runner.temp }}/unsent-delta-compatibility.json
+            ${{ runner.temp }}/unsent-delta-api-compatibility.json
           if-no-files-found: error
   repair877:
     runs-on: ubuntu-24.04

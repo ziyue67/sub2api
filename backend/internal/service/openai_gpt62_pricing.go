@@ -15,7 +15,7 @@ func gpt62DefaultPricing(model string) *LiteLLMModelPricing {
 		return nil
 	}
 	write12h := write * 2
-	return &LiteLLMModelPricing{
+	pricing := &LiteLLMModelPricing{
 		InputCostPerToken:                   input,
 		OutputCostPerToken:                  output,
 		CacheCreationInputTokenCost:         write,
@@ -26,4 +26,10 @@ func gpt62DefaultPricing(model string) *LiteLLMModelPricing {
 		Mode:                                "responses",
 		SupportsPromptCaching:               true,
 	}
+	if model != "gpt-6.2-astra-pro" {
+		pricing.LongContextInputTokenThreshold = 272_000
+		pricing.LongContextInputCostMultiplier = 2
+		pricing.LongContextOutputCostMultiplier = 1.5
+	}
+	return pricing
 }

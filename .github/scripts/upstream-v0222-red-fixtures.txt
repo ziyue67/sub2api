@@ -142,3 +142,21 @@ backend/migrations/group_usage_rollup_migration_test.go
 # Restore existing profit tests; omit provider-site tests only when absent there.
 backend/internal/service/profit_operations_test.go
 backend/internal/service/provider_profit_site_test.go
+# Fork feature APIs absent from the entire pre-recovery production overlay.
+# Their current-head fixtures remain enabled in GREEN; selected recovery oracles stay unchanged.
+backend/internal/handler/image_history_test.go
+backend/internal/handler/mcp_oauth_handler_test.go
+backend/internal/handler/openai_gateway_ws_lane_test.go
+backend/internal/handler/usage_handler_request_type_test.go
+backend/internal/handler/channel_monitor_user_scope_test.go
+backend/internal/handler/gateway_inflight_reservation_test.go
+backend/internal/handler/gateway_usage_billing_record_test.go
+backend/internal/handler/model_square_handler_test.go
+backend/internal/handler/openai_gateway_cyber_test.go
+backend/internal/handler/openai_images_size_routing_test.go
+backend/internal/handler/openai_mixed_group_failover_test.go
+backend/internal/handler/openai_profit_veto_budget_test.go
+backend/internal/handler/openai_request_body_memory_test.go
+backend/internal/handler/openai_ws_key_queue_test.go
+backend/internal/handler/request_body_limit_test.go
+backend/internal/handler/request_body_read_log_test.go

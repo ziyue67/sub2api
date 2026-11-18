@@ -4,6 +4,8 @@ on:
     paths:
       - '.github/scripts/prepare-discovery-red-compat.py'
       - '.github/scripts/test_discovery_red_compat.py'
+      - '.github/scripts/prepare-ranxi-red-api-compat.py'
+      - '.github/scripts/test_ranxi_red_api_compat.py'
       - 'backend/internal/service/openai_ws_agent_recovery.go'
       - 'backend/internal/service/openai_ws_forwarder_ingress.go'
       - 'backend/internal/service/openai_ws_http_bridge.go'
@@ -48,6 +50,7 @@ jobs:
             test "$(git hash-object "$target")" = "$(git rev-parse "b9feadf7dd6228a4117e360821d9994b7cc54897:$target")"
           done
           python3 .github/scripts/prepare-discovery-red-compat.py b9feadf7dd6228a4117e360821d9994b7cc54897 . HEAD --target ws --fixture backend/internal/service/openai_ws_plaintext_owner_test.go --fixture backend/internal/handler/openai_ws_plaintext_owner_test.go --manifest "$RUNNER_TEMP/plaintext-owner-compatibility.json"
+          python3 .github/scripts/prepare-ranxi-red-api-compat.py b9feadf7dd6228a4117e360821d9994b7cc54897 . HEAD --target bridge --fixture backend/internal/service/openai_ws_plaintext_owner_test.go --fixture backend/internal/handler/openai_ws_plaintext_owner_test.go --manifest "$RUNNER_TEMP/plaintext-owner-api-compatibility.json"
       - name: Actual delta continuation and delivery boundaries
         env:
           PHASE: ${{ matrix.phase }}
@@ -99,6 +102,7 @@ jobs:
           path: |
             ${{ runner.temp }}/plaintext-*.jsonl
             ${{ runner.temp }}/plaintext-owner-compatibility.json
+            ${{ runner.temp }}/plaintext-owner-api-compatibility.json
           if-no-files-found: error
   repair870:
     runs-on: ubuntu-latest
@@ -140,6 +144,7 @@ jobs:
             test "$(git hash-object "$target")" = "$(git rev-parse "$baseline:$target")"
           done
           python3 .github/scripts/prepare-discovery-red-compat.py "$baseline" . HEAD --target ws --fixture backend/internal/handler/openai_ws_plaintext_owner_test.go --manifest "$RUNNER_TEMP/plaintext-repair870-compatibility.json"
+          python3 .github/scripts/prepare-ranxi-red-api-compat.py "$baseline" . HEAD --target bridge --fixture backend/internal/handler/openai_ws_plaintext_owner_test.go --manifest "$RUNNER_TEMP/plaintext-repair870-api-compatibility.json"
       - name: Exact later-turn HTTP wire behavior
         env:
           PHASE: ${{ matrix.phase }}
@@ -189,4 +194,5 @@ jobs:
           path: |
             ${{ runner.temp }}/plaintext-repair870.jsonl
             ${{ runner.temp }}/plaintext-repair870-compatibility.json
+            ${{ runner.temp }}/plaintext-repair870-api-compatibility.json
           if-no-files-found: error
