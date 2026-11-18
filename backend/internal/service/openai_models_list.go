@@ -195,7 +195,8 @@ func projectAccountModelAliases(body []byte, account *Account, group *Group, cod
 	if codex {
 		field, idField = "models", "slug"
 	}
-	if !account.hasOAuthInitialModelSelection() && (account.IsOpenAIPassthroughEnabled() || len(account.GetModelMapping()) == 0) {
+	passthrough := account.IsOpenAIPassthroughEnabled()
+	if !account.hasOAuthInitialModelSelection() && ((passthrough && !account.IsOpenAIPassthroughModelFilterEnabled()) || len(account.GetModelMapping()) == 0) {
 		if len(account.GroupAllowedModels(derefGroupID(groupID))) == 0 {
 			return body, nil
 		}
@@ -262,6 +263,10 @@ func projectAccountModelAliases(body []byte, account *Account, group *Group, cod
 		}
 		target, matched := account.ResolveMappedModel(id)
 		allowed := matched || (account.IsOpenAIModelMappingAliases() && account.IsModelSupported(id))
+		if passthrough {
+			// Filtering changes eligibility, never the upstream/public model name.
+			target, allowed = id, account.IsModelSupported(id)
+		}
 		raw, available := byID[strings.TrimSpace(target)]
 		if !available || !allowed {
 			continue

@@ -21,15 +21,18 @@ type userGroupDeniedModelsFixture struct {
 
 func newUserGroupDeniedModelsFixture(t *testing.T) *userGroupDeniedModelsFixture {
 	t.Helper()
-	tx := testEntTx(t)
-	client := tx.Client()
+	ctx := context.Background()
+	client := testEntClient(t)
 	group := mustCreateGroup(t, client, &service.Group{Name: "denied-models-group"})
+	t.Cleanup(func() { require.NoError(t, client.Group.DeleteOneID(group.ID).Exec(ctx)) })
 	userA := mustCreateUser(t, client, &service.User{Email: "denied-a@example.com"})
+	t.Cleanup(func() { require.NoError(t, client.User.DeleteOneID(userA.ID).Exec(ctx)) })
 	userB := mustCreateUser(t, client, &service.User{Email: "denied-b@example.com"})
+	t.Cleanup(func() { require.NoError(t, client.User.DeleteOneID(userB.ID).Exec(ctx)) })
 	return &userGroupDeniedModelsFixture{
-		ctx:     context.Background(),
-		repo:    &userGroupRateRepository{sql: tx},
-		tx:      tx,
+		ctx:     ctx,
+		repo:    NewUserGroupRateRepository(integrationDB).(*userGroupRateRepository),
+		tx:      integrationDB,
 		groupID: group.ID,
 		userA:   userA.ID,
 		userB:   userB.ID,

@@ -15,6 +15,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
+// v35: 并入 upstream v28 的 group force_openai_ultrafast（OpenAI 网关从 ctx 读取）。
 // v33: per-key long context permission。
 // v32: per-key model mapping and reasoning effort override。
 // v31: 在 v30 基础上并入 upstream 的 group image_count_billing（按图片张数计费）。
@@ -23,7 +24,7 @@ import (
 // concurrency limit, group client and subagent admission policies)与
 // ranxi v30(include configured API key groups)。
 // v34: per-key input context token ceiling.
-const apiKeyAuthSnapshotVersion = 34
+const apiKeyAuthSnapshotVersion = 35
 
 // Local-only generation wrapper. Old entries remain bounded by existing TTL
 // and capacity, but cannot authorize after a subscription recovery checkpoint.
@@ -476,6 +477,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
 			AllowLive:                       apiKey.Group.AllowLive,
 			ForceOpenAIFast:                 apiKey.Group.ForceOpenAIFast,
+			ForceOpenAIUltrafast:            apiKey.Group.ForceOpenAIUltrafast,
 			FreeOpenAIFast:                  apiKey.Group.FreeOpenAIFast,
 			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
@@ -593,6 +595,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
 			AllowLive:                       snapshot.Group.AllowLive,
 			ForceOpenAIFast:                 snapshot.Group.ForceOpenAIFast,
+			ForceOpenAIUltrafast:            snapshot.Group.ForceOpenAIUltrafast,
 			FreeOpenAIFast:                  snapshot.Group.FreeOpenAIFast,
 			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,

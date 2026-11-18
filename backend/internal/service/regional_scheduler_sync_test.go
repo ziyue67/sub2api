@@ -119,6 +119,10 @@ type regionalExportRepo struct {
 	fail     bool
 }
 
+func (r *regionalExportRepo) ListModelAvailabilityCandidates(ctx context.Context, _ *int64, _ []string, _ bool) ([]Account, error) {
+	return r.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
+}
+
 func (r *regionalExportRepo) ListSchedulableUngroupedByPlatform(context.Context, string) ([]Account, error) {
 	if r.fail {
 		return nil, errors.New("db unavailable")

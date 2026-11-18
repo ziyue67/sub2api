@@ -173,21 +173,22 @@ func TestUltrafastUsageRecordUsageCachedTokenMatrix(t *testing.T) {
 	for _, model := range []struct {
 		name                       string
 		input, output, read, write float64
+		ultrafastMultiplier        float64
 	}{
-		{"gpt-5.6-sol", 5e-6, 30e-6, .5e-6, 6.25e-6},
-		{"gpt-5.6-terra", 2e-6, 12e-6, .2e-6, 2.5e-6},
-		{"gpt-6-astra", 10e-6, 50e-6, 1e-6, 12.5e-6},
-		{"gpt-6-sol", 2e-6, 10e-6, .2e-6, 2.5e-6},
-		{"gpt-6.1-sol", 2e-6, 10e-6, .1e-6, 2.5e-6},
-		{"gpt-6.1-terra", 1e-6, 5e-6, .05e-6, 1.25e-6},
+		{"gpt-5.6-sol", 5e-6, 30e-6, .5e-6, 6.25e-6, 2},
+		{"gpt-5.6-terra", 2e-6, 12e-6, .2e-6, 2.5e-6, 2},
+		{"gpt-6-astra", 10e-6, 50e-6, 1e-6, 12.5e-6, 6},
+		{"gpt-6-sol", 2e-6, 10e-6, .2e-6, 2.5e-6, 2},
+		{"gpt-6.1-sol", 2e-6, 10e-6, .1e-6, 2.5e-6, 6},
+		{"gpt-6.1-terra", 1e-6, 5e-6, .05e-6, 1.25e-6, 2},
 	} {
 		for _, total := range []int{10000, 272000, 272001, 500001} {
 			for _, tier := range []struct {
 				name, requested, observed, billed string
 				factor                            float64
 			}{
-				{"response", "", " UltraFast ", "ultrafast", 6},
-				{"fallback", "ultrafast", "", "ultrafast", 6},
+				{"response", "", " UltraFast ", "ultrafast", model.ultrafastMultiplier},
+				{"fallback", "ultrafast", "", "ultrafast", model.ultrafastMultiplier},
 				{"downgrade", "ultrafast", "default", "default", 1},
 			} {
 				t.Run(fmt.Sprintf("%s/%d/%s", model.name, total, tier.name), func(t *testing.T) {
@@ -285,7 +286,7 @@ func TestUltrafastUsageAccountGroupMultiplierAndZeroRate(t *testing.T) {
 			}
 			e := ultrafastUsageEvent(t, repo)
 			standard := 1000*2e-6 + 500*10e-6 + 8000*.2e-6 + 1000*2.5e-6
-			ultrafastUsageNear(t, "charge with independent account group multiplier", QuantizeUsageBillingAmount(standard*6*.25*multiplier), e.Command.BalanceCost)
+			ultrafastUsageNear(t, "charge with independent account group multiplier", QuantizeUsageBillingAmount(standard*2*.25*multiplier), e.Command.BalanceCost)
 		})
 	}
 }
@@ -293,7 +294,7 @@ func TestUltrafastUsageAccountGroupMultiplierAndZeroRate(t *testing.T) {
 func TestUltrafastUsageCacheTTLAndNoPricingCacheContamination(t *testing.T) {
 	pricing := &ModelPricing{InputPricePerToken: 2e-6, OutputPricePerToken: 10e-6, CacheReadPricePerToken: .2e-6,
 		CacheCreationPricePerToken: 2.5e-6, CacheCreation5mPrice: 2.5e-6, CacheCreation1hPrice: 4e-6, SupportsCacheBreakdown: true,
-		LongContextInputThreshold: 272000, LongContextInputMultiplier: 2, LongContextOutputMultiplier: 1.5}
+		LongContextInputThreshold: 272000, LongContextInputMultiplier: 2, LongContextOutputMultiplier: 1.5, UltrafastMultiplier: 6}
 	svc := &BillingService{}
 	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 270001, CacheCreationTokens: 1000, CacheCreation5mTokens: 400, CacheCreation1hTokens: 600}
 	for _, tier := range []struct {
@@ -321,25 +322,33 @@ func TestUltrafastUsageExplicitZeroCacheWrite(t *testing.T) {
 	ultrafastUsageNear(t, "explicit free cache creation stays zero", 0, e.Usage.CacheCreationCost)
 }
 
-// The account switch controls response-based settlement. A client explicitly
-// requesting UltraFast still pays 6x when that switch is off or absent.
+// The account switch controls response-based settlement. A client's explicit
+// UltraFast request follows model pricing even when that switch is off or absent.
 func TestUltrafastUsageExplicitRequestWithoutResponseBilling(t *testing.T) {
-	for _, flag := range []any{nil, false, true} {
-		for _, observed := range []string{"", "ultrafast"} {
-			t.Run(fmt.Sprintf("enabled=%v/observed=%s", flag, observed), func(t *testing.T) {
-				svc, input, repo, _ := ultrafastUsageHarness(t, ultrafastUsageGroup(), false)
-				if flag == nil {
-					delete(input.Account.Extra, OpenAIResponseTierBillingEnabledKey)
-				} else {
-					input.Account.Extra[OpenAIResponseTierBillingEnabledKey] = flag
-				}
-				input.Result = ultrafastUsageResult(t, "gpt-6-sol", "ultrafast", observed, 10000, 8000, 1000, 500)
-				if err := svc.RecordUsage(context.Background(), input); err != nil {
-					t.Fatal(err)
-				}
-				e := ultrafastUsageEvent(t, repo)
-				ultrafastUsageNear(t, "explicit UltraFast is always 6x", .01665, e.Command.BalanceCost)
-			})
+	for _, model := range []struct {
+		name string
+		want float64
+	}{
+		{"gpt-6-sol", .00555},
+		{"gpt-6.1-sol", .01545},
+	} {
+		for _, flag := range []any{nil, false, true} {
+			for _, observed := range []string{"", "ultrafast"} {
+				t.Run(fmt.Sprintf("%s/enabled=%v/observed=%s", model.name, flag, observed), func(t *testing.T) {
+					svc, input, repo, _ := ultrafastUsageHarness(t, ultrafastUsageGroup(), false)
+					if flag == nil {
+						delete(input.Account.Extra, OpenAIResponseTierBillingEnabledKey)
+					} else {
+						input.Account.Extra[OpenAIResponseTierBillingEnabledKey] = flag
+					}
+					input.Result = ultrafastUsageResult(t, model.name, "ultrafast", observed, 10000, 8000, 1000, 500)
+					if err := svc.RecordUsage(context.Background(), input); err != nil {
+						t.Fatal(err)
+					}
+					e := ultrafastUsageEvent(t, repo)
+					ultrafastUsageNear(t, "explicit UltraFast retains model pricing", model.want, e.Command.BalanceCost)
+				})
+			}
 		}
 	}
 }

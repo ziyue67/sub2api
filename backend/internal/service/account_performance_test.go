@@ -39,9 +39,16 @@ func TestAccountPerformancePauseIsIndependent(t *testing.T) {
 
 type performanceAccountRepoStub struct {
 	AccountRepository
-	paused map[int64]bool
-	err    error
-	calls  int
+	paused      map[int64]bool
+	err         error
+	calls       int
+	schedulable []Account
+}
+
+// ListModelAvailabilityCandidates 让区域导出走候选加载路径，返回与
+// ListSchedulableUngroupedByPlatform 相同的账号集合。
+func (r *performanceAccountRepoStub) ListModelAvailabilityCandidates(context.Context, *int64, []string, bool) ([]Account, error) {
+	return r.schedulable, nil
 }
 
 func (r *performanceAccountRepoStub) PerformancePaused(context.Context, []int64) (map[int64]bool, error) {

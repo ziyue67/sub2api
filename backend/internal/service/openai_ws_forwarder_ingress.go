@@ -992,7 +992,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if mapped := strings.TrimSpace(gjson.GetBytes(normalized, "model").String()); mapped != "" {
 			identityModel = mapped
 		}
-		accountScopedPayload, scopeErr := s.applyCodexAccountIdentityOrHarvestPinRaw(ctx, account, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), identityModel, normalized)
+		accountScopedPayload, scopeErr := s.applyCodexAccountIdentityOrHarvestPinRaw(ctx, account, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), identityModel, codexClientSessionID(c), normalized)
 		if scopeErr != nil {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket identity metadata", scopeErr)
 		}

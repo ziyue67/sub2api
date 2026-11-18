@@ -493,11 +493,15 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	// 观察者角色可以查看账号维度的成本投影；普通用户不可见。
 	if !isObserverUsageRequest(c) {
 		stats.TotalAccountCost = nil
-		stats.UpstreamEndpoints = nil
-		stats.EndpointPaths = nil
+		for i := range stats.Endpoints {
+			stats.Endpoints[i].AccountCost = 0
+		}
 	}
+	stats.UpstreamEndpoints = nil
+	stats.EndpointPaths = nil
 
 	response.Success(c, stats)
 }

@@ -126,6 +126,7 @@ func provideCleanup(
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	usageBillingLanes *service.UsageBillingLaneCombiner,
 	digestSessions *service.DigestSessionStore,
 	subscriptionService *service.SubscriptionService,
 	oauth *service.OAuthService,
@@ -414,6 +415,10 @@ func provideCleanup(
 				if usageRecordWorkerPool != nil {
 					usageRecordWorkerPool.Stop()
 				}
+				return nil
+			}},
+			{"UsageBillingLaneCombiner", func() error {
+				usageBillingLanes.Stop()
 				return nil
 			}},
 			{"OAuthService", func() error {

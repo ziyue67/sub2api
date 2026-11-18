@@ -72,6 +72,8 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	return encoded, true, nil
 }
 
+var compactionTriggerToken = []byte("compaction_trigger")
+
 func isOpenAINativeCompactionV2(c *gin.Context) bool {
 	if c == nil {
 		return false
@@ -170,12 +172,17 @@ func applyOpenAICodexBetaFeatures(c *gin.Context, account *Account, h http.Heade
 // HasCompactionTriggerInInput detects an input item with
 // type="compaction_trigger". The handler combines this body signal with the
 // request path and stream flag to distinguish the native remote compaction v2
-// wire from the legacy /responses/compact bridge.
+// wire from the legacy /responses/compact bridge. The type string appears
+// literally unless a \u escape spells plain ASCII, so other bodies skip the
+// structural scan.
 func HasCompactionTriggerInInput(body []byte) bool {
 	if len(body) == 0 {
 		return false
 	}
-	input := gjson.GetBytes(body, "input")
+	if !bytes.Contains(body, compactionTriggerToken) && !JSONMayEscapePlainASCII(body) {
+		return false
+	}
+	input := parseRawJSONView(body).Get("input")
 	if !input.IsArray() {
 		return false
 	}

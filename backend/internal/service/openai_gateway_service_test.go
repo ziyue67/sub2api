@@ -100,6 +100,10 @@ func (r stubOpenAIAccountRepo) GetByIDs(ctx context.Context, ids []int64) ([]*Ac
 	return out, nil
 }
 
+func (r stubOpenAIAccountRepo) ListModelAvailabilityCandidates(ctx context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]Account, error) {
+	return listSchedulerTestCandidatesByPlatform(ctx, r, groupID, platforms, includeGrouped)
+}
+
 func (r stubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
 	var result []Account
 	for _, acc := range r.accounts {
@@ -235,6 +239,10 @@ func TestFailoverOpenAIUpstreamHTTPError_NilContextSkipsTempUnschedulablePolicy(
 
 type groupAwareStubOpenAIAccountRepo struct {
 	stubOpenAIAccountRepo
+}
+
+func (r groupAwareStubOpenAIAccountRepo) ListModelAvailabilityCandidates(ctx context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]Account, error) {
+	return listSchedulerTestCandidatesByPlatform(ctx, r, groupID, platforms, includeGrouped)
 }
 
 func (r groupAwareStubOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {

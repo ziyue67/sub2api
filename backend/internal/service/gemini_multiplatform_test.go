@@ -150,7 +150,10 @@ func (m *mockAccountRepoForGemini) ListSchedulableUngroupedByPlatform(ctx contex
 func (m *mockAccountRepoForGemini) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]Account, error) {
 	return m.ListSchedulableByPlatforms(ctx, platforms)
 }
-func (m *mockAccountRepoForGemini) ListModelAvailabilityCandidates(ctx context.Context, _ *int64, platforms []string, _ bool) ([]Account, error) {
+func (m *mockAccountRepoForGemini) ListModelAvailabilityCandidates(ctx context.Context, groupID *int64, platforms []string, _ bool) ([]Account, error) {
+	if groupID != nil {
+		return m.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
+	}
 	return m.ListSchedulableByPlatforms(ctx, platforms)
 }
 func (m *mockAccountRepoForGemini) SetRateLimited(ctx context.Context, id int64, resetAt time.Time) error {
@@ -173,6 +176,10 @@ func (m *mockAccountRepoForGemini) ClearAntigravityQuotaScopes(ctx context.Conte
 	return nil
 }
 func (m *mockAccountRepoForGemini) ClearModelRateLimits(ctx context.Context, id int64) error {
+	return nil
+}
+
+func (m *mockAccountRepoForGemini) ClearModelRateLimit(ctx context.Context, id int64, scope string) error {
 	return nil
 }
 func (m *mockAccountRepoForGemini) UpdateSessionWindow(ctx context.Context, id int64, start, end *time.Time, status string) error {

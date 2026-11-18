@@ -228,14 +228,14 @@ func (s *OpenAIGatewayService) pinHarvestIdentityBodyForModel(ctx context.Contex
 	return next, nil
 }
 
-func (s *OpenAIGatewayService) applyCodexAccountIdentityOrHarvestPinMap(ctx context.Context, account, identityAccount *Account, apiKeyID int64, model string, body map[string]any) bool {
+func (s *OpenAIGatewayService) applyCodexAccountIdentityOrHarvestPinMap(ctx context.Context, account, identityAccount *Account, apiKeyID int64, model, clientSessionID string, body map[string]any) bool {
 	if s.pinHarvestIdentityMapsForModel(ctx, account, model, body) {
 		return true
 	}
-	return applyCodexAccountIdentityClientMetadataMap(body, identityAccount, apiKeyID)
+	return applyCodexAccountIdentityClientMetadataMap(body, identityAccount, apiKeyID, clientSessionID)
 }
 
-func (s *OpenAIGatewayService) applyCodexAccountIdentityOrHarvestPinRaw(ctx context.Context, account, identityAccount *Account, apiKeyID int64, model string, body []byte) ([]byte, error) {
+func (s *OpenAIGatewayService) applyCodexAccountIdentityOrHarvestPinRaw(ctx context.Context, account, identityAccount *Account, apiKeyID int64, model, clientSessionID string, body []byte) ([]byte, error) {
 	if session := s.harvestPinnedSessionForModel(ctx, account, model); session != "" {
 		next, _, err := pinBoundCodexTicketHarvestIdentityBody(body, &openAICodexTicket{HarvestSessionID: session})
 		if err != nil {
@@ -243,7 +243,7 @@ func (s *OpenAIGatewayService) applyCodexAccountIdentityOrHarvestPinRaw(ctx cont
 		}
 		return next, nil
 	}
-	next, _, err := applyCodexAccountIdentityClientMetadataRaw(body, identityAccount, apiKeyID)
+	next, _, err := applyCodexAccountIdentityClientMetadataRaw(body, identityAccount, apiKeyID, clientSessionID)
 	if err != nil {
 		return body, err
 	}

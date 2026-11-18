@@ -48,8 +48,29 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableByGroupID(ctx context.Con
 	return append([]Account(nil), r.accounts...), nil
 }
 
-func (r schedulerTestOpenAIAccountRepo) ListModelAvailabilityCandidates(ctx context.Context, groupID *int64, _ []string, _ bool) ([]Account, error) {
-	return r.ListSchedulableByGroupID(ctx, *groupID)
+func listSchedulerTestCandidatesByPlatform(ctx context.Context, repo AccountRepository, groupID *int64, platforms []string, includeGrouped bool) ([]Account, error) {
+	var candidates []Account
+	for _, platform := range platforms {
+		var accounts []Account
+		var err error
+		switch {
+		case groupID != nil:
+			accounts, err = repo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, platform)
+		case includeGrouped:
+			accounts, err = repo.ListSchedulableByPlatform(ctx, platform)
+		default:
+			accounts, err = repo.ListSchedulableUngroupedByPlatform(ctx, platform)
+		}
+		if err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, accounts...)
+	}
+	return candidates, nil
+}
+
+func (r schedulerTestOpenAIAccountRepo) ListModelAvailabilityCandidates(ctx context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]Account, error) {
+	return listSchedulerTestCandidatesByPlatform(ctx, r, groupID, platforms, includeGrouped)
 }
 
 func (r schedulerTestOpenAIAccountRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]Account, error) {
@@ -68,6 +89,10 @@ func (r schedulerTestOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx c
 
 type schedulerGroupAwareOpenAIAccountRepo struct {
 	schedulerTestOpenAIAccountRepo
+}
+
+func (r schedulerGroupAwareOpenAIAccountRepo) ListModelAvailabilityCandidates(ctx context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]Account, error) {
+	return listSchedulerTestCandidatesByPlatform(ctx, r, groupID, platforms, includeGrouped)
 }
 
 func (r schedulerGroupAwareOpenAIAccountRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
