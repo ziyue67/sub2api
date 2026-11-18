@@ -2,10 +2,10 @@
 """Close API/layout dependencies of pinned selective historical RED overlays.
 
 The selected regression fixtures and behavioral validators stay byte-identical.
-Only a new optional config argument, an unrelated archive layout field, an
-otherwise unreturned lane enum value, and the candidate image-limit helper are
-supplied. Each adaptation is reversible
-back to the exact historical blob and is recorded in the artifact manifest.
+API dependencies are supplied through explicit arguments, unrelated layout
+fields and candidate helpers. The handler's three HTTP body-read call sites
+are adapted separately; selected WebSocket methods remain byte-identical.
+Every adaptation reverses to the exact historical blob and is recorded.
 """
 import argparse
 import hashlib
@@ -37,6 +37,31 @@ def git(root, *args):
 
 def blob(data):
     return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+
+
+def definition(source, anchor):
+    if source.count(anchor) != 1:
+        raise ValueError("missing or ambiguous candidate declaration: " + anchor.decode())
+    start = source.index(anchor)
+    return source[start:source.index(b"\n}\n", start) + 3]
+
+
+HTTP_IMPORT = b'\tpkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"\n'
+HTTP_CALLS = (
+    (b"middleware2.RejectRequestBodyReadError(c, err)",
+     b'middleware2.RejectRequestBodyReadError(c, "handler.openai_gateway", err)', 2),
+    (b"logRequestBodyReadFailure(reqLog, c.Request, err)",
+     b"logRequestBodyReadFailure(reqLog, pkghttputil.DescribeRequestBodyReadFailure(c.Request, err))", 1),
+)
+HANDLER_HELPERS = (
+    b"func shouldRecordCyberPolicyFallbackUsage(",
+    b"func openAISlotAcquireResultForVeto(",
+    b"func (h *OpenAIGatewayHandler) handleForwardRequestBodyMemoryOverload(",
+)
+
+
+def handler_suffix(candidate):
+    return LANE_VALUE + b"".join(b"\n" + definition(candidate, anchor) for anchor in HANDLER_HELPERS)
 
 
 def adapt(target, baseline, historical, candidate):
@@ -72,10 +97,36 @@ def adapt(target, baseline, historical, candidate):
         raise ValueError("unexpected historical handler layout")
     if candidate.count(ARCHIVE_FIELD) != 1 or b"\topenAISlotAcquireLaneUnavailable\n" not in candidate:
         raise ValueError("candidate archive/lane contract changed")
-    result = historical.replace(anchor, anchor + ARCHIVE_FIELD, 1) + LANE_VALUE
-    if result.removesuffix(LANE_VALUE).replace(ARCHIVE_FIELD, b"", 1) != historical:
-        raise ValueError("handler compatibility changed historical methods")
-    return result, ["archive pointer layout for unrelated image-history callers", "unreturned lane enum value for unrelated media callers"]
+    if HTTP_IMPORT in historical or candidate.count(HTTP_IMPORT) != 1:
+        raise ValueError("unexpected historical HTTP utility import")
+    if any(anchor in historical for anchor in HANDLER_HELPERS):
+        raise ValueError("historical handler already defines candidate-only helpers")
+    result = historical.replace(anchor, anchor + ARCHIVE_FIELD, 1)
+    result = result.replace(b"import (\n", b"import (\n" + HTTP_IMPORT, 1)
+    changes = ["archive pointer layout for unrelated image-history callers",
+               "unreturned lane enum value for unrelated media callers"]
+    for old, new, count in HTTP_CALLS:
+        if historical.count(old) != count or new in historical:
+            raise ValueError("unexpected historical HTTP body-read caller")
+        result = result.replace(old, new)
+        changes.append("HTTP body-read API adapter outside selected WebSocket methods: " + new.decode())
+    suffix = handler_suffix(candidate)
+    result += suffix
+    changes.extend("append unchanged candidate helper for unrelated callers: " + declaration.decode()
+                   for declaration in HANDLER_HELPERS)
+    restored = result.removesuffix(suffix).replace(ARCHIVE_FIELD, b"", 1).replace(HTTP_IMPORT, b"", 1)
+    for old, new, count in HTTP_CALLS:
+        restored = restored.replace(new, old, count)
+    if restored != historical:
+        raise ValueError("handler compatibility failed exact historical source roundtrip")
+    # The selected ingress entry point and reporting predicates must remain the
+    # literal old implementation, independently of the reversible HTTP adapters.
+    for selected in (b"func (h *OpenAIGatewayHandler) ResponsesWebSocket(",
+                     b"func shouldReportOpenAIWSProxyAccountFailure(",
+                     b"func openAIWSIngressEndedByClient("):
+        if definition(result, selected) != definition(historical, selected):
+            raise ValueError("selected historical WebSocket method changed")
+    return result, changes
 
 
 def prepare(baseline, tree, candidate, target, fixtures):
@@ -98,11 +149,27 @@ def prepare(baseline, tree, candidate, target, fixtures):
     if target == BRIDGE and (root / contract).read_bytes() != expected_contract:
         raise ValueError("candidate factory implementation changed")
     result, changes = adapt(target, baseline, historical, expected_contract)
+    unrelated = {}
+    if target == HANDLER:
+        # Go compiles every package fixture even when only attribution tests
+        # run. This independent queue fixture calls the old admission arity.
+        path = "backend/internal/handler/openai_ws_key_queue_test.go"
+        if path in fixtures:
+            raise ValueError("cannot replace a selected candidate oracle")
+        expected_fixture = git(root, "show", candidate + ":" + path)
+        if (root / path).read_bytes() != expected_fixture:
+            raise ValueError("unrelated candidate fixture is dirty: " + path)
+        prior_fixture = git(root, "show", baseline + ":" + path)
+        unrelated[path] = {"candidate_blob": blob(expected_fixture),
+                           "historical_blob": blob(prior_fixture)}
     (root / target).write_bytes(result)
+    if unrelated:
+        (root / path).write_bytes(prior_fixture)
     return {"baseline": baseline, "candidate": candidate, "path": target,
             "historical_blob": blob(historical), "adapted_blob": blob(result),
             "candidate_contract_blob": blob(expected_contract),
-            "adaptations": changes, "selected_candidate_oracles": fixture_blobs}
+            "adaptations": changes, "selected_candidate_oracles": fixture_blobs,
+            "unrelated_fixture_overlays": unrelated}
 
 
 if __name__ == "__main__":

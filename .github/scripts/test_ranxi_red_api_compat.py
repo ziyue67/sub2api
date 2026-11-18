@@ -24,14 +24,30 @@ class RanxiAPICompatibilityTest(unittest.TestCase):
                 self.assertEqual(1, adapted.count(COMPAT.NEW_CALL))
                 self.assertEqual(1, len(changes))
 
-    def test_handler_methods_stay_byte_identical(self):
+    def test_handler_http_adapters_are_reversible_and_websocket_methods_unchanged(self):
         baseline = COMPAT.HANDLER_BASELINE
         historical = COMPAT.git(ROOT, "show", baseline + ":" + COMPAT.HANDLER)
         candidate = COMPAT.git(ROOT, "show", "HEAD:" + COMPAT.HANDLER)
         adapted, changes = COMPAT.adapt(COMPAT.HANDLER, baseline, historical, candidate)
-        restored = adapted.removesuffix(COMPAT.LANE_VALUE).replace(COMPAT.ARCHIVE_FIELD, b"", 1)
+        restored = adapted.removesuffix(COMPAT.handler_suffix(candidate))
+        restored = restored.replace(COMPAT.ARCHIVE_FIELD, b"", 1).replace(COMPAT.HTTP_IMPORT, b"", 1)
+        for old, new, count in COMPAT.HTTP_CALLS:
+            self.assertEqual(count, adapted.count(new))
+            restored = restored.replace(new, old, count)
         self.assertEqual(historical, restored)
-        self.assertEqual(2, len(changes))
+        for anchor in (b"func (h *OpenAIGatewayHandler) ResponsesWebSocket(",
+                       b"func shouldReportOpenAIWSProxyAccountFailure(",
+                       b"func openAIWSIngressEndedByClient("):
+            self.assertEqual(COMPAT.definition(historical, anchor), COMPAT.definition(adapted, anchor))
+        for anchor in COMPAT.HANDLER_HELPERS:
+            self.assertNotIn(anchor, historical)
+            self.assertEqual(COMPAT.definition(candidate, anchor), COMPAT.definition(adapted, anchor))
+        self.assertTrue(any("HTTP body-read" in change for change in changes))
+        with self.assertRaises(ValueError):
+            COMPAT.adapt(COMPAT.HANDLER, baseline, historical, candidate.replace(COMPAT.HTTP_IMPORT, b""))
+        old, new, _ = COMPAT.HTTP_CALLS[0]
+        with self.assertRaises(ValueError):
+            COMPAT.adapt(COMPAT.HANDLER, baseline, historical.replace(old, new, 1), candidate)
 
     def test_images_append_only_the_unchanged_candidate_limit_helper(self):
         historical = COMPAT.git(ROOT, "show", COMPAT.IMAGES_BASELINE + ":" + COMPAT.IMAGES)
@@ -76,6 +92,30 @@ class RanxiAPICompatibilityTest(unittest.TestCase):
         self.assertEqual(fixture, (tree / FIXTURE).read_bytes())
         self.assertEqual(COMPAT.blob(fixture), result["selected_candidate_oracles"][FIXTURE])
         self.assertEqual(COMPAT.blob((tree / COMPAT.BRIDGE).read_bytes()), result["adapted_blob"])
+
+    def test_handler_records_exact_independent_queue_fixture_and_rejects_dirty_copy(self):
+        queue = "backend/internal/handler/openai_ws_key_queue_test.go"
+        for dirty in (False, True):
+            with self.subTest(dirty=dirty):
+                tree, _, candidate = self.make_checkout()
+                baseline = COMPAT.HANDLER_BASELINE
+                for path, revision in ((COMPAT.HANDLER, baseline), (queue, candidate)):
+                    target = tree / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(COMPAT.git(tree, "show", revision + ":" + path))
+                before = (tree / COMPAT.HANDLER).read_bytes()
+                if dirty:
+                    (tree / queue).write_bytes((tree / queue).read_bytes() + b"\n// dirty\n")
+                    with self.assertRaises(ValueError):
+                        COMPAT.prepare(baseline, tree, candidate, COMPAT.HANDLER, [FIXTURE])
+                    self.assertEqual(before, (tree / COMPAT.HANDLER).read_bytes())
+                else:
+                    fixture_before = (tree / FIXTURE).read_bytes()
+                    result = COMPAT.prepare(baseline, tree, candidate, COMPAT.HANDLER, [FIXTURE])
+                    prior = COMPAT.git(tree, "show", baseline + ":" + queue)
+                    self.assertEqual(prior, (tree / queue).read_bytes())
+                    self.assertEqual(COMPAT.blob(prior), result["unrelated_fixture_overlays"][queue]["historical_blob"])
+                    self.assertEqual(fixture_before, (tree / FIXTURE).read_bytes())
 
     def test_dirty_source_factory_or_fixture_fails_before_writing(self):
         for path in [COMPAT.BRIDGE, FACTORY, FIXTURE]:
