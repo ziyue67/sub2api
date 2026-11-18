@@ -58,6 +58,9 @@ jobs:
             if git cat-file -e "$baseline:$target" 2>/dev/null; then
               mkdir -p "$(dirname "$target")"
               git show "$baseline:$target" > "$target"
+              # A file removed by the candidate is untracked after restoration.
+              # Include it in the baseline diff without staging different content.
+              git add -N -- "$target"
               expected=$(git rev-parse "$baseline:$target")
               actual=$(git hash-object "$target")
               echo "$target baseline=present expected=$expected actual=$actual" >> "$RUNNER_TEMP/issue805-evidence/red-blobs.txt"
@@ -98,6 +101,7 @@ jobs:
           # fixture absent from this baseline; do not remove it a second time.
           bash "$GITHUB_WORKSPACE/.github/scripts/prepare-replay-red-fixtures.sh" "$baseline" . "$EXPECTED_HEAD_SHA" | tee "$RUNNER_TEMP/issue805-evidence/replay-fixtures.txt"
           bash "$GITHUB_WORKSPACE/.github/scripts/prepare-moderation-red-fixtures.sh" "$baseline" . "$EXPECTED_HEAD_SHA" | tee "$RUNNER_TEMP/issue805-evidence/moderation-fixtures.txt"
+          bash "$GITHUB_WORKSPACE/.github/scripts/prepare-usage-sort-red-fixture.sh" "$baseline" . "$EXPECTED_HEAD_SHA" | tee -a "$RUNNER_TEMP/issue805-evidence/red-blobs.txt"
           # The selected regression and its shared harness must remain exact
           # candidate blobs. The clean GREEN checkout retains all new tests.
           for target in backend/internal/handler/openai_issue805_delivery_test.go backend/internal/handler/openai_issue805_owner_policy_test.go backend/internal/handler/openai_issue805_ws_test.go backend/internal/handler/openai_issue715_recovery_test.go backend/internal/handler/openai_responses_failover_cancel_test.go; do

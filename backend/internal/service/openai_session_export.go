@@ -63,6 +63,7 @@ type OpenAISessionExportClaim struct {
 	LoginEmail     string `json:"login_email"`
 	Password       string `json:"password"`
 	TOTPSecret     string `json:"totp_secret"`
+	TOTPFactorID   string `json:"totp_factor_id,omitempty"`
 	ProxyURL       string `json:"proxy_url,omitempty"`
 	ExpectedUserID string `json:"expected_user_id,omitempty"`
 }
@@ -242,19 +243,31 @@ func (s *OpenAIOAuthReauthService) ClaimSessionExportTask(ctx context.Context, w
 				_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "password_unavailable")
 				return nil, nil
 			}
-			totpSecret, err := s.decryptReauthSecret(config.TOTPSecretCiphertext, "TOTP secret cannot be decrypted")
-			if err != nil || totpSecret == "" {
+			totpSecret, err := s.decryptTOTP(config.TOTPSecretCiphertext)
+			if err != nil || totpSecret.Secret == "" {
 				_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "totp_unavailable")
 				return nil, nil
 			}
-			proxyURL, err := s.reauthProxyURL(ctx, account.ProxyID)
+			var proxyURL string
+			if account.OpenAIRequestProxyEnabled() {
+				// The worker receives one fixed exit for its whole login flow.
+				// Explicit alternate sources cannot escape the selected account group.
+				source, sourceErr := normalizeReauthProxySource(config.ProxySource, config.ProxyID)
+				if sourceErr != nil || source != OpenAIOAuthReauthProxySourceAccount {
+					_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "proxy_unavailable")
+					return nil, nil
+				}
+				proxyURL, err = resolveOpenAIMaintenanceProxy(ctx, account, s.oauth.proxyRepo)
+			} else {
+				proxyURL, err = s.reauthProxyURL(ctx, account.ProxyID)
+			}
 			if err != nil {
 				_ = s.sessionExportRepo.FinishSessionExportTask(ctx, record.ID, workerID, OpenAISessionExportStatusFailed, "proxy_unavailable")
 				return nil, nil
 			}
 			expectedUserID := strings.TrimSpace(account.GetCredential("chatgpt_user_id"))
 			s.workerLastSeen.Store(time.Now().UnixNano())
-			return &OpenAISessionExportClaim{Operation: OpenAISessionExportOperation, TaskID: record.ID, AccountID: record.AccountID, LoginEmail: config.LoginEmail, Password: password, TOTPSecret: totpSecret, ProxyURL: proxyURL, ExpectedUserID: expectedUserID}, nil
+			return &OpenAISessionExportClaim{Operation: OpenAISessionExportOperation, TaskID: record.ID, AccountID: record.AccountID, LoginEmail: config.LoginEmail, Password: password, TOTPSecret: totpSecret.Secret, TOTPFactorID: totpSecret.FactorID, ProxyURL: proxyURL, ExpectedUserID: expectedUserID}, nil
 		}
 	}
 	return nil, nil

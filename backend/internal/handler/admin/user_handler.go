@@ -25,6 +25,8 @@ type UserWithConcurrency struct {
 	dto.AdminUser
 	AutoCreditOutstanding string `json:"auto_credit_outstanding"`
 	CurrentConcurrency    int    `json:"current_concurrency"`
+	ConcurrencyAvailable  bool   `json:"concurrency_available"`
+	CurrentRPM            *int   `json:"current_rpm"`
 }
 
 // UserHandler handles admin user management
@@ -189,7 +191,11 @@ func (h *UserHandler) List(c *gin.Context) {
 				MaxConcurrency: users[i].Concurrency,
 			}
 		}
-		loadInfo, _ = h.concurrencyService.GetUsersLoadBatch(c.Request.Context(), usersConcurrency)
+		var loadErr error
+		loadInfo, loadErr = h.concurrencyService.GetUsersLoadBatch(c.Request.Context(), usersConcurrency)
+		if loadErr != nil {
+			loadInfo = nil // Discard partial results: an error is not a measured zero.
+		}
 	}
 
 	// Build response with concurrency info
@@ -210,9 +216,11 @@ func (h *UserHandler) List(c *gin.Context) {
 		out[i] = UserWithConcurrency{
 			AdminUser:             *dto.UserFromServiceAdmin(&users[i]),
 			AutoCreditOutstanding: debt[users[i].ID],
+			CurrentRPM:            users[i].CurrentRPM,
 		}
 		if info := loadInfo[users[i].ID]; info != nil {
 			out[i].CurrentConcurrency = info.CurrentConcurrency
+			out[i].ConcurrencyAvailable = true
 		}
 	}
 

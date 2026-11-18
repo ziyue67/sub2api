@@ -225,6 +225,7 @@
             />
             <span class="text-sm">
               {{ t('admin.accounts.openai.passthroughModelFilter') }}
+            <NewFeatureBadge v-if="authStore.user?.id != null" :notice-id="NEW_FEATURE_NOTICES.passthroughModelFilter" :user-id="authStore.user?.id" />
               <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.openai.passthroughModelFilterDesc') }}
               </span>
@@ -438,12 +439,20 @@
           <input
             v-model="enableModelRestriction"
             id="bulk-edit-model-restriction-enabled"
+            :disabled="syncBusy"
             type="checkbox"
             aria-controls="bulk-edit-model-restriction-body"
             class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
           />
         </div>
 
+        <BatchUpstreamWhitelist
+          v-if="syncAdminId != null"
+          v-show="syncBusy || syncRows.length > 0 || (modelRestrictionMode === 'whitelist' && !isOpenAIModelRestrictionDisabled)"
+          :rows="syncRows" :busy="syncBusy" :valid="syncValid" :user-id="syncAdminId"
+          :disabled="bulkUpdateBusy || showBulkUpdateConfirm || showMixedChannelWarning"
+          @run="startWhitelistSync" @stop="stopSync"
+        />
         <div
           id="bulk-edit-model-restriction-body"
           :class="!enableModelRestriction && 'pointer-events-none opacity-50'"
@@ -1628,6 +1637,10 @@
 </template>
 
 <script setup lang="ts">
+import { useBatchUpstreamWhitelist } from '@/composables/useBatchUpstreamWhitelist'
+import BatchUpstreamWhitelist from './BatchUpstreamWhitelist.vue'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier } from '@/utils/accountCost'
 
 import { ref, watch, computed } from 'vue'
@@ -1693,6 +1706,7 @@ import type { OpenAIWSMode } from '@/utils/openaiWsMode'
 interface Props {
   show: boolean
   accountIds: number[]
+  filteredPreview?: boolean
   selectedPlatforms: AccountPlatform[]
   selectedTypes: AccountType[]
   target?: {
@@ -1711,6 +1725,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   close: []
   updated: []
+  whitelistsSaved: []
 }>()
 
 const { t } = useI18n()
@@ -1723,6 +1738,19 @@ const targetMode = computed(() => props.target?.mode ?? 'selected')
 const targetAccountIds = computed(() => props.target?.mode === 'selected'
   ? props.target.accountIds ?? props.accountIds
   : props.accountIds)
+const syncAdminId = computed(() => props.show && authStore.isAdmin && targetMode.value === 'selected' && !props.filteredPreview
+  ? authStore.user?.id ?? null : null)
+const { rows: syncRows, busy: syncBusy, valid: syncValid, run: runSync, stop: stopSync, leave: leaveSync } = useBatchUpstreamWhitelist(
+  () => syncAdminId.value,
+  () => props.target ? props.target.accountIds ?? [] : props.accountIds,
+  () => emit('whitelistsSaved')
+)
+function startWhitelistSync(retry: boolean) {
+  if (bulkUpdateBusy.value || showBulkUpdateConfirm.value || showMixedChannelWarning.value || !syncValid.value || syncAdminId.value == null) return
+  // A subsequent form submit must not overwrite individual results with the shared draft.
+  enableModelRestriction.value = false
+  void runSync(retry)
+}
 const targetPreviewCount = computed(() => props.target?.previewCount ?? props.accountIds.length)
 const bulkUpdateTargetCount = computed(() =>
   targetMode.value === 'filtered' ? targetPreviewCount.value : props.accountIds.length
@@ -1873,7 +1901,9 @@ const submitting = ref(false)
 const showBulkUpdateConfirm = ref(false)
 const pendingBulkUpdatePayload = ref<Record<string, unknown> | null>(null)
 const confirmingBulkUpdate = ref(false)
-const bulkUpdateBusy = computed(() => submitting.value || confirmingBulkUpdate.value)
+const bulkUpdateBusy = computed(() => submitting.value || confirmingBulkUpdate.value || checkingSubmit.value || syncBusy.value)
+const checkingSubmit = ref(false)
+let dialogGeneration = 0
 const showMixedChannelWarning = ref(false)
 const mixedChannelWarningMessage = ref('')
 const pendingUpdatesForConfirm = ref<Record<string, unknown> | null>(null)
@@ -2451,6 +2481,8 @@ const handleClose = () => {
   showBulkUpdateConfirm.value = false
   pendingBulkUpdatePayload.value = null
   confirmingBulkUpdate.value = false
+  dialogGeneration++
+  leaveSync()
   showMixedChannelWarning.value = false
   mixedChannelWarningMessage.value = ''
   pendingUpdatesForConfirm.value = null
@@ -2462,12 +2494,14 @@ const handleClose = () => {
 const preCheckMixedChannelRisk = async (built: Record<string, unknown>): Promise<boolean> => {
   if (!canPreCheck()) return true
   if (mixedChannelConfirmed.value) return true
+  const generation = dialogGeneration
 
   try {
     const result = await adminAPI.accounts.checkMixedChannelRisk({
       platform: targetSelectedPlatforms.value[0],
       group_ids: groupIds.value
     })
+    if (generation !== dialogGeneration || !props.show) return false
     if (!result.has_risk) return true
 
     pendingUpdatesForConfirm.value = built
@@ -2475,6 +2509,7 @@ const preCheckMixedChannelRisk = async (built: Record<string, unknown>): Promise
     showMixedChannelWarning.value = true
     return false
   } catch (error: any) {
+    if (generation !== dialogGeneration || !props.show) return false
     appStore.showError(error.message || t('admin.accounts.bulkEdit.failed'))
     return false
   }
@@ -2483,8 +2518,7 @@ const preCheckMixedChannelRisk = async (built: Record<string, unknown>): Promise
 // 本 Fork 保留了「提交前二次确认」流程（handleBulkUpdateConfirm），ranxi 侧为直接提交；
 // 这里同时保留两侧语义：确认弹窗的并发闸门 + 默认值加载中禁止提交。
 const handleSubmit = async () => {
-  if (submitting.value || confirmingBulkUpdate.value || showBulkUpdateConfirm.value) return
-  if (bpsDefaults.loading.value) return
+  if (bpsDefaults.loading.value || bulkUpdateBusy.value || showBulkUpdateConfirm.value || showMixedChannelWarning.value) return
   if (targetMode.value === 'selected' && targetAccountIds.value.length === 0) {
     appStore.showError(t('admin.accounts.bulkEdit.noSelection'))
     return
@@ -2582,7 +2616,7 @@ const handleSubmit = async () => {
 }
 
 const handleBulkUpdateConfirm = async () => {
-  if (confirmingBulkUpdate.value || submitting.value) return
+  if (bulkUpdateBusy.value) return
 
   const built = pendingBulkUpdatePayload.value
   showBulkUpdateConfirm.value = false
@@ -2590,12 +2624,15 @@ const handleBulkUpdateConfirm = async () => {
   if (!built) return
 
   confirmingBulkUpdate.value = true
+  checkingSubmit.value = true
+  const generation = dialogGeneration
   try {
     const canContinue = await preCheckMixedChannelRisk(built)
-    if (!canContinue) return
+    if (!canContinue || !props.show || generation !== dialogGeneration) return
 
     await submitBulkUpdate(built)
   } finally {
+    checkingSubmit.value = false
     confirmingBulkUpdate.value = false
   }
 }
@@ -2685,6 +2722,7 @@ const handleMixedChannelCancel = () => {
 watch(
   () => props.show,
   (newShow) => {
+    dialogGeneration++
     if (!newShow) {
       // Reset all enable flags
       enableBaseUrl.value = false

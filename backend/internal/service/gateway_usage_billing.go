@@ -238,7 +238,7 @@ func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string)
 	}
 	if ctx != nil {
 		if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
-			return "client:" + strings.TrimSpace(clientRequestID)
+			return ClientUsageRequestID(clientRequestID)
 		}
 		if requestID, _ := ctx.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 			return "local:" + strings.TrimSpace(requestID)
@@ -291,7 +291,7 @@ func resolveUsageBillingPayloadFingerprint(ctx context.Context, requestPayloadHa
 	}
 	if ctx != nil {
 		if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
-			return "client:" + strings.TrimSpace(clientRequestID)
+			return ClientUsageRequestID(clientRequestID)
 		}
 		if requestID, _ := ctx.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 			return "local:" + strings.TrimSpace(requestID)
@@ -861,6 +861,13 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	if overrideTarget, ok := s.resolveCacheTTLUsageOverrideTarget(ctx, account); ok {
 		applyCacheTTLOverride(&result.Usage, overrideTarget)
 		cacheTTLOverridden = (result.Usage.CacheCreation5mTokens + result.Usage.CacheCreation1hTokens) > 0
+	} else if account.IsCacheTTLBillingFromRequestEnabled() {
+		// 上游强制改写 TTL 时，按客户端请求的档位计费；未显式请求 1h 一律按 5m。
+		requestedTTL := result.RequestedCacheTTL
+		if requestedTTL != cacheTTLTarget1h {
+			requestedTTL = cacheTTLTarget5m
+		}
+		cacheTTLOverridden = reclassifyCacheCreationByRequestedTTL(&result.Usage, requestedTTL)
 	}
 
 	// Keep candidate fallback, response-model selection and Free Fast on one policy snapshot.

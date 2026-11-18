@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -139,6 +140,13 @@ func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedul
 func (r *accountRepository) Create(ctx context.Context, account *service.Account) error {
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.Create(ctx, account)
+	}
+	if account != nil && account.InitialAPIKeyDisposition != nil {
+		groups := make([]service.AccountGroup, 0, len(account.GroupIDs))
+		for _, id := range account.GroupIDs {
+			groups = append(groups, service.AccountGroup{GroupID: id, Priority: 50})
+		}
+		return r.CreateWithAccountGroups(ctx, account, groups)
 	}
 	client := r.client
 	var tx *dbent.Tx
@@ -309,6 +317,9 @@ func createAccountRecord(ctx context.Context, client *dbent.Client, account *ser
 // CreateWithAccountGroups atomically persists an account, its exact per-group priorities,
 // and the scheduler outbox event used to publish the new routing snapshot.
 func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account *service.Account, groups []service.AccountGroup) error {
+	if scoped := r.accountTransactionScope(ctx); scoped != r {
+		return scoped.CreateWithAccountGroups(ctx, account, groups)
+	}
 	if account == nil {
 		return service.ErrAccountNilInput
 	}
@@ -351,6 +362,11 @@ func (r *accountRepository) CreateWithAccountGroups(ctx context.Context, account
 			builders = append(builders, builder)
 		}
 		if _, err := txClient.AccountGroup.CreateBulk(builders...).Save(ctx); err != nil {
+			return err
+		}
+	}
+	if policy := account.InitialAPIKeyDisposition; policy != nil && policy.Enabled && account.Type == service.AccountTypeOAuth {
+		if err := accounttimer.ScheduleOAuthDisposition(ctx, txClient, account.ID, account.Platform, *policy, time.Now().UTC()); err != nil {
 			return err
 		}
 	}
@@ -1092,6 +1108,18 @@ func lockAndMergeAccountProbeExtra(
 		}
 	}
 
+	if service.AccountPlatformChanging(ctx) {
+		// Quota accounting is account-wide and uses the latest locked row. Other
+		// old-platform runtime state must not be reintroduced by owner merges.
+		portable := service.AccountPlatformPortableExtra(currentExtra)
+		maps.Copy(portable, account.Extra)
+		for _, key := range []string{"quota_used", "quota_daily_used", "quota_daily_start", "quota_weekly_used", "quota_weekly_start"} {
+			if value, ok := currentExtra[key]; ok {
+				portable[key] = value
+			}
+		}
+		extra = portable
+	}
 	return extra, nil
 }
 
@@ -3189,49 +3217,6 @@ func (r *accountRepository) ClearModelRateLimits(ctx context.Context, id int64) 
 	}
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue clear model rate limit failed: account=%d err=%v", id, err)
-	}
-	r.syncSchedulerAccountSnapshot(ctx, id)
-	return nil
-}
-
-// ClearModelRateLimit 删除 model_rate_limits 中指定的单个 scope。
-// 与 ClearModelRateLimits 的全量清除不同，这里只解封一个模型窗口，
-// 不会把其他模型或并发新写入的限流一起抹掉。
-func (r *accountRepository) ClearModelRateLimit(ctx context.Context, id int64, scope string) error {
-	if strings.TrimSpace(scope) == "" {
-		return nil
-	}
-	if scoped := r.accountTransactionScope(ctx); scoped != r {
-		return scoped.ClearModelRateLimit(ctx, id, scope)
-	}
-	client := clientFromContext(ctx, r.client)
-	result, err := client.ExecContext(
-		ctx,
-		`UPDATE accounts SET
-			extra = jsonb_set(
-				COALESCE(extra, '{}'::jsonb),
-				'{model_rate_limits}'::text[],
-				COALESCE(extra->'model_rate_limits', '{}'::jsonb) - $1::text,
-				true
-			),
-			updated_at = NOW()
-		WHERE id = $2 AND deleted_at IS NULL`,
-		strings.TrimSpace(scope),
-		id,
-	)
-	if err != nil {
-		return err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		return service.ErrAccountNotFound
-	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue clear model rate limit scope failed: account=%d err=%v", id, err)
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
 	return nil

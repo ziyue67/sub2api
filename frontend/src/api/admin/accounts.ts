@@ -534,9 +534,9 @@ export async function resetTempUnschedulable(id: number): Promise<{ message: str
  */
 export async function generateAuthUrl(
   endpoint: string,
-  config: { proxy_id?: number }
-): Promise<{ auth_url: string; session_id: string }> {
-  const { data } = await apiClient.post<{ auth_url: string; session_id: string }>(endpoint, config)
+  config: { proxy_id?: number; proxy_mode?: 'single' | 'request'; proxy_ids?: number[] }
+): Promise<{ auth_url: string; session_id: string; proxy_mode?: 'single' | 'request'; proxy_id?: number }> {
+  const { data } = await apiClient.post<{ auth_url: string; session_id: string; proxy_mode?: 'single' | 'request'; proxy_id?: number }>(endpoint, config)
   return data
 }
 
@@ -548,7 +548,7 @@ export async function generateAuthUrl(
  */
 export async function exchangeCode(
   endpoint: string,
-  exchangeData: { session_id: string; code: string; state?: string; proxy_id?: number }
+  exchangeData: { session_id: string; code: string; state?: string; proxy_id?: number; proxy_mode?: 'single' | 'request'; proxy_ids?: number[] }
 ): Promise<Record<string, unknown>> {
   const { data } = await apiClient.post<Record<string, unknown>>(endpoint, exchangeData)
   return data
@@ -702,6 +702,7 @@ export interface SyncUpstreamModelsResult {
 }
 
 export interface SyncUpstreamModelsOptions {
+  whitelist_only?: boolean
   apply?: boolean
   automatic?: boolean
 }
@@ -732,7 +733,7 @@ export interface UpstreamModelMetadata {
 export async function syncUpstreamModels(
   id: number,
   options?: SyncUpstreamModelsOptions,
-  request?: { signal?: AbortSignal }
+  request?: { signal?: AbortSignal; timeout?: number }
 ): Promise<SyncUpstreamModelsResult> {
   const { data } = await apiClient.post<SyncUpstreamModelsResult>(`/admin/accounts/${id}/models/sync-upstream`, options, request)
   return data

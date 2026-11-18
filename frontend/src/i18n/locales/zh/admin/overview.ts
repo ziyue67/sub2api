@@ -568,7 +568,11 @@ export default {
       passwordCopied: '密码已复制',
       creating: '创建中...',
       updating: '更新中...',
+      liveUsageHint: '每分钟刷新当前页。并发为当前占用／上限；RPM 为现有用户级限流计数／上限，每个自然分钟重置，可能包含被限流请求。上限为 0 表示不限额（∞），仍记录使用量；不包含在分组检查阶段被拒绝的请求。',
+      liveConcurrency: '并发',
+      liveUsageUnavailable: '暂不可用',
       columns: {
+        liveUsage: '并发 / RPM',
         user: '用户',
         id: 'ID',
         email: '邮箱',
@@ -1342,8 +1346,10 @@ export default {
         force: '强制使用 Fast（priority）',
         hint: '开启后，此分组的 OpenAI 请求会强制写入 service_tier=priority；全局 Fast/Flex 策略仍可过滤或拦截。保存后新请求立即生效，已建立的 WebSocket 会话需重连。',
         forceUltrafast: '强制使用 Ultra Fast（ultrafast）',
-        ultrafastHint: '对支持的模型强制使用 Ultra Fast。GPT-6.2 订阅档位按套餐补全：Pro 200 支持 Sol，Pro 500 支持 Sol 和 Astra；其他账号使用其目录明确提供的档位。不可用时，若同时开启强制 Fast 则使用 Fast，否则跟随客户端。6.2 Sol 和 Astra 在太平洋时间 2027 年 2 月 28 日及之前按标准价 3 倍计费，之后为 6 倍。GPT-6 Astra 和 GPT-6.1 Sol 为 6 倍。免费 Fast 不包含 Ultra Fast。',
+        ultrafastHint: '对支持的模型强制设置 service_tier=ultrafast。GPT-6.2 订阅档位按套餐补全：Pro 200 支持 Sol，Pro 500 支持 Sol 和 Astra；其他账号使用其目录明确提供的档位。不可用时，若同时开启强制 Fast 则使用 Fast，否则跟随客户端。6.2 Sol 和 Astra 在太平洋时间 2027 年 2 月 28 日及之前按标准价 3 倍计费，之后为 6 倍。GPT-6 Astra 和 GPT-6.1 Sol 为 6 倍。免费 Fast 不包含 Ultra Fast。渠道可单独设置 Ultra Fast 倍率，免费 UltraFast 由独立开关控制。',
         free: '免费 Fast',
+        freeUltrafast: '免费 UltraFast',
+        freeUltrafastHint: '开启后，最终按 ultrafast 档位结算的请求向用户按 Standard 价格计费（含缓存读写）。独立于免费 Fast；不强制上游使用 UltraFast，账号成本统计仍保留实际档位。',
         freeHint: '该分组的 Fast 请求仍使用 priority 档位，但客户实际费用按同一请求的 Standard 价格计算。'
       },
       invalidRequestFallback: {

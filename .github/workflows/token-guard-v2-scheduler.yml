@@ -11,6 +11,7 @@ on:
       - 'frontend/src/views/admin/ops/__tests__/TokenGuardV2View.spec.ts'
       - '.github/scripts/token-guard-v2-browser.mjs'
       - '.github/workflows/token-guard-v2-scheduler.yml'
+      - '.github/scripts/install-ci-cjk-fonts.sh'
 
 permissions:
   contents: read
@@ -51,8 +52,8 @@ jobs:
 
   browser:
     name: Actual credential operations UI / synthetic APIs
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -71,7 +72,7 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/token-guard-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/token-guard-browser/node_modules/.bin/playwright" install --with-deps chromium
-          sudo apt-get install -y fonts-noto-cjk
+          bash .github/scripts/install-ci-cjk-fonts.sh
       - name: Real page before and after, readback and desktop/mobile screenshots
         env:
           CI: 'true'

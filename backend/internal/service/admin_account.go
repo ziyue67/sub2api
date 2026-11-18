@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/accounttimer"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -455,19 +456,20 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	delete(accountExtra, OpenCodeGoUsageSnapshotExtraKey)
 	accountExtra = prepareCodexFingerprintExtraForCreate(input.Platform, input.Type, accountExtra)
 	account := &Account{
-		InitialQualityPlan:   input.InitialQualityPlan,
-		InitialAdmissionPlan: input.InitialAdmissionPlan,
-		Name:                 input.Name,
-		Notes:                normalizeAccountNotes(input.Notes),
-		Platform:             input.Platform,
-		Type:                 input.Type,
-		Credentials:          input.Credentials,
-		Extra:                accountExtra,
-		ProxyID:              input.ProxyID,
-		Concurrency:          normalizeAccountConcurrency(input.Platform, input.Type, input.Concurrency),
-		Priority:             input.Priority,
-		Status:               StatusActive,
-		Schedulable:          input.InitialAdmissionPlan == nil,
+		InitialAPIKeyDisposition: input.InitialAPIKeyDisposition,
+		InitialQualityPlan:       input.InitialQualityPlan,
+		InitialAdmissionPlan:     input.InitialAdmissionPlan,
+		Name:                     input.Name,
+		Notes:                    normalizeAccountNotes(input.Notes),
+		Platform:                 input.Platform,
+		Type:                     input.Type,
+		Credentials:              input.Credentials,
+		Extra:                    accountExtra,
+		ProxyID:                  input.ProxyID,
+		Concurrency:              normalizeAccountConcurrency(input.Platform, input.Type, input.Concurrency),
+		Priority:                 input.Priority,
+		Status:                   StatusActive,
+		Schedulable:              input.InitialAdmissionPlan == nil,
 	}
 	if input.ProbeEnabled != nil && *input.ProbeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
@@ -585,13 +587,17 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	account.GroupIDs = append([]int64(nil), groupIDs...)
+	if err := s.validateExcelBPSProxySettings(ctx, account); err != nil {
+		return nil, err
+	}
 	if err := s.validateExcelBPS403GroupSettings(ctx, account); err != nil {
 		return nil, err
 	}
 	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
 	}
-	if account.InitialAdmissionPlan != nil && s.accountDuplicateRepo != nil {
+	if (account.InitialAdmissionPlan != nil || account.InitialAPIKeyDisposition != nil) && s.accountDuplicateRepo != nil {
 		// Publish the initially blocked account, its groups and both background
 		// plans atomically; the worker cannot race a partially bound import.
 		groups := make([]AccountGroup, 0, len(groupIDs))
@@ -605,7 +611,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 		if err := s.accountRepo.Create(ctx, account); err != nil {
 			return nil, err
 		}
-		if len(groupIDs) > 0 {
+		if len(groupIDs) > 0 && account.InitialAPIKeyDisposition == nil {
 			if err := s.accountRepo.BindGroups(ctx, account.ID, groupIDs); err != nil {
 				return nil, err
 			}
@@ -644,6 +650,11 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
+	if input.Platform != "" && s.entClient != nil && dbent.TxFromContext(ctx) == nil {
+		return s.scopedAdminTransaction(ctx, id, false, func(txctx context.Context) (*Account, error) {
+			return s.UpdateAccount(txctx, id, input)
+		})
+	}
 	// This DTO edits account settings, not the scheduling permission. Dedicated
 	// single/bulk switch APIs carry manual intent; an ordinary edit must neither
 	// overwrite a concurrently executed timer nor cancel plans via inherited intent.
@@ -661,9 +672,21 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
+	if err := prepareVertexAuthModeUpdate(account, input); err != nil {
+		return nil, err
+	}
+	if input.Platform != "" && input.Platform != account.Platform {
+		account, err = s.prepareAccountPlatformChange(ctx, account, input)
+		if err != nil {
+			return nil, err
+		}
+		ctx = WithAccountPlatformChange(ctx)
+	}
 	if (account.Platform == PlatformTypeSafe || account.Platform == PlatformMistral || account.Platform == PlatformQwen) && input.Type != "" && input.Type != AccountTypeAPIKey {
 		return nil, fmt.Errorf("%s accounts only support apikey credentials", account.Platform)
 	}
+	previousBPSProxySettings := *account
+	previousBPSProxySettings.Extra = maps.Clone(account.Extra)
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
 		normalizedExtra, err = normalizeOpenAILongContextBillingUpdateExtra(account, input)
@@ -821,6 +844,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 				normalizedExtra[key] = value
 			}
 		}
+		normalizedExtra = preserveExcelBPSProxyExtra(account.Extra, normalizedExtra)
 		normalizedExtra = MergeOpenAICodexTicketExtra(normalizedExtra, account.Extra)
 		normalizedExtra = prepareCodexFingerprintExtraForUpdate(account, normalizedExtra)
 		account.Extra = normalizedExtra
@@ -984,6 +1008,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 
+	if err := s.validateExcelBPSProxySettingsChange(ctx, &previousBPSProxySettings, account); err != nil {
+		return nil, err
+	}
 	if err := s.validateExcelBPS403GroupSettings(ctx, account); err != nil {
 		return nil, err
 	}
@@ -1066,6 +1093,15 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OAuthDegradationActionExtraKey)
 	if err := ValidateAccountCostMultiplierExtra(updates); err != nil {
 		return err
+	}
+	if hasExcelBPSProxyUpdates(updates) {
+		account, err := s.accountRepo.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.validateExcelBPSProxyUpdates(ctx, account, updates); err != nil {
+			return err
+		}
 	}
 	_, moveChanged := updates[ExcelBPSAutoMoveOn403Key]
 	_, targetChanged := updates[ExcelBPS403TargetGroupIDKey]
@@ -1198,7 +1234,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil || hasExcelBPSProxyUpdates(input.Extra) {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -1217,6 +1253,28 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			return nil, err
 		}
 		result.LongContextInheritedCount = inheritedCount
+	}
+	if hasExcelBPSProxyUpdates(input.Extra) || len(input.Credentials) > 0 {
+		for _, accountID := range input.AccountIDs {
+			account := targetsByID[accountID]
+			if account == nil {
+				return nil, ErrAccountNotFound
+			}
+			merged := *account
+			merged.Credentials = maps.Clone(account.Credentials)
+			if merged.Credentials == nil {
+				merged.Credentials = make(map[string]any)
+			}
+			maps.Copy(merged.Credentials, input.Credentials)
+			merged.Extra = maps.Clone(account.Extra)
+			if merged.Extra == nil {
+				merged.Extra = make(map[string]any)
+			}
+			maps.Copy(merged.Extra, input.Extra)
+			if err := s.validateExcelBPSProxySettingsChange(ctx, account, &merged); err != nil {
+				return nil, err
+			}
+		}
 	}
 	_, moveChanged := input.Extra[ExcelBPSAutoMoveOn403Key]
 	_, targetChanged := input.Extra[ExcelBPS403TargetGroupIDKey]

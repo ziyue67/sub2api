@@ -1599,6 +1599,8 @@ func (s *CRSSyncService) createSyncedAccount(ctx context.Context, a *Account) er
 		if err := s.autoConfigure(ctx, input); err != nil {
 			return err
 		}
+		a.InitialAPIKeyDisposition = input.InitialAPIKeyDisposition
+		a.GroupIDs = append([]int64(nil), input.GroupIDs...)
 		a.InitialQualityPlan = input.InitialQualityPlan
 		a.Priority = input.Priority
 		a.Concurrency = input.Concurrency
@@ -1610,7 +1612,7 @@ func (s *CRSSyncService) createSyncedAccount(ctx context.Context, a *Account) er
 	if err := s.accountRepo.Create(ctx, a); err != nil {
 		return err
 	}
-	if len(groups) > 0 {
+	if len(groups) > 0 && a.InitialAPIKeyDisposition == nil {
 		if err := s.accountRepo.BindGroups(ctx, a.ID, groups); err != nil {
 			return err
 		}

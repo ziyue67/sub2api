@@ -126,7 +126,7 @@
           :selection-label="(key: ApiKey) => t('keys.bulkEdit.selectKey', { name: key.name })"
           @update:selected-keys="handleSelectionChange"
           :server-side-sort="true"
-          default-sort-key="created_at"
+          default-sort-key="usage"
           default-sort-order="desc"
           @sort="handleSort"
         >
@@ -1317,7 +1317,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'key', label: t('keys.apiKey'), sortable: false },
   { key: 'group', label: t('keys.group'), sortable: true },
   { key: 'current_concurrency', label: t('keys.concurrencyAndWaiting'), sortable: true },
-  { key: 'usage', label: t('keys.usage'), sortable: false },
+  { key: 'usage', label: t('keys.usage'), sortable: true },
   { key: 'rate_limit', label: t('keys.rateLimitColumn'), sortable: false },
   { key: 'expires_at', label: t('keys.expiresAt'), sortable: true },
   { key: 'status', label: t('common.status'), sortable: true },
@@ -1447,6 +1447,8 @@ const onUsageDateRangeChange = (range: { startDate: string; endDate: string; pre
   usageStartDate.value = range.startDate
   usageEndDate.value = range.endDate
   usagePreset.value = range.preset
+  selectedIds.value = []
+  pagination.value.page = 1
   void loadApiKeys()
 }
 const userGroupRates = ref<Record<number, number>>({})
@@ -1546,7 +1548,7 @@ const pagination = ref({
   pages: 0
 })
 const sortState = ref({
-  sort_by: 'created_at',
+  sort_by: 'usage',
   sort_order: 'desc' as 'asc' | 'desc'
 })
 
@@ -1747,6 +1749,11 @@ const loadApiKeys = async () => {
   usageLoading.value = true
   usageFailed.value = false
   usageStats.value = {}
+  const range = {
+    start_date: usageStartDate.value,
+    end_date: usageEndDate.value,
+    timezone: getBrowserTimeZone()
+  }
   try {
     // Build filters
     const filters: {
@@ -1755,12 +1762,16 @@ const loadApiKeys = async () => {
       group_id?: number | string
       sort_by?: string
       sort_order?: 'asc' | 'desc'
+      start_date?: string
+      end_date?: string
+      timezone?: string
     } = {}
     if (filterSearch.value) filters.search = filterSearch.value
     if (filterStatus.value) filters.status = filterStatus.value
     if (filterGroupId.value !== '') filters.group_id = filterGroupId.value
     filters.sort_by = sortState.value.sort_by
     filters.sort_order = sortState.value.sort_order
+    if (sortState.value.sort_by === 'usage') Object.assign(filters, range)
 
     const response = await keysAPI.list(pagination.value.page, pagination.value.page_size, filters, {
       signal
@@ -1773,11 +1784,7 @@ const loadApiKeys = async () => {
 
     usageLoading.value = response.items.length > 0
     if (response.items.length > 0) {
-      void loadUsageStats(response.items.map((k) => k.id), controller, {
-        start_date: usageStartDate.value,
-        end_date: usageEndDate.value,
-        timezone: getBrowserTimeZone()
-      })
+      void loadUsageStats(response.items.map((k) => k.id), controller, range)
     }
 
   } catch (error) {

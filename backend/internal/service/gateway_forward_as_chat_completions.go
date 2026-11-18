@@ -153,6 +153,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 			return nil, fmt.Errorf("build upstream request: %w", err)
 		}
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+		s.rateLimitService.observeQualityResponse(upstreamReq.Context(), account, resp, err)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -384,14 +385,16 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	if failure := streamStatus.failure(); failure != nil {
 		_ = resp.Body.Close()
 		writeGatewayCCError(c, http.StatusBadGateway, "server_error", failure.message)
-		return &ForwardResult{
+		result := &ForwardResult{
 			UpstreamResponseModel:         observer.Model(),
 			UpstreamResponseModelConflict: observer.Conflict(),
 			UpstreamResponseServiceTier:   observer.ServiceTier(),
 			RequestID:                     requestID, UpstreamHeaders: resp.Header, Usage: usage,
 			Model: originalModel, UpstreamModel: mappedModel, ReasoningEffort: reasoningEffort,
 			Duration: time.Since(startTime),
-		}, failure.err
+		}
+		applyObservedGatewayResponseModel(c, result)
+		return result, failure.err
 	}
 
 	if finalResp == nil {

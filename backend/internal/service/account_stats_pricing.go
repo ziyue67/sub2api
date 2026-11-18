@@ -282,10 +282,14 @@ func applyAccountStatsCost(
 	totalCost float64,
 	pricingAt time.Time,
 	longContextPricingEnabled bool,
-	upstreamPriceFactor float64,
+	upstreamPriceFactors ...float64,
 ) {
 	if usageLog == nil {
 		return
+	}
+	upstreamPriceFactor := 1.0
+	if len(upstreamPriceFactors) > 0 {
+		upstreamPriceFactor = upstreamPriceFactors[0]
 	}
 	model := upstreamModel
 	if model == "" {

@@ -590,7 +590,11 @@ export default {
         rpmLimitPlaceholder: '0 = unlimited',
         rpmLimitHint: 'Max requests per minute for this user; 0 = unlimited. Acts as a fallback only when the group has no rpm_limit set.'
       },
+      liveUsageHint: 'Refreshes this page once per minute. Concurrency shows used / limit. RPM shows the existing user limiter count / limit, resets each calendar minute and may include rejected attempts. Zero limits mean unlimited (∞); usage is still counted. Requests rejected by the earlier group check are excluded.',
+      liveConcurrency: 'Concurrency',
+      liveUsageUnavailable: 'Unavailable',
       columns: {
+        liveUsage: 'Concurrency / RPM',
         user: 'User',
         id: 'ID',
         email: 'Email',
@@ -1344,8 +1348,10 @@ export default {
         force: 'Force Fast (priority)',
         hint: 'Forces service_tier=priority on OpenAI requests in this group. The global Fast/Flex policy can still filter or block it. New requests update immediately after saving; existing WebSocket sessions must reconnect.',
         forceUltrafast: 'Force Ultra Fast (ultrafast)',
-        ultrafastHint: 'Forces Ultra Fast on supported models. Pro 200 includes GPT-6.2 Sol Ultrafast. Pro 500 includes both Sol and Astra Ultrafast. Other subscriptions use the tiers advertised by their account. If unavailable, Force Fast takes precedence over the client tier. GPT-6.2 Sol and Astra cost 3× Standard through February 28, 2027 (Pacific time), then 6×. GPT-6 Astra and GPT-6.1 Sol cost 6×. Free Fast excludes Ultra Fast.',
+        ultrafastHint: 'Forces service_tier=ultrafast on supported models. Pro 200 includes GPT-6.2 Sol Ultrafast. Pro 500 includes both Sol and Astra Ultrafast. Other subscriptions use the tiers advertised by their account. If unavailable, Force Fast takes precedence over the client tier. GPT-6.2 Sol and Astra cost 3× Standard through February 28, 2027 (Pacific time), then 6×. GPT-6 Astra and GPT-6.1 Sol cost 6×. Free Fast excludes Ultra Fast. Channels can override the Ultra Fast multiplier; Free UltraFast is a separate setting.',
         free: 'Free Fast',
+        freeUltrafast: 'Free UltraFast',
+        freeUltrafastHint: 'Bill requests settled at the ultrafast tier to customers at Standard prices, including cache reads and writes. Independent of Free Fast; does not force UltraFast upstream, and preserves actual-tier account cost statistics.',
         freeHint: 'Fast requests in this group still use the priority tier, but customers are charged the equivalent Standard price.'
       },
       invalidRequestFallback: {

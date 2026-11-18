@@ -32,19 +32,14 @@ func TestCacheCreationBillingPersistence(t *testing.T) {
 	prepared := prepareUsageLogInsert(&service.UsageLog{CacheCreationBilling: audit})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 	columns := strings.Split(usageLogSelectColumns, ", ")
-	// usageLogSelectColumns 以 id 开头，比 usageLogInsertArgTypes 多一列；
-	// 尾部列序：cache_creation_billing, queue_timing, platform。
-	require.Equal(t, "cache_creation_billing", columns[len(columns)-3])
-	require.Equal(t, "queue_timing", columns[len(columns)-2])
-	require.Equal(t, "platform", columns[len(columns)-1])
-	// prepared.args 中 cache_creation_billing 是唯一包含 version/enabled 的 JSON 字符串。
-	var encoded string
-	for _, arg := range prepared.args {
-		if str, isStr := arg.(string); isStr && strings.Contains(str, `"original_creation_tokens"`) {
-			encoded = str
-			break
-		}
-	}
+	// The select row begins with id; resolve the audit by its persisted name
+	// so appending customer_cost_details cannot redirect the scanner fixture.
+	auditIndex := usageInsertColumnIndex(t, "cache_creation_billing")
+	require.Equal(t, "queue_timing", columns[auditIndex+2])
+	require.Equal(t, "platform", columns[auditIndex+3])
+	require.Equal(t, "customer_cost_details", columns[auditIndex+4])
+	encoded, ok := prepared.args[auditIndex].(string)
+	require.True(t, ok, "cache_creation_billing must occupy its named SQL argument")
 	require.NotEmpty(t, encoded, "cache_creation_billing must be serialized into args")
 	var decoded service.CacheCreationBillingAudit
 	require.NoError(t, json.Unmarshal([]byte(encoded), &decoded))
@@ -61,12 +56,19 @@ func TestCacheCreationBillingPersistence(t *testing.T) {
 type cacheBillingScanner struct{ encoded string }
 
 func (s cacheBillingScanner) Scan(dest ...any) error {
-	// Go zero values already satisfy every field; set only cache_creation_billing
-	// (尾部列序：cache_creation_billing, queue_timing, platform，审计值在倒数第三位)。
-	audit, ok := dest[len(dest)-3].(*sql.NullString)
-	if !ok {
-		return fmt.Errorf("expected audit destination *sql.NullString, got %T", dest[len(dest)-3])
+	for index, column := range strings.Split(usageLogSelectColumns, ",") {
+		if strings.TrimSpace(column) != "cache_creation_billing" {
+			continue
+		}
+		if index >= len(dest) {
+			return fmt.Errorf("missing audit destination at column %d", index)
+		}
+		audit, ok := dest[index].(*sql.NullString)
+		if !ok {
+			return fmt.Errorf("expected audit destination *sql.NullString, got %T", dest[index])
+		}
+		*audit = sql.NullString{Valid: true, String: s.encoded}
+		return nil
 	}
-	*audit = sql.NullString{Valid: true, String: s.encoded}
-	return nil
+	return fmt.Errorf("missing cache_creation_billing select column")
 }

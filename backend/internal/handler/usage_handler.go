@@ -78,6 +78,30 @@ func NewUsageHandler(
 	}
 }
 
+// SettledDebits is a bounded, read-only lookup. It never initiates billing.
+func (h *UsageHandler) SettledDebits(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	var input struct {
+		IDs []int64 `json:"usage_ids"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BadRequest(c, "Invalid usage IDs")
+		return
+	}
+	items, err := h.usageService.SettledDebits(c.Request.Context(), subject.UserID, input.IDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"items": items})
+}
+
 func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) (*userUsageFilters, bool) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -995,28 +1019,10 @@ func (h *UsageHandler) DashboardAPIKeysUsage(c *gin.Context) {
 
 	// Omitted dates preserve the existing rolling 30-day total. Explicit dates
 	// include both calendar days in the caller's timezone, including DST changes.
-	var startTime, endTime time.Time
-	if req.StartDate != "" || req.EndDate != "" {
-		if req.StartDate == "" || req.EndDate == "" {
-			response.BadRequest(c, "start_date and end_date must be provided together")
-			return
-		}
-		var err error
-		startTime, err = timezone.ParseInUserLocation("2006-01-02", req.StartDate, req.Timezone)
-		if err != nil {
-			response.BadRequest(c, "Invalid start_date, use YYYY-MM-DD")
-			return
-		}
-		endTime, err = timezone.ParseInUserLocation("2006-01-02", req.EndDate, req.Timezone)
-		if err != nil {
-			response.BadRequest(c, "Invalid end_date, use YYYY-MM-DD")
-			return
-		}
-		if startTime.After(endTime) {
-			response.BadRequest(c, "start_date must be on or before end_date")
-			return
-		}
-		endTime = endTime.AddDate(0, 0, 1)
+	startTime, endTime, err := parseAPIKeyUsageRange(req.StartDate, req.EndDate, req.Timezone)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 
 	if len(req.APIKeyIDs) == 0 {

@@ -55,7 +55,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 	cleanup := provideCleanup(
 		nil, // providerChannels
 		nil, // qqBot
-		service.ProvideBalanceNotifyService(nil, nil, nil, nil, nil, nil, nil), // balanceNotify
+		service.ProvideBalanceNotifyService(nil, nil, nil, nil), // balanceNotify
 		nil,                                  // autoCreditEmail
 		nil,                                  // cfg
 		nil,                                  // requestCaptures

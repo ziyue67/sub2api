@@ -963,11 +963,11 @@ function formatCodexTicketRemaining(seconds: number) {
   const s = total % 60
   return `${m}m${String(s).padStart(2, '0')}s`
 }
-
 const hasOpenAIQuotaObservation = computed(() => {
   const windows = [usageInfo.value?.five_hour, usageInfo.value?.seven_day]
   return windows.some(window => window && !window.utilization_unknown)
 })
+
 
 const openAISevenDayEstimatedTotalCost = computed(() => {
   const sevenDay = usageInfo.value?.seven_day
