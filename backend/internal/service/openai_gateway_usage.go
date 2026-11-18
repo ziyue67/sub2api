@@ -152,6 +152,27 @@ func groupBillsOpenAIFastAtStandard(apiKey *APIKey, account *Account, serviceTie
 	}
 }
 
+func (usage OpenAIUsage) billingUsageTokens() UsageTokens {
+	creationTokens := usage.CacheCreationInputTokens
+	if creationTokens <= 0 {
+		creationTokens = max(usage.CacheCreation5mTokens, 0) + max(usage.CacheCreation1hTokens, 0)
+	}
+	tokens := UsageTokens{
+		InputTokens:            max(usage.InputTokens-usage.CacheReadInputTokens-creationTokens, 0),
+		ImageInputTokens:       max(usage.ImageInputTokens-usage.ImageCacheReadTokens, 0),
+		ImageCacheReadTokens:   usage.ImageCacheReadTokens,
+		OutputTokens:           usage.OutputTokens,
+		CacheCreationTokens:    creationTokens,
+		CacheCreation5mTokens:  usage.CacheCreation5mTokens,
+		CacheCreation1hTokens:  usage.CacheCreation1hTokens,
+		CacheCreation30mTokens: usage.CacheCreation30mInputTokens,
+		CacheCreation12hTokens: usage.CacheCreation12hInputTokens,
+		CacheReadTokens:        usage.CacheReadInputTokens,
+		ImageOutputTokens:      usage.ImageOutputTokens,
+	}
+	return tokens
+}
+
 // RecordUsage records usage and deducts balance
 func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRecordUsageInput) error {
 	if input == nil {
@@ -188,31 +209,18 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
 	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
-	cacheCreationTokens := result.Usage.CacheCreationInputTokens
-	cache30m, cache12h := result.Usage.CacheCreation30mInputTokens, result.Usage.CacheCreation12hInputTokens
+	billingUsage := result.Usage
 	if excelBPSCacheCreationBilledAsInput(account, result) {
 		// Total input already includes cache creation. Retain those tokens in the
 		// ordinary input bucket without changing the original upstream usage.
-		cacheCreationTokens = 0
-		cache30m, cache12h = 0, 0
+		billingUsage.CacheCreationInputTokens = 0
+		billingUsage.CacheCreation5mTokens = 0
+		billingUsage.CacheCreation1hTokens = 0
+		billingUsage.CacheCreation30mInputTokens = 0
+		billingUsage.CacheCreation12hInputTokens = 0
 	}
-	actualInputTokens := result.Usage.InputTokens - result.Usage.CacheReadInputTokens - cacheCreationTokens
-	if actualInputTokens < 0 {
-		actualInputTokens = 0
-	}
-
-	// Calculate cost
-	tokens := UsageTokens{
-		InputTokens:            actualInputTokens,
-		ImageInputTokens:       max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
-		ImageCacheReadTokens:   result.Usage.ImageCacheReadTokens,
-		OutputTokens:           result.Usage.OutputTokens,
-		CacheCreationTokens:    cacheCreationTokens,
-		CacheCreation30mTokens: cache30m,
-		CacheCreation12hTokens: cache12h,
-		CacheReadTokens:        result.Usage.CacheReadInputTokens,
-		ImageOutputTokens:      result.Usage.ImageOutputTokens,
-	}
+	tokens := billingUsage.billingUsageTokens()
+	actualInputTokens := tokens.InputTokens
 
 	// Keep candidate fallback, response-model selection and Free Fast on one policy snapshot.
 	ctx = withModelBillingConfig(ctx, s.settingService)
@@ -288,7 +296,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
 	}
 	longContextBillingGate := openAILongContextBillingGate(billingAccount)
-	modelLongContextExempt := openAIGPT61SolLongContextExempt(billingAccount, result, tokens)
+	modelLongContextExempt := openAISubscriptionLongContextExempt(billingAccount, result, tokens)
 	cost, err = s.calculateOpenAIRecordUsageCost(
 		ctx,
 		result,
@@ -471,7 +479,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		UpstreamEndpoint:         optionalTrimmedStringPtr(input.UpstreamEndpoint),
 		InputTokens:              actualInputTokens,
 		OutputTokens:             result.Usage.OutputTokens,
-		CacheCreationTokens:      cacheCreationTokens,
+		CacheCreationTokens:      tokens.CacheCreationTokens,
+		CacheCreation5mTokens:    result.Usage.CacheCreation5mTokens,
+		CacheCreation1hTokens:    result.Usage.CacheCreation1hTokens,
 		CacheCreation30mTokens:   result.Usage.CacheCreation30mInputTokens,
 		CacheCreation12hTokens:   result.Usage.CacheCreation12hInputTokens,
 		CacheReadTokens:          result.Usage.CacheReadInputTokens,
@@ -690,13 +700,13 @@ func openAILongContextBillingGate(account *Account) *bool {
 // API 价卡仍是 272,000；订阅账号在该值及以下不套用 272k 附加费，超过才算长上下文。
 const openAIGPT61SolSubscriptionLongContextThreshold = 500_000
 
-// openAIGPT61SolLongContextExempt 按实际上游凭据、最终发送模型和输入 token
+// openAISubscriptionLongContextExempt 按实际上游凭据、最终发送模型和输入 token
 // 判断是否豁免官方模型价卡的长上下文附加费。
 //
-// 只豁免 OpenAI 订阅凭据（OAuth、Setup Token）上的 GPT-6.1 Sol，且计入长上下文
-// 判断的输入 token 不超过 500,000。超过 500,000 时不再豁免，沿用价卡倍率
-// （输入 ×2、输出 ×1.5，缓存侧与价卡一致）。API Key 不豁免，仍按价卡的
-// 272,000 阶梯。Terra 订阅凭据沿用原版无附加费规则。其它模型、其它平台和 upstream 透传不豁免。
+// OpenAI 订阅凭据（OAuth、Setup Token）上的 GPT-6.2 和 Terra 不收取该附加费。
+// GPT-6.1 Sol 仅在计入长上下文判断的输入 token 不超过 500,000 时豁免；
+// 超过 500,000 时沿用价卡倍率（输入 ×2、输出 ×1.5，缓存侧与价卡一致）。
+// API Key 仍按各模型价卡的阶梯；其它平台和 upstream 透传不豁免。
 //
 // 该标志只关闭官方模型长上下文阶梯（DisableModelLongContextPricing），
 // 分组自定义区间价格不受影响。token 口径与 shouldApplySessionLongContextPricing
@@ -704,7 +714,7 @@ const openAIGPT61SolSubscriptionLongContextThreshold = 500_000
 //
 // 使用发送模型（UpstreamModel，空则回退 Model），避免客户别名、渠道计费模型
 // 或响应模型计费切换改变规则。账号统计成本与用户扣费共用这次判断。
-func openAIGPT61SolLongContextExempt(account *Account, result *OpenAIForwardResult, tokens UsageTokens) bool {
+func openAISubscriptionLongContextExempt(account *Account, result *OpenAIForwardResult, tokens UsageTokens) bool {
 	if result == nil || !account.IsOpenAIOAuthLike() {
 		return false
 	}
@@ -712,8 +722,8 @@ func openAIGPT61SolLongContextExempt(account *Account, result *OpenAIForwardResu
 	if model == "" {
 		model = result.Model
 	}
-	// Terra follows the upstream subscription exemption; keep the fork's Sol 500k boundary.
-	if openai.IsGPT61TerraModelSpelling(model) {
+	// GPT-6.2 and Terra follow the upstream subscription exemption; keep the fork's Sol 500k boundary.
+	if openai.GPT62ModelID(model) != "" || openai.IsGPT61TerraModelSpelling(model) {
 		return true
 	}
 	if !openai.IsGPT61SolModelSpelling(model) {
@@ -943,23 +953,18 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageTokenCost(
 	longContextBillingGate *bool,
 	modelLongContextExempt bool,
 ) (*CostBreakdown, error) {
-	if s.resolver != nil && apiKey.Group != nil {
-		gid := apiKey.Group.ID
-		return s.billingService.CalculateCostUnified(CostInput{
-			Ctx: ctx, Model: billingModel, GroupID: &gid, Group: apiKey.Group,
-			Tokens: tokens, RequestCount: 1, RateMultiplier: multiplier, PricingAt: pricingAt,
-			ServiceTier: serviceTier, ReasoningEffort: reasoningEffort, Resolver: s.resolver,
-			LongContextBillingEnabled:      longContextBillingGate,
-			DisableModelLongContextPricing: modelLongContextExempt,
-		})
+	input := CostInput{
+		Ctx: ctx, Model: billingModel, Tokens: tokens, RequestCount: 1, RateMultiplier: multiplier,
+		PricingAt: pricingAt, ServiceTier: serviceTier, LongContextBillingEnabled: longContextBillingGate,
+		DisableModelLongContextPricing: modelLongContextExempt,
 	}
-	return s.billingService.calculateCostWithServiceTierPolicy(
-		billingModel,
-		tokens,
-		multiplier,
-		serviceTier,
-		(longContextBillingGate == nil || *longContextBillingGate) && !modelLongContextExempt,
-	)
+	if s.resolver != nil && apiKey.Group != nil {
+		input.GroupID = &apiKey.Group.ID
+		input.Group = apiKey.Group
+		input.ReasoningEffort = reasoningEffort
+		input.Resolver = s.resolver
+	}
+	return s.billingService.CalculateCostUnified(input)
 }
 
 func (s *OpenAIGatewayService) calculateOpenAIImageCost(

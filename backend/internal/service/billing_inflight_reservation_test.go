@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	gocache "github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,12 +75,21 @@ func newInflightEstimateGateway(t *testing.T, channelService *ChannelService) *G
 	cfg := &config.Config{}
 	cfg.Billing.InflightReservation = config.InflightReservationConfig{Enabled: true, DefaultMaxTokens: 1000, MaxInputTokens: 200000, MaxOutputTokens: 128000}
 	billing := NewBillingService(cfg, nil)
-	return &GatewayService{
-		cfg:            cfg,
-		billingService: billing,
-		resolver:       NewModelPricingResolver(channelService, billing),
-		channelService: channelService,
+	userGroupRateTTL := resolveUserGroupRateCacheTTL(cfg)
+	svc := &GatewayService{
+		cfg:                cfg,
+		billingService:     billing,
+		resolver:           NewModelPricingResolver(channelService, billing),
+		channelService:     channelService,
+		userGroupRateCache: gocache.New(userGroupRateTTL, 0),
 	}
+	// Match NewGatewayService's shared resolver. Leaving it nil creates a new
+	// cache and janitor per estimate; their asynchronous finalizers distort heap
+	// measurements. This fixture needs no background expiration worker.
+	svc.userGroupRateResolver = newUserGroupRateResolver(
+		nil, svc.userGroupRateCache, userGroupRateTTL, &svc.userGroupRateSF, "service.gateway",
+	)
+	return svc
 }
 
 func TestInflightEstimate_ChannelAliasUsesMappedModel(t *testing.T) {
@@ -487,9 +497,10 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 	}
 	runtime.GC()
 	runtime.ReadMemStats(&after)
-	// Keep the service alive through measurement so retained per-model state
-	// cannot disappear merely because the last request has finished.
+	// Keep the service and key alive through measurement so retained per-model
+	// state cannot disappear merely because the last request has finished.
 	runtime.KeepAlive(svc)
+	runtime.KeepAlive(apiKey)
 	runtime.KeepAlive(unrelatedHeap)
 	retainedWarnings := 0
 	svc.billingService.fallbackWarnSeen.Range(func(_, _ any) bool { retainedWarnings++; return true })

@@ -8,7 +8,7 @@ const pricing = (): PricingFormEntry => ({
   models: ['example-model'], billing_mode: 'token',
   input_price: 2, output_price: 8, cache_write_price: 2.5, cache_write_1h_price: 4, cache_write_12h_price: 5,
   cache_read_price: 0.2, image_input_price: 5, image_output_price: 10, per_request_price: 0.04,
-  fast_multiplier: 2, flex_multiplier: 0.5, reasoning_effort_multipliers: { high: 1.5 },
+  fast_multiplier: 2, flex_multiplier: 0.5, ultrafast_multiplier: 3.25, reasoning_effort_multipliers: { high: 1.5 },
   intervals: [{ min_tokens: 1000, max_tokens: null, tier_label: 'long', input_price: 4,
     output_price: 16, cache_write_price: 5, cache_write_1h_price: 8, cache_write_12h_price: 10, cache_read_price: 0.4,
     input_multiplier: 2, output_multiplier: 1.5, cache_write_multiplier: null,
@@ -33,6 +33,19 @@ describe('channel pricing transfer', () => {
     expect(imported.output_price).toBeNull()
     expect(imported.fast_multiplier).toBeNull()
   })
+  it.each([
+    [null, null], ['', null], ['1.25', 1.25], [1, 1],
+  ])('normalizes an optional Ultra Fast multiplier %s', (value, expected) => {
+    const original = { ...pricing(), ultrafast_multiplier: value }
+    const [imported] = parseChannelPricing(serializeChannelPricing('openai', [original], t), 'openai', t)
+    expect(imported.ultrafast_multiplier).toBe(expected)
+    expect(original.ultrafast_multiplier).toBe(value)
+  })
+  it('accepts legacy files without an Ultra Fast override', () => {
+    const legacy = file()
+    delete legacy.model_pricing[0].ultrafast_multiplier
+    expect(parseChannelPricing(JSON.stringify(legacy), 'openai', t)[0].ultrafast_multiplier).toBeNull()
+  })
   it('supports empty exports and UTF-8 BOM', () => {
     expect(parseChannelPricing('\uFEFF' + serializeChannelPricing('openai', [], t), 'openai', t)).toEqual([])
   })
@@ -44,6 +57,9 @@ describe('channel pricing transfer', () => {
     (f: ReturnType<typeof file>) => { f.model_pricing[0].input_price = 'Infinity' },
     (f: ReturnType<typeof file>) => { f.model_pricing[0].input_price = true },
     (f: ReturnType<typeof file>) => { f.model_pricing[0].fast_multiplier = 0 },
+    (f: ReturnType<typeof file>) => { f.model_pricing[0].ultrafast_multiplier = 0 },
+    (f: ReturnType<typeof file>) => { f.model_pricing[0].ultrafast_multiplier = -1 },
+    (f: ReturnType<typeof file>) => { f.model_pricing[0].ultrafast_multiplier = 'Infinity' },
     (f: ReturnType<typeof file>) => { f.model_pricing[0].models = [] },
     (f: ReturnType<typeof file>) => { f.model_pricing[0].models = ['example-*', 'example-model'] },
     (f: ReturnType<typeof file>) => { f.model_pricing[0].billing_mode = 'unknown' },

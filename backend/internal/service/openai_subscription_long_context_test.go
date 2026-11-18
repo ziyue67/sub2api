@@ -62,7 +62,7 @@ func TestOpenAIGPT61SolLongContextExempt(t *testing.T) {
 		{name: "Terra订阅访问令牌", account: &Account{Platform: PlatformOpenAI, Type: AccountTypeSetupToken}, result: &OpenAIForwardResult{Model: "gpt-6.1-terra"}, want: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, openAIGPT61SolLongContextExempt(tt.account, tt.result, tt.tokens))
+			require.Equal(t, tt.want, openAISubscriptionLongContextExempt(tt.account, tt.result, tt.tokens))
 		})
 	}
 }

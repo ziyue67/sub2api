@@ -33,6 +33,7 @@ function price(platform: string, model: string, input = 0.000002): ChannelModelP
     image_input_price: null,
     image_output_price: null,
     per_request_price: null,
+    ultrafast_multiplier: platform === 'openai' ? 3.25 : null,
     intervals: [],
     time_pricing: null,
   }
@@ -124,7 +125,7 @@ describe('BulkEditChannelDialog', () => {
     expect(Object.keys(payload)).toEqual(['model_pricing'])
     expect(payload.model_pricing).toHaveLength(2)
     expect(payload.model_pricing[0]).toMatchObject({ platform: 'anthropic', models: ['fresh-other'], input_price: 0.000007 })
-    expect(payload.model_pricing[1]).toMatchObject({ platform: 'openai', models: ['example-priced'], input_price: 0, output_price: null, cache_write_12h_price: 0.000005, cache_read_price: 0 })
+    expect(payload.model_pricing[1]).toMatchObject({ platform: 'openai', models: ['example-priced'], input_price: 0, output_price: null, ultrafast_multiplier: 3.25, cache_write_12h_price: 0.000005, cache_read_price: 0 })
     expect(payload.model_pricing.every((entry: ChannelModelPricing) => entry.id === undefined)).toBe(true)
     wrapper.unmount()
   })
@@ -134,14 +135,15 @@ describe('BulkEditChannelDialog', () => {
     const second = channel(2)
     const firstFile = bundle(channel(11, [price('openai', 'from-first-file', 0.000003)]))
     const secondFile = bundle(channel(12, [price('openai', 'from-second-file', 0.000009)]))
+    secondFile.platforms[0].entries[0].ultrafast_multiplier = 1.25
     const wrapper = mountDialog([first, second], { initialPricingById: { 1: firstFile, 2: secondFile } })
     expect(wrapper.find('[data-testid="bulk-matched-pricing"]').exists()).toBe(true)
     expect(wrapper.find('.pricing-entry').exists()).toBe(false)
     expect(update).not.toHaveBeenCalled()
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(update.mock.calls[0][1].model_pricing[0]).toMatchObject({ models: ['from-first-file'], input_price: 0.000003 })
-    expect(update.mock.calls[1][1].model_pricing[0]).toMatchObject({ models: ['from-second-file'], input_price: 0.000009 })
+    expect(update.mock.calls[0][1].model_pricing[0]).toMatchObject({ models: ['from-first-file'], input_price: 0.000003, ultrafast_multiplier: 3.25 })
+    expect(update.mock.calls[1][1].model_pricing[0]).toMatchObject({ models: ['from-second-file'], input_price: 0.000009, ultrafast_multiplier: 1.25 })
     expect(firstFile.platforms[0].entries[0].input_price).toBe(3)
     expect(secondFile.platforms[0].entries[0].input_price).toBe(9)
     wrapper.unmount()
