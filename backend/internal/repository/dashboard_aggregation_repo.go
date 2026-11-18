@@ -143,7 +143,7 @@ func (r *dashboardAggregationRepository) RecomputeRange(ctx context.Context, sta
 	}
 
 	// 分组日桶从 start 所在自然日起失效，由后台同步重建；失效语句独立提交，不与看板重算共享事务。
-	if err := invalidateGroupUsageRollupsAt(ctx, r.sql, start); err != nil {
+	if err := r.invalidateGroupUsageRollupsAt(ctx, r.sql, start); err != nil {
 		return err
 	}
 
@@ -153,7 +153,7 @@ func (r *dashboardAggregationRepository) RecomputeRange(ctx context.Context, sta
 		if err != nil {
 			return err
 		}
-		txRepo := newDashboardAggregationRepositoryWithSQL(tx)
+		txRepo := r.withSQL(tx)
 		if err := txRepo.recomputeRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -237,7 +237,7 @@ func (r *dashboardAggregationRepository) CleanupAggregates(ctx context.Context, 
 // CleanupUsageLogs 删除服务端配置时区内 cutoff 所在自然日零点之前的 usage_logs。
 // 删除前先把分组日汇总的保留下界推进到该零点，被删除的记录不触发日桶失效。
 func (r *dashboardAggregationRepository) CleanupUsageLogs(ctx context.Context, cutoff time.Time) error {
-	cutoff = service.GroupUsageTodayStart(cutoff)
+	cutoff = r.groupUsageTodayStart(cutoff)
 	if err := expireGroupUsageRollupsBefore(ctx, r.sql, cutoff); err != nil {
 		return err
 	}
@@ -611,7 +611,7 @@ func (r *dashboardAggregationRepository) dropUsageLogsPartition(ctx context.Cont
 			return err
 		}
 		if earliestRetained.Valid {
-			return invalidateGroupUsageRollupsAt(ctx, q, earliestRetained.Time)
+			return r.invalidateGroupUsageRollupsAt(ctx, q, earliestRetained.Time)
 		}
 		return nil
 	}
