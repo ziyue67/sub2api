@@ -248,11 +248,12 @@ func assertAnthropicCacheCreationRecordCosts(t *testing.T, usage ClaudeUsage, wa
 
 func assertAnthropicCacheCreationResultCosts(t *testing.T, result *ForwardResult, wantCacheCost float64) {
 	t.Helper()
-	assertAnthropicCacheCreationOverrideCosts(t, result, wantCacheCost, &Account{ID: 701, Platform: PlatformAnthropic}, nil, false)
+	assertAnthropicCacheCreationOverrideCosts(t, result, wantCacheCost, &Account{ID: 701, Platform: PlatformAnthropic}, nil, false, result.Usage.CacheCreation5mTokens, result.Usage.CacheCreation1hTokens)
 }
 
-func assertAnthropicCacheCreationOverrideCosts(t *testing.T, result *ForwardResult, wantCacheCost float64, account *Account, settings *SettingService, wantOverridden bool) {
+func assertAnthropicCacheCreationOverrideCosts(t *testing.T, result *ForwardResult, wantCacheCost float64, account *Account, settings *SettingService, wantOverridden bool, want5m, want1h int) {
 	t.Helper()
+	rawUsage := result.Usage
 	for _, customStats := range []bool{false, true} {
 		usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 		billingRepo := &openAIRecordUsageBillingRepoStub{}
@@ -289,8 +290,9 @@ func assertAnthropicCacheCreationOverrideCosts(t *testing.T, result *ForwardResu
 		require.NotNil(t, usageRepo.lastLog)
 		require.Equal(t, wantOverridden, usageRepo.lastLog.CacheTTLOverridden)
 		require.Equal(t, result.Usage.CacheCreationInputTokens, usageRepo.lastLog.CacheCreationTokens)
-		require.Equal(t, result.Usage.CacheCreation5mTokens, usageRepo.lastLog.CacheCreation5mTokens)
-		require.Equal(t, result.Usage.CacheCreation1hTokens, usageRepo.lastLog.CacheCreation1hTokens)
+		require.Equal(t, want5m, usageRepo.lastLog.CacheCreation5mTokens)
+		require.Equal(t, want1h, usageRepo.lastLog.CacheCreation1hTokens)
+		require.Equal(t, rawUsage, result.Usage, "recording usage must not mutate the upstream observation")
 		require.InDelta(t, wantCacheCost, usageRepo.lastLog.CacheCreationCost, 1e-12)
 		wantTotalCost := float64(result.Usage.InputTokens)*0.001 + float64(result.Usage.OutputTokens)*0.002 + wantCacheCost
 		require.Equal(t, result.Usage.InputTokens, usageRepo.lastLog.InputTokens)

@@ -173,10 +173,9 @@ func TestCacheTTLOverrideForwardBillingBoundary(t *testing.T) {
 							require.Equal(t, payload, recorder.Body.String())
 						}
 					}
-					if target == "" || (route != "standard" && route != "nonstream") {
-						require.Equal(t, test.ttl5m, result.Usage.CacheCreation5mTokens)
-						require.Equal(t, test.ttl1h, result.Usage.CacheCreation1hTokens)
-					}
+					require.Equal(t, test.ttl5m, result.Usage.CacheCreation5mTokens)
+					require.Equal(t, test.ttl1h, result.Usage.CacheCreation1hTokens)
+					rawUsage := result.Usage
 					want5m, want1h, wantCost := test.ttl5m, test.ttl1h, test.rawCost
 					if target == "5m" {
 						want5m, want1h, wantCost = test.aggregate, 0, float64(test.aggregate)*0.002
@@ -219,19 +218,18 @@ func TestCacheTTLOverrideForwardBillingBoundary(t *testing.T) {
 								require.EqualValues(t, forward1h, rewrittenUsage.Get("cache_creation.ephemeral_1h_input_tokens").Int())
 							}
 						}
-						require.Equal(t, forward5m, result.Usage.CacheCreation5mTokens)
-						require.Equal(t, forward1h, result.Usage.CacheCreation1hTokens)
+						require.Equal(t, rawUsage, result.Usage, "outbound rewriting must preserve upstream usage")
 					}
 					if target != "" && route == "nonstream" {
-						require.Equal(t, want5m, result.Usage.CacheCreation5mTokens)
-						require.Equal(t, want1h, result.Usage.CacheCreation1hTokens)
+						forwardedUsage := gjson.Get(recorder.Body.String(), "usage")
+						require.Equal(t, gjson.Get(payload, "usage.cache_creation_input_tokens").Raw, forwardedUsage.Get("cache_creation_input_tokens").Raw)
+						require.EqualValues(t, want5m, forwardedUsage.Get("cache_creation.ephemeral_5m_input_tokens").Int())
+						require.EqualValues(t, want1h, forwardedUsage.Get("cache_creation.ephemeral_1h_input_tokens").Int())
 					}
 					result.Model = "claude-sonnet-4"
 					result.UpstreamModel = "claude-sonnet-4"
-					assertAnthropicCacheCreationOverrideCosts(t, result, wantCost, account, settings, target != "" && test.aggregate > 0)
-					require.Equal(t, test.aggregate, result.Usage.CacheCreationInputTokens)
-					require.Equal(t, want5m, result.Usage.CacheCreation5mTokens)
-					require.Equal(t, want1h, result.Usage.CacheCreation1hTokens)
+					assertAnthropicCacheCreationOverrideCosts(t, result, wantCost, account, settings, target != "" && test.aggregate > 0, want5m, want1h)
+					require.Equal(t, rawUsage, result.Usage, "billing must preserve upstream usage")
 				})
 			}
 		}
