@@ -14,12 +14,13 @@ import (
 // items without a corresponding model call. Preserve their text as user context
 // before ordinary tool-output validation, including when replaying tool history.
 // Unrecognized outputs and items carrying a call identity remain untouched.
-// Keep the established handler entry point for pinned recovery callers.
-func normalizeCodexPageContext(body []byte) ([]byte, bool) {
-	return normalizeCodexUntrustedContext(body)
+// The current context entry point delegates to the established page-context
+// entry point so pinned recovery callers share the same implementation.
+func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
+	return normalizeCodexPageContext(body)
 }
 
-func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
+func normalizeCodexPageContext(body []byte) ([]byte, bool) {
 	if !mayContainCodexCallOutputCandidate(body, "codex_apps_open_page", "codex_apps_selected_page_part_", "browser_info", "goal_objective", "untrusted_context") {
 		return body, false
 	}

@@ -2037,30 +2037,6 @@ func (l *fallbackLimiter) Allow() bool {
 	return true
 }
 
-func derefAccounts(accounts []*Account) []Account {
-	if len(accounts) == 0 {
-		return []Account{}
-	}
-	out := make([]Account, 0, len(accounts))
-	for _, account := range accounts {
-		if account == nil {
-			continue
-		}
-		out = append(out, *account)
-	}
-	return out
-}
-
-func schedulableAccountValues(accounts []Account) []Account {
-	out := make([]Account, 0, len(accounts))
-	for _, account := range accounts {
-		if account.IsSchedulable() {
-			out = append(out, account)
-		}
-	}
-	return out
-}
-
 func accountValues(accounts []*Account) []Account {
 	if len(accounts) == 0 {
 		return nil
