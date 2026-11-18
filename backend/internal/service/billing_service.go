@@ -147,10 +147,8 @@ func usePriorityServiceTierPricing(serviceTier string, pricing *ModelPricing) bo
 
 func serviceTierCostMultiplier(serviceTier string) float64 {
 	switch normalizeBillingServiceTier(serviceTier) {
-	case "priority", "fast":
+	case "priority", "fast", OpenAIFastTierUltrafast:
 		return 2.0
-	case OpenAIFastTierUltrafast:
-		return 6.0
 	case "flex":
 		return 0.5
 	default:
@@ -160,6 +158,9 @@ func serviceTierCostMultiplier(serviceTier string) float64 {
 
 func configuredServiceTierMultiplier(serviceTier string, pricing *ModelPricing) float64 {
 	if pricing != nil {
+		if normalizeBillingServiceTier(serviceTier) == OpenAIFastTierUltrafast && pricing.UltrafastMultiplier > 0 {
+			return pricing.UltrafastMultiplier
+		}
 		switch normalizeBillingServiceTier(serviceTier) {
 		case "priority", "fast":
 			if pricing.FastMultiplier != nil {

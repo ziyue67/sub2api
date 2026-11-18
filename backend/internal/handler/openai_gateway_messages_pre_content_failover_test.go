@@ -79,6 +79,15 @@ type unexpectedEOFReader struct{}
 
 func (unexpectedEOFReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
+type preContentFailoverAccountRepo struct {
+	grokCredentialHandlerRepo
+}
+
+func (r *preContentFailoverAccountRepo) GetOpenAITurnAdmission(ctx context.Context, id int64) (*service.Account, *service.Account, error) {
+	account, err := r.GetByID(ctx, id)
+	return account, nil, err
+}
+
 type preContentFailoverScenario struct {
 	accounts    []service.Account
 	respond     func(call int) (*http.Response, error)
@@ -115,7 +124,7 @@ func serveMessagesScenario(t *testing.T, sc preContentFailoverScenario) (*httpte
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	groupID := int64(9101)
-	repo := &grokCredentialHandlerRepo{accounts: sc.accounts, missingOnGet: map[int64]bool{}}
+	repo := &preContentFailoverAccountRepo{grokCredentialHandlerRepo{accounts: sc.accounts, missingOnGet: map[int64]bool{}}}
 	upstream := &preContentFailoverUpstream{respond: sc.respond}
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	cfg.Gateway.MaxAccountSwitches = 3
@@ -126,7 +135,7 @@ func serveMessagesScenario(t *testing.T, sc preContentFailoverScenario) (*httpte
 	gateway := service.NewOpenAIGatewayService(
 		repo, nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil,
 		service.NewBillingService(cfg, nil), nil, billingCache, upstream,
-		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil, nil,
+		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
 	)
 	cache := &concurrencyCacheMock{
 		acquireUserSlotFn:    func(context.Context, int64, int, string) (bool, error) { return true, nil },

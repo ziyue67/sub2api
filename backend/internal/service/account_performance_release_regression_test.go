@@ -61,8 +61,11 @@ func (r *performanceExportRepo) ListSchedulableUngroupedByPlatform(context.Conte
 
 func TestAccountPerformanceRegionalExportChecksPauseAndFailsClosed(t *testing.T) {
 	r := &performanceExportRepo{
-		performanceAccountRepoStub: performanceAccountRepoStub{paused: map[int64]bool{1: true}},
-		accounts:                   []Account{{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}, {ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}},
+		performanceAccountRepoStub: performanceAccountRepoStub{
+			paused:      map[int64]bool{1: true},
+			schedulable: []Account{{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}, {ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}},
+		},
+		accounts: []Account{{ID: 1, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}, {ID: 2, Platform: PlatformOpenAI, Status: StatusActive, Schedulable: true}},
 	}
 	s := NewSchedulerSnapshotService(nil, nil, r, nil, nil)
 	buckets := []SchedulerBucket{{Platform: PlatformOpenAI, Mode: SchedulerModeSingle}}

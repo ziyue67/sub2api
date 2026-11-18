@@ -62,7 +62,7 @@ func (r *usageLogRepository) readGroupUsageRollupSnapshot(ctx context.Context, t
 		return invalid, nil
 	}
 
-	tailStart, err := r.configuredTimezone.parseGroupUsageDate(closedBefore.String)
+	tailStart, err := r.parseGroupUsageDate(closedBefore.String)
 	if err != nil {
 		// 水位值解析不出来，按无效处理：宁可多扫一次，也不要算错钱。
 		return invalid, nil //nolint:nilerr // 与上面的 valid 判定同语义，均降级为全量重算
@@ -71,8 +71,8 @@ func (r *usageLogRepository) readGroupUsageRollupSnapshot(ctx context.Context, t
 	if tailFloor.After(tailStart) {
 		tailStart = tailFloor
 	}
-	retainedDate := r.configuredTimezone.groupUsageDate(retainedFrom.Time)
-	if expiredDate := r.configuredTimezone.groupUsageDate(tailFloor); expiredDate > retainedDate {
+	retainedDate := r.groupUsageDate(retainedFrom.Time)
+	if expiredDate := r.groupUsageDate(tailFloor); expiredDate > retainedDate {
 		retainedDate = expiredDate
 	}
 	return groupUsageRollupSnapshot{
@@ -84,11 +84,11 @@ func (r *usageLogRepository) readGroupUsageRollupSnapshot(ctx context.Context, t
 }
 
 func (r *usageLogRepository) getAllGroupUsageSummaryFromRollups(ctx context.Context, todayStart time.Time) (results []usagestats.GroupUsageSummary, err error) {
-	todayStart = r.configuredTimezone.groupUsageTodayStart(todayStart)
-	yesterdayStart := r.configuredTimezone.groupUsageYesterdayStart(todayStart)
-	timezoneName := r.configuredTimezone.timezoneName()
-	todayDate := r.configuredTimezone.groupUsageDate(todayStart)
-	yesterdayDate := r.configuredTimezone.groupUsageDate(yesterdayStart)
+	todayStart = r.groupUsageTodayStart(todayStart)
+	yesterdayStart := r.groupUsageYesterdayStart(todayStart)
+	timezoneName := r.timezoneName()
+	todayDate := r.groupUsageDate(todayStart)
+	yesterdayDate := r.groupUsageDate(yesterdayStart)
 
 	state, err := r.readGroupUsageRollupSnapshot(ctx, timezoneName, todayDate)
 	if err != nil {

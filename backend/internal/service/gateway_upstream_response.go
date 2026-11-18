@@ -1351,19 +1351,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					continue
 				}
 				for _, block := range outputBlocks {
-					if !clientDisconnected {
-						restored := reverseToolNamesIfPresentString(c, block)
-						if _, werr := io.WriteString(w, restored); werr != nil {
-							clientDisconnected = true
-							logger.LegacyPrintf("service.gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
-							// 不 break：客户端断开后仍需继续合并本事件及后续事件的 usage，
-							// 否则会漏计当前事件携带的 usage 导致少计费。后续写入由
-							// clientDisconnected 守卫跳过。
-						} else {
-							flusher.Flush()
-							lastDataAt = time.Now()
-							resetKeepaliveTimer()
-						}
+					restored := reverseToolNamesIfPresentString(c, block)
+					if _, werr := io.WriteString(w, restored); werr != nil {
+						markClientDisconnected(werr)
+						break
 					}
 					if err := FlushGatewayResponse(w); err != nil {
 						markClientDisconnected(err)

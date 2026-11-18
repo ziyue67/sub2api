@@ -382,7 +382,7 @@ func cnProviderThresholdCandidates(account *Account, provider string) []*account
 // Command Code 与 Kimi 新套餐）。
 func cnQuotaHasMonthlyWindow(provider string) bool {
 	switch provider {
-	case PlatformOpenCodeGo, PlatformCommandCode, PlatformKimi:
+	case PlatformOpenCodeGo, PlatformCommandCode, PlatformKimi, PlatformMistral:
 		return true
 	default:
 		return false

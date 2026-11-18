@@ -70,6 +70,25 @@ func TestAPIKeyLongContextPolicyCountsAllVisibleHistoryAndTools(t *testing.T) {
 	}
 }
 
+func TestAPIKeyLongContextPolicyDisabledNativeToolsRemainCounted(t *testing.T) {
+	gateway := &GatewayService{billingService: longContextTestBilling(100, false)}
+	tools := `"tools":[{"type":"web_search"},{"type":"x_search"}]`
+	ctx := context.Background()
+	key := &APIKey{}
+	require.NoError(t, gateway.CheckAPIKeyLongContext(ctx, key, []byte(`{"input":"hi",`+tools+`,"tool_choice":"none"}`), "context-policy-test"))
+	for _, choice := range []string{``, `,"tool_choice":"auto"`, `,"tool_choice":"none","tool_choice":"auto"`, `,"tool_choice":"none","Tool_Choice":"required"`} {
+		var policyErr *APIKeyLongContextError
+		require.ErrorAs(t, gateway.CheckAPIKeyLongContext(ctx, key, []byte(`{"input":"hi",`+tools+choice+`}`), "context-policy-test"), &policyErr)
+		require.Equal(t, "context_unverifiable", policyErr.Code)
+	}
+	var policyErr *APIKeyLongContextError
+	large := []byte(`{"input":"hi","tool_choice":"none","tools":[{"type":"web_search","description":"` + strings.Repeat("context ", 200) + `"}]}`)
+	require.ErrorAs(t, gateway.CheckAPIKeyLongContext(ctx, key, large, "context-policy-test"), &policyErr)
+	require.Equal(t, "context_length_exceeded", policyErr.Code)
+	// Disabling tools does not hide opaque references in the actual input.
+	require.Error(t, gateway.CheckAPIKeyLongContext(ctx, key, []byte(`{"input":[{"type":"input_file","file_id":"file_fixture"}],`+tools+`,"tool_choice":"none"}`), "context-policy-test"))
+}
+
 func TestAPIKeyLongContextPolicyRejectsUnmeasurableContext(t *testing.T) {
 	gateway := &GatewayService{}
 	for name, body := range map[string]string{

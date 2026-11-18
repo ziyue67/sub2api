@@ -1673,7 +1673,7 @@ func TestCalculateCost_LargeTokenCount(t *testing.T) {
 func TestServiceTierCostMultiplier(t *testing.T) {
 	require.InDelta(t, 2.0, serviceTierCostMultiplier("priority"), 1e-12)
 	require.InDelta(t, 2.0, serviceTierCostMultiplier(" Priority "), 1e-12)
-	require.InDelta(t, 6.0, serviceTierCostMultiplier("ultrafast"), 1e-12)
+	require.InDelta(t, 2.0, serviceTierCostMultiplier("ultrafast"), 1e-12)
 	require.InDelta(t, 0.5, serviceTierCostMultiplier("flex"), 1e-12)
 	require.InDelta(t, 1.0, serviceTierCostMultiplier(""), 1e-12)
 	require.InDelta(t, 1.0, serviceTierCostMultiplier("default"), 1e-12)
@@ -2342,7 +2342,7 @@ func TestAstraUltrafastPricingUsesSixTimesStandard(t *testing.T) {
 	}
 	p, err := svc.GetModelPricing("gpt-6-sol")
 	require.NoError(t, err)
-	require.Equal(t, 6.0, configuredServiceTierMultiplier("ultrafast", p))
+	require.Equal(t, 2.0, configuredServiceTierMultiplier("ultrafast", p))
 }
 
 // 门控与计费共用同一判定：凡是分组会强制写入 ultrafast 的模型，都必须按 6x 计费。

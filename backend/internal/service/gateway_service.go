@@ -1668,16 +1668,12 @@ func availableModelsFromAccounts(accounts []Account, groupID *int64, platform st
 		// Treat it like an unmapped account: skip its mapping here and let
 		// supplementUnmappedOpenAIModels contribute the default set. Mappings on
 		// the ordinary accounts in the same group still count.
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() && !acc.IsOpenAIPassthroughModelFilterEnabled() {
-			continue
-		}
-
 		mapping := acc.GetModelMapping()
 		if acc.hasOAuthInitialModelSelection() {
 			hasInitialSelection = true
 			hasAnyMapping = true // an empty selection is an authoritative empty catalog
 		}
-		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() && !acc.hasOAuthInitialModelSelection() {
+		if platform == PlatformOpenAI && acc.IsOpenAIPassthroughEnabled() && !acc.IsOpenAIPassthroughModelFilterEnabled() && !acc.hasOAuthInitialModelSelection() {
 			mapping = nil
 		}
 		for model := range mapping {

@@ -161,6 +161,8 @@ describe('AccountUsageCell', () => {
     if (type === 'setup-token') {
       expect(getUsage).not.toHaveBeenCalled()
       expect(wrapper.find('[data-test="quota-reset"]').exists()).toBe(false)
+    } else {
+      expect(wrapper.find('[data-test="quota-reset"]').exists()).toBe(true)
     }
     await wrapper.setProps({ account: { ...wrapper.props('account'), codex_turn_tickets: [] } })
     expect(wrapper.text()).not.toContain('codexTurnTicket')

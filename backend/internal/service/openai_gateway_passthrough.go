@@ -176,13 +176,6 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			reqStream = false
 		}
 
-		accountScopedBody, accountScoped, scopeErr := applyCodexAccountIdentityClientMetadataRaw(body, codexAccountIdentitySource(c, account), getAPIKeyIDFromContext(c), codexClientSessionID(c))
-		if scopeErr != nil {
-			return nil, scopeErr
-		}
-		if accountScoped {
-			body = accountScopedBody
-		}
 		harvestModel := extractOpenAICodexTicketModel(body)
 		if harvestModel == "" {
 			harvestModel = normalizeOpenAICodexTicketModel(reqModel)

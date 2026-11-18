@@ -238,6 +238,7 @@ func TestSchedulerCacheSnapshotMemoRepeatReadsFetchTagsAndExpiredLastUsed(t *tes
 	second := memoRead(t, cache, bucket)
 	require.Equal(t, []string{
 		"mget " + schedulerBucketKey(schedulerReadyPrefix, bucket),
+		"exists " + schedulerAccountMetaKey("1"),
 	}, recorder.recorded(), "last_used read within its max age is reused")
 
 	clock.Advance(schedulerLastUsedCacheMaxAge)
@@ -245,6 +246,7 @@ func TestSchedulerCacheSnapshotMemoRepeatReadsFetchTagsAndExpiredLastUsed(t *tes
 	memoRead(t, cache, bucket)
 	require.Equal(t, []string{
 		"mget " + schedulerBucketKey(schedulerReadyPrefix, bucket),
+		"exists " + schedulerAccountMetaKey("1"),
 		"mget " + schedulerLastUsedKey("1"),
 	}, recorder.recorded())
 
@@ -707,6 +709,7 @@ func TestSchedulerCacheSnapshotMemoPlatformRevisionScopesInvalidation(t *testing
 	memoRead(t, cache, geminiSingle)
 	require.Equal(t, []string{
 		"mget " + schedulerBucketKey(schedulerReadyPrefix, geminiSingle),
+		"exists " + schedulerAccountMetaKey("211"),
 	}, recorder.recorded(), "an Anthropic account write must not invalidate a Gemini bucket")
 
 	gemini.Name = "gemini-renamed"

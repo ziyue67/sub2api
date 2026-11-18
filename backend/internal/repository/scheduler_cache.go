@@ -358,7 +358,8 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 // 同一 bucket、同一组 (active, 修订号) 的并发加载合并为一次；加载时精简记录原文未变、
 // 且预解析结果对应当前运行时模型映射版本的账号沿用已解码的母本。
 // last_used 读取结果在条目内复用 schedulerLastUsedCacheMaxAge。
-// 返回的切片与其中的账号由本次调用独占，可以修改账号的顶层字段；map、切片底层数组与指针指向的值与其它调用共享，不得原地修改。
+// 返回的切片与其中的账号由本次调用独占；Credentials、Extra 和 AccountGroups 的模型列表
+// 也复制为请求独立的值，兼容 fork 选号路径的原地调整。其余指针指向的值不得原地修改。
 func (c *schedulerCache) GetSnapshotValues(ctx context.Context, bucket service.SchedulerBucket) ([]service.Account, bool, error) {
 	entry, err := c.snapshotEntry(ctx, bucket)
 	if err != nil {
@@ -410,6 +411,16 @@ func (c *schedulerCache) snapshotEntry(ctx context.Context, bucket service.Sched
 	now := c.now()
 	if entry := c.lookupSnapshotEntry(bucketKey); entry != nil && entry.sameVersion(activeVal, revisions) {
 		age := now.Sub(entry.loadedAt)
+		if age >= 0 && age < schedulerSnapshotCacheMaxAge+schedulerSnapshotCacheStaleGrace {
+			intact, err := c.snapshotMetadataIntact(ctx, entry)
+			if err != nil {
+				return nil, err
+			}
+			if !intact {
+				c.dropSnapshotEntry(bucketKey)
+				return nil, nil
+			}
+		}
 		if age >= 0 && age < schedulerSnapshotCacheMaxAge {
 			return entry, nil
 		}
@@ -1808,4 +1819,35 @@ func cloneSchedulerAccountGroups(groups []service.AccountGroup) []service.Accoun
 		}
 	}
 	return cloned
+}
+
+// snapshotMetadataIntact 校验记忆化条目的成员元数据仍在 Redis 中。
+// 元数据被外部删除（如账号硬删除）后，记忆化条目必须退化为未命中。
+func (c *schedulerCache) snapshotMetadataIntact(ctx context.Context, entry *schedulerSnapshotEntry) (bool, error) {
+	if entry == nil || entry.empty || len(entry.ids) == 0 {
+		return true, nil
+	}
+	keys := make([]string, 0, len(entry.ids))
+	for _, id := range entry.ids {
+		keys = append(keys, schedulerAccountMetaKey(id))
+	}
+	// Only existence is required: transferring the JSON would undo memoization's
+	// bandwidth savings. Chunk the checks like metadata reads, in one pipeline.
+	pipe := c.rdb.Pipeline()
+	chunkSize := c.mgetChunkSize
+	if chunkSize <= 0 {
+		chunkSize = defaultSchedulerSnapshotMGetChunkSize
+	}
+	checks := make([]*redis.IntCmd, 0, (len(keys)+chunkSize-1)/chunkSize)
+	for start := 0; start < len(keys); start += chunkSize {
+		checks = append(checks, pipe.Exists(ctx, keys[start:min(start+chunkSize, len(keys))]...))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return false, err
+	}
+	var present int64
+	for _, check := range checks {
+		present += check.Val()
+	}
+	return present == int64(len(keys)), nil
 }

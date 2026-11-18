@@ -6719,7 +6719,9 @@ const handleSubmit = async () => {
     if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
       const newBaseUrl = editBaseUrl.value.trim() || defaultBaseUrl.value
-      const shouldApplyModelMapping = !(props.account.platform === 'openai' && (openaiPassthroughEnabled.value || copilotSDKEnabled.value))
+      const shouldApplyModelMapping = !(props.account.platform === 'openai' && (
+        (openaiPassthroughEnabled.value && !openaiPassthroughModelFilterEnabled.value) || copilotSDKEnabled.value
+      ))
 
       // Always update credentials for apikey type to handle model mapping changes
       const newCredentials: Record<string, unknown> = {

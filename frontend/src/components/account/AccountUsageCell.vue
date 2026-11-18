@@ -138,10 +138,9 @@
           <span v-if="ticket.probe" class="text-gray-400" :title="`${t('admin.accounts.openai.ticketProbe.' + ticket.probe.result)} · HTTP ${ticket.probe.http_status || '—'} · ${new Date(ticket.probe.checked_at).toLocaleString()}${ticket.probe.next_probe_at ? ' · ' + t('admin.accounts.openai.ticketProbeNext') + new Date(ticket.probe.next_probe_at).toLocaleString() : ''}${ticket.standby_expires_at ? ' · ' + t('admin.accounts.openai.ticketStandbyExpires') + new Date(ticket.standby_expires_at).toLocaleString() : ''}`">ⓘ</span>
         </div>
       </div>
-    </template>
 
-    <!-- OpenAI OAuth accounts: single source from /usage API -->
-    <template v-else-if="account.platform === 'openai' && account.type === 'oauth'">
+      <!-- OpenAI OAuth accounts: single source from /usage API -->
+      <template v-if="account.type === 'oauth'">
       <div
         v-if="error || usageInfo?.error || usageInfo?.error_code"
         role="alert"
@@ -234,6 +233,7 @@
           @account-updated="handleQuotaResetAccountUpdated"
         />
       </div>
+      </template>
     </template>
 
     <!-- Antigravity OAuth accounts: fetch usage from API -->

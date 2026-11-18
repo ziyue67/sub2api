@@ -242,41 +242,43 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 
 	next := body
 	changed := false
-	originalBodySessionID := ""
-	if cm := gjson.GetBytes(body, "client_metadata"); cm.IsObject() {
-		clientMetadata := map[string]any{}
-		if err := json.Unmarshal([]byte(cm.Raw), &clientMetadata); err != nil {
-			return body, false, fmt.Errorf("decode client_metadata for account identity: %w", err)
-		}
-		originalBodySessionID, _ = clientMetadata["session_id"].(string)
-		metadataChanged := applyCodexAccountIdentityFields(clientMetadata, account, apiKeyID)
-		if applyCodexAccountIdentityEmbeddedMetadata(clientMetadata, account, apiKeyID) {
-			metadataChanged = true
-		}
-		if metadataChanged {
-			raw, err := json.Marshal(clientMetadata)
-			if err != nil {
-				return body, false, fmt.Errorf("encode account-scoped client_metadata: %w", err)
+	for _, prefix := range []string{"", "response."} {
+		originalBodySessionID := ""
+		if cm := root.Get(prefix + "client_metadata"); cm.IsObject() {
+			clientMetadata := map[string]any{}
+			if err := decodeOpenAIJSONUseNumber([]byte(cm.Raw), &clientMetadata); err != nil {
+				return body, false, fmt.Errorf("decode client_metadata for account identity: %w", err)
 			}
-			var setErr error
-			next, setErr = sjson.SetRawBytes(next, "client_metadata", raw)
-			if setErr != nil {
-				return body, false, fmt.Errorf("splice account-scoped client_metadata: %w", setErr)
+			originalBodySessionID, _ = clientMetadata["session_id"].(string)
+			metadataChanged := applyCodexAccountIdentityFields(clientMetadata, account, apiKeyID)
+			if applyCodexAccountIdentityEmbeddedMetadata(clientMetadata, account, apiKeyID) {
+				metadataChanged = true
 			}
-			changed = true
+			if metadataChanged {
+				raw, err := json.Marshal(clientMetadata)
+				if err != nil {
+					return body, false, fmt.Errorf("encode account-scoped client_metadata: %w", err)
+				}
+				var setErr error
+				next, setErr = sjson.SetRawBytes(next, prefix+"client_metadata", raw)
+				if setErr != nil {
+					return body, false, fmt.Errorf("splice account-scoped client_metadata: %w", setErr)
+				}
+				changed = true
+			}
 		}
-	}
-	if promptCacheKey := gjson.GetBytes(body, "prompt_cache_key"); promptCacheKey.Type == gjson.String && strings.TrimSpace(promptCacheKey.String()) != "" {
-		raw := promptCacheKey.String()
-		kind := codexPromptCacheKeyKind(raw, originalBodySessionID, clientSessionID)
-		scoped := scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
-		if scoped != raw {
-			rewritten, err := sjson.SetBytes(next, "prompt_cache_key", scoped)
-			if err != nil {
-				return body, false, fmt.Errorf("splice account-scoped prompt_cache_key: %w", err)
+		if promptCacheKey := root.Get(prefix + "prompt_cache_key"); promptCacheKey.Type == gjson.String && strings.TrimSpace(promptCacheKey.String()) != "" {
+			raw := promptCacheKey.String()
+			kind := codexPromptCacheKeyKind(raw, originalBodySessionID, clientSessionID)
+			scoped := scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
+			if scoped != raw {
+				rewritten, err := sjson.SetBytes(next, prefix+"prompt_cache_key", scoped)
+				if err != nil {
+					return body, false, fmt.Errorf("splice account-scoped prompt_cache_key: %w", err)
+				}
+				next = rewritten
+				changed = true
 			}
-			next = rewritten
-			changed = true
 		}
 	}
 	return next, changed, nil
@@ -299,7 +301,7 @@ func applyCodexAccountIdentityHeaders(headers http.Header, account *Account, api
 	}
 	if raw := strings.TrimSpace(headers.Get(openAIWSTurnMetadataHeader)); raw != "" {
 		metadata := map[string]any{}
-		if err := json.Unmarshal([]byte(raw), &metadata); err == nil && metadata != nil && applyCodexAccountIdentityFields(metadata, account, apiKeyID) {
+		if err := decodeOpenAIJSONUseNumber([]byte(raw), &metadata); err == nil && metadata != nil && applyCodexAccountIdentityFields(metadata, account, apiKeyID) {
 			if rebuilt, err := marshalCodexTurnMetadata(metadata); err == nil {
 				headers.Set(openAIWSTurnMetadataHeader, string(rebuilt))
 			}

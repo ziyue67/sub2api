@@ -132,11 +132,7 @@ func TestChatFallbackResponseObservationReachesUsage(t *testing.T) {
 					require.Contains(t, rec.Body.String(), "observed response")
 				}
 				require.Equal(t, tt.model, observedUpstreamResponseModel(c), "the shared pipeline already saw the upstream model")
-				wantTier := "default"
-				if tt.model == "" {
-					wantTier = ""
-				}
-				require.Equal(t, wantTier, result.UpstreamResponseServiceTier)
+				require.Equal(t, "default", result.UpstreamResponseServiceTier, "the processing tier is declared even when the model is omitted")
 
 				usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 				usageSvc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)

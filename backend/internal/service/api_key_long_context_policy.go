@@ -203,7 +203,8 @@ func (c *apiKeyContextCounter) visit(value gjson.Result, depth int, literal, inp
 			// Schemas, metadata and tool arguments/results are literal data.
 			// Their field names do not load context, but still count in full.
 			metadata := depth == 0 && value.IsObject() && strings.EqualFold(k.String(), "metadata")
-			nestedLiteral := literal || metadata || (value.IsObject() && (strings.EqualFold(k.String(), "parameters") || strings.EqualFold(k.String(), "input_schema") || apiKeyToolDataField(value, parentField, k.String())))
+			disabledTools := depth == 0 && value.IsObject() && strings.EqualFold(k.String(), "tools") && apiKeyContextToolsDisabled(value)
+			nestedLiteral := literal || metadata || disabledTools || (value.IsObject() && (strings.EqualFold(k.String(), "parameters") || strings.EqualFold(k.String(), "input_schema") || apiKeyToolDataField(value, parentField, k.String())))
 			nestedItem := (value.IsArray() && inputItem) || (value.IsObject() && (strings.EqualFold(k.String(), "input") || strings.EqualFold(k.String(), "messages")))
 			visitErr = c.visit(v, depth+1, nestedLiteral, nestedItem, k.String())
 			return visitErr == nil
@@ -214,6 +215,20 @@ func (c *apiKeyContextCounter) visit(value gjson.Result, depth int, literal, inp
 		return nil
 	}
 	return c.count(value.String())
+}
+
+// Native tools disabled by tool_choice cannot load server-side context. Their
+// definitions still count in full, including provider cache-route declarations.
+func apiKeyContextToolsDisabled(root gjson.Result) bool {
+	found, disabled := false, true
+	root.ForEach(func(k, v gjson.Result) bool {
+		if strings.EqualFold(k.String(), "tool_choice") {
+			found = true
+			disabled = disabled && v.Type == gjson.String && v.String() == "none"
+		}
+		return true
+	})
+	return found && disabled
 }
 
 func apiKeyToolDataField(value gjson.Result, parentField, field string) bool {

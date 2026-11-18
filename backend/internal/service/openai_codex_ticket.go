@@ -1079,7 +1079,7 @@ func needsOpenAICodexAstraVersion(model string) bool {
 }
 
 func (s *OpenAIGatewayService) StartOpenAICodexTicketHarvester() {
-	if s == nil || !s.cfg.RunsBackgroundJobs() {
+	if s == nil || s.cfg == nil || !s.cfg.RunsBackgroundJobs() {
 		return
 	}
 	s.openaiCodexTicketLifecycleMu.Lock()
