@@ -9,6 +9,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
 func TestUsageLogRepositoryGetAllGroupUsageSummaryUsesRollupTail(t *testing.T) {
@@ -98,6 +100,10 @@ func TestUsageLogRepositoryGetAllGroupUsageSummaryFallsBackWhenWatermarkInvalid(
 // 尾段不早于保留下界：水位落后于保留下界时（例如清理已推进下界而重建尚未完成），
 // 尚未删除的过期记录也不计入。
 func TestUsageLogRepositoryGetAllGroupUsageSummaryTailStartsAtExpiredBefore(t *testing.T) {
+	// 该用例按 Asia/Shanghai（UTC+8）的零点对齐参数，依赖进程时区与之相同。
+	previous := timezone.Name()
+	require.NoError(t, timezone.Init("Asia/Shanghai"))
+	t.Cleanup(func() { _ = timezone.Init(previous) })
 	todayStart := time.Date(2026, 3, 9, 4, 0, 0, 0, time.UTC)
 	yesterdayStart := time.Date(2026, 3, 8, 5, 0, 0, 0, time.UTC)
 	expiredBefore := time.Date(2026, 2, 10, 5, 0, 0, 0, time.UTC)

@@ -294,6 +294,8 @@ type schedulerSnapshotEntry struct {
 	accounts     []*service.Account
 	payloads     []string
 	lastUsedKeys []string
+	// empty 标记已发布的空快照：命中但不驻留记忆。
+	empty bool
 
 	lastUsed      atomic.Pointer[schedulerLastUsedValues]
 	lastUsedLoads singleflight.Group
@@ -467,8 +469,18 @@ func (c *schedulerCache) loadSnapshotEntry(ctx context.Context, bucket service.S
 	if err != nil {
 		return nil, err
 	}
+	if len(ids) == 1 && ids[0] == schedulerEmptySnapshotMember {
+		// 已发布的空快照以哨兵成员落盘：是有效命中，但不驻留进程内记忆。
+		c.dropSnapshotEntry(bucketKey)
+		return &schedulerSnapshotEntry{
+			active:    active,
+			revisions: revisions,
+			loadedAt:  now,
+			empty:     true,
+		}, nil
+	}
 	if len(ids) == 0 {
-		// 空快照视为缓存未命中，触发数据库回退查询
+		// zset 不存在：视为缓存未命中，触发数据库回退查询
 		// 这解决了新分组创建后立即绑定账号时的竞态条件问题
 		c.dropSnapshotEntry(bucketKey)
 		return nil, nil
@@ -561,6 +573,10 @@ func (c *schedulerCache) snapshotAccountsFromEntry(ctx context.Context, entry *s
 	accounts := make([]service.Account, len(entry.accounts))
 	for i, master := range entry.accounts {
 		accounts[i] = *master
+		// 每次读取都给出独立副本，调用方原地修改不会污染母本。
+		accounts[i].Credentials = cloneSchedulerAccountMap(master.Credentials)
+		accounts[i].Extra = cloneSchedulerAccountMap(master.Extra)
+		accounts[i].AccountGroups = cloneSchedulerAccountGroups(master.AccountGroups)
 		if lastUsed[i] != nil {
 			accounts[i].LastUsedAt = lastUsed[i]
 		}
@@ -1750,4 +1766,46 @@ func filterSchedulerUpstreamBillingProbe(value any) map[string]any {
 		filtered["data"] = filteredData
 	}
 	return filtered
+}
+
+// cloneSchedulerAccountMap 深拷贝账号的 map 字段，保证快照读取的请求局部性。
+func cloneSchedulerAccountMap(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = cloneSchedulerAccountValue(value)
+	}
+	return cloned
+}
+
+func cloneSchedulerAccountValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneSchedulerAccountMap(typed)
+	case []any:
+		cloned := make([]any, len(typed))
+		for i, item := range typed {
+			cloned[i] = cloneSchedulerAccountValue(item)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+// cloneSchedulerAccountGroups 深拷贝账号-分组绑定，隔离 AllowedModels 切片。
+func cloneSchedulerAccountGroups(groups []service.AccountGroup) []service.AccountGroup {
+	if groups == nil {
+		return nil
+	}
+	cloned := make([]service.AccountGroup, len(groups))
+	for i, group := range groups {
+		cloned[i] = group
+		if group.AllowedModels != nil {
+			cloned[i].AllowedModels = append([]string(nil), group.AllowedModels...)
+		}
+	}
+	return cloned
 }

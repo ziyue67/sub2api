@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"testing"
 	"time"
 
@@ -266,6 +267,8 @@ func TestDashboardAggregationRepositorySyncGroupUsageRollupsPublishKeepsUnmarked
 
 func TestDashboardAggregationRepositorySyncGroupUsageRollupsRebuildsWhenTimezoneChanges(t *testing.T) {
 	useGroupUsageRepositoryTestTimezone(t, "America/New_York")
+	require.NoError(t, timezone.Init("America/New_York"))
+	t.Cleanup(func() { _ = timezone.Init("UTC") })
 	db, mock := newSQLMock(t)
 	repo := newDashboardAggregationRepositoryWithSQL(db)
 	todayStart := time.Date(2026, 3, 9, 4, 0, 0, 0, time.UTC)
@@ -655,4 +658,15 @@ func TestDashboardAggregationRepositoryCleanupUsageLogsPartitionFailureRollsBack
 func setGroupUsageRollupTestTimezone(t *testing.T) {
 	t.Helper()
 	useGroupUsageRepositoryTestTimezone(t, "Asia/Shanghai")
+	// 分组用量汇总按 timezone 包配置的时区换算自然日。unit 构建下
+	// integration_harness_test.go 的 TestMain 不参与编译，这里显式初始化。
+	previous := timezone.Name()
+	if err := timezone.Init("Asia/Shanghai"); err != nil {
+		t.Fatalf("init timezone: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := timezone.Init(previous); err != nil {
+			t.Logf("restore timezone %q: %v", previous, err)
+		}
+	})
 }
