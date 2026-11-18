@@ -203,7 +203,7 @@ func (c *apiKeyContextCounter) visit(value gjson.Result, depth int, literal, inp
 			// Schemas, metadata and tool arguments/results are literal data.
 			// Their field names do not load context, but still count in full.
 			metadata := depth == 0 && value.IsObject() && strings.EqualFold(k.String(), "metadata")
-			disabledTools := depth == 0 && value.IsObject() && strings.EqualFold(k.String(), "tools") && apiKeyContextToolsDisabled(value)
+			disabledTools := depth == 0 && value.IsObject() && strings.EqualFold(k.String(), "tools") && apiKeyContextToolsDisabled(value) && apiKeyCacheRouteToolDeclarations(v)
 			nestedLiteral := literal || metadata || disabledTools || (value.IsObject() && (strings.EqualFold(k.String(), "parameters") || strings.EqualFold(k.String(), "input_schema") || apiKeyToolDataField(value, parentField, k.String())))
 			nestedItem := (value.IsArray() && inputItem) || (value.IsObject() && (strings.EqualFold(k.String(), "input") || strings.EqualFold(k.String(), "messages")))
 			visitErr = c.visit(v, depth+1, nestedLiteral, nestedItem, k.String())
@@ -217,18 +217,43 @@ func (c *apiKeyContextCounter) visit(value gjson.Result, depth int, literal, inp
 	return c.count(value.String())
 }
 
-// Native tools disabled by tool_choice cannot load server-side context. Their
-// definitions still count in full, including provider cache-route declarations.
+// Only the canonical OpenAI disable control can make cache-route declarations
+// inert. Conflicting duplicates/case variants keep the conservative policy.
 func apiKeyContextToolsDisabled(root gjson.Result) bool {
 	found, disabled := false, true
 	root.ForEach(func(k, v gjson.Result) bool {
 		if strings.EqualFold(k.String(), "tool_choice") {
-			found = true
+			found = found || k.String() == "tool_choice"
 			disabled = disabled && v.Type == gjson.String && v.String() == "none"
 		}
 		return true
 	})
 	return found && disabled
+}
+
+// Grok's inert cache route consists only of these type-only declarations. Other
+// options and provider-native tools must retain the usual opaque-context checks.
+func apiKeyCacheRouteToolDeclarations(tools gjson.Result) bool {
+	if !tools.IsArray() {
+		return false
+	}
+	valid, found := true, false
+	tools.ForEach(func(_, tool gjson.Result) bool {
+		found = true
+		fields := 0
+		if !tool.IsObject() {
+			valid = false
+			return false
+		}
+		tool.ForEach(func(k, v gjson.Result) bool {
+			fields++
+			valid = valid && k.String() == "type" && v.Type == gjson.String && (v.String() == "web_search" || v.String() == "x_search")
+			return valid
+		})
+		valid = valid && fields == 1
+		return valid
+	})
+	return valid && found
 }
 
 func apiKeyToolDataField(value gjson.Result, parentField, field string) bool {

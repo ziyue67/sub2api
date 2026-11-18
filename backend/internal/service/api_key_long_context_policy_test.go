@@ -76,15 +76,28 @@ func TestAPIKeyLongContextPolicyDisabledNativeToolsRemainCounted(t *testing.T) {
 	ctx := context.Background()
 	key := &APIKey{}
 	require.NoError(t, gateway.CheckAPIKeyLongContext(ctx, key, []byte(`{"input":"hi",`+tools+`,"tool_choice":"none"}`), "context-policy-test"))
-	for _, choice := range []string{``, `,"tool_choice":"auto"`, `,"tool_choice":"none","tool_choice":"auto"`, `,"tool_choice":"none","Tool_Choice":"required"`} {
+	for _, choice := range []string{``, `,"Tool_Choice":"none"`, `,"tool_choice":"auto"`, `,"tool_choice":"none","tool_choice":"auto"`, `,"tool_choice":"none","Tool_Choice":"required"`} {
 		var policyErr *APIKeyLongContextError
 		require.ErrorAs(t, gateway.CheckAPIKeyLongContext(ctx, key, []byte(`{"input":"hi",`+tools+choice+`}`), "context-policy-test"), &policyErr)
 		require.Equal(t, "context_unverifiable", policyErr.Code)
 	}
 	var policyErr *APIKeyLongContextError
-	large := []byte(`{"input":"hi","tool_choice":"none","tools":[{"type":"web_search","description":"` + strings.Repeat("context ", 200) + `"}]}`)
+	large := []byte(`{"input":"hi","tool_choice":"none","tools":[` + strings.TrimSuffix(strings.Repeat(`{"type":"web_search"},`, 200), ",") + `]}`)
 	require.ErrorAs(t, gateway.CheckAPIKeyLongContext(ctx, key, large, "context-policy-test"), &policyErr)
 	require.Equal(t, "context_length_exceeded", policyErr.Code)
+	for _, declaration := range []string{
+		`{"googleSearch":{}}`,
+		`{"retrieval":{"vertexAiSearch":{"datastore":"fixture"}}}`,
+		`{"urlContext":{}}`,
+		`{"codeExecution":{}}`,
+		`{"type":"web_search","googleSearch":{}}`,
+		`{"type":"web_search","file_id":"file_fixture"}`,
+		`{"type":"web_search","type":"x_search"}`,
+	} {
+		body := []byte(`{"contents":[{"parts":[{"text":"hi"}]}],"tool_choice":"none","tools":[` + declaration + `]}`)
+		require.ErrorAs(t, gateway.CheckAPIKeyLongContext(ctx, key, body, "context-policy-test"), &policyErr)
+		require.Equal(t, "context_unverifiable", policyErr.Code)
+	}
 	// Disabling tools does not hide opaque references in the actual input.
 	require.Error(t, gateway.CheckAPIKeyLongContext(ctx, key, []byte(`{"input":[{"type":"input_file","file_id":"file_fixture"}],`+tools+`,"tool_choice":"none"}`), "context-policy-test"))
 }

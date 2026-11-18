@@ -221,6 +221,10 @@ func (r *retryAccountRepository) WithLatestSchedulerAccounts(_ context.Context, 
 	return publish(r.current)
 }
 
+func (r *retryAccountRepository) ListModelAvailabilityCandidates(ctx context.Context, _ *int64, _ []string, _ bool) ([]Account, error) {
+	return r.ListSchedulableUngroupedByPlatform(ctx, PlatformOpenAI)
+}
+
 func (r *retryAccountRepository) ListSchedulableUngroupedByPlatform(context.Context, string) ([]Account, error) {
 	return []Account{r.old}, nil
 }

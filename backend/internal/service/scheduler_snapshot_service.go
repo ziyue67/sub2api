@@ -344,11 +344,15 @@ func (s *SchedulerSnapshotService) loadFallbackAccounts(ctx context.Context, buc
 	}
 }
 
-// loadAndPublishFallback 先取发布令牌再读数据库：令牌之后发生的 Retire 会拦下这次回写。
+// loadAndPublishFallback 验证回源权限后，先取发布令牌再读数据库：令牌之后发生的 Retire 会拦下这次回写。
 // 取令牌、读库与回写共用 withSharedFallbackTimeout 的时限。
 func (s *SchedulerSnapshotService) loadAndPublishFallback(ctx context.Context, bucket SchedulerBucket, useMixed bool) ([]Account, error) {
 	ctx, cancel := s.withSharedFallbackTimeout(ctx)
 	defer cancel()
+
+	if err := s.guardFallback(ctx); err != nil {
+		return nil, err
+	}
 
 	var writeToken SchedulerBucketWriteToken
 	canPublish := false
@@ -364,10 +368,6 @@ func (s *SchedulerSnapshotService) loadAndPublishFallback(ctx context.Context, b
 			writeToken = token
 			canPublish = true
 		}
-	}
-
-	if err := s.guardFallback(ctx); err != nil {
-		return nil, err
 	}
 
 	accounts, err := s.loadAccountsFromDB(ctx, bucket, useMixed)

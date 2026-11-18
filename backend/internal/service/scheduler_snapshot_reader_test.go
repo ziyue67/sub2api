@@ -67,7 +67,7 @@ func TestSchedulerSnapshotReaderUsesHitsAndFailsClosedOnMissOrFailure(t *testing
 		err      error
 		success  bool
 	}{
-		{name: "hit", hit: true, accounts: []*Account{{ID: 1}}, success: true},
+		{name: "hit", hit: true, accounts: []*Account{{ID: 1, Status: StatusActive, Schedulable: true}}, success: true},
 		{name: "miss"},
 		{name: "cache_error", err: errors.New("cache unavailable")},
 	} {
