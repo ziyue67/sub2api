@@ -1,4 +1,6 @@
 import { defineComponent } from 'vue'
+import { createPinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Channel, CreateChannelRequest, UpdateChannelRequest } from '@/api/admin/channels'
@@ -28,6 +30,13 @@ vi.mock('vue-i18n', async () => ({
 function mountView() {
   return mount(ChannelsView, {
     global: {
+      plugins: [
+        createPinia(),
+        createRouter({
+          history: createMemoryHistory(),
+          routes: [{ path: '/', component: defineComponent({ template: '<div />' }) }]
+        })
+      ],
       stubs: {
         AppLayout: defineComponent({ template: '<main><slot /></main>' }),
         TablePageLayout: defineComponent({
