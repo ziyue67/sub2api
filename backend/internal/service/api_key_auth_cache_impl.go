@@ -24,7 +24,8 @@ import (
 // concurrency limit, group client and subagent admission policies)与
 // ranxi v30(include configured API key groups)。
 // v34: per-key input context token ceiling.
-const apiKeyAuthSnapshotVersion = 35
+// v37: unify fork policy fields with ranxi's independent free_openai_ultrafast.
+const apiKeyAuthSnapshotVersion = 37
 
 // Local-only generation wrapper. Old entries remain bounded by existing TTL
 // and capacity, but cannot authorize after a subscription recovery checkpoint.
@@ -479,6 +480,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			ForceOpenAIFast:                 apiKey.Group.ForceOpenAIFast,
 			ForceOpenAIUltrafast:            apiKey.Group.ForceOpenAIUltrafast,
 			FreeOpenAIFast:                  apiKey.Group.FreeOpenAIFast,
+			FreeOpenAIUltrafast:             apiKey.Group.FreeOpenAIUltrafast,
 			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
 			ModelAllowlist:                  apiKey.Group.ModelAllowlist,
@@ -597,6 +599,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			ForceOpenAIFast:                 snapshot.Group.ForceOpenAIFast,
 			ForceOpenAIUltrafast:            snapshot.Group.ForceOpenAIUltrafast,
 			FreeOpenAIFast:                  snapshot.Group.FreeOpenAIFast,
+			FreeOpenAIUltrafast:             snapshot.Group.FreeOpenAIUltrafast,
 			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
 			ModelAllowlist:                  snapshot.Group.ModelAllowlist,

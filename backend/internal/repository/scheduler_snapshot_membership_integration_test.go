@@ -19,8 +19,9 @@ func TestSchedulerSnapshotConfiguredMembership(t *testing.T) {
 			ctx := context.Background()
 			tx := testEntTx(t)
 			client := tx.Client()
-			// Other integration tests commit accounts. Exclude them only inside
-			// this rollback transaction so global/simple pools have known members.
+			// Other integration fixtures may have committed schedulable accounts.
+			// Hide them inside this rollback-only transaction before exercising
+			// simple/ungrouped pools, which deliberately query beyond one group.
 			_, err := client.Account.Update().SetSchedulable(false).Save(ctx)
 			require.NoError(t, err)
 			repo := newAccountRepositoryWithSQL(client, tx, nil)

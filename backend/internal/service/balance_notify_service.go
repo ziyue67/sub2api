@@ -40,7 +40,6 @@ type AccountQuotaReader interface {
 
 // BalanceNotifyService handles balance and quota threshold notifications.
 type BalanceNotifyService struct {
-	forecast     *BalanceForecastService
 	emailService interface {
 		SendEmail(context.Context, string, string, string) error
 	}
@@ -561,15 +560,11 @@ func (s *BalanceNotifyService) buildQuotaAlertEmailBody(accountID int64, account
 	return fmt.Sprintf(quotaAlertEmailTemplate, siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay)
 }
 
-// Stop cancels notification work, stops the forecast job and waits for the
-// bounded workers to exit. Billing persistence belongs to usage tasks and is
-// never dropped here.
+// Stop cancels notification work and waits for bounded workers to exit.
+// Billing persistence belongs to usage tasks and is never dropped here.
 func (s *BalanceNotifyService) Stop() {
 	if s == nil {
 		return
-	}
-	if s.forecast != nil {
-		s.forecast.Stop()
 	}
 	s.usageNotifications.stop()
 }

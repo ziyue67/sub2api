@@ -501,6 +501,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 			accounts.POST("/:id/totp-rotation", gin.HandlerFunc(stepUpAuth), h.Admin.OpenAIOAuthReauth.RotateTOTP)
 			accounts.POST("/:id/totp-rotation/verify", gin.HandlerFunc(stepUpAuth), h.Admin.OpenAIOAuthReauth.RetryTOTP)
 			accounts.POST("/:id/totp-export", gin.HandlerFunc(stepUpAuth), h.Admin.OpenAIOAuthReauth.ExportTOTP)
+			accounts.POST("/totp-recovery-export", gin.HandlerFunc(stepUpAuth), h.Admin.OpenAIOAuthReauth.ExportTOTPRecovery)
+			accounts.POST("/:id/totp-recovery-import", gin.HandlerFunc(stepUpAuth), h.Admin.OpenAIOAuthReauth.ImportTOTPRecovery)
 			accounts.PUT("/:id/openai-reauth/email", h.Admin.OpenAIOAuthReauth.SaveConfig)
 			accounts.POST("/:id/openai-reauth", h.Admin.OpenAIOAuthReauth.CreateTask)
 		}
@@ -1155,6 +1157,10 @@ func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.GET("/upstream-channel-bindings", h.Admin.Channel.ReadUpstreamChannelBindings)
 	admin.PUT("/upstream-channel-bindings", h.Admin.Channel.BindUpstreamChannelAccounts)
 	admin.GET("/profit-operations/snapshot", h.Admin.Channel.ProfitOperations)
+	admin.GET("/profit-operations/providers", h.Admin.Channel.ListProviderProfitLinks)
+	admin.PUT("/providers/:id/profit-channel", h.Admin.Channel.SetProviderProfitLink)
+	admin.POST("/providers/:id/profit-charges/sync", h.Admin.Channel.SyncProviderProfitCharges)
+	admin.GET("/providers/:id/profit-charges/sync/:job", h.Admin.Channel.ProviderProfitSyncStatus)
 	admin.GET("/upstream-operations/snapshot", h.Admin.Channel.UpstreamOperations)
 	channels := admin.Group("/channels")
 	{

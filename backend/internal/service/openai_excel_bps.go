@@ -447,6 +447,23 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
+	// Acquire the logical request exit before token lookup: an expired Excel
+	// grant must refresh through the same lease as attachments and generation.
+	if c != nil {
+		c.Set(openAIRequestProxyOpsKey, (*openAIRequestProxyRoute)(nil))
+	}
+	proxyCtx, releaseProxy, proxyErr := s.beginOpenAIRequestProxy(ctx, nil, account)
+	if proxyErr != nil {
+		if isExcelBPSClientCancellation(c, proxyErr) {
+			return clientCanceled()
+		}
+		return fail(503, "basispoints_proxy_unavailable", "No healthy BPS session proxy is available; retry later")
+	}
+	defer releaseProxy()
+	ctx = proxyCtx
+	if route, ok := openAIRequestProxyFromContext(ctx, account.ID); ok && c != nil {
+		c.Set(openAIRequestProxyOpsKey, route)
+	}
 	token, err := s.getExcelBPSAccessToken(ctx, account)
 	if err != nil {
 		if isExcelBPSClientCancellation(c, err) {
@@ -467,7 +484,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if account.Proxy != nil {
 		attachmentProxy = account.Proxy.URL()
 	}
-	if images != nil && images.HasImages() && account.IsExcelBPSMihomoEnabled() {
+	if images != nil && images.HasImages() && (account.IsExcelBPSMihomoEnabled() || account.ExcelBPSRequestProxyEnabled()) {
 		var lease excelBPSLease
 		// Pin the attachment upload and the Responses request to the same exit,
 		// whichever pool the account chose.
@@ -755,12 +772,16 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				return s.continueExcelBPSSearch(nextCtx, account, nextBody, token, accountID, proxyURL)
 			})
 	} else {
+		// Both repair callbacks run serially on the bridge goroutine. Their
+		// evolving request body must not replace the caller's immutable body,
+		// which is still read below when constructing result metadata.
+		repairUpstreamBody := upstreamBody
 		converted = bridge.StreamWithRepairs(requestCtx, resp.Body, func(repairCtx context.Context, failed map[string]any, validation error) (map[string]any, error) {
 			if isControlledExperiment(ctx) {
 				return nil, errors.New("controlled experiment disables BPS tool repair submissions")
 			}
 			markPriorityAttemptFailure(repairCtx)
-			correctedBody, err := basispoints.BuildToolRepairRequest(upstreamBody, failed, validation)
+			correctedBody, err := basispoints.BuildToolRepairRequest(repairUpstreamBody, failed, validation)
 			if err != nil {
 				return nil, err
 			}
@@ -803,11 +824,11 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				return nil, fmt.Errorf("excel BPS correction returned HTTP %d", repairResp.StatusCode)
 			}
 			s.UpdateCodexUsageSnapshotFromHeaders(repairCtx, account.ID, repairResp.Header)
-			upstreamBody = correctedBody
+			repairUpstreamBody = correctedBody
 			return basispoints.ReadToolRepairResponse(repairResp.Body)
 		}, func(repairCtx context.Context) (io.ReadCloser, error) {
 			markPriorityAttemptFailure(repairCtx)
-			repairBody, err := basispoints.RepairRequest(upstreamBody)
+			repairBody, err := basispoints.RepairRequest(repairUpstreamBody)
 			if err != nil {
 				return nil, err
 			}
@@ -853,6 +874,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 
 	if len(compactOutput) > 0 {
 		converted = basispoints.WithCompactedWindow(requestCtx, converted, compactOutput, compactUsageWire)
+	}
+	if account.ExcelBPSRequestProxyEnabled() {
+		converted = ownExcelBPSRequestBody(ctx, converted, lease)
 	}
 	defer func() { _ = converted.Close() }()
 	// The bridge sees the body after group policy mapping. Keep the original
@@ -915,7 +939,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				result.ResponseID = gjson.GetBytes(payload, "response.id").String()
 				result.UpstreamResponseModel = gjson.GetBytes(payload, "response.model").String()
 				result.UpstreamResponseServiceTier = normalizeObservedOpenAIServiceTier(gjson.GetBytes(payload, "response.service_tier").String())
-				upstreamFailure = basispoints.ParseUpstreamFailure(payload)
+				upstreamFailure = basispoints.ParseNormalizedUpstreamFailure(payload)
 				if bridgeFailure != nil {
 					markPriorityAttemptFailure(ctx)
 					setOpsUpstreamError(c, resp.StatusCode, "", "")
@@ -935,7 +959,12 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				if upstreamFailure != nil {
 					// Preserve the actual HTTP status separately from the event's
 					// semantic status. An accepted generation is never replayed.
-					setOpsUpstreamError(c, resp.StatusCode, upstreamFailure.Message, "")
+					safeDetail := ""
+					if upstreamFailure.Search != nil {
+						raw, _ := json.Marshal(upstreamFailure.Details())
+						safeDetail = string(raw)
+					}
+					setOpsUpstreamError(c, resp.StatusCode, upstreamFailure.Message, safeDetail)
 					MarkOpsStreamErrorValue(c, OpsStreamError{
 						ErrType: upstreamFailure.Type, Code: upstreamFailure.Code, Message: upstreamFailure.Message,
 						IntendedStatus: upstreamFailure.Status, CountTowardsSLA: true, NonStream: !stream,

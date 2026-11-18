@@ -1,7 +1,6 @@
 name: OAuth initial model selection
 on:
-  push:
-    branches: [feat/oauth-initial-model-selection]
+  workflow_dispatch:
   pull_request:
     paths:
       - 'backend/internal/service/*model*'
@@ -37,6 +36,15 @@ jobs:
         with:
           go-version-file: candidate/backend/go.mod
           cache-dependency-path: candidate/backend/go.sum
+      - name: Install Redis for shared HTTP and WS regression fixtures
+        shell: bash
+        run: |
+          bash candidate/.github/scripts/ci-ubuntu-mirrors.sh
+          if ! command -v redis-server >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends redis-server
+          fi
+          redis-server --version
       - name: Baseline must fail unchanged admission assertions
         shell: bash
         run: |
@@ -74,7 +82,7 @@ jobs:
           path: evidence/
           retention-days: 14
   selection-ui:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

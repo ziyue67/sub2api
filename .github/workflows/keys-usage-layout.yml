@@ -1,8 +1,7 @@
 name: Keys usage layout
 
 on:
-  push:
-    branches: [fix/keys-usage-layout-20261108]
+  workflow_dispatch:
   pull_request:
     paths:
       - 'frontend/src/views/user/KeysView.vue'
@@ -25,7 +24,7 @@ concurrency:
 
 jobs:
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6

@@ -1,8 +1,21 @@
 name: OAuth degradation native controls
 
 on:
+  workflow_dispatch:
   push:
-    branches: [production, fix/oauth-degradation-native-controls-20261110, ci/oauth-workflow-mirror-recovery-20261111]
+    branches: [production]
+    paths:
+      - 'backend/internal/service/*oauth*'
+      - 'backend/internal/service/account.go'
+      - 'backend/internal/service/openai_model*'
+      - 'backend/internal/repository/*oauth*'
+      - 'backend/internal/repository/account*'
+      - 'backend/internal/repository/*group*'
+      - 'backend/migrations/*oauth_degradation*'
+      - 'frontend/src/i18n/locales/*/autoConfig.ts'
+      - '.github/workflows/oauth-degradation-native-controls.yml'
+      - '.github/scripts/assert-test-log-clean.sh'
+      - '.github/scripts/test_assert_test_log_clean.py'
   pull_request:
     branches: [production]
     paths:
@@ -15,6 +28,8 @@ on:
       - 'backend/migrations/*oauth_degradation*'
       - 'frontend/src/i18n/locales/*/autoConfig.ts'
       - '.github/workflows/oauth-degradation-native-controls.yml'
+      - '.github/scripts/assert-test-log-clean.sh'
+      - '.github/scripts/test_assert_test_log_clean.py'
 
 permissions:
   contents: read
@@ -57,14 +72,14 @@ jobs:
           git rev-parse HEAD > evidence/head.txt
           (cd backend && go test -race -tags=unit ./internal/service ./internal/handler/admin -run '^(TestOAuthDegradation|TestOAuthRefresh|TestOAuthAutoConfig|TestOAuthInitial|TestOAuthModelMapping|TestAccountIsModelSupported|TestGPT55Retirement|TestQualitySupportedModels|TestQualityModel|TestOpenAI.*Model|TestAutoConfig|TestAdvanceConcurrency|TestOpenAITwoFAAdmission|TestApplyUpstreamModels|TestAutomaticUpstreamModels)' -count=1 -v) 2>&1 | tee evidence/service-unit.log
           (cd backend && go test -race -tags=unit ./internal/repository -run '^(TestOAuthDegradation|TestAutoConfig|TestAccountQuality|TestOpenAITwoFAAdmission|TestSchedulerReadiness|TestSchedulerCacheSnapshotAccountIDReuseKeepsEmptySnapshotSemantics$|TestSchedulerCacheSnapshotMemoEmptyAndNilMetadataAreNotCached$)' -count=1 -v) 2>&1 | tee evidence/repository-unit.log
-          ! grep -Eq -- '--- SKIP:|no tests to run' evidence/service-unit.log evidence/repository-unit.log
+          bash .github/scripts/assert-test-log-clean.sh green evidence/service-unit.log evidence/repository-unit.log
       - name: WebSocket first-message disconnect and timeout log boundaries
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p evidence
           (cd backend && go test -race -tags=unit ./internal/handler -run '^TestOpenAIResponsesWebSocket_(DisconnectBeforeFirstMessageIsInfo|RequestCanceledBeforeFirstMessageIsInfo|FirstMessageTimeoutUsesConfig)$' -count=20 -v) 2>&1 | tee evidence/websocket-first-message.log
-          ! grep -Eq -- '--- SKIP:|no tests to run|WARNING: DATA RACE' evidence/websocket-first-message.log
+          bash .github/scripts/assert-test-log-clean.sh green evidence/websocket-first-message.log
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -137,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/oauth-degradation-integration-race.sh postgres "$GITHUB_WORKSPACE" '^(TestOAuthDegradation|TestOAuthRefresh|TestAutoConfigConcurrent|TestOpenAITwoFAAdmission|TestQualityActionsRestore|TestQualityIsolation|TestQualityBPSAndQuarantineCoexist|TestQualityCoexist|TestAstraGroups)' 25m
-          ! grep -Eq -- '--- SKIP:|no tests to run|WARNING: DATA RACE' evidence/postgres.log
+          bash .github/scripts/assert-test-log-clean.sh green evidence/postgres.log
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -146,7 +161,7 @@ jobs:
           retention-days: 14
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

@@ -371,7 +371,7 @@ func (h prefixHook) prefixCmd(cmd redisclient.Cmder) {
 		"hgetall", "hget", "hset", "hdel", "hincrbyfloat",
 		"zadd", "zcard", "zrange", "zrangebyscore", "zrem", "zremrangebyscore", "zrevrange", "zrevrangebyscore", "zscore":
 		prefixOne(1)
-	case "mget":
+	case "mget", "exists":
 		for i := 1; i < len(args); i++ {
 			prefixOne(i)
 		}

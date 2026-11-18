@@ -179,8 +179,8 @@ func applyCodexAccountIdentityEmbeddedMetadata(values map[string]any, account *A
 // Codex derives the key from its session-id header, which matches
 // client_metadata.session_id except on an ephemeral fork such as thread/sample:
 // the fork names itself in the metadata but keeps its parent's header and key.
-func codexPromptCacheKeyKind(promptCacheKey, bodySessionID, clientSessionID string) string {
-	for _, sessionID := range []string{bodySessionID, clientSessionID} {
+func codexPromptCacheKeyKind(promptCacheKey, bodySessionID string, clientSessionIDs ...string) string {
+	for _, sessionID := range append([]string{bodySessionID}, clientSessionIDs...) {
 		if strings.TrimSpace(sessionID) != "" && promptCacheKey == sessionID {
 			return "session"
 		}
@@ -188,20 +188,20 @@ func codexPromptCacheKeyKind(promptCacheKey, bodySessionID, clientSessionID stri
 	return "prompt-cache"
 }
 
-func applyCodexAccountIdentityClientMetadataMap(requestBody map[string]any, account *Account, apiKeyID int64, clientSessionID string) bool {
+func applyCodexAccountIdentityClientMetadataMap(requestBody map[string]any, account *Account, apiKeyID int64, clientSessionIDs ...string) bool {
 	if requestBody == nil || codexAccountIdentityNamespace(account) == "" {
 		return false
 	}
-	changed := applyCodexAccountIdentitySectionMap(requestBody, account, apiKeyID, clientSessionID)
+	changed := applyCodexAccountIdentitySectionMap(requestBody, account, apiKeyID, clientSessionIDs...)
 	if response, ok := requestBody["response"].(map[string]any); ok {
-		if applyCodexAccountIdentitySectionMap(response, account, apiKeyID, clientSessionID) {
+		if applyCodexAccountIdentitySectionMap(response, account, apiKeyID, clientSessionIDs...) {
 			changed = true
 		}
 	}
 	return changed
 }
 
-func applyCodexAccountIdentitySectionMap(requestBody map[string]any, account *Account, apiKeyID int64, clientSessionID string) bool {
+func applyCodexAccountIdentitySectionMap(requestBody map[string]any, account *Account, apiKeyID int64, clientSessionIDs ...string) bool {
 	if requestBody == nil || codexAccountIdentityNamespace(account) == "" {
 		return false
 	}
@@ -218,7 +218,7 @@ func applyCodexAccountIdentitySectionMap(requestBody map[string]any, account *Ac
 		}
 	}
 	if raw, ok := requestBody["prompt_cache_key"].(string); ok && strings.TrimSpace(raw) != "" {
-		kind := codexPromptCacheKeyKind(raw, originalBodySessionID, clientSessionID)
+		kind := codexPromptCacheKeyKind(raw, originalBodySessionID, clientSessionIDs...)
 		next := scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
 		if next != raw {
 			requestBody["prompt_cache_key"] = next
@@ -231,7 +231,7 @@ func applyCodexAccountIdentitySectionMap(requestBody map[string]any, account *Ac
 // applyCodexAccountIdentityClientMetadataRaw scopes only the small identity
 // subobjects with gjson/sjson. The passthrough hot path never unmarshals the
 // potentially multi-megabyte request body.
-func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, apiKeyID int64, clientSessionID string) ([]byte, bool, error) {
+func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, apiKeyID int64, clientSessionIDs ...string) ([]byte, bool, error) {
 	if len(body) == 0 || codexAccountIdentityNamespace(account) == "" {
 		return body, false, nil
 	}
@@ -269,7 +269,7 @@ func applyCodexAccountIdentityClientMetadataRaw(body []byte, account *Account, a
 		}
 		if promptCacheKey := root.Get(prefix + "prompt_cache_key"); promptCacheKey.Type == gjson.String && strings.TrimSpace(promptCacheKey.String()) != "" {
 			raw := promptCacheKey.String()
-			kind := codexPromptCacheKeyKind(raw, originalBodySessionID, clientSessionID)
+			kind := codexPromptCacheKeyKind(raw, originalBodySessionID, clientSessionIDs...)
 			scoped := scopeCodexAccountIdentityValue(account, apiKeyID, kind, raw)
 			if scoped != raw {
 				rewritten, err := sjson.SetBytes(next, prefix+"prompt_cache_key", scoped)

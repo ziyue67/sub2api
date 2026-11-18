@@ -6,6 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDefaultModelsHaveUniqueIDs(t *testing.T) {
+	seen := make(map[string]struct{}, len(DefaultModels))
+	for _, model := range DefaultModels {
+		require.NotEmpty(t, model.ID)
+		require.NotContains(t, seen, model.ID, "public model IDs must be unique")
+		seen[model.ID] = struct{}{}
+	}
+}
+
 func TestDefaultModelsIncludeBareGPT56Alias(t *testing.T) {
 	require.Contains(t, DefaultModelIDs(), "gpt-5.6")
 }

@@ -93,6 +93,7 @@ var usageLogInsertArgTypes = [...]string{
 	"jsonb",       // cache_creation_billing
 	"jsonb",       // queue_timing
 	"text",        // platform
+	"jsonb",       // customer_cost_details
 }
 
 const (
@@ -300,14 +301,15 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
 			$10, $11,
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69
+			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, created_at
@@ -767,7 +769,8 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		) AS (VALUES `)
 
 	// Each batch row prepends a synthetic input_index before the usage-log columns.
@@ -868,7 +871,8 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+				customer_cost_details
 			)
 			SELECT
 				user_id,
@@ -939,7 +943,8 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+				customer_cost_details
 			FROM input
 			ON CONFLICT (request_id, api_key_id) DO NOTHING
 			RETURNING request_id, api_key_id, id, created_at
@@ -1050,7 +1055,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		) AS (VALUES `)
 
 	args := make([]any, 0, len(preparedList)*len(usageLogInsertArgTypes))
@@ -1147,7 +1153,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		)
 		SELECT
 			user_id,
@@ -1218,7 +1225,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		FROM input
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`)
@@ -1297,14 +1305,15 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			created_at,
 			cache_creation_billing,
 			queue_timing,
-			platform
+			platform,
+			customer_cost_details
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
 			$10, $11,
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69
+			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`, prepared.args...)
@@ -1328,6 +1337,12 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 	subscriptionID := nullInt64(log.SubscriptionID)
 	duration := nullInt(log.DurationMs)
 	firstToken := nullInt(log.FirstTokenMs)
+	var customerCostDetails any
+	if log.CustomerCostDetails != nil {
+		if raw, err := json.Marshal(log.CustomerCostDetails); err == nil {
+			customerCostDetails = string(raw)
+		}
+	}
 	userAgent := nullString(log.UserAgent)
 	ipAddress := nullString(log.IPAddress)
 	imageSize := nullString(log.ImageSize)
@@ -1437,6 +1452,7 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			nullCacheCreationBillingJSON(log.CacheCreationBilling),
 			nullQueueTimingJSON(log.QueueTiming),
 			nullString(&log.Platform),
+			customerCostDetails,
 		},
 	}
 }

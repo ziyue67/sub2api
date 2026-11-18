@@ -710,19 +710,25 @@ func openAIRequestBodyHasTools(body []byte) bool {
 	return found
 }
 
-// openAIRequestBodyHasAdditionalTools 报告请求是否把工具声明放在
-// input[].additional_tools 条目上。这是 Codex Responses Lite 的形状：顶层没有
-// tools，工具声明挂在 input 的 additional_tools 条目里。
 func openAIRequestBodyHasAdditionalTools(body []byte) bool {
-	for _, item := range gjson.GetBytes(body, "input").Array() {
-		if strings.TrimSpace(item.Get("type").String()) != "additional_tools" {
-			continue
-		}
-		if tools := item.Get("tools"); tools.IsArray() && len(tools.Array()) > 0 {
-			return true
-		}
+	root := parseRawJSONView(body)
+	if !bytes.Contains(body, []byte("additional_tools")) && !JSONMayEscapePlainASCII(body) {
+		return false
 	}
-	return false
+	found := false
+	isAdditionalToolsWithTools := func(item gjson.Result) bool {
+		return strings.TrimSpace(item.Get("type").String()) == "additional_tools" && gjsonArrayHasElements(item.Get("tools"))
+	}
+	input := root.Get("input")
+	if !input.IsArray() {
+		// gjson 把非数组的值当作只含它自身的数组。
+		return input.Type != gjson.Null && isAdditionalToolsWithTools(input)
+	}
+	input.ForEach(func(_, item gjson.Result) bool {
+		found = isAdditionalToolsWithTools(item)
+		return !found
+	})
+	return found
 }
 
 // gjsonArrayHasElements 不分配结果切片地判断数组是否非空。
@@ -2295,54 +2301,6 @@ func openAIFastPolicySettingsFromContext(ctx context.Context) *OpenAIFastPolicyS
 	return nil
 }
 
-// openAIModelSupportsUltrafast reports whether OpenAI offers the Ultrafast
-// service tier for the model. It is the single
-// source for both the group-forced tier gate and the Ultrafast billing
-// multiplier, so a model can never be forced onto Ultrafast yet billed below it.
-func openAIModelSupportsUltrafast(model string) bool {
-	normalized := normalizeKnownOpenAICodexModel(model)
-	return isOpenAIGPT6AstraModel(normalized) || normalized == "gpt-6.1-sol" || normalized == "gpt-6.2-sol" || normalized == "gpt-6.2-astra"
-}
-
-// openAIGroupForcedServiceTier returns the service_tier that the trusted request
-// Group forces onto an OpenAI-account request for the given upstream model, or
-// "" when the group forces nothing and the client's value is kept.
-//
-// The two group flags are independent and resolve as Ultrafast > Fast > client:
-//   - ForceOpenAIUltrafast applies only to models that support Ultrafast
-//     (openAIModelSupportsUltrafast) and yields "ultrafast".
-//   - Otherwise ForceOpenAIFast yields "priority", for every model.
-//
-// So a group with only ForceOpenAIUltrafast leaves unsupported models to the
-// client, and a group with both flags falls back to Fast for them.
-func openAIGroupForcedServiceTier(ctx context.Context, account *Account, model string) string {
-	if ctx == nil || account == nil || account.Platform != PlatformOpenAI {
-		return ""
-	}
-	group, _ := ctx.Value(ctxkey.Group).(*Group)
-	if !IsGroupContextValid(group) || !groupSupportsOpenAIFast(group.Platform) {
-		return ""
-	}
-	if group.ForceOpenAIUltrafast && openAIModelSupportsUltrafast(model) {
-		// Resolve the published Pro entitlement first, then account-specific grants.
-		if base := openai.GPT62ModelID(model); base != "" && account.IsOpenAIOAuthLike() {
-			if gpt62PlanIncludesUltrafast(account, base) {
-				return OpenAIFastTierUltrafast
-			}
-			metadata, ok := account.GetUpstreamModelMetadata(base)
-			if ok && gjson.GetBytes(metadata.CodexToolCapabilities["service_tiers"], `#(id=="ultrafast")`).Exists() {
-				return OpenAIFastTierUltrafast
-			}
-		} else {
-			return OpenAIFastTierUltrafast
-		}
-	}
-	if group.ForceOpenAIFast {
-		return OpenAIFastTierPriority
-	}
-	return ""
-}
-
 // applyOpenAIFastPolicyToBody applies the OpenAI fast policy to a raw request
 // body. When action=filter it removes the service_tier field; when
 // action=block it returns (body, *OpenAIFastBlockedError). On pass it
@@ -2879,7 +2837,7 @@ func normalizeOpenAIReasoningEffortForModel(raw, model string) string {
 // supportsOpenAIReasoningEffortMax reports model families whose upstream scale
 // has a distinct max level. Other models keep the legacy max -> xhigh behavior.
 func supportsOpenAIReasoningEffortMax(model string) bool {
-	if isOpenAIGPT6Model(model) || isOpenAIGPT56Model(model) {
+	if isOpenAIGPT6Model(model) || isOpenAIGPT56Model(model) || normalizeOpenAIGPT62Model(model) != "" {
 		return true
 	}
 

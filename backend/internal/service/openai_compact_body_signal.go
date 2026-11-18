@@ -2,7 +2,6 @@ package service
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -30,11 +29,7 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
-	// Escaped trigger names and invalid input retain the full decoder path.
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) > 0 && trimmed[0] == '{' &&
-		!bytes.Contains(body, []byte("compaction_trigger")) &&
-		!bytes.Contains(body, []byte(`\u`)) && json.Valid(body) {
+	if !compactionTriggerNeedsDecode(body) {
 		return body, false, nil
 	}
 	var payload map[string]any
@@ -73,6 +68,46 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 }
 
 var compactionTriggerToken = []byte("compaction_trigger")
+
+// compactionTriggerNeedsDecode lets bodies whose input order cannot change
+// skip the full decode. Without a \u escape that spells plain ASCII, every
+// decoded "compaction_trigger" string is a literal occurrence of the token, so:
+//   - no occurrence means no trigger;
+//   - a single occurrence that is the type of the last input item, as read
+//     through the zero-copy view, means the decoder sees either that same item
+//     as the only trigger or, when a duplicate member shadows it, no trigger.
+//
+// Either way the body is returned unchanged. Such a body must still be a valid
+// JSON object, so decode errors keep surfacing from the original path.
+func compactionTriggerNeedsDecode(body []byte) bool {
+	if JSONMayEscapePlainASCII(body) {
+		return true
+	}
+	switch bytes.Count(body, compactionTriggerToken) {
+	case 0:
+		trimmed := bytes.TrimLeft(body, " \t\r\n")
+		return len(trimmed) == 0 || trimmed[0] != '{' || !gjson.ValidBytes(body)
+	case 1:
+		return !compactionTriggerIsLastInputItem(body) || !gjson.ValidBytes(body)
+	default:
+		return true
+	}
+}
+
+// compactionTriggerIsLastInputItem reports whether the last element of the
+// top-level input array is an object whose type is "compaction_trigger".
+func compactionTriggerIsLastInputItem(body []byte) bool {
+	input := parseRawJSONView(body).Get("input")
+	if !input.IsArray() {
+		return false
+	}
+	var last gjson.Result
+	input.ForEach(func(_, item gjson.Result) bool {
+		last = item
+		return true
+	})
+	return last.IsObject() && last.Get("type").String() == "compaction_trigger"
+}
 
 func isOpenAINativeCompactionV2(c *gin.Context) bool {
 	if c == nil {

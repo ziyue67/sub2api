@@ -143,7 +143,7 @@ func (r *dashboardAggregationRepository) RecomputeRange(ctx context.Context, sta
 	}
 
 	// 分组日桶从 start 所在自然日起失效，由后台同步重建；失效语句独立提交，不与看板重算共享事务。
-	if err := r.invalidateGroupUsageRollupsAt(ctx, r.sql, start); err != nil {
+	if err := invalidateGroupUsageRollupsAt(ctx, r.sql, start, r.timezoneLocation().String()); err != nil {
 		return err
 	}
 
@@ -611,7 +611,7 @@ func (r *dashboardAggregationRepository) dropUsageLogsPartition(ctx context.Cont
 			return err
 		}
 		if earliestRetained.Valid {
-			return r.invalidateGroupUsageRollupsAt(ctx, q, earliestRetained.Time)
+			return invalidateGroupUsageRollupsAt(ctx, q, earliestRetained.Time, r.timezoneLocation().String())
 		}
 		return nil
 	}

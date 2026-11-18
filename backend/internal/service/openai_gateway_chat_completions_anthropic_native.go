@@ -181,7 +181,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 	var usage ClaudeUsage
 	resultWithUsage := func() *OpenAIForwardResult {
 		result := &OpenAIForwardResult{RequestID: requestID, UpstreamHeaders: resp.Header,
-			Usage: claudeUsageToOpenAIUsage(&usage), Model: originalModel, BillingModel: billingModel,
+			Usage: claudeUsageToOpenAIUsage(&usage), WebSearchCalls: usage.WebSearchRequests, Model: originalModel, BillingModel: billingModel,
 			UpstreamModel: upstreamModel, UpstreamEndpoint: "/v1/messages", ReasoningEffort: reasoningEffort,
 			Stream: false, Duration: time.Since(startTime)}
 		applyObservedUpstreamResponseModel(c, result)
@@ -191,7 +191,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
 	streamInterval := anthropicNativeStreamInterval(s.cfg)
 	pump := newAnthropicNativeLinePump(scanner, streamInterval, s.cfg)
-	streamStatus := &anthropicCompatStream{body: resp.Body}
+	streamStatus := &anthropicCompatStream{body: resp.Body, pump: pump, maxLineSize: maxLineSize, requestID: requestID}
 	defer pump.stop()
 
 	logReadErr := func(err error) {
@@ -260,9 +260,8 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		if event.Type == "error" {
 			return resultWithUsage(), writeNativeAnthropicSemanticFailure(c, []byte(payload), originalModel)
 		}
-		terminalSeen = terminalSeen || event.Type == "message_stop"
-
 		streamStatus.observe(&event, payload)
+		terminalSeen = terminalSeen || event.Type == "message_stop"
 		if streamStatus.upstreamErrType != "" {
 			break
 		}
@@ -300,11 +299,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 	if failure := streamStatus.failure(); failure != nil {
 		_ = resp.Body.Close()
 		writeChatCompletionsError(c, http.StatusBadGateway, "server_error", failure.message)
-		return &OpenAIForwardResult{
-			RequestID: requestID, UpstreamHeaders: resp.Header, Usage: claudeUsageToOpenAIUsage(&usage),
-			Model: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
-			UpstreamEndpoint: "/v1/messages", ReasoningEffort: reasoningEffort, Duration: time.Since(startTime),
-		}, failure.err
+		return resultWithUsage(), failure.err
 	}
 
 	if finalResp == nil {
@@ -545,7 +540,6 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			return resultWithUsage(), writeNativeAnthropicSemanticFailure(c, []byte(payload), originalModel)
 		}
 		terminalSeen = terminalSeen || event.Type == "message_stop"
-
 		streamStatus.observe(&event, payload)
 		if streamStatus.upstreamErrType != "" {
 			break
@@ -560,6 +554,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 		}
 	}
 
+	streamStatus.clientDisconnected = clientDisconnected
 	if failure := streamStatus.failure(); failure != nil {
 		_ = resp.Body.Close()
 		if !clientDisconnected {

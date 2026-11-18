@@ -294,8 +294,6 @@ type schedulerSnapshotEntry struct {
 	accounts     []*service.Account
 	payloads     []string
 	lastUsedKeys []string
-	// empty 标记已发布的空快照：命中但不驻留记忆。
-	empty bool
 
 	lastUsed      atomic.Pointer[schedulerLastUsedValues]
 	lastUsedLoads singleflight.Group
@@ -358,8 +356,7 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 // 同一 bucket、同一组 (active, 修订号) 的并发加载合并为一次；加载时精简记录原文未变、
 // 且预解析结果对应当前运行时模型映射版本的账号沿用已解码的母本。
 // last_used 读取结果在条目内复用 schedulerLastUsedCacheMaxAge。
-// 返回的切片与其中的账号由本次调用独占；Credentials、Extra 和 AccountGroups 的模型列表
-// 也复制为请求独立的值，兼容 fork 选号路径的原地调整。其余指针指向的值不得原地修改。
+// 返回账号使用 fork 的独立深拷贝，允许选号路径修改嵌套配置；加载与解码仍按 bucket 合并。
 func (c *schedulerCache) GetSnapshotValues(ctx context.Context, bucket service.SchedulerBucket) ([]service.Account, bool, error) {
 	entry, err := c.snapshotEntry(ctx, bucket)
 	if err != nil {
@@ -372,6 +369,10 @@ func (c *schedulerCache) GetSnapshotValues(ctx context.Context, bucket service.S
 	if err != nil {
 		return nil, false, err
 	}
+	if accounts == nil {
+		c.dropSnapshotEntry(bucket.String())
+		return nil, false, nil
+	}
 	return accounts, true, nil
 }
 
@@ -379,20 +380,39 @@ func (c *schedulerCache) GetSnapshotValues(ctx context.Context, bucket service.S
 func (c *schedulerCache) snapshotEntry(ctx context.Context, bucket service.SchedulerBucket) (*schedulerSnapshotEntry, error) {
 	bucketKey := bucket.String()
 	tagKeys := schedulerSnapshotTagKeys(bucket)
-	tags, err := c.rdb.MGet(ctx, tagKeys...).Result()
+	// GET preserves wrong-type errors; MGET would silently turn corrupt control
+	// keys into nil. Read every control/revision tag before any memo lookup.
+	pipe := c.rdb.Pipeline()
+	tagCommands := make([]*redis.StringCmd, len(tagKeys))
+	for i, key := range tagKeys {
+		tagCommands[i] = pipe.Get(ctx, key)
+	}
+	_, _ = pipe.Exec(ctx)
+	readyVal, err := tagCommands[0].Result()
+	if errors.Is(err, redis.Nil) || (err == nil && readyVal != "1") {
+		c.dropSnapshotEntry(bucketKey)
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	if len(tags) != len(tagKeys) {
-		return nil, fmt.Errorf("unexpected scheduler snapshot tag count: got %d, want %d", len(tags), len(tagKeys))
+	activeVal, err := tagCommands[1].Result()
+	if errors.Is(err, redis.Nil) {
+		c.dropSnapshotEntry(bucketKey)
+		return nil, nil
 	}
-	readyVal, err := schedulerCacheOptionalString(tags[0])
 	if err != nil {
 		return nil, err
 	}
-	activeVal, err := schedulerCacheOptionalString(tags[1])
-	if err != nil {
-		return nil, err
+	tags := make([]any, len(tagKeys))
+	for i := 2; i < len(tagCommands); i++ {
+		value, err := tagCommands[i].Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		if err == nil {
+			tags[i] = value
+		}
 	}
 	// 修订号缺失（nil）按空字符串比较：它是一个独立取值，不会与任何写入过的随机修订号相等。
 	revisions := make([]string, 0, len(tags)-2)
@@ -411,16 +431,6 @@ func (c *schedulerCache) snapshotEntry(ctx context.Context, bucket service.Sched
 	now := c.now()
 	if entry := c.lookupSnapshotEntry(bucketKey); entry != nil && entry.sameVersion(activeVal, revisions) {
 		age := now.Sub(entry.loadedAt)
-		if age >= 0 && age < schedulerSnapshotCacheMaxAge+schedulerSnapshotCacheStaleGrace {
-			intact, err := c.snapshotMetadataIntact(ctx, entry)
-			if err != nil {
-				return nil, err
-			}
-			if !intact {
-				c.dropSnapshotEntry(bucketKey)
-				return nil, nil
-			}
-		}
 		if age >= 0 && age < schedulerSnapshotCacheMaxAge {
 			return entry, nil
 		}
@@ -480,21 +490,14 @@ func (c *schedulerCache) loadSnapshotEntry(ctx context.Context, bucket service.S
 	if err != nil {
 		return nil, err
 	}
-	if len(ids) == 1 && ids[0] == schedulerEmptySnapshotMember {
-		// 已发布的空快照以哨兵成员落盘：是有效命中，但不驻留进程内记忆。
-		c.dropSnapshotEntry(bucketKey)
-		return &schedulerSnapshotEntry{
-			active:    active,
-			revisions: revisions,
-			loadedAt:  now,
-			empty:     true,
-		}, nil
-	}
 	if len(ids) == 0 {
-		// zset 不存在：视为缓存未命中，触发数据库回退查询
-		// 这解决了新分组创建后立即绑定账号时的竞态条件问题
+		// An active version without its data is incomplete, not an empty pool.
 		c.dropSnapshotEntry(bucketKey)
 		return nil, nil
+	}
+	if len(ids) == 1 && ids[0] == schedulerEmptySnapshotMember {
+		c.dropSnapshotEntry(bucketKey)
+		return &schedulerSnapshotEntry{active: active, revisions: revisions, loadedAt: now}, nil
 	}
 
 	keys := make([]string, 0, len(ids))
@@ -503,7 +506,9 @@ func (c *schedulerCache) loadSnapshotEntry(ctx context.Context, bucket service.S
 		keys = append(keys, schedulerAccountMetaKey(id))
 		lastUsedKeys = append(lastUsedKeys, schedulerLastUsedKey(id))
 	}
-	values, err := c.mgetChunked(ctx, keys)
+	generation := c.lastUsedGeneration.Load()
+	fetchedAt := c.now()
+	values, lastUsedRaw, err := c.mgetSnapshotFields(ctx, keys, lastUsedKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -547,6 +552,17 @@ func (c *schedulerCache) loadSnapshotEntry(ctx context.Context, bucket service.S
 		payloads:     payloads,
 		lastUsedKeys: lastUsedKeys,
 	}
+	lastUsed := make([]*time.Time, len(masters))
+	for i, raw := range lastUsedRaw {
+		value, err := parseSchedulerLastUsed(raw)
+		if err != nil {
+			return nil, err
+		}
+		if value != nil && (masters[i].LastUsedAt == nil || value.After(*masters[i].LastUsedAt)) {
+			lastUsed[i] = value
+		}
+	}
+	entry.lastUsed.Store(&schedulerLastUsedValues{fetchedAt: fetchedAt, generation: generation, values: lastUsed})
 	c.storeSnapshotEntry(bucketKey, entry)
 	return entry, nil
 }
@@ -577,19 +593,34 @@ func (e *schedulerSnapshotEntry) masterIndex() map[string]int {
 
 // snapshotAccountsFromEntry 为本次调用一次性分配一组母本副本，并套用 last_used。
 func (c *schedulerCache) snapshotAccountsFromEntry(ctx context.Context, entry *schedulerSnapshotEntry) ([]service.Account, error) {
+	chunkSize := c.mgetChunkSize
+	if chunkSize <= 0 {
+		chunkSize = defaultSchedulerSnapshotMGetChunkSize
+	}
+	for start := 0; start < len(entry.accounts); start += chunkSize {
+		end := min(start+chunkSize, len(entry.accounts))
+		keys := make([]string, 0, end-start)
+		for _, account := range entry.accounts[start:end] {
+			keys = append(keys, schedulerAccountMetaKey(strconv.FormatInt(account.ID, 10)))
+		}
+		n, err := c.rdb.Exists(ctx, keys...).Result()
+		if err != nil {
+			return nil, err
+		}
+		if n != int64(len(keys)) {
+			return nil, nil
+		}
+	}
 	lastUsed, err := c.entryLastUsed(ctx, entry)
 	if err != nil {
 		return nil, err
 	}
 	accounts := make([]service.Account, len(entry.accounts))
 	for i, master := range entry.accounts {
-		accounts[i] = *master
-		// 每次读取都给出独立副本，调用方原地修改不会污染母本。
-		accounts[i].Credentials = cloneSchedulerAccountMap(master.Credentials)
-		accounts[i].Extra = cloneSchedulerAccountMap(master.Extra)
-		accounts[i].AccountGroups = cloneSchedulerAccountGroups(master.AccountGroups)
+		accounts[i] = master.CopySchedulerSnapshot()
 		if lastUsed[i] != nil {
-			accounts[i].LastUsedAt = lastUsed[i]
+			value := *lastUsed[i]
+			accounts[i].LastUsedAt = &value
 		}
 	}
 	return accounts, nil
@@ -1436,6 +1467,33 @@ func marshalSchedulerCacheAccount(account service.Account) ([]byte, []byte, erro
 	return fullPayload, metaPayload, nil
 }
 
+// mgetSnapshotFields pipelines metadata and the independently updated LRU
+// side keys. Each command retains the configured key limit; only one pair
+// is in flight at a time to bound the queued reply size.
+func (c *schedulerCache) mgetSnapshotFields(ctx context.Context, keys, lastUsedKeys []string) ([]any, []any, error) {
+	if len(keys) != len(lastUsedKeys) {
+		return nil, nil, fmt.Errorf("scheduler snapshot field count mismatch")
+	}
+	values := make([]any, 0, len(keys))
+	lastUsed := make([]any, 0, len(keys))
+	chunkSize := c.mgetChunkSize
+	if chunkSize <= 0 {
+		chunkSize = defaultSchedulerSnapshotMGetChunkSize
+	}
+	for start := 0; start < len(keys); start += chunkSize {
+		end := min(start+chunkSize, len(keys))
+		pipe := c.rdb.Pipeline()
+		metaCmd := pipe.MGet(ctx, keys[start:end]...)
+		lastUsedCmd := pipe.MGet(ctx, lastUsedKeys[start:end]...)
+		if _, err := pipe.Exec(ctx); err != nil {
+			return nil, nil, err
+		}
+		values = append(values, metaCmd.Val()...)
+		lastUsed = append(lastUsed, lastUsedCmd.Val()...)
+	}
+	return values, lastUsed, nil
+}
+
 func (c *schedulerCache) mgetChunked(ctx context.Context, keys []string) ([]any, error) {
 	if len(keys) == 0 {
 		return []any{}, nil
@@ -1690,6 +1748,11 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_passthrough_model_filter",
 		// 生图尺寸档位在候选过滤阶段按本投影判定，裁掉后受限账号会接到不允许的档位。
 		service.AccountExtraOpenAIImageSizeTiers,
+		service.ExcelBPSProxyModeKey,
+		service.ExcelBPSProxyIDsKey,
+		service.OpenAIProxyModeKey,
+		service.OpenAIProxyIDsKey,
+		"openai_excel_bps_proxy_source",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
 		service.OpenAICodexSkipHarvestExtraKey,
@@ -1722,7 +1785,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 	}
 	filtered := make(map[string]any)
 	for _, key := range keys {
-		if value, ok := extra[key]; ok && (value != nil || key == "openai_excel_bps_models") {
+		if value, ok := extra[key]; ok && (value != nil || key == "openai_excel_bps_models" || key == service.OpenAIProxyModeKey) {
 			if key == service.UpstreamBillingProbeExtraKey {
 				filteredProbe := filterSchedulerUpstreamBillingProbe(value)
 				if filteredProbe == nil {
@@ -1777,77 +1840,4 @@ func filterSchedulerUpstreamBillingProbe(value any) map[string]any {
 		filtered["data"] = filteredData
 	}
 	return filtered
-}
-
-// cloneSchedulerAccountMap 深拷贝账号的 map 字段，保证快照读取的请求局部性。
-func cloneSchedulerAccountMap(source map[string]any) map[string]any {
-	if source == nil {
-		return nil
-	}
-	cloned := make(map[string]any, len(source))
-	for key, value := range source {
-		cloned[key] = cloneSchedulerAccountValue(value)
-	}
-	return cloned
-}
-
-func cloneSchedulerAccountValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return cloneSchedulerAccountMap(typed)
-	case []any:
-		cloned := make([]any, len(typed))
-		for i, item := range typed {
-			cloned[i] = cloneSchedulerAccountValue(item)
-		}
-		return cloned
-	default:
-		return value
-	}
-}
-
-// cloneSchedulerAccountGroups 深拷贝账号-分组绑定，隔离 AllowedModels 切片。
-func cloneSchedulerAccountGroups(groups []service.AccountGroup) []service.AccountGroup {
-	if groups == nil {
-		return nil
-	}
-	cloned := make([]service.AccountGroup, len(groups))
-	for i, group := range groups {
-		cloned[i] = group
-		if group.AllowedModels != nil {
-			cloned[i].AllowedModels = append([]string(nil), group.AllowedModels...)
-		}
-	}
-	return cloned
-}
-
-// snapshotMetadataIntact 校验记忆化条目的成员元数据仍在 Redis 中。
-// 元数据被外部删除（如账号硬删除）后，记忆化条目必须退化为未命中。
-func (c *schedulerCache) snapshotMetadataIntact(ctx context.Context, entry *schedulerSnapshotEntry) (bool, error) {
-	if entry == nil || entry.empty || len(entry.ids) == 0 {
-		return true, nil
-	}
-	keys := make([]string, 0, len(entry.ids))
-	for _, id := range entry.ids {
-		keys = append(keys, schedulerAccountMetaKey(id))
-	}
-	// Only existence is required: transferring the JSON would undo memoization's
-	// bandwidth savings. Chunk the checks like metadata reads, in one pipeline.
-	pipe := c.rdb.Pipeline()
-	chunkSize := c.mgetChunkSize
-	if chunkSize <= 0 {
-		chunkSize = defaultSchedulerSnapshotMGetChunkSize
-	}
-	checks := make([]*redis.IntCmd, 0, (len(keys)+chunkSize-1)/chunkSize)
-	for start := 0; start < len(keys); start += chunkSize {
-		checks = append(checks, pipe.Exists(ctx, keys[start:min(start+chunkSize, len(keys))]...))
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return false, err
-	}
-	var present int64
-	for _, check := range checks {
-		present += check.Val()
-	}
-	return present == int64(len(keys)), nil
 }

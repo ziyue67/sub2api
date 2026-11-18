@@ -1,8 +1,7 @@
 name: OpenAI multi-connection contract
 
 on:
-  push:
-    branches: [feat/openai-multi-auth-connections]
+  workflow_dispatch:
   pull_request:
     branches: [production]
     paths: ['backend/**', 'frontend/**', '.github/workflows/openai-multi-auth.yml']
@@ -183,7 +182,7 @@ jobs:
           path: ${{ runner.temp }}/issue594-*.log
   ui:
     needs: red
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

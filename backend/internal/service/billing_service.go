@@ -209,9 +209,10 @@ type UsageTokens struct {
 
 // CostBreakdown 费用明细
 type CostBreakdown struct {
-	modelBillingMultiplier    float64 // Customer-only model surcharge; zero means 1x.
-	InputCost                 float64 // 文本输入费用（不含图片输入，图片输入单独记入 ImageInputCost）
-	ImageInputCost            float64 // 图片输入 token 费用（如 gpt-image-2 图片编辑）
+	customerCacheCosts        []CustomerCacheCostDetail // Display-only evidence from this exact calculation.
+	modelBillingMultiplier    float64                   // Customer-only model surcharge; zero means 1x.
+	InputCost                 float64                   // 文本输入费用（不含图片输入，图片输入单独记入 ImageInputCost）
+	ImageInputCost            float64                   // 图片输入 token 费用（如 gpt-image-2 图片编辑）
 	OutputCost                float64
 	ImageOutputCost           float64
 	CacheCreationCost         float64
@@ -234,6 +235,9 @@ func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.CacheReadCost *= multiplier
 	cost.TotalCost *= multiplier
 	cost.ActualCost *= multiplier
+	for i := range cost.customerCacheCosts {
+		cost.customerCacheCosts[i].UnitPrice *= multiplier
+	}
 }
 
 func isClaudeFable51Model(model string) bool {
@@ -619,6 +623,15 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:         2,
 		LongContextOutputMultiplier:        1.5,
 	}
+	gpt62ProPrice := gpt62DefaultPricing("gpt-6.2-astra-pro")
+	s.fallbackPrices["gpt-6.2-astra-pro"] = &ModelPricing{
+		InputPricePerToken:            gpt62ProPrice.InputCostPerToken,
+		OutputPricePerToken:           gpt62ProPrice.OutputCostPerToken,
+		CacheCreationPricePerToken:    gpt62ProPrice.CacheCreationInputTokenCost,
+		CacheCreation12hPricePerToken: gpt62ProPrice.CacheCreationInputTokenCost12h,
+		CacheCreationPriceExplicit:    true,
+		CacheReadPricePerToken:        gpt62ProPrice.CacheReadInputTokenCost,
+	}
 
 	// GPT-6.1 Terra official rates, 2026-10-26.
 	s.fallbackPrices["gpt-6.1-terra"] = &ModelPricing{
@@ -697,14 +710,14 @@ func (s *BillingService) initFallbackPricing() {
 	}
 	// OpenAI GPT-5.6 官方价格（USD/token）。缓存写入为输入价的 1.25 倍。
 	s.fallbackPrices["gpt-5.6-sol"] = &ModelPricing{
-		InputPricePerToken:                 5e-6,
-		InputPricePerTokenPriority:         10e-6,
-		OutputPricePerToken:                30e-6,
-		OutputPricePerTokenPriority:        60e-6,
-		CacheCreationPricePerToken:         6.25e-6,
-		CacheCreationPricePerTokenPriority: 12.5e-6,
-		CacheReadPricePerToken:             0.5e-6,
-		CacheReadPricePerTokenPriority:     1e-6,
+		InputPricePerToken:                 4e-6,
+		InputPricePerTokenPriority:         8e-6,
+		OutputPricePerToken:                20e-6,
+		OutputPricePerTokenPriority:        40e-6,
+		CacheCreationPricePerToken:         5e-6,
+		CacheCreationPricePerTokenPriority: 10e-6,
+		CacheReadPricePerToken:             0.4e-6,
+		CacheReadPricePerTokenPriority:     0.8e-6,
 	}
 	s.fallbackPrices["gpt-5.6-terra"] = &ModelPricing{
 		InputPricePerToken:                 2e-6,
@@ -1411,7 +1424,7 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	// OpenAI（GPT-5 / Codex 族）：仅匹配已知型号，避免未知 OpenAI 型号误计价。
 	if normalized := normalizeKnownOpenAICodexModel(modelLower); normalized != "" {
 		switch normalized {
-		case "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna":
+		case "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.2-astra", "gpt-6.2-astra-pro", "gpt-6.2-sol":
 			return s.fallbackPrices[normalized]
 		case "gpt-6-astra":
 			return s.fallbackPrices["gpt-6-astra"]
@@ -1586,7 +1599,8 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 				InputPricePerTokenPriority:         litellmPricing.InputCostPerTokenPriority,
 				OutputPricePerToken:                litellmPricing.OutputCostPerToken,
 				OutputPricePerTokenPriority:        litellmPricing.OutputCostPerTokenPriority,
-				CacheCreationPriceExplicit:         (openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model) || openai.GPT62ModelID(model) != "") && litellmPricing.CacheCreationInputTokenCostExplicit,
+				CacheCreationPriceExplicit:         (openai.IsGPT6SolOrLunaModelSpelling(model) || openai.IsGPT61SolModelSpelling(model) || openai.IsGPT61TerraModelSpelling(model) || openai.GPT62ModelID(model) != "" || normalizeOpenAIGPT62Model(model) != "") && litellmPricing.CacheCreationInputTokenCostExplicit,
+				CacheCreation12hPricePerToken:      litellmPricing.CacheCreationInputTokenCost12h,
 				CacheCreationPricePerToken:         litellmPricing.CacheCreationInputTokenCost,
 				CacheCreationPricePerTokenPriority: litellmPricing.CacheCreationInputTokenCostPriority,
 				CacheReadPricePerToken:             litellmPricing.CacheReadInputTokenCost,
@@ -1958,6 +1972,7 @@ func (s *BillingService) computeTokenBreakdown(
 		bd.CacheCreationCost + bd.CacheReadCost
 	bd.ActualCost = bd.TotalCost * rateMultiplier
 	bd.LongContextBillingApplied = baselineCost != nil && bd.ActualCost > baselineCost.ActualCost
+	bd.customerCacheCosts = resolvedCustomerCacheCosts(cacheCreationPricing, tokens, cacheCreationPrice, cacheCreationMultiplier, cacheReadPrice, tierMultiplier)
 
 	return bd
 }
@@ -2147,11 +2162,12 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 		(pricing.InputPricePerTokenPriority > 0 && pricing.CacheCreationPricePerTokenPriority <= 0))
 	fastRatio := openAIModelFastPricingRatio(normalized)
 	needsOpus55FastMultiplier := claude.IsOpus55(model) && pricing.FastMultiplier == nil
-	if !needsCacheCreationPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier && !openAIModelSupportsUltrafast(normalized) {
+	supportsUltrafastPricing := openAIModelSupportsUltrafast(normalized) || normalizeOpenAIGPT62Model(normalized) != ""
+	if !needsCacheCreationPolicy && fastRatio <= 0 && !needsOpus55FastMultiplier && !supportsUltrafastPricing {
 		return pricing
 	}
 	cloned := *pricing
-	if openAIModelSupportsUltrafast(normalized) {
+	if supportsUltrafastPricing {
 		cloned.UltrafastMultiplier = openAIUltrafastMultiplier(normalized, pricingAt)
 	}
 	if needsOpus55FastMultiplier {
@@ -2677,7 +2693,7 @@ func openAIUltrafastMultiplier(model string, at time.Time) float64 {
 	if at.IsZero() {
 		at = timezone.Now()
 	}
-	if openai.GPT62ModelID(model) != "" && at.Before(time.Date(2027, time.March, 1, 8, 0, 0, 0, time.UTC)) {
+	if (openai.GPT62ModelID(model) != "" || normalizeOpenAIGPT62Model(model) != "") && at.Before(time.Date(2027, time.March, 1, 8, 0, 0, 0, time.UTC)) {
 		return 3
 	}
 	return 6

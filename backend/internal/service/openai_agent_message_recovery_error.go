@@ -11,17 +11,23 @@ var errOpenAIAgentRecoveryUnavailable = errors.New("encrypted agent continuation
 // OpenAIAgentRecoveryError is a local compatibility refusal, not a failure of
 // the entire account pool. Reasons contain no route IDs, credentials or input.
 type OpenAIAgentRecoveryError struct {
-	Reason  string
-	RetryAt time.Time
+	diagnostic *openAIRecoveryDiagnostics
+	Reason     string
+	RetryAt    time.Time
 }
 
 func (e *OpenAIAgentRecoveryError) Error() string { return e.ClientMessage() }
 func (e *OpenAIAgentRecoveryError) Unwrap() error { return errOpenAIAgentRecoveryUnavailable }
 func (e *OpenAIAgentRecoveryError) ClientCode() string {
+	if e.Reason == "continuation_history_missing" {
+		return "previous_response_not_found"
+	}
 	return "encrypted_agent_recovery_" + e.Reason
 }
 func (e *OpenAIAgentRecoveryError) HTTPStatus() int {
 	switch e.Reason {
+	case "continuation_history_missing":
+		return http.StatusBadRequest
 	case "readable_intent_missing", "readable_history_unsupported":
 		return http.StatusUnprocessableEntity
 	case "owner_rate_limited":
@@ -45,6 +51,8 @@ func (e *OpenAIAgentRecoveryError) ClientType() string {
 func (e *OpenAIAgentRecoveryError) ClientMessage() string {
 	var reason, action string
 	switch e.Reason {
+	case "continuation_history_missing":
+		return "The previous response cannot be continued on this connection. Retry with the complete original input and no previous_response_id. The current request was not sent upstream; preserve existing tool results and do not execute tools again."
 	case "readable_intent_missing":
 		return "The current request has no readable task or summary from which a new provider conversation can be built. The opaque contents are unavailable; no generation or tool was replayed."
 	case "readable_history_unsupported":
@@ -90,3 +98,11 @@ type openAINonStreamingDeliveryError struct{ err error }
 
 func (e *openAINonStreamingDeliveryError) Error() string { return e.err.Error() }
 func (e *openAINonStreamingDeliveryError) Unwrap() error { return e.err }
+
+// InternalSubreason exposes only a fixed diagnostic category for persistence.
+func (e *OpenAIAgentRecoveryError) InternalSubreason() string {
+	if e == nil || e.diagnostic == nil {
+		return "unknown"
+	}
+	return safeOpenAIRecoverySubreason(e.diagnostic.subreason)
+}

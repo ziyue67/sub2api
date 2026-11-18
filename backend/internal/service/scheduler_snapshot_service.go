@@ -284,6 +284,9 @@ func (s *SchedulerSnapshotService) ListSchedulableAccounts(ctx context.Context, 
 		}
 	}
 
+	if s.cache != nil && !s.writesSnapshots() {
+		return nil, useMixed, ErrSchedulerCacheNotReady
+	}
 	accounts, err := s.loadFallbackAccounts(ctx, bucket, useMixed)
 	if err != nil {
 		return nil, useMixed, err
@@ -311,7 +314,7 @@ func (s *SchedulerSnapshotService) readSnapshotAccounts(ctx context.Context, buc
 
 // loadFallbackAccounts 回源数据库读取 bucket 的账号，取得发布令牌时尽力回写快照。
 // 同一 bucket 的并发回源合并为一次：合并回源与回写不随单个调用方取消，各调用方按自身 ctx 等待结果，
-// 并各自得到一份只含当前可调度账号的独占切片；账号的 map、切片底层数组与指针指向的值在调用方之间共享，不得原地修改。
+// 并各自得到深拷贝的账号快照，避免调用方修改嵌套配置影响其他请求。
 func (s *SchedulerSnapshotService) loadFallbackAccounts(ctx context.Context, bucket SchedulerBucket, useMixed bool) ([]Account, error) {
 	loadCtx := context.WithoutCancel(ctx)
 	results := s.fallbackLoads.DoChan(bucket.String(), func() (result any, err error) {
@@ -335,7 +338,7 @@ func (s *SchedulerSnapshotService) loadFallbackAccounts(ctx context.Context, buc
 		accounts := make([]Account, 0, len(shared))
 		for i := range shared {
 			if shared[i].IsSchedulable() {
-				accounts = append(accounts, shared[i])
+				accounts = append(accounts, shared[i].CopySchedulerSnapshot())
 			}
 		}
 		return accounts, nil
@@ -2034,7 +2037,30 @@ func (l *fallbackLimiter) Allow() bool {
 	return true
 }
 
-// accountValues 把指针切片解引用成值切片，供快照账本按值返回。
+func derefAccounts(accounts []*Account) []Account {
+	if len(accounts) == 0 {
+		return []Account{}
+	}
+	out := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		out = append(out, *account)
+	}
+	return out
+}
+
+func schedulableAccountValues(accounts []Account) []Account {
+	out := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.IsSchedulable() {
+			out = append(out, account)
+		}
+	}
+	return out
+}
+
 func accountValues(accounts []*Account) []Account {
 	if len(accounts) == 0 {
 		return nil

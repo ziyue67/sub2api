@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -31,22 +32,36 @@ type OpenAIAgentRecoveryEpochCache interface {
 }
 
 type openAIAgentRecoveryDelivery struct {
-	service *OpenAIGatewayService
-	ctx     context.Context
-	request *openAIAgentRecoveryRequest
-	binding openAIAgentRecoveryBinding
-	pending string
-	keys    map[[32]byte]bool
-	epochs  map[string]bool
-	once    sync.Once
+	discoveryBindings                                        map[string]openAIToolProofSnapshot
+	toolFinal                                                map[string]bool
+	service                                                  *OpenAIGatewayService
+	ctx                                                      context.Context
+	request                                                  *openAIAgentRecoveryRequest
+	binding                                                  openAIAgentRecoveryBinding
+	pending                                                  string
+	keys                                                     map[[32]byte]bool
+	epochs                                                   map[string]bool
+	once                                                     sync.Once
+	tools                                                    map[string]openAIToolObservation
+	toolTerminal, toolInvalid, toolAnchorsValid, toolEnabled bool
+	toolAnchors                                              map[string]openAIToolAnchor
 }
 
 func newOpenAIAgentRecoveryDelivery(s *OpenAIGatewayService, ctx context.Context, r *openAIAgentRecoveryRequest, b openAIAgentRecoveryBinding) *openAIAgentRecoveryDelivery {
-	return &openAIAgentRecoveryDelivery{service: s, ctx: ctx, request: r, binding: b, pending: "pending:" + uuid.NewString() + ":" + encodeOpenAIAgentRecoveryBinding(b), keys: make(map[[32]byte]bool), epochs: make(map[string]bool)}
+	enabled := r.userID > 0 && s.settingService != nil && s.settingService.IsOpenAI409OmitEncryptedHistoryEnabled(ctx)
+	var anchors map[string]openAIToolAnchor
+	valid := false
+	if enabled {
+		storeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		anchors, valid = s.toolInputAnchors(storeCtx, r)
+		cancel()
+	}
+	return &openAIAgentRecoveryDelivery{toolEnabled: enabled, toolAnchors: anchors, toolAnchorsValid: valid, service: s, ctx: ctx, request: r, binding: b, pending: "pending:" + uuid.NewString() + ":" + encodeOpenAIAgentRecoveryBinding(b), keys: make(map[[32]byte]bool), epochs: make(map[string]bool)}
 }
 
 func (s *OpenAIGatewayService) awaitOpenAIAgentRecovery(ctx context.Context, shared OpenAIAgentRecoveryCache, state *openAIAgentRecoveryState, key [32]byte) (openAIAgentRecoveryBinding, bool, error) {
 	observedPending := false
+	var lastPending openAIAgentRecoveryBinding
 	for {
 		var b openAIAgentRecoveryBinding
 		var found bool
@@ -64,8 +79,11 @@ func (s *OpenAIGatewayService) awaitOpenAIAgentRecovery(ctx context.Context, sha
 			found = found && time.Now().Before(b.expiresAt)
 		}
 		if err != nil {
-			if observedPending && ctx.Err() != nil {
-				return b, false, openAIAgentRecoveryError("delivery_pending")
+			if observedPending && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				// Retain pending diagnostics only for the wait's context error.
+				// Independent storage failures remain unavailable; found=false
+				// and the error still prohibit an ownership grant.
+				return lastPending, false, openAIAgentRecoveryError("delivery_pending")
 			}
 			return b, false, openAIAgentRecoveryError("store_unavailable")
 		}
@@ -82,6 +100,7 @@ func (s *OpenAIGatewayService) awaitOpenAIAgentRecovery(ctx context.Context, sha
 			return b, found, nil
 		}
 		observedPending = true
+		lastPending = b
 		timer := time.NewTimer(5 * time.Millisecond)
 		select {
 		case <-ctx.Done():
@@ -106,6 +125,10 @@ func (d *openAIAgentRecoveryDelivery) reserve(items [][32]byte) error {
 			if err := shared.ReserveOpenAIAgentRecoveryEpoch(ctx, epochKey, d.pending, d.service.openAIWSSessionStickyTTL()); err != nil {
 				return openAIAgentRecoveryError("store_unavailable")
 			}
+		}
+		if d.service.cache == nil && d.toolEnabled && !d.epochs[epochKey] {
+			d.epochs[epochKey] = true
+			d.service.localToolEpoch(epochKey, d.pending, false, false)
 		}
 		if (d.request.disableOwnerBinding || d.request.omitted400History) && d.request.known[key] {
 			// An echoed completed input is still its original producer's item.
@@ -211,6 +234,18 @@ func (d *openAIAgentRecoveryDelivery) finish(completed bool) {
 				_ = shared.FinishOpenAIAgentRecoveryEpoch(ctx, key, d.pending, eligible[key], d.service.openAIWSSessionStickyTTL())
 			}
 		}
+		if d.service.cache == nil && d.toolEnabled {
+			eligible := make(map[string]bool)
+			if completed {
+				for _, item := range d.request.outputs {
+					eligible[d.request.shadowEpochKey(item)] = true
+				}
+			}
+			for key := range d.epochs {
+				d.service.localToolEpoch(key, d.pending, true, eligible[key])
+			}
+		}
+		d.finishTools(ctx, completed)
 	})
 }
 

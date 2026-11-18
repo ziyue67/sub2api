@@ -831,15 +831,13 @@ func (s *AccountUsageService) getOpenAIUsage(ctx context.Context, account *Accou
 			// but persists only its own bengalfox windows on the shadow row.
 			if s.openAIQuotaService != nil {
 				if quotaUsage, err := s.openAIQuotaService.QueryUsage(ctx, account.ID); err == nil {
-					if updates := quotaUsage.schedulingUpdates; len(updates) > 0 {
+					if updates := quotaUsage.schedulingUpdates; hasOpenAIQuotaObservation(updates) {
 						mergeAccountExtra(account, updates)
 						if account.ParentAccountID != nil {
 							notifyOpenAIAutoReset(*account.ParentAccountID)
 						}
-						if usage.UpdatedAt == nil {
-							usage.UpdatedAt = &now
-						}
 						applyExtraToUsage(usage, account.Extra, now)
+						usage.Source = "active"
 					}
 				}
 			}
@@ -1022,7 +1020,7 @@ func (s *AccountUsageService) persistOpenAICodexProbeResponse(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	if len(updates) > 0 {
+	if hasOpenAIQuotaObservation(updates) {
 		// Error responses can carry zero-usage headers too. Keep their display
 		// snapshot, but never use them to undo the account's cooldown.
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
