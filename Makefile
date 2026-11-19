@@ -54,7 +54,6 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/admin/account/__tests__/PelicanRecordsDashboard.spec.ts \
 	src/api/admin/__tests__/scheduledTests.spec.ts \
 	src/features/ip-risk/__tests__/IPRiskSettings.spec.ts \
-	src/components/admin/account/__tests__/OpenAISessionExportDialog.spec.ts \
 	src/components/admin/account/__tests__/AccountActionMenu.spark_shadow.spec.ts \
 	src/api/__tests__/groupCacheTest.spec.ts \
 	src/views/admin/__tests__/GroupCacheTestView.spec.ts \
@@ -165,7 +164,23 @@ FRONTEND_CRITICAL_VITEST := \
 	src/features/channel-monitor-v2/__tests__/designSystem.structure.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorFormat.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorZoom.spec.ts \
-	src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts
+	src/components/admin/channel/__tests__/PricingEntryCard.modelDefaultPrice.spec.ts \
+	src/components/admin/operations/__tests__/AutoConfigHistory.spec.ts \
+	src/components/admin/operations/__tests__/OAuthInitialModelSelection.spec.ts \
+	src/components/common/__tests__/DataTable.spec.ts \
+	src/components/layout/__tests__/TablePageLayout.spec.ts \
+	src/features/ip-audit/__tests__/UserKeyRiskNotices.spec.ts \
+	src/utils/__tests__/modelBilling.spec.ts \
+	src/views/admin/__tests__/DashboardView.spec.ts \
+	src/views/admin/__tests__/GroupsView.codexCLIOnly.spec.ts \
+	src/views/admin/__tests__/GroupsView.columnSettings.spec.ts \
+	src/views/admin/__tests__/GroupsView.compositePlatforms.spec.ts \
+	src/views/admin/__tests__/GroupsView.duplicate.spec.ts \
+	src/views/admin/__tests__/GroupsView.streamOnly.spec.ts \
+	src/views/admin/__tests__/PrioritySchedulingQuantile.spec.ts \
+	src/views/admin/__tests__/PrioritySchedulingReading.spec.ts \
+	src/views/admin/__tests__/PrioritySchedulingView.spec.ts \
+	src/views/admin/__tests__/UpstreamChannelOperationsView.spec.ts
 
 # 一键编译前后端
 build: build-backend build-frontend

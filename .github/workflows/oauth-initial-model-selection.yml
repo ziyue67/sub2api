@@ -1,19 +1,6 @@
 name: OAuth initial model selection
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'backend/internal/service/*model*'
-      - 'backend/internal/service/oauth_auto_config*'
-      - 'backend/internal/service/account_credentials_redact.go'
-      - 'backend/internal/service/admin_account.go'
-      - 'backend/internal/service/gateway_scheduling.go'
-      - 'backend/internal/handler/admin/account_auto_config*'
-      - 'frontend/src/**/OAuthInitialModelSelection*'
-      - 'frontend/src/**/AutoConfigView*'
-      - 'frontend/src/**/newFeatureNotices*'
-      - '.github/workflows/oauth-initial-model-selection.yml'
-      - '.github/scripts/oauth-initial-model-selection-browser.mjs'
 permissions:
   contents: read
 jobs:

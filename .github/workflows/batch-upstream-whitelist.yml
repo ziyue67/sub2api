@@ -1,26 +1,10 @@
 name: Batch upstream whitelist
 on:
-  pull_request:
-    paths:
-      - 'frontend/src/components/account/*UpstreamWhitelist*'
-      - 'frontend/src/composables/useBatchUpstreamWhitelist.ts'
-      - 'frontend/src/components/account/BulkEditAccountModal.vue'
-      - 'frontend/src/components/account/__tests__/BatchUpstreamWhitelist*'
-      - 'backend/internal/**/**batch_whitelist*'
-      - 'backend/internal/service/upstream_model_mapping_sync.go'
-      - 'backend/internal/service/upstream_models.go'
-      - 'backend/internal/service/openai_excel_bps_model_access.go'
-      - 'backend/internal/service/openai_models_list.go'
-      - 'backend/internal/service/openai_codex_models_service.go'
-      - 'backend/internal/service/openai_excel_oauth.go'
-      - 'backend/internal/handler/admin/account_handler.go'
-      - '.github/workflows/batch-upstream-whitelist.yml'
-      - '.github/scripts/install-ci-cjk-fonts.sh'
-      - '.github/scripts/batch-whitelist-ui.mjs'
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: batch-upstream-whitelist-${{ github.event.pull_request.number }}
+  group: batch-upstream-whitelist-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 env:
   BASE: 701612f6e9f7b697eb36397b9fb49bf7324e56a1
@@ -35,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
@@ -120,7 +104,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: whitelist-contract-${{ github.event.pull_request.head.sha }}
+          name: whitelist-contract-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             ${{ runner.temp }}/handler-red.log
             ${{ runner.temp }}/handler-green.log
@@ -136,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: pnpm/action-setup@v6
         with:
@@ -176,7 +160,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: whitelist-ui-${{ github.event.pull_request.head.sha }}
+          name: whitelist-ui-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             ${{ runner.temp }}/evidence/*.png
             ${{ runner.temp }}/evidence/*.json

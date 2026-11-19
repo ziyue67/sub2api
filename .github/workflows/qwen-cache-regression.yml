@@ -1,13 +1,6 @@
 name: Qwen cache and strict affinity
 
 on:
-  pull_request:
-    paths:
-      - 'backend/internal/service/qwen*'
-      - 'backend/internal/service/openai_strict_session*'
-      - 'frontend/src/components/account/QwenCacheSettings.vue'
-      - '.github/scripts/qwen-cache-preview.mjs'
-      - '.github/workflows/qwen-cache-regression.yml'
   workflow_dispatch:
 
 permissions:

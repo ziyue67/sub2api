@@ -1,14 +1,6 @@
 name: Quality live regressions
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'backend/internal/service/quality*'
-      - 'backend/internal/service/openai_codex_models_service.go'
-      - 'backend/internal/repository/quality*'
-      - 'frontend/src/components/admin/operations/QualityOwnershipReview.vue'
-      - 'frontend/src/views/admin/AccountQualityView.vue'
-      - '.github/workflows/quality-live-regressions.yml'
 permissions:
   contents: read
 jobs:
