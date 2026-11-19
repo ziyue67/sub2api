@@ -214,6 +214,71 @@ func TestGatewayService_Forward_FailoverErrorKeepsNilResult(t *testing.T) {
 	require.Nil(t, result, "failover 错误必须保持 result=nil，防止重试成功后双重计费")
 }
 
+func TestGatewayService_Forward_FailoverKeepsRawBodyOutOfProcessLogs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const marker = "upstream-diagnostic-test-marker"
+	const raw = `{"error":{"message":"temporarily unavailable"},"diagnostic":"` + marker + `"}`
+	const requestID = "req-failover-log-test"
+
+	for _, tc := range []struct {
+		name        string
+		passthrough bool
+		newAccount  func() *Account
+	}{
+		{"forward", false, newAnthropicOAuthAccountForPartialUsageTest},
+		{"anthropic_passthrough", true, newAnthropicAPIKeyAccountForTest},
+	} {
+		for _, enabled := range []bool{false, true} {
+			name := tc.name + "/detail_disabled"
+			if enabled {
+				name = tc.name + "/detail_enabled"
+			}
+			t.Run(name, func(t *testing.T) {
+				sink, cleanup := captureStructuredLog(t)
+				defer cleanup()
+
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+				body := []byte(`{"model":"claude-3-5-sonnet-latest","messages":[{"role":"user","content":"hello"}]}`)
+				parsed, err := ParseGatewayRequest(NewRequestBodyRef(body), PlatformAnthropic)
+				require.NoError(t, err)
+
+				headers := make(http.Header)
+				headers.Set("x-request-id", requestID)
+				svc := newForwardPartialUsageServiceForTest(&anthropicHTTPUpstreamRecorder{resp: &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Header:     headers,
+					Body:       io.NopCloser(strings.NewReader(raw)),
+				}})
+				svc.cfg.Gateway.LogUpstreamErrorBody = enabled
+				svc.cfg.Gateway.LogUpstreamErrorBodyMaxBytes = 512
+
+				result, err := svc.Forward(context.Background(), c, tc.newAccount(), parsed)
+				require.Nil(t, result)
+				var failover *UpstreamFailoverError
+				require.ErrorAs(t, err, &failover)
+				require.Equal(t, http.StatusServiceUnavailable, failover.StatusCode)
+				require.True(t, sink.ContainsMessage("Status=503 RequestID="+requestID))
+
+				value, ok := c.Get(OpsUpstreamErrorsKey)
+				require.True(t, ok)
+				events, ok := value.([]*OpsUpstreamErrorEvent)
+				require.True(t, ok)
+				require.NotEmpty(t, events)
+				event := events[len(events)-1]
+				require.Equal(t, tc.passthrough, event.Passthrough)
+				detail := event.Detail
+				if enabled {
+					require.Contains(t, detail, marker)
+				} else {
+					require.Empty(t, detail)
+				}
+				require.False(t, sink.ContainsMessage(marker), "raw upstream body must stay out of process logs")
+			})
+		}
+	}
+}
+
 func TestGatewayService_Forward_PreOutputSSEOverloadedErrorUsesSemantic529(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
