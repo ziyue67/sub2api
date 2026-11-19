@@ -27,6 +27,22 @@ export const apiClient: AxiosInstance = axios.create({
   }
 })
 
+/**
+ * Reads a delay-seconds Retry-After header (the panel rate limiter sends one with
+ * every 429). HTTP-date values and malformed input yield undefined.
+ */
+export const parseRetryAfterSeconds = (headers: unknown): number | undefined => {
+  if (!headers || typeof headers !== 'object') return undefined
+  const getter = (headers as { get?: unknown }).get
+  const raw = typeof getter === 'function'
+    ? getter.call(headers, 'retry-after')
+    : (headers as Record<string, unknown>)['retry-after'] ?? (headers as Record<string, unknown>)['Retry-After']
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : undefined
+  if (typeof value !== 'string' || !/^\s*\d+\s*$/.test(value)) return undefined
+  return Number(value.trim())
+}
+
 // ==================== Request Interceptor ====================
 
 // Get user's timezone
@@ -92,13 +108,6 @@ apiClient.interceptors.request.use(
 )
 
 // ==================== Response Interceptor ====================
-
-// Retry-After 只接受整数秒；跨域部署未暴露该头或为 HTTP-date 形式时返回 undefined。
-const parseRetryAfterSeconds = (headers: unknown): number | undefined => {
-  const raw = (headers as Record<string, unknown> | undefined)?.['retry-after']
-  if (typeof raw !== 'string' || !/^\d+$/.test(raw.trim())) return undefined
-  return Number(raw.trim())
-}
 
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => {

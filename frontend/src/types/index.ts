@@ -1249,6 +1249,9 @@ export interface UpstreamBalanceData {
   // headroom, depending on how the upstream bills the key.
   remaining?: number
   wallet_balance?: number
+  raw_wallet_balance?: number
+  raw_unit?: 'USD'
+  display_exchange_rate?: number
   // Subscription without any spending limit.
   unlimited?: boolean
   quota_limit?: number
@@ -1305,7 +1308,7 @@ export interface NewAPIUpstreamConfigRequest {
 export interface NewAPIUpstreamPreview {
   site_url: string
   user_id: number
-  wallet: { amount: number; unit: 'USD' }
+  wallet: { amount: number; unit: string }
   accounts: Array<{
     account_id: number
     name: string
