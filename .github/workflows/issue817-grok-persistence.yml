@@ -2,6 +2,11 @@ name: Issue817 Grok persistence recovery
 
 on:
   workflow_dispatch:
+    inputs:
+      historical_red:
+        description: 'Also replay pinned historical implementations (maintenance evidence)'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'backend/internal/service/account_test_service.go'
@@ -41,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        behavior: [red, negative_red, backoff_red, edit_red, green]
+        behavior: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.historical_red && '["red","negative_red","backoff_red","edit_red","green"]' || '["green"]') }}
     services:
       postgres:
         image: postgres:18.1-alpine3.23

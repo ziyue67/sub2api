@@ -80,7 +80,6 @@ type AccountTestOptions struct {
 
 // AccountTestResult is the background result used by batch account tests.
 type AccountTestResult struct {
-	grokRecovery       *grokTestRecovery
 	Status             string
 	ResponseText       string
 	ErrorMessage       string
@@ -3841,12 +3840,14 @@ func (s *AccountTestService) sendErrorAndEnd(c *gin.Context, errorMsg string) er
 // RunTestBackground captures an account test's SSE in memory, then parses the
 // result. Grok recovery evidence is returned for the runner to apply after save.
 func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID int64, modelID string) (*ScheduledTestResult, error) {
+	recovery := &grokTestRecovery{}
+	ctx = context.WithValue(ctx, grokTestRecoveryContextKey{}, recovery)
 	result, err := s.RunTestBackgroundDetailed(ctx, accountID, modelID)
 	if err != nil {
 		return nil, err
 	}
 	return &ScheduledTestResult{
-		grokRecovery: result.grokRecovery,
+		grokRecovery: recovery,
 		Status:       result.Status,
 		ResponseText: result.ResponseText,
 		ErrorMessage: result.ErrorMessage,
@@ -3860,8 +3861,6 @@ func (s *AccountTestService) RunTestBackground(ctx context.Context, accountID in
 // latency in addition to total latency for batch test reporting.
 func (s *AccountTestService) RunTestBackgroundDetailed(ctx context.Context, accountID int64, modelID string) (*AccountTestResult, error) {
 	startedAt := time.Now()
-	recovery := &grokTestRecovery{}
-	ctx = context.WithValue(ctx, grokTestRecoveryContextKey{}, recovery)
 
 	w := httptest.NewRecorder()
 	ginCtx, _ := gin.CreateTestContext(w)
@@ -3885,7 +3884,6 @@ func (s *AccountTestService) RunTestBackgroundDetailed(ctx context.Context, acco
 	}
 
 	return &AccountTestResult{
-		grokRecovery:       recovery,
 		Status:             status,
 		ResponseText:       responseText,
 		ErrorMessage:       errMsg,

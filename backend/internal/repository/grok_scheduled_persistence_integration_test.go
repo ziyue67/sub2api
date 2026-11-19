@@ -288,7 +288,7 @@ func TestIssue817GrokScheduledRecoveryRequiresSavedResult(t *testing.T) {
 func TestIssue817GrokManualRecoveryRemainsImmediate(t *testing.T) {
 	// The same real transport and observer retain default/manual recovery; no
 	// scheduled context or SaveResult gate is injected into the admin path.
-	for _, mode := range []string{service.AccountTestModeDefault, service.AccountTestModeGrokText} {
+	for _, mode := range []string{service.AccountTestModeDefault, service.AccountTestModeGrokText, "batch_detailed"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			now := time.Now().UTC().Truncate(time.Microsecond)
@@ -310,9 +310,14 @@ func TestIssue817GrokManualRecoveryRemainsImmediate(t *testing.T) {
 			accounts := NewAccountRepository(integrationEntClient, integrationDB, nil)
 			scheduled := service.NewScheduledTestService(NewScheduledTestPlanRepository(integrationDB), NewScheduledTestResultRepository(integrationDB))
 			_, executor := service.NewGrokConnectivityRunnerForTesting(scheduled, accounts, &issue817GrokHTTP{client: server.Client(), target: target})
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodPost, "/offline/admin/test", nil)
-			require.NoError(t, executor.TestAccountConnection(c, id, "grok-4.5", "", mode))
+			if mode == "batch_detailed" {
+				_, err := executor.RunTestBackgroundDetailed(ctx, id, "grok-4.5")
+				require.NoError(t, err)
+			} else {
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/offline/admin/test", nil)
+				require.NoError(t, executor.TestAccountConnection(c, id, "grok-4.5", "", mode))
+			}
 			account, err := accounts.GetByID(ctx, id)
 			require.NoError(t, err)
 			require.Nil(t, account.RateLimitedAt)

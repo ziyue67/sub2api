@@ -8,7 +8,7 @@
 - 接入 OpenAI 旧版兼容模式、单账号余额通知关闭、New API 采购成本换算及客户端身份。
 - 接入质量结果保存确认、Grok 保存结果后再恢复限流及恢复代次隔离。
 - 跟随上游退休旧凭证守护与手动采票流程，保留 V2 凭证巡检，并迁移到共享重登服务。
-- 保留 fork VERSION `0.2.23`、邮件及图片归档、原始用量与缓存计费、工具附加费，以及 Sol 订阅 500,000 输入 token 边界。详细批量测试继续保留首字节延迟，并将 Grok 恢复证据传到调度持久化路径。
+- 保留 fork VERSION `0.2.23`、邮件及图片归档、原始用量与缓存计费、工具附加费，以及 Sol 订阅 500,000 输入 token 边界。详细批量测试继续保留首字节延迟；调度包装函数持有 Grok 恢复证据，仅在结果保存后确认，人工批量入口继续即时恢复，并新增真实数据库断言。
 
 ## 为什么精简历史回放
 
@@ -23,8 +23,9 @@
 | WS plaintext response ownership | continuation / repair870 的 GREEN | RED、修复 RED、PLAINTEXT_RED |
 | WS followup error capture | capture / review-close-repair GREEN、当前两轮归因 race | 两个原 RED 矩阵实例与旧两轮归因对照步骤 |
 | HTTP recovery native controls | behavior GREEN 与完整性保护 | 全旧生产树恢复的 RED |
+| Issue817 Grok persistence recovery | 完整 GREEN、真实 PostgreSQL／Redis、race、保存确认和恢复代次检查 | red、negative_red、backoff_red、edit_red 四个历史矩阵实例 |
 
-共将 10 个历史 job／矩阵实例及一个嵌入的历史对照步骤移出普通 PR。当前版本使用的特殊标签、race 和具名结果断言全部保留；主 CI、安全检查、真实数据库、浏览器功能验收继续自动执行。手动回放仍使用原始基线、原失败数量、控制场景和错误标记；不把编译失败当作预期业务失败。
+共将 14 个历史 job／矩阵实例及一个嵌入的历史对照步骤移出普通 PR。本次新引入的 Grok 旧源码 `45ebcb708867dd61caae10435d19d2df17cd41f3` 缺少 fork 仍在使用的 `RunTestBackgroundDetailed` 批量入口，因此同样纳入手动历史证据范围。当前版本使用的特殊标签、race 和具名结果断言全部保留；主 CI、安全检查、真实数据库、浏览器功能验收继续自动执行。手动回放仍使用原始基线、原失败数量、控制场景和错误标记；不把编译失败当作预期业务失败。
 
 ## 哪些测试实际删除
 

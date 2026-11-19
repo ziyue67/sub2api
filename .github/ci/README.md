@@ -21,7 +21,7 @@ python3 -m unittest discover -s .github/ci -p 'test_*.py' -v
 
 ## 历史 RED 回放与当前版本回归
 
-普通 PR 自动检查当前提交的行为。`account-request-proxy.yml`、`ws-unsent-delta.yml`、`ws-plaintext-owner.yml`、`ws-followup-capture.yml` 和 `http-recovery-native-controls.yml` 的固定旧源码 RED 回放改为手动选择：在 Actions 的 Run workflow 中选定分支，再勾选 `historical_red`。不勾选时仍运行原有 GREEN 与当前版本检查；勾选后额外执行原来的 RED、PLAINTEXT_RED 和基线对照，原始失败数量、错误标记及编译错误拒绝规则不变。
+普通 PR 自动检查当前提交的行为。`account-request-proxy.yml`、`ws-unsent-delta.yml`、`ws-plaintext-owner.yml`、`ws-followup-capture.yml`、`http-recovery-native-controls.yml` 和 `issue817-grok-persistence.yml` 的固定旧源码 RED 回放改为手动选择：在 Actions 的 Run workflow 中选定分支，再勾选 `historical_red`。不勾选时仍运行原有 GREEN 与当前版本检查；勾选后额外执行原来的 RED、PLAINTEXT_RED 和基线对照，原始失败数量、错误标记及编译错误拒绝规则不变。
 
 这些历史回放把旧生产代码与当前测试混合，接口演进后需要额外兼容层，适合验证回归用例最初是否能捕获旧缺陷，不适合作为每次上游同步必须修复的兼容目标。历史证据仍保存在 Git 和手动入口；普通 PR 不会因旧源码缺少新 API 而强迫修改生产代码。
 
