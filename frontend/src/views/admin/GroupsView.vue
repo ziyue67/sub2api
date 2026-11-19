@@ -4684,6 +4684,7 @@ const groupPricingFromAPI = (
       : null,
     image_input_price: perTokenToMTok(entry.image_input_price),
     image_output_price: perTokenToMTok(entry.image_output_price),
+    image_minimum_charge: entry.image_minimum_charge ?? null,
     per_request_price: entry.per_request_price,
     intervals: apiIntervalsToForm(entry.intervals || []),
     time_pricing: createDefaultTimePricingForm(),
@@ -4710,6 +4711,7 @@ const groupPricingToAPI = (
       ),
       image_input_price: mTokToPerToken(entry.image_input_price),
       image_output_price: mTokToPerToken(entry.image_output_price),
+      image_minimum_charge: entry.billing_mode === "token" ? toNullableNumber(entry.image_minimum_charge) : null,
       per_request_price: toNullableNumber(entry.per_request_price),
       intervals:
         entry.billing_mode === "token"
