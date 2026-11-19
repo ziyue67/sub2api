@@ -1,5 +1,11 @@
 name: WS plaintext response ownership
 on:
+  workflow_dispatch:
+    inputs:
+      historical_red:
+        description: 'Also replay pinned historical implementations (maintenance evidence)'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - '.github/scripts/prepare-discovery-red-compat.py'
@@ -24,11 +30,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        phase: [RED, GREEN]
+        phase: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.historical_red && '["RED","GREEN"]' || '["GREEN"]') }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v6
@@ -98,7 +104,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: plaintext-owner-${{ matrix.phase }}-${{ github.event.pull_request.head.sha }}
+          name: plaintext-owner-${{ matrix.phase }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             ${{ runner.temp }}/plaintext-*.jsonl
             ${{ runner.temp }}/plaintext-owner-compatibility.json
@@ -110,11 +116,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        phase: [RED, PLAINTEXT_RED, GREEN]
+        phase: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.historical_red && '["RED","PLAINTEXT_RED","GREEN"]' || '["GREEN"]') }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v6
@@ -190,7 +196,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: plaintext-repair870-${{ matrix.phase }}-${{ github.event.pull_request.head.sha }}
+          name: plaintext-repair870-${{ matrix.phase }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             ${{ runner.temp }}/plaintext-repair870.jsonl
             ${{ runner.temp }}/plaintext-repair870-compatibility.json

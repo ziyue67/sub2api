@@ -13,7 +13,6 @@ import promptAudit from './promptAudit'
 import emailBroadcast from './emailBroadcast'
 import safetyPromptAudit from './safetyPromptAudit'
 import plugins from './plugins'
-import harvestFlow from './harvestFlow'
 
 export default {
   ...moderationUsers,
@@ -31,5 +30,4 @@ export default {
   ...emailBroadcast,
   ...safetyPromptAudit,
   ...plugins,
-  ...harvestFlow,
 }

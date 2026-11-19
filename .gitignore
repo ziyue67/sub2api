@@ -267,3 +267,5 @@ frontend/src/**/*.js.map
 
 !docs/free-ultrafast-billing.md
 !/.github/scripts/free-ultrafast-browser.mjs
+
+!docs/smart-ops-retirement.md

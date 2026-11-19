@@ -76,7 +76,6 @@ type AccountHandler struct {
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	opencodeGoUsage         *service.OpenCodeGoUsageService
 	codexTicketSettings     *service.SettingService
-	codexHarvest            *service.CodexHarvestService
 	openAIGatewayService    *service.OpenAIGatewayService
 	cfg                     *config.Config
 }
