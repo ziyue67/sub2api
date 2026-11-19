@@ -1,13 +1,6 @@
 name: Smart operations sidebar preview
 on:
-  pull_request:
-    paths:
-      - 'frontend/src/components/settings/SmartOpsSidebarSettings.vue'
-      - 'frontend/src/constants/smartOpsMenu.ts'
-      - 'frontend/src/stores/adminSettings.ts'
-      - 'frontend/src/views/admin/SettingsView.vue'
-      - '.github/workflows/smart-ops-sidebar-preview.yml'
-      - '.github/scripts/prmerge-ui-preview.mjs'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

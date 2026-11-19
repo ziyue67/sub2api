@@ -1,12 +1,6 @@
 name: Quality orphan model removal
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'backend/internal/**/quality*'
-      - 'frontend/src/**/QualityOwnershipReview*'
-      - 'frontend/src/**/AccountQualityView*'
-      - '.github/workflows/quality-orphan-removal.yml'
 permissions:
   contents: read
 jobs:

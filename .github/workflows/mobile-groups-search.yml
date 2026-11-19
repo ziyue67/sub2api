@@ -1,18 +1,7 @@
 name: Mobile groups search
 
 on:
-  pull_request:
-    paths:
-      - 'frontend/src/views/admin/GroupsView.vue'
-      - 'frontend/src/components/layout/TablePageLayout.vue'
-      - 'frontend/src/components/layout/AppLayout.vue'
-      - 'frontend/src/components/layout/AppHeader.vue'
-      - 'frontend/src/components/common/DataTable.vue'
-      - 'frontend/src/style.css'
-      - '.github/scripts/mobile-groups-search-browser.mjs'
-      - '.github/workflows/mobile-groups-search.yml'
-      - '.github/scripts/install-ci-cjk-fonts.sh'
-
+  workflow_dispatch:
 permissions:
   contents: read
 

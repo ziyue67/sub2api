@@ -1,14 +1,6 @@
 name: Quality Jev exact-head regression
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'backend/internal/service/quality_judge*'
-      - 'backend/internal/pkg/typesafe/**'
-      - 'backend/internal/repository/quality_jev_integration_test.go'
-      - 'frontend/src/views/admin/AccountQualityView.vue'
-      - '.github/scripts/quality-jev-screenshot.mjs'
-      - '.github/workflows/quality-jev-judge.yml'
 permissions:
   contents: read
 jobs:

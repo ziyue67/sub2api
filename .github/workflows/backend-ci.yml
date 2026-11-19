@@ -278,6 +278,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Frontend typecheck and critical vitest
         run: make test-frontend
+      # lint, vue-tsc and locale completeness already ran in make test-frontend.
+      # Bundle once here instead of rebuilding in each feature workflow.
+      - name: Production frontend bundle
+        run: pnpm --dir frontend exec vite build
 
   golangci-lint:
     needs: changes

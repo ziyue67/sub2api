@@ -1,5 +1,18 @@
 # 历史 CI 归档
 
+## 2026-11-19：主 CI 已覆盖的重复入口
+
+本轮再原样迁入 4 份工作流（6 个 job），Actions 不再加载；应用测试继续自动执行，不删除测试源码。另有 14 份历史／浏览器验收保留在活动目录，但仅允许手动触发，详见 [PR CI 精简清单](../ci/pr-ci-consolidation-2026-11-19.md)。
+
+| 工作流 | 当前主门禁 |
+| --- | --- |
+| [bps-wire-contract.yml](bps-wire-contract.yml) | Go unit 全包，包含 BPS wire/access/usage |
+| [dashboard-account-concurrency.yml](dashboard-account-concurrency.yml) | Go unit；DashboardView、NewFeatureBadge 与主前端打包 |
+| [quality-oauth-401.yml](quality-oauth-401.yml) | Go unit + PostgreSQL integration |
+| [quality-retest-rest.yml](quality-retest-rest.yml) | Go unit + PostgreSQL integration；主关键前端清单 |
+
+## 2026-11-17：历史功能验收
+
 2026-11-17 从 `.github/workflows/` 迁出 32 份工作流。GitHub Actions 不加载本目录；文件原样保留，便于追溯旧 PR 的验收命令、固定基线和截图步骤。测试源码及取证脚本仍在原位置。
 
 归档基线：`e3f238e3f`（production）。归档对象只包含已合并功能的专用分支验收、旧上游版本同步、历史截图和试用构建；当前开放 PR 的专用入口保留；另外归档仅允许在 `Wei-Shaw/sub2api` 执行的上游 CLA 工作流，它在本 fork 不提供检查。主 CI 继续执行后端 unit/integration、前端关键测试、lint、部署及发布辅助脚本检查。

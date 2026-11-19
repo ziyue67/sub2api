@@ -1,14 +1,5 @@
 name: Upstream channel operations exact head
 on:
-  pull_request:
-    paths:
-      - '**/upstream_operations*'
-      - '**/UpstreamChannelOperations*'
-      - '**/UpstreamAnalytics*'
-      - '.github/workflows/upstream-channel-operations.yml'
-      - '.github/scripts/upstream-channel-operations-screenshot.mjs'
-      - 'frontend/src/api/admin/upstreamOperations.ts'
-      - 'frontend/src/i18n/locales/*/upstreamOps.ts'
   workflow_dispatch:
 permissions:
   contents: read

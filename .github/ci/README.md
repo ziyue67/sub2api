@@ -29,6 +29,17 @@ python3 -m unittest discover -s .github/ci -p 'test_*.py' -v
 
 退休功能的测试随对应生产模块一起删除；仍在使用的 V2 凭证巡检、共享重登、迁移兼容、授权及计费边界测试继续保留。仅凭文件旧、数量多或运行慢，不作为删除依据。
 
+## 精简独立 PR 检查（2026-11-19）
+
+在 PR #172 合并后的 main 基线上，允许响应 main PR 的工作流入口由 60 份减少到 42 份，移除 18 个自动入口、29 个独立 job 定义；实际每个 PR 的运行数仍取决于改动路径。这是触发数量变化，不把 skipped job 计作减少。
+
+- BPS wire、Dashboard 并发、质量 OAuth 401 和质量休息重测四份重复工作流迁到 `../workflow-archive/`，普通 Go 单元及 PostgreSQL 集成测试继续由主 CI 完整发现执行。
+- 其余 14 份历史对照、截图及离线浏览器验收只保留 `workflow_dispatch`；固定旧源码、浏览器步骤、原始断言与 artifact 保留，需要时选择分支手动运行。功能性浏览器行为也可手动验收；它们的截图或布局检查不等同于 Vitest，日常 PR 不再自动收集这些证据。
+- 根 `Makefile` 中的前端清单调整只影响主前端门禁；Go unit/integration 和 lint 直接读取后端目录，不再因该清单变化重跑。`backend/Makefile` 和所有 `backend/**` 改动仍触发完整后端检查。
+- 原先独立工作流中的 30 份当前前端规格全部由主关键清单覆盖：原清单已有 14 份，补齐缺少的 16 份，同时移除一条指向已删除 OpenAISessionExportDialog 规格的陈旧条目；实际存在的规格从 165 份增至 181 份。主 `frontend` job 在 lint、类型检查、i18n 和关键 Vitest 后统一执行一次 Vite 生产打包，取代专项工作流中的重复构建。
+
+具体入口及覆盖对应关系见 [本次精简清单](pr-ci-consolidation-2026-11-19.md)。主 CI、安全扫描、V2 巡检、共享重登、授权与计费边界、当前版本特殊标签、race、真实 Redis/PostgreSQL 专项入口继续自动按范围运行。新增普通回归优先加入主套件；临时取证或历史 RED 不再新增永久的 PR 自动入口。
+
 ## Go 测试并行与耗时报告
 
 后端选择器分别决定 `unit-test` 和 `integration-test`。单元测试在四个 GitHub 托管 runner 上按 package 分片，集成测试在独立 runner 同时执行；`test` 保留为汇总检查，任何应运行的分片失败、取消或跳过都会失败。复用单元测试证据要求四个分片全部成功，且源码、辅助脚本、分片权重和 job 定义一致；手动/tag 仍强制全量。整个旧 workflow 被新 head 取消时，汇总 job 也取消，避免 always() 任务在队列中阻塞后续运行；取消状态不算通过。
