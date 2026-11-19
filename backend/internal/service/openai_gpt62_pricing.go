@@ -26,7 +26,8 @@ func gpt62DefaultPricing(model string) *LiteLLMModelPricing {
 		Mode:                                "responses",
 		SupportsPromptCaching:               true,
 	}
-	if model != "gpt-6.2-astra-pro" {
+	// Upstream publishes this policy for Sol/Astra, not the fork-only Pro ID.
+	if model == "gpt-6.2-sol" || model == "gpt-6.2-astra" {
 		pricing.LongContextInputTokenThreshold = 272_000
 		pricing.LongContextInputCostMultiplier = 2
 		pricing.LongContextOutputCostMultiplier = 1.5

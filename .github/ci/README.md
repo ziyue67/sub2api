@@ -19,11 +19,23 @@ python3 -m unittest discover -s .github/ci -p 'test_*.py' -v
 
 它使用临时 Git 仓库和模拟 GitHub 返回值，覆盖删除、重命名、依赖变更、检查命令变更、旧成功复用、失败/API 异常回退及手动全量，不运行 Go/前端应用测试。
 
+## 历史 RED 回放与当前版本回归
+
+普通 PR 自动检查当前提交的行为。`account-request-proxy.yml`、`ws-unsent-delta.yml`、`ws-plaintext-owner.yml`、`ws-followup-capture.yml` 和 `http-recovery-native-controls.yml` 的固定旧源码 RED 回放改为手动选择：在 Actions 的 Run workflow 中选定分支，再勾选 `historical_red`。不勾选时仍运行原有 GREEN 与当前版本检查；勾选后额外执行原来的 RED、PLAINTEXT_RED 和基线对照，原始失败数量、错误标记及编译错误拒绝规则不变。
+
+这些历史回放把旧生产代码与当前测试混合，接口演进后需要额外兼容层，适合验证回归用例最初是否能捕获旧缺陷，不适合作为每次上游同步必须修复的兼容目标。历史证据仍保存在 Git 和手动入口；普通 PR 不会因旧源码缺少新 API 而强迫修改生产代码。
+
+当前版本的特殊标签（`unsentdelta`、`plaintextowner`、`followupcapture`、`issue905`、`httpprojection`、`bps_request_integration`）、`-race`、真实 Redis、完整单元／数据库集成、安全扫描及功能性浏览器验收继续保留。它们不完全包含在默认 `-tags=unit` 中，因此不关闭整份专用工作流，也不因历史 RED 迁移而删除业务断言。
+
+退休功能的测试随对应生产模块一起删除；仍在使用的 V2 凭证巡检、共享重登、迁移兼容、授权及计费边界测试继续保留。仅凭文件旧、数量多或运行慢，不作为删除依据。
+
 ## Go 测试并行与耗时报告
 
 后端选择器分别决定 `unit-test` 和 `integration-test`。单元测试在四个 GitHub 托管 runner 上按 package 分片，集成测试在独立 runner 同时执行；`test` 保留为汇总检查，任何应运行的分片失败、取消或跳过都会失败。复用单元测试证据要求四个分片全部成功，且源码、辅助脚本、分片权重和 job 定义一致；手动/tag 仍强制全量。整个旧 workflow 被新 head 取消时，汇总 job 也取消，避免 always() 任务在队列中阻塞后续运行；取消状态不算通过。
 
 `.github/ci/go_tests.py` 从 `go list -tags=unit ./...` 动态发现全部包，再按 `go-test-weights.json` 的历史耗时从重到轻分配。新包按 1 秒估算并自动纳入；无测试包也保留。权重仅影响分配，不筛选测试。初始权重来自 [2026-11-17 的成功运行](https://github.com/ranxi2001/sub2api/actions/runs/44150112506)，其中 handler 581.520 秒、service 363.216 秒。包内用例尚未进一步拆分，因此单个重包仍可能决定单元测试关键路径。
+
+单元测试的每个 package 显式使用 `-timeout=20m`，容纳已接近 Go 默认 10 分钟上限的 handler 全量套件；四分片仍运行全部用例，job 的 40 分钟上限继续生效。
 
 运行仍经过 backend Makefile：`test-unit-packages` 接收包列表，嵌套收款模块的 `test-collection` 在第 0 片执行一次；默认 `make test-unit` 仍包含两者。单元测试保留 Go 测试结果缓存。集成测试保留 PostgreSQL/Redis、Docker testcontainers 和 `GOFLAGS=-p=1`，增加 `-count=1` 确保外部服务检查实际执行。原先单独运行的 `TestUsageTrendAggregateTimezone` 已包含在完整集成套件内，不再重复启动仓库集成环境。每个单元分片和集成 runner 都安装并检查 redis-server，分别满足快照适配器和认证缓存跨进程 Pub/Sub 用例；服务容器不能替代这些用例自行启动的独立 Redis 进程。
 

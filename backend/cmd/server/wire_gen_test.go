@@ -103,7 +103,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil,                                                  // controlledExperiment
 		nil,                                                  // accountOps
 		accountPerformanceSvc,                                // accountPerformance
-		nil,                                                  // accountTokenGuard
+		nil,                                                  // openAIRelogin
 		nil,                                                  // accountTokenGuardV2
 		nil,                                                  // backupSvc
 		nil,                                                  // paymentOrderExpiry

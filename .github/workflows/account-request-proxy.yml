@@ -1,5 +1,11 @@
 name: Account request proxy routing
 on:
+  workflow_dispatch:
+    inputs:
+      historical_red:
+        description: 'Also replay pinned historical implementations (maintenance evidence)'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'backend/**'
@@ -17,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-go@v6
         with:
@@ -90,19 +96,20 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: account-proxy-${{ github.event.pull_request.head.sha }}
+          name: account-proxy-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             ${{ runner.temp }}/account-proxy.jsonl
             ${{ runner.temp }}/account-proxy-redis.log
             ${{ runner.temp }}/config-switch-green.jsonl
           if-no-files-found: error
   config-switch-red:
+    if: github.event_name == 'workflow_dispatch' && inputs.historical_red
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v6
@@ -161,18 +168,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: config-switch-red-${{ github.event.pull_request.head.sha }}
+          name: config-switch-red-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             ${{ runner.temp }}/config-switch-red.jsonl
             ${{ runner.temp }}/config-switch-red-source.txt
           if-no-files-found: error
   refresh-oracle-red:
+    if: github.event_name == 'workflow_dispatch' && inputs.historical_red
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@v6
@@ -222,7 +230,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: refresh-oracle-red-${{ github.event.pull_request.head.sha }}
+          name: refresh-oracle-red-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             ${{ runner.temp }}/refresh-oracle-red.jsonl
             ${{ runner.temp }}/refresh-oracle-red-api-compatibility.json

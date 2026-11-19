@@ -1,5 +1,11 @@
 name: HTTP recovery native controls
 on:
+  workflow_dispatch:
+    inputs:
+      historical_red:
+        description: 'Also replay pinned historical implementations (maintenance evidence)'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'backend/internal/service/openai*'
@@ -18,11 +24,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        phase: [RED, GREEN]
+        phase: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.historical_red && '["RED","GREEN"]' || '["GREEN"]') }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-go@v6
         with:
@@ -55,7 +61,7 @@ jobs:
             esac
           done
           python3 .github/scripts/prepare-upstream-v0222-red-fixtures.py "$baseline" . HEAD
-          bash .github/scripts/prepare-usage-sort-red-fixture.sh "$baseline" . "${{ github.event.pull_request.head.sha }}"
+          bash .github/scripts/prepare-usage-sort-red-fixture.sh "$baseline" . "${{ github.event.pull_request.head.sha || github.sha }}"
       - name: Authenticated HTTP task continuation
         env:
           PHASE: ${{ matrix.phase }}
@@ -74,5 +80,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: http-native-controls-${{ matrix.phase }}-${{ github.event.pull_request.head.sha }}
+          name: http-native-controls-${{ matrix.phase }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/native-controls.jsonl

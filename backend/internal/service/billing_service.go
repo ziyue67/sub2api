@@ -623,14 +623,19 @@ func (s *BillingService) initFallbackPricing() {
 		LongContextInputMultiplier:         2,
 		LongContextOutputMultiplier:        1.5,
 	}
-	gpt62ProPrice := gpt62DefaultPricing("gpt-6.2-astra-pro")
-	s.fallbackPrices["gpt-6.2-astra-pro"] = &ModelPricing{
-		InputPricePerToken:            gpt62ProPrice.InputCostPerToken,
-		OutputPricePerToken:           gpt62ProPrice.OutputCostPerToken,
-		CacheCreationPricePerToken:    gpt62ProPrice.CacheCreationInputTokenCost,
-		CacheCreation12hPricePerToken: gpt62ProPrice.CacheCreationInputTokenCost12h,
-		CacheCreationPriceExplicit:    true,
-		CacheReadPricePerToken:        gpt62ProPrice.CacheReadInputTokenCost,
+	for _, model := range []string{"gpt-6.2-astra", "gpt-6.2-astra-pro", "gpt-6.2-sol"} {
+		price := gpt62DefaultPricing(model)
+		s.fallbackPrices[model] = &ModelPricing{
+			InputPricePerToken:            price.InputCostPerToken,
+			OutputPricePerToken:           price.OutputCostPerToken,
+			CacheCreationPricePerToken:    price.CacheCreationInputTokenCost,
+			CacheCreation12hPricePerToken: price.CacheCreationInputTokenCost12h,
+			CacheCreationPriceExplicit:    true,
+			CacheReadPricePerToken:        price.CacheReadInputTokenCost,
+			LongContextInputThreshold:     price.LongContextInputTokenThreshold,
+			LongContextInputMultiplier:    price.LongContextInputCostMultiplier,
+			LongContextOutputMultiplier:   price.LongContextOutputCostMultiplier,
+		}
 	}
 
 	// GPT-6.1 Terra official rates, 2026-10-26.
@@ -2123,7 +2128,7 @@ func (s *BillingService) applyModelSpecificPricingPolicy(model string, pricing *
 
 // applyModelSpecificPricingPolicyEx 与 applyModelSpecificPricingPolicy 相同，
 // 但由调用方控制是否强制 DeepSeek 官方价（forceDeepSeekRates）。
-// GPT-6.2 Ultrafast 按请求时点计算。
+// GPT-6.2 UltraFast 按请求时点应用上游促销倍率。
 // calculateTokenCost 对分组/渠道自定义定价（Source 非 LiteLLM）传 false：
 // 强制覆盖会把运营者配置的售价盖回官方价，违反自定义定价语义。
 func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing *ModelPricing, forceDeepSeekRates bool, pricingAt time.Time) *ModelPricing {
