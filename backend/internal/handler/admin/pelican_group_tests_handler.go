@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"net/http"
 	"strconv"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -27,11 +29,28 @@ func (h *PelicanGroupTestHandler) ListPlans(c *gin.Context) {
 	response.Success(c, plans)
 }
 
+func bindGroupPersonalOwner(c *gin.Context, input *service.PelicanGroupTestPlanInput) bool {
+	if input.PromptMode != service.PelicanPromptModePersonal {
+		return true
+	}
+	subject, ok := middleware.GetAuthSubjectFromContext(c)
+	role, _ := middleware.GetUserRoleFromContext(c)
+	if !ok || subject.UserID <= 0 || role != service.RoleAdmin || c.GetString("auth_method") != service.AuditAuthMethodJWT {
+		response.Error(c, http.StatusForbidden, "An administrator session is required for a personal SVG bank")
+		return false
+	}
+	input.PersonalBankOwnerID = subject.UserID
+	return true
+}
+
 // CreatePlan POST /api/v1/admin/pelican-group-tests
 func (h *PelicanGroupTestHandler) CreatePlan(c *gin.Context) {
 	var input service.PelicanGroupTestPlanInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		response.BadRequest(c, "invalid request body")
+		return
+	}
+	if !bindGroupPersonalOwner(c, &input) {
 		return
 	}
 	plan, err := h.svc.CreatePlan(c.Request.Context(), input)
@@ -52,6 +71,9 @@ func (h *PelicanGroupTestHandler) UpdatePlan(c *gin.Context) {
 	var input service.PelicanGroupTestPlanInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		response.BadRequest(c, "invalid request body")
+		return
+	}
+	if !bindGroupPersonalOwner(c, &input) {
 		return
 	}
 	plan, err := h.svc.UpdatePlan(c.Request.Context(), id, input)

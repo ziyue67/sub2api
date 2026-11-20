@@ -1,5 +1,6 @@
 export default {
   personalBank: {
+    scheduledHint: 'Shares your manual SVG question bank. Saving this form binds the current administrator bank; quick pause/resume keeps the existing bank. Each round draws one enabled question shared by every parallel sample, without immediate repeats when two or more are enabled. Save questions in Manage bank first. No model request is sent when none are enabled.',
     mode: 'My question bank (random)',
     manage: 'Manage questions',
     add: 'Add question',

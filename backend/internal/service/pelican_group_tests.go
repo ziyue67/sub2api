@@ -101,6 +101,9 @@ type PelicanGroupTestPlanInput struct {
 	PromptMode      string `json:"prompt_mode,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort"`
 	ParallelCount   int    `json:"parallel_count"`
+	// Internal identity; a request body cannot choose another administrator.
+	PersonalBankOwnerID int64 `json:"-"`
+	UseMyQuestionBank   bool  `json:"use_my_question_bank,omitempty"`
 }
 
 type PelicanGroupTestRepository interface {
@@ -145,13 +148,14 @@ type pelicanGroupTestGroups interface {
 }
 
 type PelicanGroupTestService struct {
-	repo       PelicanGroupTestRepository
-	groups     pelicanGroupTestGroups
-	router     pelicanGroupRouter
-	runAccount func(ctx context.Context, accountID int64, model string, cfg *PelicanTestConfig) (*ScheduledTestResult, error)
-	showcase   *PelicanShowcaseService
-	billing    *BillingService
-	now        func() time.Time
+	repo              PelicanGroupTestRepository
+	groups            pelicanGroupTestGroups
+	router            pelicanGroupRouter
+	runAccount        func(ctx context.Context, accountID int64, model string, cfg *PelicanTestConfig) (*ScheduledTestResult, error)
+	showcase          *PelicanShowcaseService
+	billing           *BillingService
+	personalQuestions *SettingService
+	now               func() time.Time
 	// runs tracks background runs so tests can wait for them.
 	runs sync.WaitGroup
 }
@@ -165,15 +169,17 @@ func NewPelicanGroupTestService(
 	accountTest *AccountTestService,
 	showcase *PelicanShowcaseService,
 	billing *BillingService,
+	personalQuestions *SettingService,
 ) *PelicanGroupTestService {
 	return &PelicanGroupTestService{
-		repo:       repo,
-		groups:     groupRepo,
-		router:     &gatewayPelicanGroupRouter{gateway: gateway, openai: openai, concurrency: concurrency, slotWait: pelicanGroupTestSlotWait},
-		runAccount: accountTest.RunPelicanBackground,
-		showcase:   showcase,
-		billing:    billing,
-		now:        time.Now,
+		repo:              repo,
+		groups:            groupRepo,
+		router:            &gatewayPelicanGroupRouter{gateway: gateway, openai: openai, concurrency: concurrency, slotWait: pelicanGroupTestSlotWait},
+		runAccount:        accountTest.RunPelicanBackground,
+		showcase:          showcase,
+		billing:           billing,
+		personalQuestions: personalQuestions,
+		now:               time.Now,
 	}
 }
 
@@ -247,7 +253,7 @@ func (s *PelicanGroupTestService) planFromInput(ctx context.Context, input Pelic
 		return nil, infraerrors.BadRequest("INVALID_PELICAN_GROUP_TEST", "model is required (maximum 100 bytes)")
 	}
 	prompt := strings.TrimSpace(input.Prompt)
-	if (prompt == "" && input.PromptMode != PelicanPromptModeRandom) || len(prompt) > 32000 {
+	if (prompt == "" && input.PromptMode != PelicanPromptModeRandom && input.PromptMode != PelicanPromptModePersonal) || len(prompt) > 32000 {
 		return nil, infraerrors.BadRequest("INVALID_PELICAN_GROUP_TEST", "prompt is required (maximum 32000 bytes)")
 	}
 	effort := normalizePelicanReasoningEffort(input.ReasoningEffort)
@@ -272,6 +278,12 @@ func (s *PelicanGroupTestService) planFromInput(ctx context.Context, input Pelic
 	plan.NextRunAt = &next
 	plan.Enabled = input.Enabled
 	plan.PelicanConfig = &PelicanTestConfig{QuestionKind: "pelican", PromptMode: input.PromptMode, Prompt: prompt, ReasoningEffort: effort, ParallelCount: parallel, ModelID: plan.ModelID}
+	if input.PromptMode == PelicanPromptModePersonal {
+		if err := s.bindPersonalBank(ctx, plan, current, input); err != nil {
+			return nil, err
+		}
+		return plan, nil
+	}
 	if err := validatePelicanPromptMode(plan.PelicanConfig); err != nil {
 		return nil, infraerrors.BadRequest("INVALID_PELICAN_GROUP_TEST", err.Error())
 	}
@@ -291,6 +303,10 @@ func (s *PelicanGroupTestService) RunNow(ctx context.Context, id int64) error {
 		return ErrPelicanGroupTestModelRequired
 	}
 	now := s.now()
+	prepared, err := s.prepareGroupQuestion(ctx, plan, "manual-group:"+now.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return err
+	}
 	until := now.Add(pelicanGroupTestLease).Truncate(time.Microsecond)
 	claimed, err := s.repo.Claim(ctx, plan, now, until, nil)
 	if err != nil {
@@ -299,7 +315,7 @@ func (s *PelicanGroupTestService) RunNow(ctx context.Context, id int64) error {
 	if !claimed {
 		return ErrPelicanGroupTestPlanRunning
 	}
-	plan.PelicanConfig = freezePelicanQuestion(plan.PelicanConfig, "manual-group:"+now.UTC().Format(time.RFC3339Nano), nil)
+	plan.PelicanConfig = prepared
 	s.runs.Add(1)
 	go func() {
 		defer s.runs.Done()
@@ -361,7 +377,13 @@ func (s *PelicanGroupTestService) runScheduled(ctx context.Context, plan *Pelica
 	if err != nil || !claimed {
 		return
 	}
-	plan.PelicanConfig = freezePelicanQuestion(plan.PelicanConfig, "scheduled:"+roundTime.UTC().Format(time.RFC3339Nano), nil)
+	prepared, err := s.prepareGroupQuestion(ctx, plan, "scheduled:"+roundTime.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		result := s.newResult(plan, now, s.now(), "personal_question_unavailable: "+err.Error())
+		s.saveGroupResults(plan, until, []*PelicanGroupTestResult{result})
+		return
+	}
+	plan.PelicanConfig = prepared
 	s.execute(plan, until)
 }
 
@@ -371,6 +393,10 @@ func (s *PelicanGroupTestService) execute(plan *PelicanGroupTestPlan, until time
 	runCtx, cancel := context.WithTimeout(context.Background(), pelicanGroupTestRunTimeout)
 	defer cancel()
 	results := s.runSamples(runCtx, plan)
+	s.saveGroupResults(plan, until, results)
+}
+
+func (s *PelicanGroupTestService) saveGroupResults(plan *PelicanGroupTestPlan, until time.Time, results []*PelicanGroupTestResult) {
 	// Persist with a fresh context so timeout failures are still recorded.
 	saveCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stop()

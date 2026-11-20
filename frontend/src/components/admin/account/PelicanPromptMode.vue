@@ -10,7 +10,7 @@
       </label>
       <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.pelicanRandomQuestionBank" :user-id="auth.user?.id" />
       <slot />
-      <NewFeatureBadge v-if="allowPersonal" :notice-id="NEW_FEATURE_NOTICES.pelicanPersonalQuestionBank" :user-id="auth.user?.id" />
+      <NewFeatureBadge v-if="allowPersonal" :notice-id="personalNoticeId || NEW_FEATURE_NOTICES.pelicanPersonalQuestionBank" :user-id="auth.user?.id" />
     </div>
     <p v-if="modelValue === 'random'" class="text-xs text-gray-500">{{ t('pelicanTests.questionBank.hint') }}</p>
   </div>
@@ -21,7 +21,7 @@ import { useAuthStore } from '@/stores/auth'
 import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
 import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import type { PelicanManualPromptMode } from '@/types'
-defineProps<{ modelValue?: PelicanManualPromptMode; disabled?: boolean; allowPersonal?: boolean }>()
+defineProps<{ modelValue?: PelicanManualPromptMode; disabled?: boolean; allowPersonal?: boolean; personalNoticeId?: string }>()
 defineEmits<{ 'update:modelValue': [value: PelicanManualPromptMode] }>()
 const { t } = useI18n()
 const auth = useAuthStore()

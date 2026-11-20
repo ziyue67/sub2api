@@ -248,8 +248,14 @@
             <label class="field-label mt-0" for="pelican-test-prompt">{{ t('pelicanTests.editor.prompt') }}</label>
             <button type="button" class="link-button text-xs" @click="editor.form.prompt = PELICAN_PROMPT">{{ t('pelicanTests.editor.resetPrompt') }}</button>
           </div>
-          <PelicanPromptMode v-model="editor.form.prompt_mode" />
-          <textarea v-if="editor.form.prompt_mode !== 'random'" id="pelican-test-prompt" v-model="editor.form.prompt" rows="3" maxlength="32000" class="input w-full" data-testid="pelican-test-prompt" />
+          <PelicanPromptMode v-model="editor.form.prompt_mode" :allow-personal="auth.user?.role === 'admin'" :personal-notice-id="NEW_FEATURE_NOTICES.pelicanScheduledPersonalBank">
+            <button v-if="editor.form.prompt_mode === 'personal_random'" type="button" class="btn btn-secondary btn-sm" data-testid="pelican-group-bank-manage" @click="showPersonalBank = !showPersonalBank">{{ t('pelicanTests.personalBank.manage') }}</button>
+          </PelicanPromptMode>
+          <template v-if="editor.form.prompt_mode === 'personal_random'">
+            <p class="field-hint">{{ t('pelicanTests.personalBank.scheduledHint') }}</p>
+            <PelicanPersonalBank v-if="showPersonalBank" :key="auth.user?.id" @close="showPersonalBank = false" @saved="showPersonalBank = false" />
+          </template>
+          <textarea v-if="!['random', 'personal_random'].includes(editor.form.prompt_mode || '')" id="pelican-test-prompt" v-model="editor.form.prompt" rows="3" maxlength="32000" class="input w-full" data-testid="pelican-test-prompt" />
           <p class="field-hint">{{ t('pelicanTests.editor.promptHint') }}</p>
         </div>
         <div class="grid gap-4 sm:grid-cols-2">
@@ -335,6 +341,9 @@
 
 <script setup lang="ts">
 import PelicanPromptMode from '@/components/admin/account/PelicanPromptMode.vue'
+import PelicanPersonalBank from '@/components/admin/account/PelicanPersonalBank.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
+import { useAuthStore } from '@/stores/auth'
 import PelicanQuestionSnapshot from '@/components/admin/account/PelicanQuestionSnapshot.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
@@ -384,6 +393,8 @@ const { t } = useI18n()
 const appStore = useAppStore()
 
 const plans = ref<PelicanGroupTestPlan[]>([])
+const auth = useAuthStore()
+const showPersonalBank = ref(false)
 const plansLoaded = ref(false)
 const settings = ref<PelicanShowcaseSettings | null>(null)
 const draft = ref<PelicanShowcaseSettings | null>(null)
@@ -596,6 +607,7 @@ function inputFrom(plan: PelicanGroupTestPlan): PelicanGroupTestPlanInput {
 }
 
 function openEditor(plan?: PelicanGroupTestPlan) {
+  showPersonalBank.value = false
   const form: PelicanGroupTestPlanInput = plan
     ? inputFrom(plan)
     : { group_id: 0, model_id: '', cron_expression: SCHEDULES[1].cron, enabled: true, prompt: PELICAN_PROMPT, reasoning_effort: 'medium', parallel_count: 1 }
@@ -608,13 +620,13 @@ async function savePlan() {
   const current = editor.value
   if (!current || savingPlan.value) return
   const form = current.form
-  if (!form.group_id || !form.model_id.trim() || (form.prompt_mode !== 'random' && !form.prompt.trim()) || !form.cron_expression.trim()) {
+  if (!form.group_id || !form.model_id.trim() || (!['random', 'personal_random'].includes(form.prompt_mode || '') && !form.prompt.trim()) || !form.cron_expression.trim()) {
     fail(null, t('pelicanTests.editor.required'))
     return
   }
   savingPlan.value = true
   try {
-    const input = { ...form, parallel_count: Number(form.parallel_count) || 1 }
+    const input = { ...form, parallel_count: Number(form.parallel_count) || 1, ...(form.prompt_mode === 'personal_random' ? { use_my_question_bank: true } : {}) }
     if (current.id) {
       await pelicanTestsAPI.updatePlan(current.id, input)
       succeed(t('pelicanTests.editor.updated'))
