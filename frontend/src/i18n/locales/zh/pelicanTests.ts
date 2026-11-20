@@ -1,4 +1,18 @@
 export default {
+  personalBank: {
+    mode: '我的题库（随机）',
+    manage: '管理题库',
+    add: '新增题目',
+    title: '标题',
+    prompt: '题面',
+    enabled: '启用',
+    removeDraft: '移除草稿',
+    empty: '没有启用的题目。请在「管理题库」中添加或启用题目。',
+    loading: '正在载入题库…',
+    retry: '重试',
+    loadError: '题库载入失败。',
+    saveError: '题库保存失败，未保存的编辑已保留。',
+  },
   questionBank: {'mode': 'SVG 题面模式', 'random': '随机题库（同轮共用）', 'custom': '自定义题面', 'hint': '同轮所有账号和样本使用同一道题；准备下一轮后重新抽题。结果由人工按本题判据复核，不自动评分。', 'next': '准备下一轮', 'snapshot': '本次题目与评估依据', 'legacy': '此记录未保存题库版本或评估依据，可能是旧记录或自定义题面。', 'error': '题目准备失败，请重试。'},
   title: '鹈鹕测智',
   description: '按分组定时出题，由 sub2api 的调度器像真实请求一样挑选账号作答；成功生成的作品展示在用户的「鹈鹕测智」页面。',

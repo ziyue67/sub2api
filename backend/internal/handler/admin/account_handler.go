@@ -76,6 +76,7 @@ type AccountHandler struct {
 	ollamaCloudUsage        *service.OllamaCloudUsageService
 	opencodeGoUsage         *service.OpenCodeGoUsageService
 	codexTicketSettings     *service.SettingService
+	pelicanPersonalSettings *service.SettingService
 	openAIGatewayService    *service.OpenAIGatewayService
 	cfg                     *config.Config
 }
@@ -1667,6 +1668,17 @@ func (h *AccountHandler) PelicanTest(c *gin.Context) {
 		cfg, err := service.ResolveManualPelicanQuestion(req.PelicanQuestion)
 		if err != nil {
 			response.BadRequest(c, err.Error())
+			return
+		}
+		req.Prompt = cfg.ActualPrompt
+	} else if req.PromptMode == service.PelicanPromptModePersonal {
+		owner, ok := h.pelicanPersonalOwner(c)
+		if !ok {
+			return
+		}
+		cfg, err := h.pelicanPersonalSettings.ResolvePelicanPersonalRound(owner, req.PelicanQuestion)
+		if err != nil {
+			response.ErrorFrom(c, err)
 			return
 		}
 		req.Prompt = cfg.ActualPrompt

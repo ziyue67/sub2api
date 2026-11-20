@@ -21,6 +21,8 @@ type PelicanQuestion struct {
 	Source   string   `json:"source"`
 	Prompt   string   `json:"prompt"`
 	Criteria []string `json:"criteria"`
+	Title    string   `json:"title,omitempty"`
+	Proof    string   `json:"proof,omitempty"`
 }
 
 type pelicanQuestionTask struct {

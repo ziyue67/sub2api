@@ -129,8 +129,12 @@
         <p v-if="questionKind === 'candy'" class="mt-2 text-xs text-gray-500">{{ t('admin.accounts.pelicanTest.candyHint') }}</p>
       </div>
       <template v-if="questionKind === 'pelican'">
-        <PelicanPromptMode :model-value="promptMode" @update:model-value="selectPromptMode" :disabled="running || preparingQuestion" />
-        <template v-if="promptMode === 'random'">
+        <PelicanPromptMode :model-value="promptMode" :allow-personal="auth.isAdmin" @update:model-value="selectPromptMode" :disabled="running || preparingQuestion || managingBank">
+          <button v-if="isPersonalMode && auth.isAdmin" type="button" class="btn btn-secondary" data-testid="pelican-personal-manage"
+            :aria-expanded="managingBank" :disabled="running || preparingQuestion || managingBank" @click="managingBank = true">{{ t('pelicanTests.personalBank.manage') }}</button>
+        </PelicanPromptMode>
+        <PelicanPersonalBank v-if="managingBank && isPersonalMode && auth.isAdmin" @close="managingBank = false" @saved="onPersonalBankSaved" />
+        <template v-else-if="promptMode !== 'custom'">
           <button type="button" class="btn btn-secondary" data-testid="pelican-next-round" :disabled="running || preparingQuestion" @click="prepareQuestion">{{ t('pelicanTests.questionBank.next') }}</button>
           <p v-if="questionError" role="alert">{{ questionError }}</p>
           <PelicanQuestionSnapshot v-if="questionSnapshot" :question="questionSnapshot.pelican_question" :actual-prompt="questionSnapshot.actual_prompt" />
@@ -138,7 +142,7 @@
       </template>
       <div class="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
         <TextArea
-          v-if="promptMode !== 'random'"
+          v-if="promptMode === 'custom'"
           v-model="prompt"
           :label="t('admin.accounts.pelicanTest.promptLabel')"
           :disabled="running"
@@ -206,7 +210,7 @@
 
       <ScheduledTestsPanel v-if="show && account && activeTab === 'schedule'" :key="account.id" :show="true" embedded
         :account-id="account.id" :default-model="modelId" :model-options="[{ value: modelId, label: modelId }]"
-        :pelican-config="{ question_kind: questionKind, prompt_mode: promptMode, prompt, reasoning_effort: reasoningEffort, parallel_count: Number(parallelCount) }"
+        :pelican-config="{ question_kind: questionKind, prompt_mode: isPersonalMode ? 'custom' : promptMode === 'random' ? 'random' : 'custom', prompt: isPersonalMode ? questionPrompt('pelican') : prompt, reasoning_effort: reasoningEffort, parallel_count: Number(parallelCount) }"
         :disabled="running" @preview="previewScheduled" @history="scheduledRecords = $event" />
       <div v-else-if="activeTab === 'history'" class="space-y-2">
         <button v-for="result in scheduledRecords" :key="`scheduled-${result.id}`" type="button"
@@ -305,13 +309,14 @@ import TextArea from '@/components/common/TextArea.vue'
 import Select from '@/components/common/Select.vue'
 import { Icon } from '@/components/icons'
 import PelicanPromptMode from './PelicanPromptMode.vue'
+import PelicanPersonalBank from './PelicanPersonalBank.vue'
 import PelicanQuestionSnapshot from './PelicanQuestionSnapshot.vue'
 import { useAuthStore } from '@/stores/auth'
-import { currentPelicanQuestionRound, preparePelicanQuestionRound } from '@/utils/pelicanQuestionRound'
+import { clearPersonalPelicanQuestionRound, currentPelicanQuestionRound, preparePelicanQuestionRound } from '@/utils/pelicanQuestionRound'
 import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { getAvailableModels, getModelReasoning, probeOpenAICodexState, type OpenAICodexStateProbeResult, type OpenAICodexStateVerdict } from '@/api/admin/accounts'
-import type { Account, AccountListItem, PelicanQuestion, PelicanTestConfig, ScheduledTestResult } from '@/types'
+import type { Account, AccountListItem, PelicanManualPromptMode, PelicanQuestion, PelicanTestConfig, ScheduledTestResult } from '@/types'
 import ScheduledTestsPanel from './ScheduledTestsPanel.vue'
 import PelicanRecordsDashboard from './PelicanRecordsDashboard.vue'
 import TestModelSelect from './TestModelSelect.vue'
@@ -362,29 +367,50 @@ const emit = defineEmits<{ (event: 'close'): void }>()
 
 const questionKind = ref<IntelligenceQuestion>('candy')
 const prompt = ref(questionPrompt('candy'))
-const promptMode = ref<'custom' | 'random'>('custom')
+const promptMode = ref<PelicanManualPromptMode>('custom')
+const isPersonalMode = computed(() => promptMode.value === 'personal_random')
+const managingBank = ref(false)
 const questionSnapshot = ref<PelicanTestConfig | null>(null)
 const questionError = ref('')
 const preparingQuestion = ref(false)
 async function prepareQuestion() {
-  if (running.value || preparingQuestion.value) return
+  if (running.value || preparingQuestion.value || managingBank.value || promptMode.value === 'custom') return
+  const personal = isPersonalMode.value
+  const owner = auth.user?.id ?? null
+  if (personal && (!auth.isAdmin || owner === null)) return
+  const previous = questionSnapshot.value?.pelican_question?.id
   preparingQuestion.value = true
   questionError.value = ''
   const controller = new AbortController()
   controllers.set('question', controller)
   try {
-    questionSnapshot.value = await preparePelicanQuestionRound(auth.user?.id ?? null, controller.signal)
-  } catch {
-    if (!controller.signal.aborted) questionError.value = t('pelicanTests.questionBank.error')
+    const snapshot = await preparePelicanQuestionRound(owner, controller.signal, personal, previous)
+    if (questionKind.value === 'pelican' && promptMode.value === (personal ? 'personal_random' : 'random')) questionSnapshot.value = snapshot
+  } catch (error) {
+    if (controller.signal.aborted) return
+    const empty = personal && (error as { reason?: string } | null)?.reason === 'PELICAN_PERSONAL_EMPTY'
+    if (empty) {
+      questionSnapshot.value = null
+      clearPersonalPelicanQuestionRound(owner)
+    }
+    questionError.value = t(empty ? 'pelicanTests.personalBank.empty' : 'pelicanTests.questionBank.error')
   } finally {
     preparingQuestion.value = false
     controllers.delete('question')
   }
 }
-function selectPromptMode(mode: 'custom' | 'random') {
+function selectPromptMode(mode: PelicanManualPromptMode) {
+  if (mode === 'personal_random' && !auth.isAdmin) return
   promptMode.value = mode
-  if (mode !== 'random') return
-  questionSnapshot.value = currentPelicanQuestionRound(auth.user?.id ?? null)
+  managingBank.value = false
+  questionError.value = ''
+  questionSnapshot.value = mode === 'custom' ? null : currentPelicanQuestionRound(auth.user?.id ?? null, mode === 'personal_random')
+  if (mode === 'custom') return
+  if (!questionSnapshot.value) void prepareQuestion()
+}
+
+function onPersonalBankSaved() {
+  managingBank.value = false
   if (!questionSnapshot.value) void prepareQuestion()
 }
 // Claude accounts cannot serve the OpenAI default.
@@ -425,13 +451,17 @@ function selectQuestion(value: string | number | boolean | null) {
   if (running.value || (value !== 'candy' && value !== 'pelican')) return
   questionKind.value = value
   promptMode.value = 'custom'
+  managingBank.value = false
   prompt.value = questionPrompt(value)
 }
 const reasoningOptions = computed(() => reasoningLevels.value.map((value) => ({
   value,
   label: ({ low: t('admin.accounts.pelicanTest.reasoningLow'), medium: t('admin.accounts.pelicanTest.reasoningMedium'), high: t('admin.accounts.pelicanTest.reasoningHigh'), none: t('admin.accounts.pelicanTest.reasoningNone'), minimal: t('admin.accounts.pelicanTest.reasoningMinimal'), xhigh: t('admin.accounts.pelicanTest.reasoningXHigh'), max: t('admin.accounts.pelicanTest.reasoningMax'), ultra: t('admin.accounts.pelicanTest.reasoningUltra') } as Record<string, string>)[value] || value
 })))
-const canStart = computed(() => Boolean(props.account && !preparingQuestion.value && (promptMode.value === 'random' ? (questionSnapshot.value?.actual_prompt && questionSnapshot.value.pelican_question?.round_id.startsWith('manual:')) : prompt.value.trim()) && modelId.value.trim() && normalizeCount() > 0))
+const canStart = computed(() => Boolean(props.account && !preparingQuestion.value && !managingBank.value &&
+  (!isPersonalMode.value || auth.isAdmin) &&
+  (promptMode.value === 'custom' ? prompt.value.trim() : (questionSnapshot.value?.actual_prompt && questionSnapshot.value.pelican_question?.round_id.startsWith('manual:'))) &&
+  modelId.value.trim() && normalizeCount() > 0))
 const hasDownloadable = computed(() => runs.value.some((run) => Boolean(run.output)))
 const probeSupported = computed(() => props.account?.platform === 'openai' && (props.account.type === 'oauth' || props.account.type === 'setup-token'))
 const canStartProbe = computed(() => Boolean(props.account && probeSupported.value))
@@ -515,6 +545,7 @@ function newTicketLabel(result: OpenAICodexStateProbeResult) {
 }
 
 const storageKey = computed(() => `${STORAGE_PREFIX}${props.account?.id ?? 'unknown'}`)
+const personalStorageKey = computed(() => auth.isAdmin && auth.user?.id ? `${storageKey.value}:personal:${auth.user.id}` : null)
 
 function normalizeCount(): number {
   const value = Number(parallelCount.value)
@@ -522,18 +553,26 @@ function normalizeCount(): number {
   return Math.min(8, Math.max(1, Math.floor(value)))
 }
 
-function readRecords() {
+function loadStoredRecords(key: string): TestRecord[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(storageKey.value) || '[]')
-    records.value = Array.isArray(parsed) ? parsed : []
+    const parsed = JSON.parse(localStorage.getItem(key) || '[]')
+    return Array.isArray(parsed) ? parsed : []
   } catch {
-    records.value = []
+    return []
   }
+}
+
+function readRecords() {
+  const personal = personalStorageKey.value ? loadStoredRecords(personalStorageKey.value) : []
+  records.value = [...loadStoredRecords(storageKey.value), ...personal].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 function saveRecords() {
   try {
-    localStorage.setItem(storageKey.value, JSON.stringify(records.value.slice(0, 8)))
+    localStorage.setItem(storageKey.value, JSON.stringify(records.value.filter(record => !record.pelicanQuestion?.proof).slice(0, 8)))
+    if (personalStorageKey.value) {
+      localStorage.setItem(personalStorageKey.value, JSON.stringify(records.value.filter(record => record.pelicanQuestion?.proof).slice(0, 8)))
+    }
   } catch {
     // A large model response must not prevent the current result from being shown.
   }
@@ -582,7 +621,7 @@ function loadRecord(record: TestRecord) {
   if (running.value) return
   questionKind.value = record.questionKind || 'pelican'
   prompt.value = record.prompt
-  promptMode.value = record.pelicanQuestion ? 'random' : 'custom'
+  promptMode.value = record.pelicanQuestion?.proof ? 'personal_random' : record.pelicanQuestion ? 'random' : 'custom'
   questionSnapshot.value = record.pelicanQuestion ? { prompt: record.prompt, reasoning_effort: record.reasoningEffort, parallel_count: record.runs.length, pelican_question: record.pelicanQuestion, actual_prompt: record.actualPrompt } : null
   modelId.value = record.modelId
   reasoningEffort.value = record.reasoningEffort || 'medium'
@@ -604,6 +643,7 @@ interface ManualRound {
   modelId: string
   reasoningEffort: string
   prompt: string
+  promptMode: PelicanManualPromptMode
   actualPrompt: string
   question?: PelicanQuestion
 }
@@ -618,7 +658,7 @@ async function consumeRun(run: TestRun, signal: AbortSignal, round: ManualRound)
     body: JSON.stringify({
       model_id: round.modelId,
       prompt: round.actualPrompt,
-      prompt_mode: round.question ? 'random' : 'custom',
+      prompt_mode: round.promptMode,
       pelican_question: round.question,
       mode: 'default',
       reasoning_effort: round.reasoningEffort
@@ -684,11 +724,13 @@ async function startOne(run: TestRun, round: ManualRound) {
 async function startTest() {
   if (running.value || !props.account || !canStart.value) return
   viewingScheduled.value = false
-  const question = promptMode.value === 'random' ? questionSnapshot.value?.pelican_question : undefined
+  const question = promptMode.value !== 'custom' ? questionSnapshot.value?.pelican_question : undefined
+  const owner = auth.user?.id
   const round: ManualRound = {
     accountId: props.account.id, questionKind: questionKind.value,
     modelId: modelId.value.trim(), reasoningEffort: reasoningEffort.value,
     prompt: question?.prompt || prompt.value.trim(),
+    promptMode: promptMode.value,
     actualPrompt: question ? questionSnapshot.value!.actual_prompt! : `${prompt.value.trim()}\n\n${deliveryContract.value}`,
     question: question ? JSON.parse(JSON.stringify(question)) : undefined,
   }
@@ -709,7 +751,7 @@ async function startTest() {
   running.value = true
   await Promise.all(runs.value.map((run) => startOne(run, round)))
   running.value = false
-  if (props.account?.id !== round.accountId || !props.show) return
+  if (props.account?.id !== round.accountId || !props.show || (round.promptMode === 'personal_random' && (auth.user?.id !== owner || !auth.isAdmin))) return
   const record: TestRecord = {
     id: `${Date.now()}`,
     createdAt: new Date().toISOString(),
@@ -766,9 +808,11 @@ onBeforeUnmount(() => { for (const controller of controllers.values()) controlle
 
 watch(modelId, () => { if (props.show) loadReasoning() })
 
-watch(() => [props.show, props.account?.id] as const, ([show]) => {
+watch(() => [props.show, props.account?.id, auth.user?.id, auth.isAdmin] as const, ([show]) => {
   // The records window never outlives the dialog or carries over to another account.
   recordsView.value = null
+  managingBank.value = false
+  controllers.get('question')?.abort()
   if (show) {
     readRecords()
     activeTab.value = 'results'

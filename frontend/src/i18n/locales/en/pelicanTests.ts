@@ -1,4 +1,18 @@
 export default {
+  personalBank: {
+    mode: 'My question bank (random)',
+    manage: 'Manage questions',
+    add: 'Add question',
+    title: 'Title',
+    prompt: 'Prompt',
+    enabled: 'Enabled',
+    removeDraft: 'Remove draft',
+    empty: 'No enabled questions. Add or enable a question in Manage questions.',
+    loading: 'Loading questions…',
+    retry: 'Retry',
+    loadError: 'Could not load your question bank.',
+    saveError: 'Could not save your question bank. Unsaved edits are still here.',
+  },
   questionBank: {'mode': 'SVG prompt mode', 'random': 'Random bank (shared round)', 'custom': 'Custom prompt', 'hint': 'All accounts and samples in a round share one question. Prepare the next round to draw again. Review results manually against the question criteria; no automatic grading.', 'next': 'Prepare next round', 'snapshot': 'Question and review criteria', 'legacy': 'No question version or review criteria were recorded (older record or custom prompt).', 'error': 'Could not prepare the question. Please retry.'},
   cost: {
     today: 'Today {amount}',

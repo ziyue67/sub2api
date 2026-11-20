@@ -6,6 +6,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import IQTestModal from '../IQTestModal.vue'
 import TestModelSelect from '../TestModelSelect.vue'
 import { apiClient } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
+import { useNewFeatureNoticeStore } from '@/stores/newFeatureNotices'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
 
 const { probeOpenAICodexState, getAvailableModels, getModelReasoning } = vi.hoisted(() => ({
   probeOpenAICodexState: vi.fn(), getAvailableModels: vi.fn(), getModelReasoning: vi.fn()
@@ -86,6 +90,94 @@ describe('IQTestModal', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('keeps the personal-bank notice independent of older and later feature notices', async () => {
+    const admin = { id: 71, role: 'admin' } as any
+    const previous = NEW_FEATURE_NOTICES.pelicanRandomQuestionBank
+    const personal = NEW_FEATURE_NOTICES.pelicanPersonalQuestionBank
+    expect(new Set(Object.values(NEW_FEATURE_NOTICES)).size).toBe(Object.values(NEW_FEATURE_NOTICES).length)
+    useAuthStore().user = admin
+    useNewFeatureNoticeStore().dismiss(admin.id, previous)
+    const openSVG = async () => {
+      const wrapper = mountModal()
+      ;(wrapper.vm as any).selectQuestion('pelican')
+      await wrapper.vm.$nextTick()
+      return wrapper
+    }
+    const entry = await openSVG()
+    const otherEntry = await openSVG()
+    const findNotice = (wrapper: typeof entry, id: string) => wrapper.findAllComponents(NewFeatureBadge).find(badge => badge.props('noticeId') === id)
+    const button = '[data-testid="new-feature-badge"]'
+    expect(findNotice(entry, previous)?.find(button).exists()).toBe(false)
+    expect(findNotice(entry, personal)?.find(button).exists()).toBe(true)
+    expect(findNotice(otherEntry, personal)?.find(button).exists()).toBe(true)
+    await findNotice(entry, personal)!.get(button).trigger('click')
+    expect(findNotice(otherEntry, personal)?.find(button).exists()).toBe(false)
+    entry.unmount()
+    otherEntry.unmount()
+
+    setActivePinia(createPinia())
+    useAuthStore().user = admin
+    const reopened = await openSVG()
+    const next = mount(NewFeatureBadge, { props: { noticeId: 'fixture-next-svg-feature', userId: admin.id } })
+    expect(findNotice(reopened, previous)?.find(button).exists()).toBe(false)
+    expect(findNotice(reopened, personal)?.find(button).exists()).toBe(false)
+    expect(next.find(button).exists()).toBe(true)
+    reopened.unmount()
+    next.unmount()
+  })
+
+  it('saves personal questions and reuses the signed draw across accounts and samples', async () => {
+    useAuthStore().user = { id: 71, role: 'admin' } as any
+    const question = { id: 'personal-rain', title: 'Rain', version: 'personal-svg-v1', round_id: 'manual:fixture', source: 'personal:svg-motion', prompt: 'Draw an SVG rain scene', criteria: [], proof: 'fixture-proof' }
+    let saved = false
+    const get = vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url.endsWith('/pelican-personal-questions')) return { data: [] }
+      if (!saved) throw { reason: 'PELICAN_PERSONAL_EMPTY' }
+      return { data: { prompt: question.prompt, actual_prompt: 'Draw rain\n\nHTML only', pelican_question: question } }
+    })
+    const put = vi.spyOn(apiClient, 'put').mockImplementation(async () => {
+      saved = true
+      return { data: [{ id: question.id, title: question.title, prompt: question.prompt, enabled: true }] }
+    })
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+    vm.selectQuestion('pelican')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-testid="pelican-mode-select"]').setValue('personal_random')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe('pelicanTests.personalBank.empty')
+    await wrapper.get('[data-testid="pelican-personal-manage"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="pelican-personal-add"]').trigger('click')
+    await wrapper.get('[data-testid="pelican-personal-title"]').setValue(question.title)
+    await wrapper.get('[data-testid="pelican-personal-prompt"]').setValue(question.prompt)
+    await wrapper.get('[data-testid="pelican-personal-save"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith('/admin/accounts/pelican-personal-questions', { items: [{ id: '', title: question.title, prompt: question.prompt, enabled: true }] }, expect.anything())
+    expect(wrapper.get('[data-testid="pelican-question-snapshot"]').text()).toContain('Rain')
+    vm.parallelCount = 2
+    await vm.startTest()
+    const calls = vi.mocked(global.fetch).mock.calls.filter(([url]) => String(url).includes('/pelican-test'))
+    expect(calls).toHaveLength(2)
+    for (const [, options] of calls) {
+      expect(JSON.parse(options!.body as string)).toMatchObject({ prompt_mode: 'personal_random', pelican_question: question })
+    }
+    const personalHistory = JSON.parse(localStorage.getItem('sub2api-pelican-test:42:personal:71')!)
+    expect(personalHistory[0].pelicanQuestion).toEqual(question)
+    expect(localStorage.getItem('sub2api-pelican-test:42')).not.toContain('fixture-proof')
+    await wrapper.setProps({ account: { id: 43, name: 'Second fixture', platform: 'openai', type: 'oauth', status: 'active' } as any })
+    vm.selectQuestion('pelican')
+    vm.selectPromptMode('personal_random')
+    await vm.startTest()
+    const comparison = vi.mocked(global.fetch).mock.calls.find(([url]) => String(url).includes('/43/pelican-test'))
+    expect(JSON.parse(comparison![1]!.body as string).pelican_question).toEqual(question)
+    expect(get.mock.calls.filter(([url]) => String(url).endsWith('/pelican-personal-question'))).toHaveLength(2)
+    await wrapper.get('[data-testid="pelican-next-round"]').trigger('click')
+    await flushPromises()
+    expect(get).toHaveBeenLastCalledWith('/admin/accounts/pelican-personal-question', expect.objectContaining({ params: { previous_id: question.id } }))
+    wrapper.unmount()
   })
 
   it('freezes one random question across samples and stores its version with the actual prompt', async () => {

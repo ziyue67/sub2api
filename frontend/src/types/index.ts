@@ -2981,6 +2981,17 @@ export interface PelicanQuestion {
   source: string
   prompt: string
   criteria: string[]
+  title?: string
+  proof?: string
+}
+
+export type PelicanManualPromptMode = 'custom' | 'random' | 'personal_random'
+
+export interface PelicanPersonalQuestion {
+  id: string
+  title: string
+  prompt: string
+  enabled: boolean
 }
 
 export interface PelicanTestConfig {
