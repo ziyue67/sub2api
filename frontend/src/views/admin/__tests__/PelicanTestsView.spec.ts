@@ -5,6 +5,11 @@ import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PelicanTestsView from '../PelicanTestsView.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { useAuthStore } from '@/stores/auth'
+import { useNewFeatureNoticeStore } from '@/stores/newFeatureNotices'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
+import { apiClient } from '@/api/client'
 import type { PelicanGroupTestPlan, PelicanGroupTestResult } from '@/api/admin/pelicanTests'
 
 const api = vi.hoisted(() => ({
@@ -96,10 +101,100 @@ beforeEach(() => {
 })
 afterEach(() => {
   wrapper?.unmount()
+  vi.restoreAllMocks()
   vi.useRealTimers()
 })
 
 describe('PelicanTestsView', () => {
+  it('manages the shared personal bank from the group editor and saves a scheduled rule', async () => {
+    useAuthStore().user = { id: 71, role: 'admin' } as any
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: [] } as any)
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: [] } as any)
+    api.createPlan.mockResolvedValue(plan())
+    wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="pelican-tests-create"]').trigger('click')
+    await flushPromises()
+    const editor = wrapper.get('[data-testid="pelican-test-editor"]')
+    await editor.findAll('select')[0].setValue('6')
+    await editor.get('[data-testid="pelican-test-model"]').setValue('fixture-model')
+    await editor.get('[data-testid="pelican-test-prompt"]').setValue('')
+    await editor.get('[data-testid="pelican-mode-select"]').setValue('personal_random')
+    expect(editor.find('[data-testid="pelican-test-prompt"]').exists()).toBe(false)
+    expect(editor.text()).toContain('pelicanTests.personalBank.scheduledHint')
+    await editor.get('[data-testid="pelican-group-bank-manage"]').trigger('click')
+    await flushPromises()
+    expect(get).toHaveBeenCalledWith('/admin/accounts/pelican-personal-questions', expect.anything())
+    await editor.get('[data-testid="pelican-personal-add"]').trigger('click')
+    await editor.get('[data-testid="pelican-personal-title"]').setValue('Rain')
+    await editor.get('[data-testid="pelican-personal-prompt"]').setValue('Draw SVG rain')
+    await editor.get('[data-testid="pelican-personal-save"]').trigger('click')
+    await flushPromises()
+    expect(put).toHaveBeenCalledWith('/admin/accounts/pelican-personal-questions', { items: [{ id: '', title: 'Rain', prompt: 'Draw SVG rain', enabled: true }] }, expect.anything())
+    expect(editor.find('[data-testid="pelican-personal-bank"]').exists()).toBe(false)
+    expect(api.createPlan).not.toHaveBeenCalled()
+    await editor.trigger('submit')
+    await flushPromises()
+    expect(api.createPlan).toHaveBeenCalledWith(expect.objectContaining({ prompt_mode: 'personal_random', prompt: '', model_id: 'fixture-model', use_my_question_bank: true }))
+    expect(api.createPlan.mock.calls[0][0]).not.toHaveProperty('personal_bank_owner_id')
+    expect(api.createPlan.mock.calls[0][0]).not.toHaveProperty('pelican_question')
+  })
+
+  it('preserves a personal rule on quick pause and keeps the editor open after a save failure', async () => {
+    useAuthStore().user = { id: 72, role: 'admin' } as any
+    api.listPlans.mockResolvedValue([plan({ pelican_config: { prompt_mode: 'personal_random', personal_bank_owner_id: 71, prompt: '', reasoning_effort: 'high', parallel_count: 2 } })])
+    api.updatePlan.mockResolvedValue(plan())
+    wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="pelican-plan-toggle-7"]').trigger('click')
+    await flushPromises()
+    expect(api.updatePlan).toHaveBeenCalledWith(7, expect.objectContaining({ prompt_mode: 'personal_random', enabled: false }))
+    expect(api.updatePlan.mock.calls[0][1]).not.toHaveProperty('use_my_question_bank')
+    expect(api.updatePlan.mock.calls[0][1]).not.toHaveProperty('personal_bank_owner_id')
+    await wrapper.get('[data-testid="pelican-plan-edit-7"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="pelican-mode-select"]').setValue('personal_random')
+    api.updatePlan.mockRejectedValueOnce({ message: 'No enabled personal questions' })
+    await wrapper.get('[data-testid="pelican-test-editor"]').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="pelican-test-editor"]').exists()).toBe(true)
+    expect(api.updatePlan).toHaveBeenLastCalledWith(7, expect.objectContaining({ prompt_mode: 'personal_random', use_my_question_bank: true }))
+  })
+
+  it('announces scheduled personal banks independently and synchronizes notice dismissal', async () => {
+    const admin = { id: 71, role: 'admin' } as any
+    useAuthStore().user = admin
+    const old = NEW_FEATURE_NOTICES.pelicanPersonalQuestionBank
+    const scheduled = NEW_FEATURE_NOTICES.pelicanScheduledPersonalBank
+    useNewFeatureNoticeStore().dismiss(admin.id, old)
+    wrapper = mountView()
+    const other = mountView()
+    try {
+      await flushPromises()
+      await wrapper.get('[data-testid="pelican-tests-create"]').trigger('click')
+      await other.get('[data-testid="pelican-tests-create"]').trigger('click')
+      await flushPromises()
+      const badge = (entry: typeof wrapper) => entry.findAllComponents(NewFeatureBadge).find(b => b.props('noticeId') === scheduled)!
+      const button = '[data-testid="new-feature-badge"]'
+      expect(badge(wrapper).find(button).exists()).toBe(true)
+      expect(badge(other).find(button).exists()).toBe(true)
+      await badge(wrapper).get(button).trigger('click')
+      expect(badge(other).find(button).exists()).toBe(false)
+    } finally { other.unmount() }
+    wrapper.unmount()
+    setActivePinia(createPinia())
+    useAuthStore().user = admin
+    wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="pelican-tests-create"]').trigger('click')
+    await flushPromises()
+    const restored = wrapper.findAllComponents(NewFeatureBadge).find(b => b.props('noticeId') === scheduled)!
+    expect(restored.find('[data-testid="new-feature-badge"]').exists()).toBe(false)
+    const later = mount(NewFeatureBadge, { props: { noticeId: 'fixture-later-scheduled-feature', userId: admin.id } })
+    expect(later.find('[data-testid="new-feature-badge"]').exists()).toBe(true)
+    later.unmount()
+  })
+
   it('shows USD totals beside group names and preserves unknown, zero and partial costs', async () => {
     api.listPlans.mockResolvedValue([plan(), plan({ id: 8, today_cost_usd: 0, total_cost_usd: 0.4, total_cost_incomplete: true })])
     api.listResults.mockResolvedValue({ items: [result(), result({ id: 89, cost_usd: null }), result({ id: 88, cost_usd: 0 }), result({ id: 87, cost_usd: 0.0000001 }), result({ id: 86, cost_usd: 0.2, cost_incomplete: true })], total: 5 })

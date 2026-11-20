@@ -7,7 +7,8 @@ import { apiClient } from '../client'
 import type { PaginatedResponse, PelicanQuestion } from '@/types'
 
 export interface PelicanGroupTestConfig {
-  prompt_mode?: 'custom' | 'random'
+  personal_bank_owner_id?: number
+  prompt_mode?: 'custom' | 'random' | 'personal_random'
   pelican_question?: PelicanQuestion
   actual_prompt?: string
   question_kind?: string
@@ -72,7 +73,9 @@ export interface PelicanGroupTestPlan {
 
 /** What an admin edits. The group of an existing plan cannot change. */
 export interface PelicanGroupTestPlanInput {
-  prompt_mode?: 'custom' | 'random'
+  /** Explicit editor save rebinds to the current admin; quick toggles preserve ownership. */
+  use_my_question_bank?: boolean
+  prompt_mode?: 'custom' | 'random' | 'personal_random'
   group_id: number
   model_id: string
   cron_expression: string

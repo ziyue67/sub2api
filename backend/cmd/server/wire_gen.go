@@ -209,7 +209,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	accountTestService := service.ProvideAccountTestService(accountRepository, geminiTokenProvider, claudeTokenProvider, grokTokenProvider, antigravityGatewayService, httpUpstream, configConfig, tlsFingerprintProfileService, openAIGatewayService, settingService, pluginManager)
 	pelicanShowcaseRepository := repository.NewPelicanShowcaseRepository(db)
 	pelicanShowcaseService := service.NewPelicanShowcaseService(pelicanShowcaseRepository, settingService)
-	pelicanGroupTestService := service.NewPelicanGroupTestService(pelicanGroupTestRepository, groupRepository, gatewayService, openAIGatewayService, concurrencyService, accountTestService, pelicanShowcaseService, billingService)
+	pelicanGroupTestService := service.NewPelicanGroupTestService(pelicanGroupTestRepository, groupRepository, gatewayService, openAIGatewayService, concurrencyService, accountTestService, pelicanShowcaseService, billingService, settingService)
 	channelMonitorV2Service := service.ProvideChannelMonitorV2Service(channelMonitorV2Repository, settingService, pelicanGroupTestService)
 	qqbotService := service.ProvideQQBotService(db, secretEncryptor, configConfig, apiKeyAuthCacheInvalidator, billingCacheService, emailService, settingService, userRepository, channelMonitorV2Service, groupRepository, channelRepository, channelService, modelPricingResolver, billingService, userGroupRateRepository, apiKeyService, accountRepository)
 	qqBotHandler := handler.NewQQBotHandler(qqbotService)

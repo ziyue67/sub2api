@@ -137,6 +137,7 @@ deploy/docker-compose.override.yml
 vite.config.js
 user-traffic-pending/
 docs/*
+!docs/pelican-personal-question-bank.md
 !docs/image-request-archive.md
 !docs/account-platform-edit.md
 !docs/openai-totp-factor-recovery.md
