@@ -1,6 +1,6 @@
 <template>
   <details class="max-h-64 overflow-auto rounded border p-3 text-sm" data-testid="pelican-question-snapshot">
-    <summary>{{ t('pelicanTests.questionBank.snapshot') }}<span v-if="question"> · {{ question.id }} · {{ question.version }}</span></summary>
+    <summary>{{ t('pelicanTests.questionBank.snapshot') }}<span v-if="question"> · {{ question.title || question.id }}<template v-if="!question.title"> · {{ question.version }}</template></span></summary>
     <template v-if="question">
       <p class="mt-2 break-all text-xs text-gray-500">{{ question.source }} · {{ question.round_id }}</p>
       <pre class="mt-2 whitespace-pre-wrap">{{ actualPrompt || question.prompt }}</pre>

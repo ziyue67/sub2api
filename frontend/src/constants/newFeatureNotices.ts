@@ -30,6 +30,7 @@ export const NEW_FEATURE_NOTICES = {
   userIdCopy: 'user-id-copy-initial-announcement',
   accountAverageCache: 'account-average-cache-initial-announcement',
   pelicanRandomQuestionBank: 'pelican-random-question-bank',
+  pelicanPersonalQuestionBank: 'pelican-personal-question-bank',
   antigravityUsageQuery: 'antigravity-usage-query-initial-announcement',
   openaiCacheWriteTTL12h: 'openai-cache-write-12h-initial-announcement',
   easyPayRefundSuccessCode: 'easypay-refund-success-code-initial-announcement',
