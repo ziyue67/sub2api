@@ -165,8 +165,9 @@ func signPelicanPersonalQuestion(key []byte, owner int64, question PelicanQuesti
 	question.Proof = ""
 	payload, _ := json.Marshal(question) // PelicanQuestion contains only JSON-safe fields.
 	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(strconv.FormatInt(owner, 10) + ":"))
-	mac.Write(payload)
+	// hash.Hash.Write always succeeds; explicitly discard its unused results.
+	_, _ = mac.Write([]byte(strconv.FormatInt(owner, 10) + ":"))
+	_, _ = mac.Write(payload)
 	return mac.Sum(nil)
 }
 
