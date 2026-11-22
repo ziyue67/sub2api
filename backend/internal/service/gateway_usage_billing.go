@@ -898,7 +898,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			responseCost := s.calculateRecordUsageCost(ctx, result, apiKey, responseModel, multiplier, imageMultiplier, pricingAt)
 			baselineChannelPriced := s.resolveChannelPricing(ctx, billingModel, apiKey) != nil
 			if responseModelBillingAdoptable(cost, responseCost, baselineChannelPriced, responseChannelPriced) {
-				// Keep the effective model for the raw-usage audit repricing below.
+				// Keep the adopted model for raw-usage audit repricing and probe penalties.
 				logResponseModelBillingApplied("service.gateway", account, result.RequestID, billingModel, responseModel, cost, responseCost)
 				cost = responseCost
 				billingModel = responseModel
@@ -935,6 +935,29 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		statsTotalCost = cost.TotalCost
 	}
 
+	// Freeze the penalty before building the deduplicated ledger command. Raw
+	// token components and account procurement costs remain unchanged.
+	if result.ProbePenaltyEligible && account.ProbePenaltyMinimum() > 0 {
+		outputPrice := 0.0
+		if cost != nil && result.Usage.OutputTokens > 0 {
+			outputPrice = cost.OutputCost / float64(result.Usage.OutputTokens) * multiplier * costModelBillingMultiplier(cost)
+		} else if cost != nil {
+			one := *result
+			one.Usage.OutputTokens = 1
+			if quote := s.calculateRecordUsageCost(ctx, &one, apiKey, billingModel, multiplier, imageMultiplier, pricingAt); quote != nil {
+				outputPrice = quote.OutputCost * multiplier * costModelBillingMultiplier(quote)
+			}
+		}
+		penalty, err := calculateProbePenalty(cost, account.ProbePenaltyMinimum(), outputPrice, result.Usage.OutputTokens)
+		if err != nil {
+			return err
+		}
+		result.ProbePenalty = penalty
+		if penalty != nil {
+			cost.ActualCost = penalty.ActualCost
+		}
+	}
+
 	// 判断计费方式：订阅模式 vs 余额模式
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 	billingType := BillingTypeBalance
@@ -948,6 +971,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		requestedModel, multiplier, imageMultiplier, baseMultiplier, accountRateMultiplier, billingType, cacheTTLOverridden, cost)
 	usageLog.RateMultiplier *= costModelBillingMultiplier(cost)
 	usageLog.CacheCreationBilling = cacheBillingAudit
+	if result.ProbePenalty != nil {
+		usageLog.CustomerCostDetails = &CustomerCostDetails{Version: 4, ProbePenalty: result.ProbePenalty,
+			InputCost: cost.InputCost, OutputCost: cost.OutputCost, CacheCreationCost: cost.CacheCreationCost,
+			CacheReadCost: cost.CacheReadCost, TotalCost: cost.TotalCost, ActualCost: cost.ActualCost, Multiplier: usageLog.RateMultiplier}
+	}
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）。纯存储费不是一次模型请求，
 	// 账号统计成本回落 total_cost（官方存储价）。
@@ -967,6 +995,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		usageLog.AccountStatsCost = &statsTotalCost
 	}
 
+	captureGatewayProcurementCost(usageLog, account)
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !simpleModeKeyRateLimitOnly {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
@@ -979,7 +1008,9 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 后扣运行在 worker 池的 background ctx 上，无法再从 ctx 取 ForcePlatform。
 	// 缺省（未设置）时回退到分组平台，保持对其它调用方的兼容。
 	quotaPlatform := input.QuotaPlatform
-	if quotaPlatform == "" {
+	if account.IsGateway() {
+		quotaPlatform = usageLog.Platform
+	} else if quotaPlatform == "" {
 		quotaPlatform = PlatformFromAPIKey(apiKey)
 		if quotaPlatform == PlatformComposite && account != nil {
 			quotaPlatform = account.Platform
@@ -1484,7 +1515,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		)
 	}
 	usageLog := &UsageLog{
-		Platform:                 account.Platform,
+		Platform:                 usagePlatformForRequest(ctx, account, apiKey, input.QuotaPlatform),
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,

@@ -14,6 +14,9 @@ backend/internal/handler/openai_codex_page_context_test.go
 backend/internal/handler/openai_gateway_messages_pre_content_failover_test.go
 backend/internal/handler/openai_native_anthropic_endpoint_test.go
 backend/internal/handler/openai_page_context_test.go
+backend/internal/handler/openai_videos_test.go
+backend/internal/server/routes/openai_videos_test.go
+backend/internal/service/openai_videos_test.go
 backend/internal/payment/provider/alipay_test.go
 backend/internal/pkg/antigravity/carbon_thinking_test.go
 backend/internal/pkg/antigravity/claude_types_test.go
@@ -182,8 +185,54 @@ backend/internal/service/upstream_batch_whitelist_identity_policy_test.go
 # Image usage settlement fixtures need the candidate billing implementation.
 backend/internal/handler/image_billing_response_test.go
 backend/internal/service/image_usage_billing_test.go
+backend/internal/repository/image_billing_recovery_integration_test.go
+backend/internal/repository/image_billing_recovery_export_test.go
+backend/internal/repository/usage_billing_delivery_unit_test.go
+backend/internal/repository/usage_billing_delivery_integration_test.go
 
 # Account balance notifications require newer AccountOps APIs.
 backend/internal/service/account_ops_balance_notification_test.go
 backend/internal/service/grok_rate_limit_history_test.go
 backend/internal/service/new_api_cost_test.go
+backend/internal/service/new_api_wallet_test.go
+
+# Later OAuth degradation/Candy tests require APIs absent from older overlays.
+# Restore existing 429/validation fixtures; omit Candy only when baseline-absent.
+# This manifest is their sole owner across the HTTP2 and replay helper chains.
+backend/internal/service/oauth_degradation_429_test.go
+backend/internal/service/oauth_degradation_validation_test.go
+backend/internal/service/oauth_degradation_candy_test.go
+
+# Ciallo quality questions were introduced after the WS residual RED baseline.
+backend/internal/service/ciallo_test.go
+
+# Controls diagnostics require the newer recovery APIs, not historical RED sources.
+backend/internal/service/openai_409_controls_diagnostics_test.go
+backend/internal/handler/openai_owner_conflict_diagnostics_test.go
+
+# v0.2.24 model listing and request-body diagnostics depend on newer handler APIs.
+backend/internal/handler/gateway_models_test.go
+backend/internal/handler/request_body_limit_test.go
+backend/internal/handler/request_body_read_log_test.go
+
+# Probe penalty tests use receipt types absent from historical WS sources.
+backend/internal/handler/probe_penalty_response_test.go
+backend/internal/service/account_probe_penalty_test.go
+
+# Native Messages gateway selection requires the request-scoped account and group reader.
+backend/internal/handler/gateway_messages_selection_test.go
+
+# Native Gemini envelope tests share those candidate-only gateway APIs/fixtures.
+# Frozen candidate blob: 2aeba94f1e98e3db91b6d3006ed0d0575775a6e9; full historical RED only.
+backend/internal/handler/gateway_gemini_envelope_test.go
+
+# Model plaza display currency tests require the candidate display configuration.
+backend/internal/service/model_plaza_currency_test.go
+backend/internal/service/model_plaza_currency_update_test.go
+backend/internal/handler/model_plaza_currency_test.go
+
+# Anthropic media fixtures share compatEffortPolicyUpstream, absent in historical RED.
+# Current candidate/GREEN retains both files and the complete media assertions.
+# Frozen candidate blobs: eb860ff6bb7a0900ed1243d29d58c7ae4ae0eb83 / a69b0b585c25073321953af8630d64c743db2893.
+backend/internal/handler/gateway_anthropic_media_test.go
+backend/internal/handler/gateway_anthropic_tool_media_test.go

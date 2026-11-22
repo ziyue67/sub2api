@@ -25,7 +25,7 @@ func TestOAuthDegradationStartupPostgres(t *testing.T) {
 	var policy map[string]any
 	require.NoError(t, json.Unmarshal(raw, &policy))
 	policy["revision"] = "degradation-" + suffix
-	policy["degradation_action"] = map[string]any{"enabled": true, "threshold_percent": 50, "target_concurrency": 10, "models": []string{"gpt-6-luna"}}
+	policy["degradation_action"] = map[string]any{"enabled": true, "threshold_percent": 50, "upstream_429_enabled": false, "target_concurrency": 10, "models": []string{"gpt-6-luna"}}
 	raw, err = json.Marshal(policy)
 	require.NoError(t, err)
 	var prior string
@@ -48,6 +48,7 @@ func TestOAuthDegradationStartupPostgres(t *testing.T) {
 	for _, kind := range []string{service.AccountTypeOAuth, service.AccountTypeAPIKey} {
 		a := mustCreateAccount(t, integrationEntClient, &service.Account{Name: "degradation-" + suffix + kind, Platform: service.PlatformOpenAI, Type: kind, Concurrency: 20, Schedulable: true, Credentials: map[string]any{"model_mapping": map[string]any{"gpt-6-luna": "gpt-6-luna"}, "keep": "credential"}, Extra: map[string]any{"keep": "extra"}})
 		ids = append(ids, a.ID)
+		recordDegradationHTTPPressure(a.ID)
 		t.Cleanup(func() {
 			_, cleanupErr := integrationDB.ExecContext(ctx, "DELETE FROM account_auto_config_events WHERE account_id=$1", a.ID)
 			require.NoError(t, cleanupErr)
@@ -67,11 +68,12 @@ func TestOAuthDegradationStartupPostgres(t *testing.T) {
 			_, err = integrationDB.ExecContext(ctx, `INSERT INTO scheduled_test_results(plan_id,status,started_at,finished_at,created_at,pelican_config,quality_round_id,quality_action,quality_judgment,error_message) VALUES($1,$2,NOW()-INTERVAL '1 minute',NOW()-INTERVAL '50 seconds',NOW()-INTERVAL '50 seconds','{"quality":{},"parallel_count":1}',$3,'evaluated',jsonb_build_object('verdict',$4::text),$5)`, plan, status, fmt.Sprintf("degradation-%s-%d-%d", suffix, a.ID, i), verdict, message)
 			require.NoError(t, err)
 		}
+		prepareConfirmedProbeFixture(t, a.ID)
 	}
 	settings := NewSettingRepository(integrationEntClient)
 	start := func() *service.AccountOpsService {
 		s := service.NewAccountOpsService(settings, NewAccountOpsRepository(integrationDB), nil)
-		s.SetNotificationDependencies(repo, nil, false, "UTC")
+		s.SetNotificationDependencies(confirmedProbeAccounts{repo}, nil, false, "UTC")
 		s.Start()
 		return s
 	}

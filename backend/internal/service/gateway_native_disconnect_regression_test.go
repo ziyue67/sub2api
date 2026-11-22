@@ -40,7 +40,13 @@ func TestClaudeBillingProbeNativeFinalUsage(t *testing.T) {
 			resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(anthropicStreamWithMidStreamText() + "\n"))}
 			result, err := newStreamingResponseTestGatewayService().handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
 			require.NotNil(t, result)
-			require.NoError(t, err)
+			if name == "complete" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "stream usage incomplete")
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover))
+			}
 			require.Equal(t, name != "complete", result.clientDisconnect)
 			require.Equal(t, 20, result.usage.InputTokens)
 			require.Equal(t, 11, result.usage.CacheReadInputTokens)
@@ -60,7 +66,9 @@ func TestClaudeNativeDisconnectReturnsOnFinalUsageWithoutEOF(t *testing.T) {
 	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
 	resp, pw := stallingAnthropicUpstream(t, anthropicStreamWithMidStreamText()+"\n")
 	result, err := newStreamingResponseTestGatewayService().handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "stream usage incomplete")
+	var failover *UpstreamFailoverError
+	require.False(t, errors.As(err, &failover))
 	require.Equal(t, 42, result.usage.OutputTokens)
 	require.True(t, result.clientDisconnect)
 	_, err = io.WriteString(pw, "data: late\n\n")
@@ -214,7 +222,14 @@ func TestClaudeNativeDisconnectBillsFinalUsageLikeCompleteStream(t *testing.T) {
 			}}
 			account := newAnthropicOAuthAccountForPartialUsageTest()
 			result, err := newForwardPartialUsageServiceForTest(upstream).Forward(context.Background(), c, account, parsed)
-			require.NoError(t, err)
+			if disconnect {
+				require.ErrorContains(t, err, "stream usage incomplete")
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover))
+			} else {
+				require.NoError(t, err)
+			}
+			require.NotNil(t, result)
 			require.Equal(t, 42, result.Usage.OutputTokens)
 			require.Equal(t, disconnect, result.ClientDisconnect)
 			result.RequestID = "synthetic-final-usage"

@@ -118,11 +118,11 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_ForwardStreamPreservesBodyAnd
 	}
 
 	upstreamSSE := strings.Join([]string{
-		`data: {"type":"message_start","message":{"usage":{"input_tokens":9,"cached_tokens":7}}}`,
+		`data: {"type":"message_start","message":{"content":[{"type":"text","text":"fixture"}],"usage":{"input_tokens":9,"cached_tokens":7}}}`,
 		"",
 		`data: {"type":"message_delta","usage":{"output_tokens":3}}`,
 		"",
-		"data: [DONE]",
+		`data: {"type":"message_stop"}`,
 		"",
 	}, "\n")
 	upstream := &anthropicHTTPUpstreamRecorder{
@@ -1116,7 +1116,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingStillCollectsUsageAf
 	}
 
 	result, err := svc.handleStreamingResponseAnthropicAPIKeyPassthrough(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "claude-3-7-sonnet-20250219")
-	require.NoError(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
 	require.NotNil(t, result.usage)
 	require.Equal(t, 11, result.usage.InputTokens)
@@ -1538,11 +1538,11 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingSendsKeepaliveDuring
 		defer close(done)
 		time.Sleep(1200 * time.Millisecond)
 		_, _ = pw.Write([]byte(strings.Join([]string{
-			`data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}`,
+			`data: {"type":"message_start","message":{"content":[{"type":"text","text":"fixture"}],"usage":{"input_tokens":3}}}`,
 			"",
 			`data: {"type":"message_delta","usage":{"output_tokens":2}}`,
 			"",
-			"data: [DONE]",
+			`data: {"type":"message_stop"}`,
 			"",
 		}, "\n")))
 		_ = pw.Close()
@@ -1555,7 +1555,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingSendsKeepaliveDuring
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Contains(t, rec.Body.String(), "event: ping\ndata: {\"type\": \"ping\"}\n\n")
-	require.Contains(t, rec.Body.String(), "data: [DONE]")
+	require.Contains(t, rec.Body.String(), `data: {"type":"message_stop"}`)
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInterleavePartialEvent(t *testing.T) {
@@ -1584,10 +1584,10 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInte
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":4}}}` + "\n"))
+		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"content":[{"type":"text","text":"fixture"}],"usage":{"input_tokens":4,"output_tokens":0}}}` + "\n"))
 		time.Sleep(1200 * time.Millisecond)
 		_, _ = pw.Write([]byte("\n"))
-		_, _ = pw.Write([]byte("data: [DONE]\n\n"))
+		_, _ = pw.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
 		_ = pw.Close()
 	}()
 
@@ -1598,9 +1598,9 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingKeepaliveDoesNotInte
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	body := rec.Body.String()
-	require.NotContains(t, body, `data: {"type":"message_start","message":{"usage":{"input_tokens":4}}}`+"\n"+"event: ping")
+	require.NotContains(t, body, `data: {"type":"message_start","message":{"content":[{"type":"text","text":"fixture"}],"usage":{"input_tokens":4,"output_tokens":0}}}`+"\n"+"event: ping")
 	require.NotContains(t, body, "event: ping")
-	require.Contains(t, body, "data: [DONE]")
+	require.Contains(t, body, `data: {"type":"message_stop"}`)
 }
 
 func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingReadError(t *testing.T) {
@@ -1659,7 +1659,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDi
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":9}}}` + "\n"))
+		_, _ = pw.Write([]byte(`data: {"type":"message_start","message":{"usage":{"input_tokens":9}}}` + "\n\n"))
 		// 保持上游连接静默，触发数据间隔超时分支。
 		time.Sleep(1500 * time.Millisecond)
 		_ = pw.Close()
@@ -1670,7 +1670,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingTimeoutAfterClientDi
 	<-done
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "stream usage incomplete after timeout")
+	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
 	require.True(t, result.clientDisconnect)
 	require.Equal(t, 9, result.usage.InputTokens)
@@ -1731,7 +1731,7 @@ func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingUpstreamReadErrorAft
 
 	result, err := svc.handleStreamingResponseAnthropicAPIKeyPassthrough(context.Background(), resp, c, &Account{ID: 4}, time.Now(), "claude-3-7-sonnet-20250219")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "stream usage incomplete after disconnect")
+	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
 	require.True(t, result.clientDisconnect)
 	require.Equal(t, 8, result.usage.InputTokens)

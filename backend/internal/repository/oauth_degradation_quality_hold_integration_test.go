@@ -59,6 +59,7 @@ func TestOAuthDegradationHoldSurvivesQualityRecovery(t *testing.T) {
 				require.NoError(t, f.plans.FinishPelican(ctx, f.plan.ID, f.until, time.Now()))
 				f.claim()
 				degrade := func() {
+					recordDegradationHTTPPressure(f.account)
 					// Use the same persisted completed-round evidence as the actual
 					// degradation evaluator, rather than inserting the hold itself.
 					for i := range 6 {
@@ -66,7 +67,8 @@ func TestOAuthDegradationHoldSurvivesQualityRecovery(t *testing.T) {
  VALUES($1,'failed',clock_timestamp(),clock_timestamp(),clock_timestamp(),'{"parallel_count":1}',$2,'evaluated','{"verdict":"incorrect"}','state_degraded')`, f.plan.ID, fmt.Sprintf("%s-%d-%d", name, f.account, i))
 						require.NoError(t, err)
 					}
-					require.NoError(t, repo.EvaluateOAuthDegradation(ctx, f.account, time.Now()))
+					prepareConfirmedProbeFixture(t, f.account)
+					require.NoError(t, evaluateConfirmedProbe(ctx, repo, f.account, time.Now()))
 					a, err := repo.GetByID(ctx, f.account)
 					require.NoError(t, err)
 					require.Equal(t, tc.target, a.Concurrency)

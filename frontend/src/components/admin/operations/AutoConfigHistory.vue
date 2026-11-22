@@ -2,7 +2,7 @@
   <section class="min-w-0 rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-900" aria-labelledby="auto-config-history-title" data-testid="auto-config-history">
     <header class="flex flex-wrap items-start justify-between gap-4 p-5">
       <div class="min-w-0">
-        <h2 id="auto-config-history-title" class="text-lg font-semibold">{{ t('autoConfig.logs.title') }}</h2>
+        <h2 id="auto-config-history-title" class="flex items-center gap-2 text-lg font-semibold">{{ t('autoConfig.logs.title') }}<NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.oauth429IndependentTests" :user-id="auth.user?.id" /></h2>
         <p class="mt-1 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ t('autoConfig.logs.description') }}</p>
       </div>
       <div class="flex w-full items-center gap-3 sm:w-auto">
@@ -72,13 +72,15 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import Icon from '@/components/icons/Icon.vue'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import { formatDateTime } from '@/utils/format'
 import { getAutoConfigEvents, type AutoConfigEvent, type AutoConfigEventKind } from '@/api/admin/autoConfig'
 
 const props = defineProps<{ refreshKey: number }>()
 const { t } = useI18n()
 const auth = useAuthStore()
-const kinds: AutoConfigEventKind[] = ['config_saved', 'initial_applied', 'concurrency_upgraded', 'failure_cooldown', 'degradation_applied']
+const kinds: AutoConfigEventKind[] = ['config_saved', 'initial_applied', 'concurrency_upgraded', 'failure_cooldown', 'degradation_applied', 'oauth429_review_completed']
 const kind = ref<AutoConfigEventKind | ''>('')
 const events = ref<AutoConfigEvent[]>([])
 const hasMore = ref(false), loading = ref(false), error = ref(''), retryMore = ref(false)
@@ -120,14 +122,27 @@ function badgeClass(value: AutoConfigEventKind) {
 }
 function details(event: AutoConfigEvent) {
   const d = event.details
+  if (event.kind === 'oauth429_review_completed' && d.oauth429) {
+    const review = d.oauth429
+    const verdicts = review.runs.map(run => t('autoConfig.logs.oauth429Verdicts.' + run.verdict)).join(' / ')
+    const summary = t('autoConfig.logs.oauth429Detail', { model: review.model, verdicts })
+    const reason = review.reason ? t('autoConfig.logs.oauth429Reasons.' + review.reason) : ''
+    return [summary, reason, review.model_blocked ? t('autoConfig.logs.oauth429ModelBlocked') : ''].filter(Boolean).join(' · ')
+  }
   if (event.kind === 'degradation_applied' && d.degradation) {
     const e = d.degradation
     const actions = []
     if (e.limit_concurrency !== false) actions.push(t('autoConfig.degradation.concurrencyEvent', { before: d.previous_concurrency, after: d.concurrency }))
     if (e.limit_models !== false) actions.push(t('autoConfig.degradation.modelsEvent', { models: (e.models ?? []).join(', ') || '∅' }))
     if (e.limit_groups) actions.push(t('autoConfig.degradation.groupsEvent', { groups: groupIDs(e.group_ids), removed: groupIDs(e.removed_group_ids) }))
-    if (e.trigger_reason === 'upstream_429' && e.upstream_error) {
+    if (e.trigger_reason === 'probe_and_candy_retests' && e.candy_review) {
+      actions.unshift(t('autoConfig.degradation.candyEvent', { model: e.candy_review.model_id, wrong: e.candy_review.incorrect }))
+    }
+    if ((e.trigger_reason === 'upstream_429' || e.trigger_reason === 'probe_and_upstream_429') && e.upstream_error) {
       const http = e.upstream_error
+      if (e.trigger_reason === 'probe_and_upstream_429') {
+        actions.unshift(t('autoConfig.degradation.probeEvent', { percent: e.degradation_percent, threshold: e.threshold_percent, samples: e.quality_samples }))
+      }
       return t('autoConfig.degradation.upstream429Event', { failures: http.failures, total: http.total, rateLimited: http.rate_limited ?? 0, errorThreshold: e.upstream_error_threshold_percent ?? 80, shareThreshold: e.upstream_429_share_threshold_percent ?? 80, actions: actions.join(' · '), start: formatDateTime(e.window_start), end: formatDateTime(e.window_end) })
     }
     return t('autoConfig.degradation.event', { percent: e.degradation_percent, threshold: e.threshold_percent, samples: e.quality_samples, actions: actions.join(' · '), start: formatDateTime(e.window_start), end: formatDateTime(e.window_end) })

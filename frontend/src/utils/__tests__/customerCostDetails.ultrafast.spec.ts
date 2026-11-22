@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { UsageLog } from '@/types'
-import { customerCostSnapshot, customerCostsUnknown } from '../customerCostDetails'
+import { customerCachePrices, customerCostSnapshot, customerCostsUnknown } from '../customerCostDetails'
 
 const fixture = (): UsageLog => ({
  service_tier:'ultrafast',rate_multiplier:.6,actual_cost:.000996,total_cost:.00996,
@@ -25,4 +25,55 @@ describe('UltraFast customer cost snapshots',()=>{
   const row=fixture();row.actual_cost=.005976
   expect(customerCostSnapshot(row)).toBeNull()
  })
+})
+
+describe('image minimum charge and saved Standard tier costs', () => {
+ it.each(['fast', 'ultrafast'])('renders v3 %s components and cache prices without repricing history', tier => {
+  const row = fixture()
+  row.service_tier = tier
+  row.actual_cost = .01
+  row.cache_read_tokens = 40
+  row.customer_cost_details = {
+   version: 3, free_fast: tier === 'fast', free_ultrafast: tier === 'ultrafast',
+   input_cost: 0, output_cost: 0, image_input_cost: 0, image_output_cost: 0,
+   cache_creation_cost: 0, cache_read_cost: .004, total_cost: .004, multiplier: .5,
+   actual_cost: .01, image_minimum_charge: .01, image_minimum_charge_adjustment: .008,
+   cache_cost_details: [{ kind: 'read', tokens: 40, unit_price: .0001 }],
+  }
+  expect(customerCostSnapshot(row)).toBe(row.customer_cost_details)
+  expect(customerCostsUnknown(row)).toBe(false)
+  expect(customerCachePrices(row)).toEqual([{ kind: 'read', tokens: 40, unit_price: .0001 }])
+  row.rate_multiplier = 999
+  row.total_cost = 123
+  expect(customerCostSnapshot(row)?.multiplier).toBe(.5)
+  row.customer_cost_details.image_minimum_charge_adjustment = .007
+  expect(customerCostSnapshot(row)).toBeNull()
+ })
+ it('retains v3 Standard evidence when token costs already exceed the minimum', () => {
+  const row = fixture()
+  Object.assign(row.customer_cost_details!, {
+   version: 3, image_minimum_charge: .0001, image_minimum_charge_adjustment: 0,
+  })
+  expect(customerCostSnapshot(row)).toBe(row.customer_cost_details)
+  expect(customerCostsUnknown(row)).toBe(false)
+ })
+})
+
+
+it('uses the saved probe penalty quote for fast and standard requests', () => {
+  for (const service_tier of [null, 'fast']) {
+    const row = fixture()
+    row.service_tier = service_tier
+    row.actual_cost = .01
+    row.customer_cost_details = {
+      version: 4, free_fast: false, input_cost: .00071, output_cost: .00095,
+      image_input_cost: 0, image_output_cost: 0, cache_creation_cost: 0, cache_read_cost: 0,
+      total_cost: .00166, actual_cost: .01, multiplier: .6,
+      probe_penalty: { minimum_charge: .01, adjustment: .009004, actual_cost: .01, original_output_tokens: 19, billing_output_tokens: 200, output_token_price: .00005 }
+    }
+    expect(customerCostSnapshot(row)).toBe(row.customer_cost_details)
+    expect(customerCostsUnknown(row)).toBe(false)
+    row.customer_cost_details.probe_penalty!.adjustment = .009
+    expect(customerCostSnapshot(row)).toBeNull()
+  }
 })

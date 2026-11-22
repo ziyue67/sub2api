@@ -69,12 +69,12 @@ func readGeminiCachedContentBody(c *gin.Context) ([]byte, bool) {
 		if middleware.RejectRequestBodyReadError(c, "handler.gemini_cached_contents_handler", err) {
 			return nil, false
 		}
-		if maxErr, ok := extractMaxBytesError(err); ok {
-			googleError(c, http.StatusRequestEntityTooLarge, buildBodyTooLargeMessage(maxErr.Limit))
-			return nil, false
-		}
 		status, message := requestBodyReadFailure(bodyLog, c.Request, err)
-		googleErrorWithType(c, status, "invalid_request_error", "", message)
+		if status == pkghttputil.StatusClientClosedRequest {
+			c.Status(status)
+		} else {
+			googleErrorWithType(c, status, "invalid_request_error", "", message)
+		}
 		return nil, false
 	}
 	if len(body) == 0 {

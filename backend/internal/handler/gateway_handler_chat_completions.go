@@ -358,6 +358,26 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		var result *service.ForwardResult
 		setActualUpstreamEndpoint(c, "")
+		var probeResponse *probePenaltyResponse
+		if account.ProbePenaltyMinimum() > 0 {
+			if !h.gatewayService.ProbePenaltySettlementEnabled() {
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", "Probe penalty requires durable settlement")
+				return
+			}
+			probeResponse, err = newProbePenaltyResponse(c.Writer, reqStream)
+			if err != nil {
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", "Probe penalty response unavailable")
+				return
+			}
+			defer probeResponse.close()
+			c.Writer = probeResponse
+		}
 		if account.Platform == service.PlatformGemini {
 			if h.geminiCompatService == nil {
 				h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
@@ -381,6 +401,20 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			result, err = h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, parsedReq)
 		}
 
+		if probeResponse != nil {
+			c.Writer = probeResponse.ResponseWriter
+			if err == nil {
+				err = probeResponse.validate()
+			}
+			if err != nil && probeResponse.size >= 0 {
+				if probeResponse.status >= http.StatusBadRequest {
+					_ = probeResponse.finish(nil)
+				} else {
+					probeResponse.settlementError()
+				}
+			}
+		}
+
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
 		}
@@ -401,8 +435,8 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
 			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel)
-			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
-				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+			record := func(ctx context.Context) error {
+				return h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:             result,
 					QuotaPlatform:      quotaPlatform,
 					APIKey:             apiKey,
@@ -418,11 +452,23 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 					APIKeyService:      h.apiKeyService,
 					SessionID:          sessionID,
 					ChannelUsageFields: channelUsageFields,
-				}); err != nil {
-					reqLog.Error("gateway.cc.record_usage_failed",
-						zap.Int64("account_id", account.ID),
-						zap.Error(err),
-					)
+				})
+			}
+			if probeResponse != nil && err == nil {
+				result.ProbePenaltyEligible = true
+				if billingErr := record(service.WithProbePenaltyResult(context.WithoutCancel(c.Request.Context()), result)); billingErr != nil {
+					reqLog.Error("gateway.probe_penalty_settlement_failed", zap.Error(billingErr))
+					probeResponse.settlementError()
+					return
+				}
+				if responseErr := probeResponse.finish(result); responseErr != nil {
+					reqLog.Error("gateway.probe_penalty_response_failed", zap.Error(responseErr))
+				}
+				return
+			}
+			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+				if billingErr := record(ctx); billingErr != nil {
+					reqLog.Error("gateway.record_usage_failed", zap.Error(billingErr))
 				}
 			})
 		}

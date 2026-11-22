@@ -620,7 +620,10 @@ const applyFilters = () => {
   if (activeTab.value === 'errors') {
     loadAdminErrors()
   } else {
+    errRequestSeq++
+    errLoading.value = false
     errRows.value = []
+    errTotal.value = 0
   }
 }
 // Drill down from the per-user token ranking: scope the whole usage view to
@@ -934,7 +937,7 @@ const rankingRef = ref<InstanceType<typeof UserTokenRanking> | null>(null)
 
 const switchTab = (tab: DetailTab) => {
   if (!detailTabs.value.some(item => item.key === tab)) return
-  const clearPlatform = tab !== 'usage' && !!filters.value.platform
+  const clearPlatform = tab !== 'usage' && tab !== 'errors' && !!filters.value.platform
   if (clearPlatform) filters.value.platform = undefined
   activeTab.value = tab
   if (clearPlatform) applyFilters()
@@ -961,8 +964,10 @@ const toRFC3339 = (value: string | undefined, endExclusive = false): string | un
   return date.toISOString()
 }
 
+let errRequestSeq = 0
 const loadAdminErrors = async () => {
   if (!canViewErrors.value) return
+  const seq = ++errRequestSeq
   errLoading.value = true
   try {
     const resp = await (props.observerMode ? observerUsageAPI.listErrors : listErrorLogs)({
@@ -977,19 +982,24 @@ const loadAdminErrors = async () => {
       account_id: filters.value.account_id ?? undefined,
       group_id: filters.value.group_id ?? undefined,
       model: filters.value.model || undefined,
+      platform: props.observerMode ? undefined : filters.value.platform,
       phase: filters.value.error_phase || undefined,
       category: filters.value.error_category || undefined,
       status_codes: filters.value.status_code != null ? String(filters.value.status_code) : undefined,
       sort_by: errSortBy.value,
       sort_order: errSortOrder.value,
     })
+    if (seq !== errRequestSeq) return
     errRows.value = resp.items
     errTotal.value = resp.total
   } catch (error) {
+    if (seq !== errRequestSeq) return
+    errRows.value = []
+    errTotal.value = 0
     console.error('Failed to load admin errors:', error)
     appStore.showError(t('usage.errors.failedToLoad'))
   } finally {
-    errLoading.value = false
+    if (seq === errRequestSeq) errLoading.value = false
   }
 }
 

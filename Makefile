@@ -4,6 +4,13 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/user/__tests__/ImageHistoryView.spec.ts \
 	src/components/admin/__tests__/ImageArchiveAsset.spec.ts \
 	src/views/admin/__tests__/ImageArchiveView.spec.ts \
+	src/components/settings/ModelPlazaCurrencySettings.spec.ts \
+	src/utils/__tests__/plazaCurrency.spec.ts \
+	src/components/modelPlaza/__tests__/ModelPlazaContent.currency.spec.ts \
+	src/components/modelPlaza/__tests__/PlazaModelPricingTable.spec.ts \
+	src/components/modelPlaza/__tests__/PlazaModelPricingTable.video.spec.ts \
+	src/components/modelPlaza/__tests__/PlazaGroupSection.spec.ts \
+	src/components/common/__tests__/Select.spec.ts \
 	src/components/account/__tests__/AccountUsageCell.spec.ts \
 	src/views/admin/__tests__/ChannelsView.bedrockCompat.spec.ts \
 	src/views/admin/__tests__/ChannelsView.ultrafastPricing.spec.ts \

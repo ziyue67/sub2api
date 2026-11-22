@@ -116,6 +116,7 @@ function mountModal(
         },
         ProxySelector: true,
         GroupSelector: true,
+        NewFeatureBadge: true,
         Icon: true
       }
     }

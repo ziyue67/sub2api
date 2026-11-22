@@ -151,7 +151,7 @@ type CreateAccountRequest struct {
 	Name                    string         `json:"name" binding:"required"`
 	Notes                   *string        `json:"notes"`
 	Platform                string         `json:"platform" binding:"required"`
-	Type                    string         `json:"type" binding:"required,oneof=oauth setup-token apikey upstream bedrock service_account"`
+	Type                    string         `json:"type" binding:"required,oneof=oauth setup-token apikey upstream bedrock service_account gateway"`
 	Credentials             map[string]any `json:"credentials" binding:"required"`
 	Extra                   map[string]any `json:"extra"`
 	ProxyID                 *int64         `json:"proxy_id"`
@@ -173,7 +173,7 @@ type UpdateAccountRequest struct {
 	Platform            string         `json:"platform"`
 	Name                string         `json:"name"`
 	Notes               *string        `json:"notes"`
-	Type                string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey upstream bedrock service_account"`
+	Type                string         `json:"type" binding:"omitempty,oneof=oauth setup-token apikey upstream bedrock service_account gateway"`
 	Credentials         map[string]any `json:"credentials"`
 	Extra               map[string]any `json:"extra"`
 	ProxyID             *int64         `json:"proxy_id"`
@@ -1662,6 +1662,26 @@ func (h *AccountHandler) PelicanTest(c *gin.Context) {
 	var req PelicanTestRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if req.PromptMode == "ciallo" {
+		model := strings.TrimSpace(req.ModelID)
+		if model == "" || len(model) > 100 || accountID <= 0 {
+			response.BadRequest(c, "Invalid account or model")
+			return
+		}
+		switch req.ReasoningEffort {
+		case "", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+		default:
+			response.BadRequest(c, "Invalid reasoning effort")
+			return
+		}
+		result, err := h.accountTestService.RunCiallo(c.Request.Context(), accountID, model, req.ReasoningEffort)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		response.Success(c, result)
 		return
 	}
 	if req.PromptMode == service.PelicanPromptModeRandom {

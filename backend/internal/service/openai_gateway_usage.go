@@ -231,39 +231,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	var cost *CostBreakdown
 	// Use the rewrite captured during forwarding, never current key settings:
 	// skipped endpoints and policy changes after admission retain their price.
-	requestedBillingModel := input.OriginalModel
-	if input.APIKeyMappedModel != "" {
-		requestedBillingModel = input.APIKeyMappedModel
-	}
-	channelBillingModel := input.ChannelMappedModel
-	if !input.ChannelMappingApplied && channelBillingModel == input.OriginalModel {
-		// An unchanged channel field is the audit alias, not an explicit price
-		// override. Do not resurrect its price when the key target is unpriced.
-		channelBillingModel = requestedBillingModel
-	}
-	resultBillingModel := result.Model
-	if !input.ChannelMappingApplied && result.Model == input.OriginalModel {
-		resultBillingModel = requestedBillingModel
-	}
-	billingModel := forwardResultBillingModel(resultBillingModel, result.UpstreamModel)
-	if result.BillingModel != "" {
-		billingModel = strings.TrimSpace(result.BillingModel)
-	}
-	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" &&
-		((input.APIKeyMappedModel != "" && input.ChannelMappingApplied) || input.ChannelMappedModel != input.OriginalModel) {
-		billingModel = input.ChannelMappedModel
-	}
-	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
-		billingModel = requestedBillingModel
-	}
-	billingModels := usageBillingModelCandidates(
-		billingModel,
-		result.BillingModel,
-		channelBillingModel,
-		requestedBillingModel,
-		result.UpstreamModel,
-		resultBillingModel,
-	)
+	requestedBillingModel, billingModel, billingModels := openAIUsageBillingModels(result, input.ChannelUsageFields)
 	billingModels = s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, billingModels)
 	requestedServiceTier := optionalStringValue(result.ServiceTier)
 	var tierPricing *ModelPricing
@@ -448,7 +416,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 	usageLog := &UsageLog{
 		CustomerCostDetails:      customerCostDetails,
-		Platform:                 account.Platform,
+		Platform:                 usagePlatformForRequest(ctx, account, apiKey, input.QuotaPlatform),
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
@@ -490,7 +458,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		if result.MiniMaxH3BaseCost != nil {
 			usageLog.VideoResolution = optionalTrimmedStringPtr(result.VideoResolution)
 		}
-		videoDurationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
+		videoDurationSeconds := result.VideoBillingDuration()
 		usageLog.VideoDurationSeconds = &videoDurationSeconds
 	}
 	if cost != nil && result.HeaderTimeoutRetries > 0 {
@@ -505,7 +473,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			customerCostDetails.ActualCost *= factor
 		}
 	}
-	if details := applyImageMinimumCharge(cost, result.ImageCount, result.HeaderTimeoutRetries, imageMinimumCharge(apiKey.Group, requestedBillingModel, billingModel)); details != nil {
+	if details := applyImageMinimumCharge(cost, result.ImageCount, result.HeaderTimeoutRetries, imageMinimumCharge(apiKey.Group, requestedBillingModel, billingModel), customerCostDetails); details != nil {
 		usageLog.CustomerCostDetails = details
 	}
 	if cost != nil {
@@ -586,6 +554,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		)
 	}
 
+	captureGatewayProcurementCost(usageLog, account)
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple && !simpleModeKeyRateLimitOnly {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.openai_gateway")
@@ -597,7 +566,9 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// Async usage billing runs outside the original request context, so it
 	// cannot recover ForcePlatform there. Fall back for internal/test callers.
 	quotaPlatform := input.QuotaPlatform
-	if quotaPlatform == "" {
+	if account.IsGateway() {
+		quotaPlatform = usageLog.Platform
+	} else if quotaPlatform == "" {
 		quotaPlatform = PlatformFromAPIKey(apiKey)
 	}
 
@@ -705,6 +676,9 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	pricingAt time.Time,
 ) (*CostBreakdown, error) {
 	billingModel := firstUsageBillingModel(billingModels)
+	if result != nil && result.WanBaseCost != nil && result.VideoCount > 0 {
+		return &CostBreakdown{TotalCost: *result.WanBaseCost, ActualCost: *result.WanBaseCost * videoMultiplier, BillingMode: string(BillingModeVideo)}, nil
+	}
 	// MiniMax H3 video billing settles on its own create-time tariff snapshot.
 	if result != nil && result.MiniMaxH3BaseCost != nil && result.VideoCount > 0 {
 		return s.calculateOpenAIVideoCost(ctx, billingModel, apiKey, result, videoMultiplier), nil
@@ -1002,7 +976,7 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 		videoCount = 1
 	}
 	resolution := NormalizeVideoBillingResolutionOrDefault(result.VideoResolution)
-	durationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
+	durationSeconds := result.VideoBillingDuration()
 	resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey)
 	if resolved != nil && resolved.Source == PricingSourceGroup && resolved.Mode == BillingModeVideo {
 		gid := apiKey.Group.ID
@@ -1018,13 +992,13 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 	}
 	groupConfig := videoPriceConfigFromAPIKey(apiKey)
 	if apiKeyHasConfiguredVideoPrice(apiKey, billingModel, resolution) {
-		return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
+		return s.billingService.calculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
 	}
 	if refreshed := s.apiKeyWithFreshGroupMediaPricing(ctx, apiKey); refreshed != apiKey {
 		apiKey = refreshed
 		groupConfig = videoPriceConfigFromAPIKey(apiKey)
 		if apiKeyHasConfiguredVideoPrice(apiKey, billingModel, resolution) {
-			return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
+			return s.billingService.calculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
 		}
 	}
 	if resolved != nil && resolved.Source == PricingSourceChannel &&
@@ -1055,7 +1029,7 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 		logger.LegacyPrintf("service.openai_gateway", "Calculate video channel cost failed: %v", err)
 	}
 
-	return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
+	return s.billingService.calculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
 }
 
 func (s *OpenAIGatewayService) apiKeyWithFreshGroupMediaPricing(ctx context.Context, apiKey *APIKey) *APIKey {

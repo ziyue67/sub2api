@@ -95,12 +95,23 @@ func filterRetiredOpenAIPublicModelsBody(body []byte, accounts []Account, codex 
 
 // Compact-only administrator mappings are evaluated against their actual
 // target, without treating an old client-visible name as a retired target.
-func supportsOpenAIRequestModel(account *Account, requestedModel string, requireCompact bool) bool {
-	if account.Platform == PlatformOpenAI && !account.oauthInitialSelectionAllows(resolveOpenAIAccountUpstreamModelForRequest(account, requestedModel, requireCompact)) {
+func supportsOpenAIRequestModel(account *Account, requestedModel string, requireCompact bool, compactModel ...string) bool {
+	endpoint := ""
+	if requireCompact {
+		endpoint = "/responses/compact"
+	}
+	if account.isOAuth429ModelBlockedForEndpoint(requestedModel, endpoint, compactModel...) {
 		return false
 	}
-	if isRetiredOpenAISubscriptionModel(account, resolveOpenAIAccountUpstreamModelForRequest(account, requestedModel, requireCompact)) {
+	target := ResolveOAuth429TargetModel(account, requestedModel, endpoint, compactModel...)
+	if account.Platform == PlatformOpenAI && !account.oauthInitialSelectionAllows(target) {
 		return false
+	}
+	if isRetiredOpenAISubscriptionModel(account, target) {
+		return false
+	}
+	if account.gatewayBindingModel != "" {
+		return account.gatewayProtocolSource.isModelMappingSupported(account.gatewayBindingModel)
 	}
 	return account.isModelMappingSupported(requestedModel)
 }
