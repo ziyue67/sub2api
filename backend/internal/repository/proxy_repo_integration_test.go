@@ -313,7 +313,7 @@ func (s *ProxyRepoSuite) TestBPSConfiguredReferenceProtectsSingleAndBatchDeletio
 	s.Require().NoError(err)
 	admin := service.NewAdminService(
 		nil, nil, nil, nil, s.repo, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	s.Require().ErrorIs(admin.DeleteProxy(s.ctx, p.ID), service.ErrProxyInUse)
 	batch, err := admin.BatchDeleteProxies(s.ctx, []int64{p.ID})
@@ -391,7 +391,7 @@ func (s *ProxyRepoSuite) TestNonBPSCredentialsIgnoreRetainedGroupsButKeepLegacyP
 	s.Require().Equal(int64(5), counts[legacy.ID])
 	admin := service.NewAdminService(
 		nil, nil, nil, nil, s.repo, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	s.Require().NoError(admin.DeleteProxy(s.ctx, groupOnly.ID))
 	batch, err := admin.BatchDeleteProxies(s.ctx, []int64{batchOnly.ID, legacy.ID})

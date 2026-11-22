@@ -183,6 +183,7 @@ func shouldReportOpenAIWSProxyAccountFailure(err error) bool {
 		!errors.As(err, &recovery) &&
 		!errors.Is(err, errOpenAIWSUnsupportedModelSwitch) &&
 		!errors.Is(err, errOpenAIWSLocalAdmissionRejected) &&
+		!errors.Is(err, service.ErrOpenAIWSConflictingRequestFields) &&
 		!errors.Is(err, service.ErrOpenAIWSNodeOwner) &&
 		!service.IsOpenAIWSSessionPreemptedError(err)
 }
@@ -1859,7 +1860,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	} else {
 		body = policyBody
 	}
-	routingModel := service.NormalizeOpenAICompatRequestedModel(reqModel)
 	preferredMappedModel := resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
 	reqStream := gjson.GetBytes(body, "stream").Bool()
 
@@ -1877,6 +1877,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	// 解析渠道级模型映射
 	channelMappingMsg, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
 	mappedBodyForMessages := newOpenAIModelMappedBodyCache(body, h.gatewayService.ReplaceModelInBody)
+	// Schedule by the channel-mapped model, as the Responses and Chat Completions
+	// paths do: the forwarded body carries that model, so account model filters
+	// must judge it rather than the client's alias.
+	routingModel := service.NormalizeOpenAICompatRequestedModel(openAIChannelForwardModel(channelMappingMsg, reqModel))
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
 	if h.errorPassthroughService != nil {
@@ -3358,6 +3362,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, "model is required in first response.create payload")
 		return
 	}
+	// Capture validation from the client bytes before readable-shadow recovery.
+	// Model-policy refusals below retain their existing precedence.
+	firstConflictingField, firstFieldsConflict := requestmodel.ConflictingField("application/json", firstMessage)
 	service.SetOpenAIWSRecoveryPrincipal(c, subject.UserID, apiKey.ID)
 	shadowSession := h.gatewayService.GenerateSessionHashWithFallback(c, firstMessage,
 		openAIWSIngressFallbackSessionSeed(subject.UserID, apiKey.ID, apiKey.GroupID))
@@ -3392,6 +3399,16 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 		middleware2.MarkIngressRejected(c, middleware2.IngressRejectModelNotAllowed)
 		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, fmt.Sprintf("Model %q is not available for your account in this group", denied))
+		return
+	}
+	// 帧内重复字段（model、service_tier、reasoning.effort 等，含大小写变体与
+	// 嵌套对象）会让计费/策略读到的首个值与上游实际绑定的值分叉；取值相同也不
+	// 放行，因为网关的 sjson 改写只动首个（GHSA-p3r4-jcm3-2hph）。与 HTTP 入口
+	// （RejectConflictingRequestFields）同一规则，对所有分组生效。放在白名单
+	// 之后，白名单的拒绝原因保持不变。
+	if firstFieldsConflict {
+		middleware2.MarkIngressRejected(c, middleware2.IngressRejectConflictingRequestFields)
+		closeOpenAIClientWS(wsConn, coderws.StatusPolicyViolation, fmt.Sprintf("response.create payload declares field %.64q more than once", firstConflictingField))
 		return
 	}
 	// Keep the client model in the frame for admission, response identity and usage.
@@ -4127,6 +4144,12 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 					service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 					middleware2.MarkIngressRejected(c, middleware2.IngressRejectModelNotAllowed)
 					return service.NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, fmt.Sprintf("Model %q is not available for your account in this group", denied), nil)
+				}
+				// Validate the original frame before audit or forwarding; normalization
+				// may have rewritten duplicate fields in the parsed payload.
+				if field, conflict := requestmodel.ConflictingField("application/json", clientPayload); conflict {
+					middleware2.MarkIngressRejected(c, middleware2.IngressRejectConflictingRequestFields)
+					return service.NewOpenAIWSConflictingRequestFieldsError(field)
 				}
 				auditBody := clientPayload
 				if rebuiltAuditBody != nil {

@@ -15,7 +15,7 @@ import (
 )
 
 func quality152Admin(repo service.AdminAccountRepository) service.AdminService {
-	return service.NewAdminService(&config.Config{}, nil, nil, repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, integrationEntClient, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return service.NewAdminService(&config.Config{}, nil, nil, repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, integrationEntClient, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 func quality152Marker(stamp string) map[string]any {
 	return map[string]any{"sample-model": map[string]any{"reason": "quality_rule:7", "isolated_at": stamp}}

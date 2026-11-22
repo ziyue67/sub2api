@@ -53,7 +53,7 @@ func (f *observerSetupFixture) admin(codes service.RedeemCodeRepository, invalid
 	if codes == nil {
 		codes = NewRedeemCodeRepository(f.client)
 	}
-	return service.NewAdminService(nil, f.users, f.groups, nil, nil, nil, codes, nil, nil, nil, nil, nil, invalidator, f.client, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return service.NewAdminService(nil, f.users, f.groups, nil, nil, nil, codes, nil, nil, nil, nil, nil, invalidator, f.client, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func (f *observerSetupFixture) reload(t *testing.T) *service.User {

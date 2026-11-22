@@ -58,7 +58,7 @@ func initialSelectionHandler(t *testing.T) (*AccountHandler, *initialSelectionAc
 	require.NoError(t, err)
 	settings := service.NewSettingService(&opsHandlerWritableSettings{raw: string(raw)}, nil)
 	repo := &initialSelectionAccounts{}
-	creator := service.NewAdminService(nil, nil, initialSelectionGroups{}, repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, settings, nil, nil, nil, nil, nil, nil, nil, nil)
+	creator := service.NewAdminService(nil, nil, initialSelectionGroups{}, repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, settings, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	admin := &initialSelectionAdmin{codexImportMemoryAdminService: newCodexImportMemoryAdminService(nil), creator: creator}
 	handler := NewAccountHandler(admin, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	return handler, repo, admin
