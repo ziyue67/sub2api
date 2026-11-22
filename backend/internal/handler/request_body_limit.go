@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -32,14 +31,6 @@ func handleRequestBodyReadError(c *gin.Context, reqLog *zap.Logger, err error) b
 		return true
 	}
 	return middleware2.RejectRequestBodyMemoryOverload(c, err)
-}
-
-func formatBodyLimit(limit int64) string {
-	const mb = 1024 * 1024
-	if limit >= mb {
-		return fmt.Sprintf("%dMB", limit/mb)
-	}
-	return fmt.Sprintf("%dB", limit)
 }
 
 func readLenientJSONRequestBodyWithPrealloc(req *http.Request, cfg *config.Config) ([]byte, error) {
