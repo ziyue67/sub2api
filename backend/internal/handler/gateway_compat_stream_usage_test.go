@@ -72,7 +72,7 @@ func runCompatStreamUsageHandler(t *testing.T, endpoint, upstreamStream string, 
 	return runCompatStreamUsageHandlerWithDelivery(t, endpoint, upstreamStream, closeUpstream, nil, "")
 }
 
-func runCompatStreamUsageHandlerWithDelivery(t *testing.T, endpoint, upstreamStream string, closeUpstream bool, durable service.UsageBillingRepository, baseURL string) compatStreamUsageRun {
+func runCompatStreamUsageHandlerWithDelivery(t *testing.T, endpoint, upstreamStream string, closeUpstream bool, durable service.UsageBillingRepository, baseURL string, accountExtra ...map[string]any) compatStreamUsageRun {
 	t.Helper()
 	cfg := &config.Config{Gateway: config.GatewayConfig{StreamDataIntervalTimeout: 1}}
 	cfg.Security.URLAllowlist.AllowPrivateHosts = true
@@ -84,6 +84,9 @@ func runCompatStreamUsageHandlerWithDelivery(t *testing.T, endpoint, upstreamStr
 		Status: service.StatusActive, Schedulable: true, Concurrency: 1,
 		Credentials:   map[string]any{"api_key": "test-key"},
 		AccountGroups: []service.AccountGroup{{AccountID: 9301, GroupID: groupID}},
+	}
+	if len(accountExtra) > 0 {
+		account.Extra = accountExtra[0]
 	}
 	snapshot := service.NewSchedulerSnapshotService(&fakeSchedulerCache{accounts: []*service.Account{account}}, nil, nil, nil, nil)
 	run := compatStreamUsageRun{
@@ -126,6 +129,9 @@ func runCompatStreamUsageHandlerWithDelivery(t *testing.T, endpoint, upstreamStr
 	}
 
 	body := `{"model":"claude-sonnet-4.5","stream":true,"input":"hello"}`
+	if endpoint == "messages" {
+		body = `{"model":"claude-sonnet-4.5","stream":true,"max_tokens":32,"messages":[{"role":"user","content":"hello"}]}`
+	}
 	if endpoint == "chat/completions" {
 		body = `{"model":"claude-sonnet-4.5","stream":true,"messages":[{"role":"user","content":"hello"}]}`
 	}
@@ -136,7 +142,9 @@ func runCompatStreamUsageHandlerWithDelivery(t *testing.T, endpoint, upstreamStr
 	c.Set(string(middleware.ContextKeyAPIKey), apiKey)
 	c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 9303})
 
-	if endpoint == "chat/completions" {
+	if endpoint == "messages" {
+		h.Messages(c)
+	} else if endpoint == "chat/completions" {
 		h.ChatCompletions(c)
 	} else {
 		h.Responses(c)
@@ -219,7 +227,7 @@ func TestGatewayCompatibilityHandlers_IdleBeforeAnyEventWritesStreamError(t *tes
 	}
 }
 
-func TestGatewayCompatibilityHandlers_UpstreamErrorEventAfterOutputIsNotBilled(t *testing.T) {
+func TestGatewayCompatibilityHandlers_UpstreamErrorPreservesPartialBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstreamError := "event: error\n" + `data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}` + "\n\n"
 	for _, endpoint := range []string{"chat/completions", "responses"} {
@@ -238,8 +246,12 @@ func TestGatewayCompatibilityHandlers_UpstreamErrorEventAfterOutputIsNotBilled(t
 
 			run.billingRepo.mu.Lock()
 			defer run.billingRepo.mu.Unlock()
-			require.Empty(t, run.billingRepo.commands, "an upstream error event is not billed while the client is online")
-			require.Empty(t, run.usageRepo.created)
+			require.Len(t, run.billingRepo.commands, 1, "known partial usage must survive the failure")
+			require.Greater(t, run.billingRepo.commands[0].BalanceCost, 0.0)
+			require.Len(t, run.usageRepo.created, 1)
+			usage := <-run.usageRepo.created
+			require.Equal(t, 12, usage.InputTokens)
+			require.Equal(t, 1, usage.OutputTokens)
 		})
 	}
 }

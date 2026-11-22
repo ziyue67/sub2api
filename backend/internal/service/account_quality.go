@@ -109,7 +109,7 @@ func validateQualityPolicy(plan *ScheduledTestPlan) error {
 		return fmt.Errorf("quality plans require a text answer question")
 	}
 	// 探针自带判定；随机题的参考答案由执行器生成，其他答题规则必须配置答案。
-	if plan.PelicanConfig.QuestionKind != OpenAICodexStateProbeQuestionKind && plan.PelicanConfig.QuestionKind != QualityRandomQuestionKind {
+	if plan.PelicanConfig.QuestionKind != OpenAICodexStateProbeQuestionKind && plan.PelicanConfig.QuestionKind != QualityRandomQuestionKind && plan.PelicanConfig.QuestionKind != QualityCialloQuestionKind {
 		if strings.TrimSpace(q.ExpectedAnswer) == "" || len(q.ExpectedAnswer) > 4000 {
 			return fmt.Errorf("expected answer must be 1–4000 bytes")
 		}
@@ -328,5 +328,17 @@ func (a *Account) IsQualityModelIsolated(model string) bool {
 // Only trusted internal account tests may probe through their own isolation.
 // Normal scheduler selection and every later WebSocket turn share this gate.
 func (a *Account) qualityModelBlocked(ctx context.Context, model string) bool {
-	return ctx.Value(qualityProbeContextKey{}) != true && (a.IsQualityModelIsolated(model) || a.hasQualityModelCooldown(model))
+	blocked := a.IsOAuth429ModelBlocked(model)
+	if route, ok := ctx.Value(oauth429RequestRouteKey{}).(oauth429RequestRoute); ok {
+		endpoint := ""
+		if route.Compact {
+			endpoint = "/responses/compact"
+		}
+		target := ResolveOAuth429TargetModel(a, route.Model, endpoint, oauth429CompactModel(ctx))
+		if model == route.Model || model == target {
+			entries, _ := a.Extra[OAuth429ModelBlocksKey].(map[string]any)
+			blocked = entries[target] != nil
+		}
+	}
+	return ctx.Value(qualityProbeContextKey{}) != true && (a.IsQualityModelIsolated(model) || a.hasQualityModelCooldown(model) || blocked)
 }

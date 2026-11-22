@@ -455,7 +455,11 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 			return "quota_auto_pause"
 		}
 	}
-	if requestedModel != "" && !supportsOpenAIRequestModel(account, requestedModel, requireCompact) {
+	modelCompact := requireCompact
+	if route, ok := ctx.Value(oauth429RequestRouteKey{}).(oauth429RequestRoute); ok {
+		modelCompact = route.Compact
+	}
+	if requestedModel != "" && !supportsOpenAIRequestModel(account, requestedModel, modelCompact, oauth429CompactModel(ctx)) {
 		return "model_not_supported"
 	}
 	if requestedModel != "" && !pelicanGroupTestModelAllowed(ctx, account, requestedModel) {
@@ -937,6 +941,7 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 // selectAccountForModelWithExclusionsStickyHit 与 selectAccountForModelWithExclusions 相同，
 // 另返回账号是否来自粘性会话命中。
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusionsStickyHit(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64, requiredCapability OpenAIEndpointCapability, preferLowUpstreamRate bool) (*Account, bool, error) {
+	ctx = s.withOAuth429Routing(ctx, requestedModel, requireCompact)
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
@@ -1218,6 +1223,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 }
 
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability OpenAIEndpointCapability, useUpstreamTokenCost bool, stickyBindingAllowed ...func(*Account) bool) (*AccountSelectionResult, error) {
+	ctx = s.withOAuth429Routing(ctx, requestedModel, requireCompact)
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
@@ -1742,7 +1748,7 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 		}
-		return accounts, nil
+		return appendGatewayCandidates(ctx, s.accountRepo, s.schedulerSnapshot, groupID, platform, accounts), nil
 	}
 	var accounts []Account
 	var err error
@@ -1760,7 +1766,7 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	if platform == PlatformGrok {
 		accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 	}
-	return accounts, nil
+	return appendGatewayCandidates(ctx, s.accountRepo, s.schedulerSnapshot, groupID, platform, accounts), nil
 }
 
 func (s *OpenAIGatewayService) tryAcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, accountOpt ...*Account) (*AcquireResult, error) {
@@ -1803,7 +1809,13 @@ func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccountBeforeProfit(
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 
 	fresh := account
-	if s.schedulerSnapshot != nil {
+	if account.gatewayProtocolSource != nil {
+		current, err := s.openAIGatewaySelectionView(ctx, account)
+		if err != nil {
+			return nil
+		}
+		fresh = current
+	} else if s.schedulerSnapshot != nil {
 		current, err := s.getSchedulableAccount(ctx, account.ID)
 		if err != nil || current == nil {
 			return nil
@@ -1863,7 +1875,14 @@ func (s *OpenAIGatewayService) recheckSelectedOpenAIAccountFromDBBeforeProfit(ct
 		return nil
 	}
 	platform = NormalizeOpenAICompatiblePlatform(platform)
-	if s.schedulerSnapshot == nil || s.accountRepo == nil {
+	if account.gatewayProtocolSource != nil {
+		view, err := s.openAIGatewaySelectionView(ctx, account)
+		if err != nil {
+			return nil
+		}
+		account = view
+	}
+	if account.gatewayProtocolSource != nil || s.schedulerSnapshot == nil || s.accountRepo == nil {
 		if s.openAIGroupRequiresPrivacySet(ctx, groupID) && !account.IsPrivacySet() {
 			return nil
 		}
@@ -1931,6 +1950,20 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	} else {
 		account, err = s.accountRepo.GetByID(ctx, accountID)
 	}
+	if account == nil && s.schedulerSnapshot != nil {
+		scope, _ := ctx.Value(gatewaySelectionKey{}).(gatewaySelection)
+		if _, ok := requestGatewaySelection(ctx, &scope.groupID, scope.target); ok {
+			if reader := gatewayAccountReader(s.accountRepo, s.schedulerSnapshot); reader != nil {
+				fresh, _, readErr := reader.GatewayRequestAccount(ctx, accountID, scope.groupID)
+				if readErr == nil && fresh != nil && fresh.IsGateway() {
+					account, err = fresh, nil
+				}
+			}
+		}
+	}
+	if err == nil && account != nil && account.IsGateway() {
+		account, err = s.openAIGatewaySelectionView(ctx, account)
+	}
 	if err != nil || account == nil {
 		return account, err
 	}
@@ -1978,6 +2011,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountBlockedBySchedulingThreshold(ctx c
 }
 
 func (s *OpenAIGatewayService) hydrateSelectedAccount(ctx context.Context, account *Account) (*Account, error) {
+	if account != nil && account.gatewayProtocolSource != nil {
+		return s.openAIGatewaySelectionView(ctx, account)
+	}
 	if account == nil || s.schedulerSnapshot == nil {
 		return account, nil
 	}

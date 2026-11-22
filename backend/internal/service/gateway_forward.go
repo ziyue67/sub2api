@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/tidwall/gjson"
 
@@ -120,6 +121,18 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 
 // Forward 转发请求到Claude API
 func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (result *ForwardResult, err error) {
+	if account.gatewayProtocolsPending() {
+		if parsed != nil && parsed.GroupID != nil {
+			if group, ok := ctx.Value(ctxkey.Group).(*Group); !ok || group == nil || group.ID != *parsed.GroupID {
+				return nil, ErrGatewayAccountGroup
+			}
+		}
+		view, err := s.gatewayProtocolAccount(ctx, account, "anthropic", gatewayProtocolParsedModel(parsed))
+		if err != nil {
+			return nil, err
+		}
+		account = view
+	}
 	cacheBilling1h := account.IsCacheCreationBilling1hEnabled()
 	ctx = withCacheCreationBillingSnapshot(ctx, cacheBilling1h)
 	defer func() {
@@ -914,7 +927,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		if err != nil {
 			var sseErr *sseStreamErrorEventError
 			if errors.As(err, &sseErr) {
-				return nil, s.sseStreamErrorEventFailover(ctx, c, account, resp, sseErr.RawData, reqModel, c.Writer.Size() != writerSizeBeforeStream)
+				policyErr := s.sseStreamErrorEventFailover(ctx, c, account, resp, sseErr.RawData, reqModel, (streamResult != nil && (streamResult.usageObserved || streamResult.usage.hasObservedTokens())) || c.Writer.Size() != writerSizeBeforeStream)
+				partial := partialStreamUsageResult(c, resp, streamResult, originalModel, mappedModel, startTime, err)
+				if partial != nil || c.Writer.Size() != writerSizeBeforeStream {
+					return partial, errors.New("stream usage incomplete: upstream semantic stream failure")
+				}
+				return nil, policyErr
 			}
 			// 流中断（缺失 terminal 事件、读错误、数据间隔超时等）时保留已观测到的
 			// usage 与错误一起返回，handler 在错误处理完成后照常提交 usage 记录。
@@ -1182,9 +1200,8 @@ func (s *GatewayService) sseStreamErrorEventFailover(ctx context.Context, c *gin
 	})
 
 	logger.LegacyPrintf("service.gateway",
-		"[Forward] SSE error event in stream: Account=%d(%s) RequestID=%s Body=%s",
-		account.ID, account.Name, resp.Header.Get("x-request-id"),
-		truncateString(rawData, 1000),
+		"[Forward] SSE error event in stream: account_id=%d request_id=%s status=%d output_started=%t",
+		account.ID, resp.Header.Get("x-request-id"), semanticStatus, outputStarted,
 	)
 
 	return &UpstreamFailoverError{

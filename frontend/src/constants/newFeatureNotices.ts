@@ -4,7 +4,14 @@
  * browser; use a new ID to announce the feature again in a later release.
  */
 export const NEW_FEATURE_NOTICES = {
+  modelPlazaCurrency: 'model-plaza-display-currency-20261121',
+  exaSearch: 'exa-search-provider',
+  claudeWindowCost: 'claude-window-cost-estimate',
+  openaiVideos: 'openai-videos-endpoint-capability',
+  channelBalanceOverview: 'channel-balance-overview-20261122',
+  channelConfig: 'channel-configuration-20261119',
   imageUsageBilling: 'image-usage-minimum-charge-20261119',
+  crossPlatformGatewayAccounts: 'cross-platform-gateway-accounts',
   newAPICostConversion: 'new-api-cost-conversion-20261119',
   accountOpsBalanceNotification: 'account-ops-per-account-balance-notification-20261119',
   channelUltrafastPricing: 'channel-ultrafast-pricing-initial-announcement',
@@ -22,6 +29,7 @@ export const NEW_FEATURE_NOTICES = {
   accountOpsProviderBalance: 'account-ops-provider-wallet-balance',
   accountOpsOAuthLifecycle: 'account-ops-oauth-lifecycle',
   moderationUpstreamAccountScope: 'moderation-upstream-account-scope',
+  adminErrorPlatform: 'admin-error-platform-filter',
   adminUsagePlatform: 'admin-usage-platform-filter-initial-announcement',
   usageTrendRate: 'usage-trend-tooltip-rpm-tpm-initial-announcement',
   priorityCacheWeight: 'priority-cache-weight-initial-announcement',
@@ -39,11 +47,14 @@ export const NEW_FEATURE_NOTICES = {
   settingsSaveDock: 'settings-save-dock-initial-announcement',
   qwenPlatform: 'qwen-platform-initial-announcement',
   qwenCache: 'qwen-cache-strict-session-initial-announcement',
+  oauth429IndependentTests: 'oauth-degradation-429-independent-tests',
   oauthDegradation429: 'oauth-degradation-429-conditions-initial-announcement',
+  oauthDegradationCandyRetest: 'oauth-degradation-candy-retest',
   priorityAccountPerformance: 'priority-account-performance-scoring-initial-announcement',
   oauthDegradationActions: 'oauth-degradation-actions-initial-announcement',
   openaiAPIKeyFallback: 'openai-apikey-fallback-initial-announcement',
   dashboardAccountConcurrency: 'dashboard-account-concurrency-initial-announcement',
+  ciallo: 'account-quality-ciallo-v1',
   qualityRetestRest: 'quality-retest-rest-initial-announcement',
   qualityOAuth401Cleanup: 'quality-oauth-401-cleanup-initial-announcement',
   keyRisk: 'key-risk-notices-acknowledgement-initial-announcement',
@@ -86,4 +97,5 @@ export const NEW_FEATURE_NOTICES = {
   bpsAccountMultiProxy: 'bps-account-multi-proxy-request-routing',
   openaiAccountMultiProxy: '2026-11-16-openai-account-multi-proxy',
   cacheTtlBillingFromRequest: 'anthropic-apikey-cache-ttl-billing-from-request-initial-announcement',
+  accountProbePenalty: 'account-claude-probe-penalty-initial-announcement',
 } as const

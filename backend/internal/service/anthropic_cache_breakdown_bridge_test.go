@@ -22,6 +22,7 @@ func TestAnthropicBridgePreservesCacheTTLBreakdown(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprint(stream), func(t *testing.T) {
 			sse := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-opus-5\",\"content\":[],\"usage\":{\"input_tokens\":2,\"cache_read_input_tokens\":80995,\"cache_creation_input_tokens\":4828,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":4828}}}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":764}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+			sse = withAnthropicFixtureContent(sse)
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(sse))}}
 			svc := &GatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
 			body := []byte(fmt.Sprintf(`{"model":"claude-opus-5","stream":%v,"messages":[{"role":"user","content":"synthetic test"}]}`, stream))

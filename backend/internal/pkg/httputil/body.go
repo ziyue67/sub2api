@@ -8,11 +8,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/requestcapture"
 
 	"github.com/klauspost/compress/zstd"
 )

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -130,6 +131,7 @@ func (s *OpenAIGatewayService) TryRebuildOpenAI409History(ctx context.Context, c
 	request.omittedHistory = true
 	request.inputDigest = openAIAgentRecoveryInputDigest(clean)
 	request.replayControlsDigest = openAI409ControlsDigest(clean)
+	request.controlFingerprints = openAI409FingerprintControls(clean)
 	request.omittedSource = r
 	request.toolProofs = r.toolProofs
 	return next, clean, true, nil
@@ -560,12 +562,16 @@ func prepareOpenAI409KnownReadableReplay(raw []byte) ([]byte, error) {
 // Protect the caller's available tools/schema and task instructions as well as
 // input. Model mappings and transport flags are independently account-specific.
 func openAI409ControlsDigest(raw []byte) [32]byte {
-	fields := []string{"tools", "tool_choice", "parallel_tool_calls", "instructions"}
+	fields := []string{"tools", "tool_choice", "parallel_tool_calls", "instructions", "functions", "function_call"}
 	selected := make(map[string]any, len(fields))
+	// Bind legacy inputs to the same immutable source before converting them.
+	// Keep the digest of requests without aliases byte-for-byte compatible.
 	for _, field := range fields {
 		value := gjson.GetBytes(raw, field)
 		if !value.Exists() {
-			selected[field] = nil
+			if field != "functions" && field != "function_call" {
+				selected[field] = nil
+			}
 			continue
 		}
 		decoder := json.NewDecoder(strings.NewReader(value.Raw))
@@ -583,6 +589,64 @@ func openAI409ControlsDigest(raw []byte) [32]byte {
 	return sha256.Sum256(canonical)
 }
 
+type openAI409ControlFingerprints struct {
+	values   [4][32]byte
+	observed [4]bool
+}
+
+var openAI409ControlFields = [...]string{"tools", "tool_choice", "parallel_tool_calls", "instructions"}
+
+func openAI409FingerprintControls(raw []byte) openAI409ControlFingerprints {
+	var fingerprints openAI409ControlFingerprints
+	for i, field := range openAI409ControlFields {
+		value := gjson.GetBytes(raw, field)
+		var encoded []byte
+		if !value.Exists() {
+			encoded, _ = json.Marshal([]any{false})
+		} else {
+			decoder := json.NewDecoder(strings.NewReader(value.Raw))
+			decoder.UseNumber()
+			var decoded any
+			if decoder.Decode(&decoded) != nil {
+				continue
+			}
+			encoded, _ = json.Marshal([]any{true, decoded})
+		}
+		if encoded == nil {
+			continue
+		}
+		fingerprints.values[i] = sha256.Sum256(encoded)
+		fingerprints.observed[i] = true
+	}
+	return fingerprints
+}
+
+func openAI409ControlDiagnostic(raw []byte, expected openAI409ControlFingerprints, source string, digestChanged, previousResponsePresent, conversationPresent bool) OpsRecoveryControls {
+	actual := openAI409FingerprintControls(raw)
+	checks := [4]string{}
+	complete := true
+	for i := range openAI409ControlFields {
+		switch {
+		case !expected.observed[i] || !actual.observed[i]:
+			checks[i] = "unknown"
+			complete = false
+		case expected.values[i] != actual.values[i]:
+			checks[i] = "changed"
+		default:
+			checks[i] = "match"
+		}
+	}
+	observation := "complete"
+	if !complete {
+		observation = "partial"
+	}
+	return OpsRecoveryControls{
+		Observation: observation, Snapshot: source,
+		Tools: checks[0], ToolChoice: checks[1], ParallelToolCalls: checks[2], Instructions: checks[3],
+		DigestChanged: digestChanged, PreviousResponseIDPresent: previousResponsePresent, ConversationPresent: conversationPresent,
+	}
+}
+
 func prepareOpenAI409APIKeyReplay(ctx context.Context, body []byte, responsesLite bool) ([]byte, error) {
 	r := openAIAgentRecoveryFromContext(ctx)
 	if r == nil || !r.omittedHistory {
@@ -596,6 +660,7 @@ func prepareOpenAI409APIKeyReplay(ctx context.Context, body []byte, responsesLit
 		return nil, err
 	}
 	r.apiControlsDigest = openAI409ControlsDigest(prepared)
+	r.apiFingerprints = openAI409FingerprintControls(prepared)
 	r.apiInputDigest = openAIAgentRecoveryInputDigest(prepared)
 	r.apiReplayPrepared = true
 	return prepared, nil
@@ -625,6 +690,31 @@ func prepareOpenAI409OAuthReplay(ctx context.Context, c *gin.Context, body map[s
 		body["instructions"] = defaultCodexSynthInstructions(firstNonEmptyString(body["model"]))
 	}
 	extractSystemMessagesFromInput(body, false)
+	httpReplay := c != nil && c.Request != nil && c.Request.Method == http.MethodPost && GetOpenAIClientTransport(c) != OpenAIClientTransportWS
+	legacyCall, hasLegacyCall := body["function_call"]
+	if httpReplay {
+		_, functions := body["functions"]
+		_, tools := body["tools"]
+		_, choice := body["tool_choice"]
+		if (functions && tools) || (hasLegacyCall && choice) {
+			return openAIRecoveryWireRefusal(ctx, "oauth_projection_source")
+		}
+		if hasLegacyCall {
+			switch value := legacyCall.(type) {
+			case string:
+				if value != "none" && value != "auto" {
+					return openAIRecoveryWireRefusal(ctx, "oauth_projection_source")
+				}
+			case map[string]any:
+				if len(value) != 1 || strings.TrimSpace(firstNonEmptyString(value["name"])) == "" {
+					return openAIRecoveryWireRefusal(ctx, "oauth_projection_source")
+				}
+			default:
+				return openAIRecoveryWireRefusal(ctx, "oauth_projection_source")
+			}
+		}
+		convertCodexLegacyFunctionControls(body)
+	}
 	normalizeCodexTools(body)
 	reverse, _, err := aliasOpenAIOAuthReservedToolNames(body)
 	if err != nil {
@@ -632,6 +722,17 @@ func prepareOpenAI409OAuthReplay(ctx context.Context, c *gin.Context, body map[s
 	}
 	setCodexToolNameReverse(c, reverse)
 	normalizeCodexToolChoice(body)
+	if httpReplay {
+		// A forced legacy function must not fall back to auto during flattening.
+		if _, forced := legacyCall.(map[string]any); forced {
+			if choice, ok := body["tool_choice"].(map[string]any); !ok || choice["type"] != "function" {
+				return openAIRecoveryWireRefusal(ctx, "oauth_projection_source")
+			}
+		}
+		if !isOpenAIResponsesCompactPath(c) {
+			declareOpenAIWebSearchHistoryTool(body, isOpenAIResponsesLiteHeader(c.GetHeader(responsesLiteHeader)), true)
+		}
+	}
 	prepared, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -640,6 +741,7 @@ func prepareOpenAI409OAuthReplay(ctx context.Context, c *gin.Context, body map[s
 	// Only this narrowly derived OAuth expectation is used at its final send.
 	r.oauthInputDigest = openAIAgentRecoveryInputDigest(prepared)
 	r.oauthControlsDigest = openAI409ControlsDigest(prepared)
+	r.oauthFingerprints = openAI409FingerprintControls(prepared)
 	r.oauthReplayPrepared = true
 	return nil
 }
@@ -659,6 +761,24 @@ func openAIRecoveryWireRefusal(ctx context.Context, stage string, details ...zap
 	fields := append([]zap.Field{zap.String("stage", stage)}, details...)
 	logger.FromContext(ctx).Warn("openai.encrypted_history_409_refused", fields...)
 	return openAIRecoveryDiagnosticError("wire_changed", stage, openAIAgentRecoveryFromContext(ctx))
+}
+
+func openAIRecoveryControlsWireRefusal(ctx context.Context, report OpsRecoveryControls) error {
+	logger.FromContext(ctx).Warn("openai.encrypted_history_409_refused",
+		zap.String("stage", "controls_integrity"),
+		zap.String("controls_observation", report.Observation), zap.String("controls_snapshot", report.Snapshot),
+		zap.String("tools", report.Tools), zap.String("tool_choice", report.ToolChoice),
+		zap.String("parallel_tool_calls", report.ParallelToolCalls), zap.String("instructions", report.Instructions),
+		zap.Bool("controls_digest_changed", report.DigestChanged),
+		zap.Bool("previous_response_id_present", report.PreviousResponseIDPresent),
+		zap.Bool("conversation_present", report.ConversationPresent))
+	err := openAIRecoveryDiagnosticError("wire_changed", "controls_integrity", openAIAgentRecoveryFromContext(ctx))
+	if recovery, ok := err.(*OpenAIAgentRecoveryError); ok {
+		diagnostic := *recovery.diagnostic
+		diagnostic.controls = &report
+		recovery.diagnostic = &diagnostic
+	}
+	return err
 }
 
 func checkOpenAIRecoveryProjectionSource(ctx context.Context, stage string, body []byte, r *openAIAgentRecoveryRequest) error {
@@ -732,6 +852,7 @@ func (s *OpenAIGatewayService) prepareOpenAI409HTTPProjection(ctx context.Contex
 	snapshot := *r
 	snapshot.inputDigest = openAIAgentRecoveryInputDigest(clean)
 	snapshot.replayControlsDigest = openAI409ControlsDigest(clean)
+	snapshot.controlFingerprints = openAI409FingerprintControls(clean)
 	snapshot.apiReplayPrepared, snapshot.oauthReplayPrepared = false, false
 	return context.WithValue(ctx, openAIAgentRecoveryContextKey{}, &snapshot), clean, nil
 }

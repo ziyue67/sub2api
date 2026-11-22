@@ -11,6 +11,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
       - uses: pnpm/action-setup@v6
         with:
           version: 9
@@ -25,13 +26,18 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/pr-ui-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/pr-ui-browser/node_modules/.bin/playwright" install --with-deps chromium
       - name: Fetch immutable before baseline
-        run: git fetch --no-tags --depth=1 origin c115bef917eae22fc2f5a4d0ba6ac6cbe600e8e4
+        env:
+          SOURCE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$SOURCE_BASE" ]; then SOURCE_BASE="$(git rev-parse HEAD^)"; fi
+          git fetch --no-tags --depth=1 origin "$SOURCE_BASE"
+          printf 'SOURCE_BASE=%s\n' "$SOURCE_BASE" >> "$GITHUB_ENV"
       - name: Capture actual Vue components with fictional local data
         env:
           NODE_OPTIONS: --max-old-space-size=1536
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/pr-ui-browser/node_modules/playwright/index.mjs
         run: |
-          node .github/scripts/prmerge-ui-preview.mjs "$GITHUB_WORKSPACE" sidebar "$RUNNER_TEMP/smart-ops-sidebar-preview" c115bef917eae22fc2f5a4d0ba6ac6cbe600e8e4
+          node .github/scripts/prmerge-ui-preview.mjs "$GITHUB_WORKSPACE" sidebar "$RUNNER_TEMP/smart-ops-sidebar-preview" "$SOURCE_BASE"
           node .github/scripts/prmerge-ui-preview.mjs "$GITHUB_WORKSPACE" sidebar "$RUNNER_TEMP/smart-ops-sidebar-preview"
       - uses: actions/upload-artifact@v7
         if: always()

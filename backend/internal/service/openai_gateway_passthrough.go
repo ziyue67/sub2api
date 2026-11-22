@@ -140,6 +140,20 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	ctx = withOpenAITransportMode(ctx, "passthrough")
 	requestedModel := reqModel
 	upstreamPassthroughModel := ""
+	// Gateway accounts retain explicit portable mappings even though their
+	// transport uses passthrough. Legacy passthrough keeps its original contract.
+	if account != nil && account.gatewayProtocolSource != nil {
+		mappedModel := account.GetMappedModel(reqModel)
+		if mappedModel != "" && mappedModel != reqModel {
+			nextBody, setErr := sjson.SetBytes(body, "model", mappedModel)
+			if setErr != nil {
+				return nil, fmt.Errorf("set gateway passthrough model: %w", setErr)
+			}
+			body = nextBody
+			upstreamPassthroughModel = mappedModel
+			attemptImageIntentInvalidated = true
+		}
+	}
 	if isOpenAIResponsesCompactPath(c) && !account.IsCopilotSDKEnabled() {
 		compactMappedModel := s.resolveOpenAICompactFallbackModel(account, reqModel)
 		if compactMappedModel != "" && compactMappedModel != reqModel {
@@ -662,7 +676,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	// DeepSeek / Kimi 原生 Responses 端点为无状态实现（见 normalizeDeepSeekResponsesRequestBody）。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(withOAuth429WireBody(ctx, body), http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -1026,6 +1040,9 @@ func (s *OpenAIGatewayService) handleErrorResponsePassthrough(
 	}
 	MarkResponseCommitted(c)
 	body := s.redactAgentIdentitySensitiveBody(ctx, account, responseBody)
+	if writeDeepSeekInputContentRejection(c, account, resp, body, writeChatCompletionsError) {
+		return fmt.Errorf("deepseek input content rejected")
+	}
 
 	// cyber_policy 仍按原始 body 打内部标记，供 handler 事后写风控/邮件；面向客户端的
 	// 错误体在下方统一重建。cyber 是上游网络安全策略拦截，不冷却账号，

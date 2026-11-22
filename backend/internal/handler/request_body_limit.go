@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -12,12 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// handleRequestBodyReadError handles cancellation and temporary capacity errors
-// before callers classify malformed or oversized request bodies.
-//
-// A read deadline on HTTP/1 also cancels the request context, so a body read
-// timeout is left to requestBodyReadFailure (408) instead of being reported as
-// a client that went away (499).
 // extractMaxBytesError distinguishes the per-request size cap from other read
 // failures so callers can answer 413 instead of a generic 400.
 func extractMaxBytesError(err error) (*http.MaxBytesError, bool) {
@@ -28,6 +21,9 @@ func extractMaxBytesError(err error) (*http.MaxBytesError, bool) {
 	return nil, false
 }
 
+// handleRequestBodyReadError handles cancellation and temporary capacity errors
+// before callers classify malformed or oversized request bodies. HTTP/1 read
+// deadlines can also cancel the context; preserve their timeout response (408).
 func handleRequestBodyReadError(c *gin.Context, reqLog *zap.Logger, err error) bool {
 	if err != nil && !pkghttputil.IsRequestBodyReadTimeout(err) && failoverClientGone(c) {
 		logRequestBodyReadFailure(reqLog, pkghttputil.DescribeRequestBodyReadFailure(c.Request, err))
@@ -35,18 +31,6 @@ func handleRequestBodyReadError(c *gin.Context, reqLog *zap.Logger, err error) b
 		return true
 	}
 	return middleware2.RejectRequestBodyMemoryOverload(c, err)
-}
-
-func formatBodyLimit(limit int64) string {
-	const mb = 1024 * 1024
-	if limit >= mb {
-		return fmt.Sprintf("%dMB", limit/mb)
-	}
-	return fmt.Sprintf("%dB", limit)
-}
-
-func buildBodyTooLargeMessage(limit int64) string {
-	return fmt.Sprintf("Request body too large, limit is %s", formatBodyLimit(limit))
 }
 
 func readLenientJSONRequestBodyWithPrealloc(req *http.Request, cfg *config.Config) ([]byte, error) {
@@ -59,3 +43,5 @@ func gatewayMaxBodySize(cfg *config.Config) int64 {
 	}
 	return cfg.Gateway.MaxBodySize
 }
+
+func buildBodyTooLargeMessage(limit int64) string { return pkghttputil.BodyTooLargeMessage(limit) }

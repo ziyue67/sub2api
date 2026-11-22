@@ -86,6 +86,14 @@ type Account struct {
 	GroupIDs          []int64
 	Groups            []*Group
 
+	// Request-local transport binding only; never persisted or exported. Final
+	// admission compares the neutral gateway identity before rebuilding a view.
+	gatewayProtocolSource  *Account
+	gatewayProtocolModel   string
+	gatewayBindingModel    string
+	gatewayMessagesView    *Account
+	gatewaySelectionTarget string
+
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
 	modelMappingCacheReady          bool
@@ -304,6 +312,11 @@ func accountLoadPreferenceRate(account *Account, loadRate int) int {
 }
 
 func (a *Account) IsSchedulable() bool {
+	// Fail closed until the four gateway protocols and their final admission
+	// checks are implemented together. Manual switches cannot bypass this gate.
+	if a.IsGateway() || a.Platform == PlatformGateway {
+		return false
+	}
 	if !a.IsActive() || !a.Schedulable || a.PerformancePaused {
 		return false
 	}
@@ -2255,13 +2268,17 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	if a == nil {
 		return false
 	}
+	if capability == OpenAIEndpointCapabilityVideos && a.Platform == PlatformQwen {
+		mode := a.GetCredential("qwen_video_protocol")
+		return a.Type == AccountTypeAPIKey && (mode == "dashscope" || mode == "openai" || mode == "fixed_duration") && a.GetCredential("base_url") != ""
+	}
 	if capability == OpenAIEndpointCapabilityMiniMaxH3 {
 		return a.Platform == PlatformMiniMax && a.Type == AccountTypeAPIKey && !a.IsCodingPlan() &&
 			strings.TrimSpace(a.GetCredential("base_url")) != ""
 	}
-	if capability == OpenAIEndpointCapabilitySeedance {
+	if capability == OpenAIEndpointCapabilitySeedance || capability == OpenAIEndpointCapabilityVideos {
 		configured, _ := a.openAIEndpointCapabilitySet()
-		return configured["seedance"] && a.Platform == PlatformOpenAI && a.Type == AccountTypeAPIKey &&
+		return configured[string(capability)] && a.Platform == PlatformOpenAI && a.Type == AccountTypeAPIKey &&
 			strings.TrimSpace(a.GetCredential("base_url")) != ""
 	}
 	if capability == "" {

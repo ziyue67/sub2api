@@ -92,6 +92,21 @@ func prismBrowserResponsesURL(baseURL string) string {
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, resultErr error) {
+	if account.gatewayProtocolsPending() {
+		view, err := s.gatewayProtocolAccount(ctx, account, "openai", gatewayProtocolBodyModel(body))
+		if err != nil {
+			return nil, err
+		}
+		account = view
+	}
+	ctx = s.withOAuth429Routing(ctx, gjson.GetBytes(body, "model").String(), IsOpenAIResponsesCompactPath(c))
+	endpoint := ""
+	if IsOpenAIResponsesCompactPath(c) {
+		endpoint = "/responses/compact"
+	}
+	if account.isOAuth429ModelBlockedForEndpoint(gjson.GetBytes(body, "model").String(), endpoint, oauth429CompactModel(ctx)) {
+		return nil, denyOpenAITurn("model_runtime_blocked")
+	}
 	preparedCtx, preparedBody, prepareErr := s.prepareOpenAIAgentOAuthReplay(ctx, account, body)
 	if prepareErr != nil {
 		return nil, prepareErr
@@ -109,7 +124,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, admissionErr
 	}
 	ctx = admittedCtx
-	endpoint := openAIResponsesUpstreamEndpoint
+	endpoint = openAIResponsesUpstreamEndpoint
 	if IsOpenAIResponsesCompactPath(c) {
 		endpoint += "/compact"
 	}
@@ -2134,7 +2149,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	// previous_response_id，避免携带状态字段被上游拒绝。
 	body = normalizeDeepSeekResponsesRequestBody(account, body)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(withOAuth429WireBody(ctx, body), "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

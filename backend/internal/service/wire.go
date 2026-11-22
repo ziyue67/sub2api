@@ -813,11 +813,16 @@ func ProvideScheduledTestRunnerService(
 	rdb *redis.Client,
 	groupTests *PelicanGroupTestService,
 	monitor *ChannelMonitorV2Service,
+	concurrency *ConcurrencyService,
 ) *ScheduledTestRunnerService {
 	svc := NewScheduledTestRunnerService(planRepo, scheduledSvc, accountTestSvc, rateLimitSvc, cfg)
 	if rdb != nil {
 		svc.qualityTrigger = &quality5xxTrigger{queue: qualityqueue.NewRedis(rdb)}
 	}
+	if accountTestSvc != nil {
+		svc.oauth429Repo, _ = accountTestSvc.accountRepo.(OAuth429Repository)
+	}
+	svc.oauth429Slots = concurrency
 	svc.judgeQuality = judge.Judge
 	svc.groupTests = groupTests
 	svc.candyMonitor = monitor.candy
@@ -1412,6 +1417,11 @@ func ProvideAccountOpsService(settings SettingRepository, repo AccountOpsReposit
 	svc.SetNotificationQuotaReaders(usageLogs, geminiQuota)
 	svc.autoAccounts, _ = accounts.(AccountConcurrencyRepository)
 	svc.autoGroups = groups
+	if routing, ok := accounts.(OAuth429RoutingConfigurator); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		svc.oauth429Routing, svc.oauth429RoutingErr = routing.ConfigureOAuth429Routing(ctx, oauth429ConfiguredCompactModel(cfg))
+		cancel()
+	}
 	svc.start(cfg.RunsBackgroundJobs())
 	return svc
 }

@@ -167,7 +167,12 @@ func RegisterGatewayRoutes(
 		}
 	}
 	videoGenerationHandler := func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformMiniMax {
+		platform := getGroupPlatform(c)
+		if (platform == service.PlatformOpenAI || platform == service.PlatformQwen) && strings.HasSuffix(c.FullPath(), "/videos") &&
+			h.OpenAIGateway.TryOpenAIVideoGeneration(c) {
+			return
+		}
+		if platform == service.PlatformMiniMax {
 			h.OpenAIGateway.MiniMaxH3Videos(c)
 			return
 		}
@@ -187,7 +192,13 @@ func RegisterGatewayRoutes(
 		})
 	}
 	videoStatusHandler := func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformMiniMax {
+		platform := getGroupPlatform(c)
+		if (platform == service.PlatformOpenAI || platform == service.PlatformComposite || platform == service.PlatformQwen) &&
+			strings.HasSuffix(c.FullPath(), "/videos/:request_id") && service.IsOpenAIVideoTaskID(c.Param("request_id")) {
+			h.OpenAIGateway.OpenAIVideoLookup(c)
+			return
+		}
+		if platform == service.PlatformMiniMax {
 			h.OpenAIGateway.MiniMaxH3Videos(c)
 			return
 		}
@@ -207,7 +218,13 @@ func RegisterGatewayRoutes(
 		})
 	}
 	videoContentHandler := func(c *gin.Context) {
-		if getGroupPlatform(c) == service.PlatformMiniMax {
+		platform := getGroupPlatform(c)
+		if (platform == service.PlatformOpenAI || platform == service.PlatformComposite || platform == service.PlatformQwen) &&
+			strings.HasSuffix(c.FullPath(), "/videos/:request_id/content") && service.IsOpenAIVideoTaskID(c.Param("request_id")) {
+			h.OpenAIGateway.OpenAIVideoLookup(c)
+			return
+		}
+		if platform == service.PlatformMiniMax {
 			h.OpenAIGateway.MiniMaxH3Videos(c)
 			return
 		}

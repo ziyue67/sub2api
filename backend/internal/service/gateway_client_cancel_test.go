@@ -81,14 +81,14 @@ func TestClaudeClientCancelAfterTerminalPreservesCompletedUsage(t *testing.T) {
 	c, _ := gin.CreateTestContext(&claudeTerminalFlushFailure{httptest.NewRecorder()})
 	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
 	body := strings.Join([]string{
-		`data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":2}}}`,
+		`data: {"type":"message_start","message":{"content":[{"type":"text","text":"fixture"}],"usage":{"input_tokens":11,"output_tokens":2}}}`,
 		`data: {"type":"message_delta","usage":{"output_tokens":7}}`,
 		`data: {"type":"message_stop"}`,
 		"",
 	}, "\n\n")
 	resp := &http.Response{Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}
 	result, err := newStreamingResponseTestGatewayService().handleStreamingResponse(context.Background(), resp, c, &Account{ID: 1}, time.Now(), "model", "model", false)
-	require.NoError(t, err, "a terminal event already established complete upstream usage")
+	require.ErrorIs(t, err, io.ErrClosedPipe, "terminal delivery failure must be reported with known usage")
 	require.True(t, result.clientDisconnect)
 	require.Equal(t, 11, result.usage.InputTokens)
 	require.Equal(t, 7, result.usage.OutputTokens)
@@ -185,7 +185,7 @@ func TestClaudeClientCancelForwardActualHTTPAndDoesNotRetry(t *testing.T) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				if sendUsage {
 					w.Header().Set("Content-Type", "text/event-stream")
-					_, _ = io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":11,\"cache_read_input_tokens\":7,\"output_tokens\":2}}}\n\n")
+					_, _ = io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"fixture\"}],\"usage\":{\"input_tokens\":11,\"cache_read_input_tokens\":7,\"output_tokens\":2}}}\n\n")
 					if err := http.NewResponseController(w).Flush(); err != nil {
 						t.Errorf("flush synthetic upstream usage: %v", err)
 					}
@@ -271,7 +271,8 @@ func TestClaudeClientCancelForwardActualHTTPAndDoesNotRetry(t *testing.T) {
 				t.Fatal("forward did not return")
 			}
 			if wantFinalUsage {
-				require.NoError(t, err, "accepted stream must collect the final Usage after downstream cancellation")
+				require.ErrorIs(t, err, context.Canceled, "a disconnected request must remain canceled after draining final Usage")
+				require.ErrorContains(t, err, "client disconnected after final Usage")
 			} else if sendUsage {
 				require.ErrorContains(t, err, "disconnect drain timeout")
 			} else {

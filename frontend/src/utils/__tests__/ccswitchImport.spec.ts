@@ -46,16 +46,20 @@ describe('ccswitchImport utils', () => {
     expect(params.get('resource')).toBe('provider')
     expect(params.get('app')).toBe('codex')
     expect(params.get('endpoint')).toBe(endpoint)
-    expect(params.get('model')).toBe(OPENAI_CC_SWITCH_CODEX_MODEL)
+    expect(params.get('model')).toBe('gpt-6.1-sol')
     const embedded = JSON.parse(atob(params.get('config')!)) as {
       auth: { OPENAI_API_KEY: string }
       config: string
     }
     expect(params.get('configFormat')).toBe('json')
     expect(embedded.auth.OPENAI_API_KEY).toBe(baseInput.apiKey)
+    expect(embedded.config).toMatch(/^model = "gpt-6.1-sol"$/m)
+    expect(embedded.config).toMatch(/^review_model = "gpt-6.1-sol"$/m)
+    expect(embedded.config).not.toMatch(/^(disable_response_storage|network_access|windows_wsl_setup_acknowledged) =/m)
     expect(embedded.config.split('\n[')[0]).toContain('service_tier = "fast"')
     expect(embedded.config.match(/^service_tier = /gm)).toHaveLength(1)
     expect(embedded.config).toContain(`base_url = "${endpoint}"`)
+    expect(embedded.config).toContain('model_catalog_url = "https://api.example.com/v1/models"')
     expect(atob(params.get('usageScript') || '')).toBe(baseInput.usageScript)
     const payload = JSON.parse(atob(params.get('config') || '')) as { config: string }
     expect(params.get('configFormat')).toBe('json')

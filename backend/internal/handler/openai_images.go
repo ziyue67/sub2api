@@ -192,6 +192,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 	requestCtx := service.WithOpenAIImageSizeRouting(service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context())), parsed.Size)
 	requestCtx = parsed.WithModelAuthorization(requestCtx, channelMapping.MappedModel)
+	requestCtx = service.WithImageBillingModel(requestCtx, clientRequestedUsageFields(c, channelMapping, requestModel, ""))
 
 	maxAccountSwitches := h.maxAccountSwitches
 	switchCount := 0

@@ -48,6 +48,11 @@ func (s *AccountTestService) RunPelicanBackground(ctx context.Context, accountID
 		cfg = &copy
 
 	}
+	var ciallo *CialloEvidence
+	if cfg.QuestionKind == QualityCialloQuestionKind {
+		ciallo = &CialloEvidence{TemplateVersion: cialloTemplateVersion, JudgeVersion: cialloJudgeVersion}
+		ctx = context.WithValue(ctx, cialloEvidenceKey{}, ciallo)
+	}
 	started := time.Now()
 	directOAuth401, directOAuthRevoked401, nativeOAuthTransport := false, false, false
 	ctx = withPelicanTestOptions(ctx, pelicanTestOptions{
@@ -80,12 +85,16 @@ func (s *AccountTestService) RunPelicanBackground(ctx context.Context, accountID
 		output = ""
 		message = pelicanErrHistoryLimit
 	}
+	if ciallo != nil && message == "" && (!ciallo.complete || ciallo.interrupted || ctx.Err() != nil) {
+		message = "ciallo_incomplete"
+	}
 	status := "success"
 	if message != "" {
 		status = "failed"
 	}
 	finished := time.Now()
 	snapshot := *cfg
+	snapshot.Ciallo = ciallo
 	snapshot.ModelID = model
 	snapshot.ActualPrompt = intelligenceTestPrompt(cfg)
 	return &ScheduledTestResult{DirectOAuth401: directOAuth401, DirectOAuthRevoked401: directOAuthRevoked401, Status: status, ResponseText: output, ErrorMessage: message, LatencyMs: finished.Sub(started).Milliseconds(), StartedAt: started, FinishedAt: finished, PelicanConfig: &snapshot}, nil
@@ -372,6 +381,12 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 	if succeeded && plan.AutoRecover && plan.PelicanConfig.Quality == nil && !isBuiltinCandyPlan(plan.PelicanConfig) && !isOpenAICodexStateProbePlan(plan.PelicanConfig) {
 		s.tryRecoverAccount(saveCtx, plan.AccountID, plan.ID)
 	}
+	if plan.PelicanConfig.Quality != nil && isBuiltinCandyPlan(plan.PelicanConfig) && applyTriggeredQuality &&
+		qualityAction != "stale_run" && qualityAction != "action_error" && qualityAction != "account_deleted" {
+		s.reviewDegradationCandyRound(runCtx, plan, until, results)
+	}
+	finishCtx, finishCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer finishCancel()
 	finished := time.Now()
 	if plan.TriggerSource == quality5xxSource {
 		// The stored rule was validated before claiming. The execution-only
@@ -380,9 +395,9 @@ func (s *ScheduledTestRunnerService) runPelicanPlan(ctx context.Context, plan *S
 		if nextErr != nil {
 			return false
 		}
-		err = s.planRepo.FinishTriggeredQuality(saveCtx, plan, until, finished, following)
+		err = s.planRepo.FinishTriggeredQuality(finishCtx, plan, until, finished, following)
 	} else {
-		err = s.planRepo.FinishPelican(saveCtx, plan.ID, until, finished)
+		err = s.planRepo.FinishPelican(finishCtx, plan.ID, until, finished)
 	}
 	if err != nil {
 		logger.LegacyPrintf("service.scheduled_test_runner", "pelican plan=%d finish failed: %v", plan.ID, err)
@@ -448,6 +463,14 @@ func (s *ScheduledTestRunnerService) runPelicanSample(ctx context.Context, plan 
 			if CandyAnswerCorrect(result.ResponseText) {
 				judgment.Verdict = "correct"
 			}
+		} else if plan.PelicanConfig.QuestionKind == QualityCialloQuestionKind {
+			judgment = &QualityJudgment{Kind: QualityCialloQuestionKind, RulesVersion: cialloJudgeVersion, Verdict: "unknown", Reason: "incomplete"}
+			if evidence := snapshot.Ciallo; evidence != nil && evidence.complete && !evidence.interrupted && strings.TrimSpace(result.ResponseText) != "" {
+				judgment.Verdict, judgment.Reason = "incorrect", "unmatched"
+				if matchedCialloGreeting(result.ResponseText) != "" {
+					judgment.Verdict, judgment.Reason = "correct", "matched"
+				}
+			}
 		} else if s.judgeQuality != nil {
 			judgment = s.judgeQuality(ctx, plan.AccountID, plan.PelicanConfig, result.ResponseText)
 		}
@@ -508,6 +531,9 @@ func isBuiltinCandyPlan(cfg *PelicanTestConfig) bool {
 
 // Missing kind preserves HTML validation for saved plans from older versions.
 func intelligenceTestPrompt(cfg *PelicanTestConfig) string {
+	if cfg.QuestionKind == QualityCialloQuestionKind {
+		return QualityCialloQuestionKind
+	}
 	if cfg.Quality != nil {
 		return cfg.Prompt + "\n\n只输出最终答案，不要解释。"
 	}

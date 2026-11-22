@@ -161,10 +161,11 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 
 		// remainingFraction 是剩余比例 (0.0-1.0)，转换为使用率百分比
 		utilization := int((1.0 - modelInfo.QuotaInfo.RemainingFraction) * 100)
+		resetTime := antigravityQuotaResetTime(modelInfo.QuotaInfo)
 
 		info.AntigravityQuota[modelName] = &AntigravityModelQuota{
 			Utilization: utilization,
-			ResetTime:   modelInfo.QuotaInfo.ResetTime,
+			ResetTime:   resetTime,
 		}
 
 		// 填充模型详细能力信息
@@ -197,8 +198,8 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 			progress := &UsageProgress{
 				Utilization: utilization,
 			}
-			if modelInfo.QuotaInfo.ResetTime != "" {
-				if resetTime, err := time.Parse(time.RFC3339, modelInfo.QuotaInfo.ResetTime); err == nil {
+			if resetTimeRaw := antigravityQuotaResetTime(modelInfo.QuotaInfo); resetTimeRaw != "" {
+				if resetTime, err := time.Parse(time.RFC3339, resetTimeRaw); err == nil {
 					progress.ResetsAt = &resetTime
 					progress.RemainingSeconds = int(time.Until(resetTime).Seconds())
 				}
@@ -221,51 +222,15 @@ func (f *AntigravityQuotaFetcher) buildUsageInfo(modelsResp *antigravity.FetchAv
 	return info
 }
 
-// buildAntigravityQuotaGroups turns a quota summary into display groups, each with its
-// windows ordered 5h then weekly. Returns nil when there is nothing to show.
-func buildAntigravityQuotaGroups(summary *antigravity.QuotaSummaryResponse) []*AntigravityQuotaGroup {
-	if summary == nil {
-		return nil
+// antigravityQuotaResetTime suppresses moving upstream reset timestamps for unused quota.
+// Google returns resetTime = now + 5h on every fetch when remainingFraction == 1; that
+// moving timestamp is not an active reset deadline. Check the raw fraction rather than
+// the truncated integer utilization percentage so usage below 1% still retains its real deadline.
+func antigravityQuotaResetTime(quota *antigravity.ModelQuotaInfo) string {
+	if quota.RemainingFraction >= 1 {
+		return ""
 	}
-	windowOrder := map[string]int{"5h": 0, "weekly": 1}
-	var groups []*AntigravityQuotaGroup
-	for _, group := range summary.Groups {
-		if len(group.Buckets) == 0 {
-			continue
-		}
-		out := &AntigravityQuotaGroup{Name: group.DisplayName, Description: group.Description}
-		for _, bucket := range group.Buckets {
-			if out.Key == "" {
-				if i := strings.LastIndex(bucket.BucketID, "-"); i > 0 {
-					out.Key = bucket.BucketID[:i]
-				}
-			}
-			used := (1.0 - bucket.RemainingFraction) * 100
-			if used < 0 {
-				used = 0
-			}
-			window := &AntigravityQuotaWindow{Window: bucket.Window, Utilization: used}
-			if bucket.ResetTime != "" {
-				if resetAt, err := time.Parse(time.RFC3339, bucket.ResetTime); err == nil {
-					window.ResetsAt = &resetAt
-				}
-			}
-			out.Windows = append(out.Windows, window)
-		}
-		sort.SliceStable(out.Windows, func(i, j int) bool {
-			oi, iok := windowOrder[out.Windows[i].Window]
-			oj, jok := windowOrder[out.Windows[j].Window]
-			if !iok {
-				oi = len(windowOrder)
-			}
-			if !jok {
-				oj = len(windowOrder)
-			}
-			return oi < oj
-		})
-		groups = append(groups, out)
-	}
-	return groups
+	return quota.ResetTime
 }
 
 // GetProxyURL 获取账户的代理 URL
@@ -333,4 +298,49 @@ func extractValidationURL(body string) string {
 		return m
 	}
 	return ""
+}
+
+func buildAntigravityQuotaGroups(summary *antigravity.QuotaSummaryResponse) []*AntigravityQuotaGroup {
+	if summary == nil {
+		return nil
+	}
+	windowOrder := map[string]int{"5h": 0, "weekly": 1}
+	var groups []*AntigravityQuotaGroup
+	for _, group := range summary.Groups {
+		if len(group.Buckets) == 0 {
+			continue
+		}
+		out := &AntigravityQuotaGroup{Name: group.DisplayName, Description: group.Description}
+		for _, bucket := range group.Buckets {
+			if out.Key == "" {
+				if i := strings.LastIndex(bucket.BucketID, "-"); i > 0 {
+					out.Key = bucket.BucketID[:i]
+				}
+			}
+			used := (1.0 - bucket.RemainingFraction) * 100
+			if used < 0 {
+				used = 0
+			}
+			window := &AntigravityQuotaWindow{Window: bucket.Window, Utilization: used}
+			if bucket.ResetTime != "" {
+				if resetAt, err := time.Parse(time.RFC3339, bucket.ResetTime); err == nil {
+					window.ResetsAt = &resetAt
+				}
+			}
+			out.Windows = append(out.Windows, window)
+		}
+		sort.SliceStable(out.Windows, func(i, j int) bool {
+			oi, iok := windowOrder[out.Windows[i].Window]
+			oj, jok := windowOrder[out.Windows[j].Window]
+			if !iok {
+				oi = len(windowOrder)
+			}
+			if !jok {
+				oj = len(windowOrder)
+			}
+			return oi < oj
+		})
+		groups = append(groups, out)
+	}
+	return groups
 }

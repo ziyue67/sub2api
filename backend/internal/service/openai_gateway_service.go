@@ -336,6 +336,8 @@ type OpenAIForwardResult struct {
 	VideoDurationSeconds int
 	// MiniMaxH3BaseCost is a server-only create-time tariff snapshot in USD.
 	MiniMaxH3BaseCost *float64
+	WanBilledSeconds  float64
+	WanBaseCost       *float64
 	// WebSearchCalls is the number of completed OpenAI hosted web_search_call
 	// invocations. It also covers the standalone Codex alpha/search endpoint.
 	// The surcharge is additive when token usage is present.

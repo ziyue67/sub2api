@@ -466,8 +466,9 @@
               <button
                 v-if="isCodexQuickConfigPlatform(row.group?.platform)"
                 @click="openCodexQuickConfigModal(row)"
+                :disabled="row.group?.platform === 'openai' && publicSettingsLoading"
                 data-testid="quick-config-button"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 disabled:opacity-50 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
                 :title="t('keys.quickConfigure')"
               >
                 <Icon name="download" size="sm" />
@@ -476,7 +477,9 @@
               <!-- Use Key Button -->
               <button
                 @click="openUseKeyModal(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-900/20 dark:hover:text-green-400"
+                :disabled="row.group?.platform === 'openai' && publicSettingsLoading"
+                data-testid="use-key-button"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600 disabled:opacity-50 dark:hover:bg-green-900/20 dark:hover:text-green-400"
               >
                 <Icon name="terminal" size="sm" />
                 <span class="text-xs">{{ t('keys.useKey') }}</span>
@@ -485,7 +488,9 @@
               <button
                 v-if="!publicSettings?.hide_ccs_import_button"
                 @click="importToCcswitch(row)"
-                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+                :disabled="row.group?.platform === 'openai' && publicSettingsLoading"
+                data-testid="ccswitch-import-button"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 disabled:opacity-50 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
               >
                 <Icon name="upload" size="sm" />
                 <span class="text-xs">{{ t('keys.importToCcSwitch') }}</span>
@@ -1118,6 +1123,7 @@
       :show="showUseKeyModal"
       :api-key="selectedKey?.key || ''"
       :base-url="publicSettings?.api_base_url || ''"
+      :site-name="publicSettings?.site_name"
       :platform="selectedKey?.group?.platform || null"
       :claude-code-only="selectedKey?.group?.claude_code_only || false"
       :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
@@ -1128,6 +1134,7 @@
       :show="showCodexQuickConfigModal"
       :api-key="selectedKey?.key || ''"
       :base-url="publicSettings?.api_base_url || ''"
+      :site-name="publicSettings?.site_name"
       :platform="selectedCodexQuickConfigPlatform"
       @close="closeCodexQuickConfigModal"
     />
@@ -1295,7 +1302,7 @@ import {
   buildCcSwitchImportDeeplink,
   type CcSwitchClientType
 } from '@/utils/ccswitchImport'
-import { isCodexQuickConfigPlatform } from '@/utils/codexQuickConfig'
+import { isCodexQuickConfigPlatform, resolveSiteProviderName } from '@/utils/codexQuickConfig'
 import { buildMagpieImportLink } from '@/utils/magpieImport'
 
 // Helper to format date for datetime-local input
@@ -2301,7 +2308,10 @@ const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
   const platform = row.group?.platform || 'anthropic'
 
   const usageScript = CC_SWITCH_USAGE_SCRIPT
-  const providerName = (publicSettings.value?.site_name || 'sub2api').trim() || 'sub2api'
+  const siteName = publicSettings.value?.site_name
+  const providerName = platform === 'openai'
+    ? resolveSiteProviderName(siteName)
+    : siteName?.trim() || 'sub2api'
   const deeplink = buildCcSwitchImportDeeplink({
     baseUrl,
     platform,

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -657,6 +658,9 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 	if account == nil {
 		return false
 	}
+	if account.IsGateway() && account.gatewayMessagesView != nil {
+		account = account.gatewayMessagesView
+	}
 	if !account.IsSchedulable() {
 		return true
 	}
@@ -804,7 +808,10 @@ type AudioUsage struct {
 type ForwardResult struct {
 	// Snapshotted at dispatch; billing-only, never rewrites upstream responses.
 	CacheCreationBilling1h bool
-	RequestID              string
+	// Only a successfully completed Claude response can receive the opt-in floor.
+	ProbePenaltyEligible bool
+	ProbePenalty         *ProbePenaltyReceipt
+	RequestID            string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
 	Usage           ClaudeUsage
@@ -1572,7 +1579,7 @@ func (s *GatewayService) DoGrokNativeResponsesJSON(ctx context.Context, account 
 			}
 		}
 	}
-	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	upstreamReq, err := http.NewRequestWithContext(withOAuth429WireBody(ctx, body), http.MethodPost, targetURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build grok responses request: %w", err)
 	}
@@ -1623,6 +1630,21 @@ func mixedListingModelAllowed(groupPlatform, model string) bool {
 }
 
 func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
+	legacy := s.cachedAvailableModels(ctx, groupID, platform)
+	catalog, err := s.readGatewayModelCatalog(ctx, groupID, platform)
+	if err != nil {
+		return legacy
+	}
+	models := catalog.directModels(platform)
+	if len(models) == 0 {
+		return legacy
+	}
+	combined := append(slices.Clone(legacy), models...)
+	slices.Sort(combined)
+	return slices.Compact(combined)
+}
+
+func (s *GatewayService) cachedAvailableModels(ctx context.Context, groupID *int64, platform string) []string {
 	cacheKey := modelsListCacheKey(groupID, platform)
 	if s.modelsListCache != nil {
 		if cached, found := s.modelsListCache.Get(cacheKey); found {
