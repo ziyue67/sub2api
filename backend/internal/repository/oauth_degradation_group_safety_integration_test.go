@@ -55,7 +55,7 @@ func TestOAuthDegradationScopedAdminServiceRestoresNativeGroupWithinPermission(t
 	require.NoError(t, err)
 	adminRepo := NewAdminAccountRepository(integrationEntClient, integrationDB, nil)
 	adminGroups := NewAdminGroupRepository(integrationEntClient, integrationDB)
-	admin := service.NewAdminService(nil, nil, adminGroups, adminRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, integrationEntClient, nil, nil, nil, nil, nil, nil, nil, nil, nil).(service.ScopedAdminAccounts)
+	admin := service.NewAdminService(nil, nil, adminGroups, adminRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, integrationEntClient, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).(service.ScopedAdminAccounts)
 	principal := &adminaccess.Principal{CreatorID: 9, Policy: adminaccess.Policy{Rules: []adminaccess.Rule{{Permissions: []string{"accounts.groups"}, GroupIDs: []int64{closed, kept}, AccountTypes: []string{"oauth"}, Platforms: []string{"openai"}}}}}
 	raw, err := json.Marshal([]int64{closed, kept})
 	require.NoError(t, err)

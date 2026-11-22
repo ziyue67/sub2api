@@ -42,7 +42,7 @@ func TestUpstreamChannelEntityHTTPAccountProfitPersistence(t *testing.T) {
 	require.NoError(t, e)
 	channelService := service.NewChannelService(repository.NewChannelRepository(db), nil, nil, nil, nil)
 	ch := admin.NewChannelHandler(channelService, nil, nil)
-	adminService := service.NewAdminService(cfg, userRepo, repository.NewAdminGroupRepository(client, db), repository.NewAdminAccountRepository(client, db, nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, client, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminService := service.NewAdminService(cfg, userRepo, repository.NewAdminGroupRepository(client, db), repository.NewAdminAccountRepository(client, db, nil), nil, nil, nil, nil, nil, nil, nil, nil, nil, client, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	ah := admin.NewAccountHandler(adminService, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	ah.SetUpstreamChannelService(channelService)
 	audit := service.NewAuditLogService(repository.NewAuditLogRepository(db), nil)

@@ -10,18 +10,19 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// Codex Desktop injects Companion Page context as agent function_call_output
-// items without a corresponding model call. Preserve their text as user context
-// before ordinary tool-output validation, including when replaying tool history.
-// Unrecognized outputs and items carrying a call identity remain untouched.
-// The current context entry point delegates to the established page-context
-// entry point so pinned recovery callers share the same implementation.
+// Codex injects external context as standalone outputs, without a model tool call.
+// Preserve their text as user context before ordinary tool-output validation,
+// including when replaying tool history. Unrecognized outputs and items carrying
+// a call identity remain untouched. Pinned recovery callers share this path.
 func normalizeCodexUntrustedContext(body []byte) ([]byte, bool) {
 	return normalizeCodexPageContext(body)
 }
 
 func normalizeCodexPageContext(body []byte) ([]byte, bool) {
-	if !mayContainCodexCallOutputCandidate(body, "codex_apps_open_page", "codex_apps_selected_page_part_", "browser_info", "goal_objective", "untrusted_context") {
+	if !mayContainCodexCallOutputCandidate(body,
+		"codex_apps_open_page", "codex_apps_selected_page_part_",
+		"browser_info", "goal_objective", "untrusted_context", "untrusted_content", "ide_context", "proposed_plan",
+	) {
 		return body, false
 	}
 	input := gjson.GetBytes(body, "input")
@@ -44,9 +45,9 @@ func normalizeCodexPageContext(body []byte) ([]byte, bool) {
 			return true
 		}
 		name, output := item.Get("name").String(), item.Get("output").String()
-		text := "<external_" + name + ">\n" + output + "\n</external_" + name + ">"
-		if name == "browser_info" || name == "goal_objective" || name == "untrusted_context" {
-			text = "<external_" + name + ">" + output + "</external_" + name + ">"
+		text := "<external_" + name + ">" + output + "</external_" + name + ">"
+		if validCodexPageContext(name, output) {
+			text = "<external_" + name + ">\n" + output + "\n</external_" + name + ">"
 		}
 		message, err := json.Marshal(map[string]any{
 			"type": "message",
@@ -89,12 +90,27 @@ func isCodexContext(item gjson.Result) bool {
 	if output.Type != gjson.String {
 		return false
 	}
-	name := item.Get("name").String()
-	if name == "browser_info" || name == "goal_objective" || name == "untrusted_context" {
-		return strings.TrimSpace(output.String()) != ""
+	return validCodexUntrustedContext(item.Get("name").String(), output.String())
+}
+
+func validCodexUntrustedContext(name, output string) bool {
+	switch name {
+	case "browser_info", "goal_objective", "untrusted_context", "ide_context":
+		return strings.TrimSpace(output) != ""
+	case "untrusted_content":
+		// Codex's fallback for an unnamed context source can carry any text, including an empty value.
+		return true
+	case "proposed_plan":
+		// Codex splits an approved plan by byte length, so a chunk can be all whitespace.
+		return output != ""
+	default:
+		return validCodexPageContext(name, output)
 	}
+}
+
+func validCodexPageContext(name, output string) bool {
 	if name == "codex_apps_open_page" {
-		return validCodexPageSnapshot(output.String())
+		return validCodexPageSnapshot(output)
 	}
 	const prefix = "codex_apps_selected_page_part_"
 	if !strings.HasPrefix(name, prefix) {
@@ -112,7 +128,7 @@ func isCodexContext(item gjson.Result) bool {
 	}
 	// Snapshot parts may split a JSON document, so validate the matching envelope
 	// rather than requiring each part to be independently valid JSON.
-	header, snapshot, hasNewline := strings.Cut(output.String(), "\n")
+	header, snapshot, hasNewline := strings.Cut(output, "\n")
 	wantHeader := "Companion Page snapshot part " + part + " of " + total + ":"
 	return hasNewline && strings.TrimSuffix(header, "\r") == wantHeader && strings.TrimSpace(snapshot) != "" &&
 		(totalNumber > 1 || validCodexPageSnapshot(snapshot))

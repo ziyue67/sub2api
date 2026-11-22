@@ -64,6 +64,7 @@ it('keeps A dismissed, shares B dismissal, reloads B and leaves future C visible
  const a = card(pinia), b = card(pinia); await flushPromises()
  expect(a.find('[data-testid="new-feature-badge"]').exists()).toBe(true)
  await a.get('[data-testid="new-feature-badge"]').trigger('click')
+ expect(useNewFeatureNoticeStore(pinia).isDismissed(41, id)).toBe(true)
  expect(b.find('[data-testid="new-feature-badge"]').exists()).toBe(false)
  a.unmount(); b.unmount()
  const reloaded = createPinia(), c = card(reloaded); await flushPromises()

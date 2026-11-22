@@ -1891,6 +1891,26 @@ func TestShouldReportOpenAIWSProxyAccountFailure(t *testing.T) {
 		require.Equal(t, "invalid or conflicting session identity", closeErr.Reason())
 	})
 
+	t.Run("duplicate client fields do not penalize account", func(t *testing.T) {
+		for _, field := range []string{"model", "reasoning.effort", "session.model"} {
+			t.Run(field, func(t *testing.T) {
+				localErr := service.NewOpenAIWSConflictingRequestFieldsError(field)
+				for _, err := range []error{localErr, fmt.Errorf("wrapped ingress turn: %w", localErr)} {
+					require.False(t, shouldReportOpenAIWSProxyAccountFailure(err))
+					require.ErrorIs(t, err, service.ErrOpenAIWSConflictingRequestFields)
+					var closeErr *service.OpenAIWSClientCloseError
+					require.ErrorAs(t, err, &closeErr)
+					require.Equal(t, coderws.StatusPolicyViolation, closeErr.StatusCode())
+				}
+			})
+		}
+	})
+
+	t.Run("upstream internal close still penalizes account", func(t *testing.T) {
+		err := service.NewOpenAIWSClientCloseError(coderws.StatusInternalError, "upstream websocket proxy failed", errors.New("upstream read failed"))
+		require.True(t, shouldReportOpenAIWSProxyAccountFailure(fmt.Errorf("wrapped ingress turn: %w", err)))
+	})
+
 	t.Run("upstream policy violation still penalizes account", func(t *testing.T) {
 		err := service.NewOpenAIWSClientCloseError(
 			coderws.StatusPolicyViolation,
@@ -2085,6 +2105,8 @@ type openAIResponsesWSUsageLogCase struct {
 	firstFrameCloseExpected bool
 	// secondTurnCloseExpected：第二个 turn 被拒（连接被 1008 关闭）。
 	secondTurnCloseExpected bool
+	// midFrameCloseExpected：midPayload 被拒（连接被 1008 关闭），帧不到达上游。
+	midFrameCloseExpected bool
 }
 
 type openAIResponsesWSUsageLogResult struct {
@@ -3518,6 +3540,19 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		err = clientConn.Write(writeCtx, coderws.MessageText, []byte(tc.midPayload))
 		cancelWrite()
 		require.NoError(t, err)
+		if tc.midFrameCloseExpected {
+			readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+			_, _, readErr := clientConn.Read(readCtx)
+			cancelRead()
+			require.Error(t, readErr, "mid frame should have been rejected with a close")
+			var closeErr coderws.CloseError
+			require.ErrorAs(t, readErr, &closeErr)
+			require.Equal(t, coderws.StatusPolicyViolation, closeErr.Code)
+			require.Contains(t, closeErr.Reason, tc.closeReason)
+			require.Len(t, upstreamPayloadCh, 1, "rejected mid frame must not reach upstream")
+			_ = clientConn.CloseNow()
+			return openAIResponsesWSUsageLogResult{}
+		}
 		readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
 		_, event, readErr := clientConn.Read(readCtx)
 		cancelRead()

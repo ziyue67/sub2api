@@ -16,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 // RegisterGatewayRoutes 注册 API 网关路由（Claude/OpenAI/Gemini 兼容）
@@ -62,6 +61,21 @@ func RegisterGatewayRoutes(
 	}
 	traffic := middleware.UserTraffic(trafficRecorder)
 	imageAdmission := middleware.ExcelBPSImageAdmission()
+	// 分组链上的中间件（白名单、字段歧义检查、合成路由）会在 handler 之前读完
+	// 请求体，路由级的上限来不及生效；纯文本入口的上限必须在分组层按路由选择。
+	textBodyRoutes := map[string]bool{
+		"/v1/systemone":                   true,
+		"/v1/alpha/search":                true,
+		"/v1/embeddings":                  true,
+		"/backend-api/codex/alpha/search": true,
+	}
+	groupBodyLimit := func(c *gin.Context) {
+		if textBodyRoutes[c.FullPath()] {
+			textBodyLimit(c)
+			return
+		}
+		bodyLimit(c)
+	}
 	clientRequestID := middleware.ClientRequestID()
 	opsErrorLogger := handler.OpsErrorLoggerMiddleware(opsService)
 	var captureTraffic gin.HandlerFunc
@@ -103,6 +117,11 @@ func RegisterGatewayRoutes(
 	groupAntiDistillation := middleware.GroupAntiDistillation(apiKeyService.CheckGroupAntiDistillation)
 	groupCodexCLIOnly := middleware.GroupCodexCLIOnly(settingService)
 	groupBlockSubagents := middleware.GroupBlockSubagents()
+
+	// 请求体字段歧义拒绝：同名字段重复且取值不一致（如两个不同的 model）时，
+	// 计费读到的值和实际转发的值会分叉。对所有分组生效，紧跟在白名单准入之后、
+	// 合成路由改写之前，白名单的拒绝响应保持不变。
+	rejectConflictingFields := middleware.RejectConflictingRequestFields()
 
 	isOpenAIResponsesCompatibleGatewayPlatform := func(c *gin.Context) bool {
 		// openai、grok 与多协议 API Key 供应商经 OpenAI 网关转发（平台清单）。
@@ -252,7 +271,7 @@ func RegisterGatewayRoutes(
 
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
-	gateway.Use(traffic, bodyLimit)
+	gateway.Use(traffic, groupBodyLimit)
 	gateway.Use(clientRequestID)
 	gateway.Use(opsErrorLogger)
 	gateway.Use(endpointNorm)
@@ -265,7 +284,7 @@ func RegisterGatewayRoutes(
 	gateway.GET("/images/history", h.OpenAIGateway.ImageHistory)
 	gateway.GET("/images/history/:id", h.OpenAIGateway.ImageHistoryDetail)
 	gateway.GET("/images/history/:id/files/:file", h.OpenAIGateway.ImageHistoryFile)
-	gateway.Use(groupModelAllowlist, apiKeyModelPolicy)
+	gateway.Use(groupModelAllowlist, rejectConflictingFields, apiKeyModelPolicy)
 	gateway.Use(groupCodexCLIOnly, groupBlockSubagents)
 	gateway.Use(groupAntiDistillation, groupStreamOnly)
 	// A serverless route may proxy to an older pod before local target resolution.
@@ -284,8 +303,8 @@ func RegisterGatewayRoutes(
 			}
 			h.Gateway.Messages(c)
 		})
-		// System One carries only JSON text, so it uses the text body limit.
-		gateway.POST("/systemone", textBodyLimit, h.Gateway.SystemOne)
+		// System One carries only JSON text; groupBodyLimit applies the text body limit.
+		gateway.POST("/systemone", h.Gateway.SystemOne)
 		// /v1/messages/count_tokens: OpenAI bridges upstream, Grok estimates
 		// locally, and Anthropic-compatible platforms retain their existing path.
 		gateway.POST("/messages/count_tokens", countTokensHandler)
@@ -313,7 +332,7 @@ func RegisterGatewayRoutes(
 			}
 			h.Gateway.Responses(c)
 		}))
-		gateway.POST("/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
+		gateway.POST("/alpha/search", h.OpenAIGateway.AlphaSearch)
 		gateway.GET("/responses", func(c *gin.Context) {
 			h.OpenAIGateway.ResponsesWebSocket(c)
 		})
@@ -325,7 +344,7 @@ func RegisterGatewayRoutes(
 			}
 			h.Gateway.ChatCompletions(c)
 		})
-		gateway.POST("/embeddings", textBodyLimit, func(c *gin.Context) {
+		gateway.POST("/embeddings", func(c *gin.Context) {
 			if !isOpenAIOnlyEndpointGatewayPlatform(c) {
 				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
 				c.JSON(http.StatusNotFound, gin.H{
@@ -440,6 +459,7 @@ func RegisterGatewayRoutes(
 	gemini.Use(middleware.APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg))
 	gemini.Use(captureTraffic)
 	gemini.Use(groupModelAllowlist)
+	gemini.Use(rejectConflictingFields)
 	gemini.Use(groupCodexCLIOnly, groupBlockSubagents)
 	gemini.Use(groupStreamOnly)
 	gemini.Use(compositeGeminiTarget)
@@ -477,7 +497,7 @@ func RegisterGatewayRoutes(
 	// 根路径别名共用中间件链：白名单准入在 apiKeyAuth 之后、compositeTarget
 	// 之前，避免逐条路由手工维护链导致漏挂。
 	rootRoute := func(method, path string, limit gin.HandlerFunc, handler gin.HandlerFunc) {
-		r.Handle(method, path, traffic, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, apiKeyModelPolicy, groupCodexCLIOnly, groupBlockSubagents, groupAntiDistillation, groupStreamOnly, apiKeyLongContext, podRoute, compositeTarget, apiKeyLongContext, requireGroupAnthropic, handler)
+		r.Handle(method, path, traffic, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, rejectConflictingFields, apiKeyModelPolicy, groupCodexCLIOnly, groupBlockSubagents, groupAntiDistillation, groupStreamOnly, apiKeyLongContext, podRoute, compositeTarget, apiKeyLongContext, requireGroupAnthropic, handler)
 	}
 	for _, prefix := range []string{"/api/v3", "/v3", "/v1", ""} {
 		rootRoute(http.MethodPost, prefix+"/contents/generations/tasks", bodyLimit, h.OpenAIGateway.SeedanceTasks)
@@ -494,13 +514,13 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/models/:model", bodyLimit, h.Gateway.Models)
 	rootRoute(http.MethodPost, "/messages/count_tokens", bodyLimit, countTokensHandler)
 	codexDirect := r.Group("/backend-api/codex")
-	codexDirect.Use(traffic, bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, apiKeyModelPolicy, groupCodexCLIOnly, groupBlockSubagents, groupAntiDistillation, groupStreamOnly, apiKeyLongContext, podRoute, compositeTarget, apiKeyLongContext, requireGroupAnthropic)
+	codexDirect.Use(traffic, groupBodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), captureTraffic, imageAdmission, groupModelAllowlist, rejectConflictingFields, apiKeyModelPolicy, groupCodexCLIOnly, groupBlockSubagents, groupAntiDistillation, groupStreamOnly, apiKeyLongContext, podRoute, compositeTarget, apiKeyLongContext, requireGroupAnthropic)
 	{
 		codexDirect.POST("/realtime/calls", h.OpenAIGateway.Live)
 		codexDirect.GET("/:call_id", h.OpenAIGateway.LiveSideband)
 		codexDirect.POST("/responses", responsesHandler)
 		codexDirect.POST("/responses/*subpath", guardResponsesSubpath(responsesHandler))
-		codexDirect.POST("/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)
+		codexDirect.POST("/alpha/search", h.OpenAIGateway.AlphaSearch)
 		codexDirect.GET("/responses", func(c *gin.Context) {
 			h.OpenAIGateway.ResponsesWebSocket(c)
 		})
@@ -616,7 +636,7 @@ func RegisterGatewayRoutes(
 	antigravityV1.Use(middleware.ForcePlatform(service.PlatformAntigravity))
 	antigravityV1.Use(gin.HandlerFunc(apiKeyAuth))
 	antigravityV1.Use(captureTraffic)
-	antigravityV1.Use(groupModelAllowlist, apiKeyModelPolicy)
+	antigravityV1.Use(groupModelAllowlist, rejectConflictingFields, apiKeyModelPolicy)
 	antigravityV1.Use(groupCodexCLIOnly, groupBlockSubagents)
 	antigravityV1.Use(groupStreamOnly)
 	antigravityV1.Use(apiKeyLongContext)
@@ -637,6 +657,7 @@ func RegisterGatewayRoutes(
 	antigravityV1Beta.Use(middleware.APIKeyAuthWithSubscriptionGoogle(apiKeyService, subscriptionService, cfg))
 	antigravityV1Beta.Use(captureTraffic)
 	antigravityV1Beta.Use(groupModelAllowlist)
+	antigravityV1Beta.Use(rejectConflictingFields)
 	antigravityV1Beta.Use(groupCodexCLIOnly, groupBlockSubagents)
 	antigravityV1Beta.Use(groupStreamOnly)
 	antigravityV1Beta.Use(apiKeyLongContext)
@@ -735,9 +756,7 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 				c.Request = c.Request.WithContext(service.WithCompositeRouteDecision(c.Request.Context(), decision))
 				if upstreamModel := strings.TrimSpace(decision.UpstreamModel); upstreamModel != "" && upstreamModel != model && gjson.ValidBytes(body) {
 					if _, modelPath := requestmodel.JSONModelPathForRoute(routePath, body); modelPath != "" {
-						if rewritten, rewriteErr := sjson.SetBytes(body, modelPath, upstreamModel); rewriteErr == nil {
-							body = rewritten
-						}
+						body = service.RewriteCompositeRequestModel(body, modelPath, upstreamModel)
 					}
 				}
 			}
