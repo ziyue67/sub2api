@@ -172,6 +172,10 @@ func (grokMediaSlotRepo) SetTempUnschedulable(context.Context, int64, time.Time,
 	return nil
 }
 
+func (*grokMediaValidationSettingsRepo) GetMultiple(context.Context, []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 func (*grokMediaValidationSettingsRepo) SetMultiple(context.Context, map[string]string) error {
 	return nil
 }

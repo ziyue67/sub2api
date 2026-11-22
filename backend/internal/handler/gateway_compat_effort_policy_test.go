@@ -41,7 +41,7 @@ func TestOpenAIResponsesUsageReportsConfigurationUpdateEffort(t *testing.T) {
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
 	t.Cleanup(billing.Stop)
 	gateway := service.NewOpenAIGatewayService(
-		&openAIWSUsageHandlerAccountRepoStub{account: account}, usageRepo, nil, nil, nil, nil, nil, cfg,
+		&openAIWSUsageHandlerAccountRepoStub{account: account}, nil, usageRepo, nil, nil, nil, nil, nil, cfg,
 		nil, nil, service.NewBillingService(cfg, nil), nil, billing, upstream, &service.DeferredService{},
 		nil, nil, nil, nil, nil, nil, nil,
 	)
@@ -56,7 +56,12 @@ func TestOpenAIResponsesUsageReportsConfigurationUpdateEffort(t *testing.T) {
 	require.Equal(t, "medium", gjson.GetBytes(bodies[0], "reasoning.effort").String())
 	require.JSONEq(t, input, gjson.GetBytes(bodies[0], "input").Raw)
 	require.Len(t, usageRepo.created, 1)
-	log := dto.UsageLogFromService(<-usageRepo.created)
+	recorded := <-usageRepo.created
+	require.NotNil(t, recorded.ReasoningEffort)
+	require.Equal(t, "medium", *recorded.ReasoningEffort)
+	require.NotNil(t, recorded.RequestedReasoningEffort)
+	require.Equal(t, "high", *recorded.RequestedReasoningEffort)
+	log := dto.UsageLogFromService(recorded)
 	require.NotNil(t, log.ReasoningEffort)
 	require.Equal(t, "high", *log.ReasoningEffort)
 }

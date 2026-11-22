@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { createPinia } from 'pinia'
 import PlazaModelPricingTable from '../PlazaModelPricingTable.vue'
 import zh from '@/i18n/locales/zh/dashboard'
 import en from '@/i18n/locales/en/dashboard'
@@ -44,7 +45,7 @@ describe.each([
     return mount(PlazaModelPricingTable, {
       props: { models: [model], rateMultiplier: 0.5, ...extraProps },
       global: {
-        plugins: [createI18n({ legacy: false, locale: language.locale, messages: { zh, en } })]
+        plugins: [createPinia(), createI18n({ legacy: false, locale: language.locale, messages: { zh, en } })]
       }
     })
   }

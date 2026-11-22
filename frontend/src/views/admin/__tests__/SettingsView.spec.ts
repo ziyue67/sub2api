@@ -798,7 +798,7 @@ describe("admin SettingsView payment visible method controls", () => {
     const add = wrapper.findAll('button').find(b => b.text() === 'admin.settings.webSearchEmulation.addProvider');
     await add!.trigger('click');
     const providerSelect = wrapper.findAll('select').find(s => s.find('option[value="deepseek"]').exists())!;
-    expect(providerSelect.findAll('option').map(o => o.attributes('value'))).toEqual(['brave', 'tavily', 'deepseek']);
+    expect(providerSelect.findAll('option').map(o => o.attributes('value'))).toEqual(['brave', 'tavily', 'deepseek', 'exa']);
     await providerSelect.setValue('deepseek');
     expect(wrapper.text()).toContain('admin.settings.webSearchEmulation.deepSeekHint');
     await wrapper.get('input[placeholder="admin.settings.webSearchEmulation.apiKeyPlaceholder"]').setValue('fictional-deepseek-key');

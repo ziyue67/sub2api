@@ -6,6 +6,8 @@ import type { DashboardStats } from '@/types'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import DashboardView from '../DashboardView.vue'
 
+enableAutoUnmount(afterEach)
+
 const { getSnapshotV2, getUserUsageTrend, getUserSpendingRanking, getConcurrencySummary } = vi.hoisted(() => ({
   getSnapshotV2: vi.fn(),
   getUserUsageTrend: vi.fn(),
@@ -237,6 +239,8 @@ describe('admin DashboardView', () => {
 
     expect(getSnapshotV2).toHaveBeenCalledTimes(1)
     const snapshotParams = getSnapshotV2.mock.calls[0][0]
+    expectDashboardRange(snapshotParams.start_date, snapshotParams.end_date)
+    expect(wrapper.getComponent(DateRangePicker).props('rolling24Hours')).toBe(true)
     expect(snapshotParams.granularity).toBe('hour')
     expect(snapshotParams.start_date).toMatch(RFC3339_RE)
     expect(snapshotParams.end_date).toMatch(RFC3339_RE)
