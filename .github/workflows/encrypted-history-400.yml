@@ -34,7 +34,7 @@ jobs:
         run: |
           bash .github/scripts/ci-ubuntu-mirrors.sh
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
-          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends redis-server
+          sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
       - name: Native recovery and unchanged 409 regressions
         working-directory: backend
         run: |

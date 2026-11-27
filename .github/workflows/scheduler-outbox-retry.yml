@@ -45,7 +45,7 @@ jobs:
           docker info > ../evidence/docker-info.txt
           if ! command -v gdb >/dev/null; then
             sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
-            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends gdb
+            sudo apt-get install -y --no-install-recommends gdb -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
           ulimit -c unlimited
           sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/scheduler-retry.core.%p" > ../evidence/core-pattern.txt

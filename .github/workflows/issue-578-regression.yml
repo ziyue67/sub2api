@@ -184,7 +184,7 @@ jobs:
           git rev-parse HEAD | tee evidence/head.txt
           bash .github/scripts/ci-ubuntu-mirrors.sh
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
-          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends postgresql redis-server
+          sudo apt-get install -y --no-install-recommends postgresql redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           for attempt in 1 2 3 4 5; do
             if (cd backend && go mod download all); then break; fi
             if [ "$attempt" -eq 5 ]; then exit 1; fi

@@ -131,7 +131,7 @@ jobs:
           if ! command -v gdb >/dev/null; then
             bash .github/scripts/ci-ubuntu-mirrors.sh
             sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
-            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends gdb
+            sudo apt-get install -y --no-install-recommends gdb -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
           uname -a > evidence/kernel.txt
           go version > evidence/toolchain.txt
