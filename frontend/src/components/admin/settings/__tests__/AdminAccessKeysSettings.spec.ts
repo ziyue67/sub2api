@@ -4,10 +4,11 @@ import AdminAccessKeysSettings from '../AdminAccessKeysSettings.vue'
 import zh from '@/i18n/locales/zh/adminAccessKeys'
 import en from '@/i18n/locales/en/adminAccessKeys'
 import { createI18n } from 'vue-i18n'
-const mountSettings = () => mount(AdminAccessKeysSettings, { global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh: { adminAccessKeys: zh }, en: { adminAccessKeys: en } } })], stubs: { teleport: true } } })
+const mountSettings = () => mount(AdminAccessKeysSettings, { global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh: { adminAccessKeys: zh }, en: { adminAccessKeys: en } } })], stubs: { teleport: true, NewFeatureBadge: true } } })
 import { getAllIncludingInactive } from '@/api/admin/groups'
 const mocks = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), update: vi.fn(), rotate: vi.fn(), revoke: vi.fn(), deleteRecord: vi.fn(), stepUp: vi.fn((fn: () => unknown) => fn()) }))
 vi.mock('@/api/admin/adminAccessKeys', () => mocks)
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 41 } }) }))
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: vi.fn().mockResolvedValue([{ id: 7, name: '测试分组' }]) }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/composables/useStepUp', () => ({ useStepUp: () => ({ run: mocks.stepUp }), isStepUpCancelled: () => false }))

@@ -248,35 +248,13 @@ describe('admin UsageView route filters', () => {
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('ranked-user@example.test')
   })
 
-  it('mounts the latency panel only after selecting its tab and passes supported filters', async () => {
+  it('omits the retired per-request diagnostic tabs', async () => {
     const wrapper = mountRouteFilteredUsageView()
     await flushPromises()
+    const labels = wrapper.findAll('[data-testid="usage-detail-tab"]').map(tab => tab.text())
+    expect(labels).not.toContain('latencyObservability.title')
     expect(wrapper.find('[data-test="latency-tab"]').exists()).toBe(false)
-
-    const vm = wrapper.vm as any
-    vm.filters.model = 'gpt-5.6-sol'
-    vm.filters.user_id = 42
-    vm.filters.api_key_id = 8
-    vm.filters.account_id = 7
-    vm.filters.group_id = 3
-    await wrapper.vm.$nextTick()
-
-    const latencyTab = wrapper.findAll('[data-testid="usage-detail-tab"]').find(tab => tab.text() === 'latencyObservability.title')!
-    await latencyTab.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[data-test="latency-tab"]').exists()).toBe(true)
-    expect(wrapper.findComponent(LatencyObservabilityPanelStub).props()).toMatchObject({
-      startDate: expect.any(String),
-      endDate: expect.any(String),
-      model: 'gpt-5.6-sol',
-      userId: 42,
-      apiKeyId: 8,
-      accountId: 7,
-      groupId: 3,
-      flat: true,
-      hideTitle: true,
-    })
+    expect(wrapper.find('[data-test="connection-tab"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

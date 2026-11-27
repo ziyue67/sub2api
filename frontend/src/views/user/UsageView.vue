@@ -127,7 +127,7 @@
           </div>
 
           <div class="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
-            <button type="button" @click="refreshData" :disabled="activeTab === 'errors' ? errorLoading : loading" class="btn btn-secondary">
+            <button type="button" @click="refreshData()" :disabled="activeTab === 'errors' ? errorLoading : loading" class="btn btn-secondary">
               {{ t('common.refresh') }}
             </button>
             <button type="button" @click="resetFilters" class="btn btn-secondary">
@@ -584,10 +584,12 @@ const refreshRollingRange = () => {
   filters.value.end_date = range.end
 }
 
-const refreshData = () => {
-  refreshRollingRange()
-  pagination.page = 1
-  errorPage.value = 1
+const refreshData = (resetPage = true) => {
+  if (resetPage) {
+    refreshRollingRange()
+    pagination.page = 1
+    errorPage.value = 1
+  }
   void loadLogs()
   void loadStats()
   void loadModelStats()
@@ -1012,7 +1014,7 @@ watch(activeTab, (tab, previous) => {
   } else if (usageRefreshPending && (tab === 'usage' || tab === 'errors')) {
     usageRefreshPending = false
     void loadFilterOptions()
-    refreshData()
+    refreshData(false)
   }
 }, { flush: 'sync' })
 

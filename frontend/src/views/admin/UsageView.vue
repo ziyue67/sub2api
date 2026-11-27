@@ -614,7 +614,6 @@ const refreshData = () => {
   refreshRollingRange()
   pagination.page = 1
   errPage.value = 1
-  connectionRefreshKey.value++
   invalidateModelStatsCache()
   loadLogs()
   loadStats(true)

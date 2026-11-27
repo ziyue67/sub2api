@@ -482,6 +482,7 @@ describe('EditAccountModal', () => {
   })
 
   it.each(['new_api', 'sub2api'])('keeps %s gateway models across connection and group edits', async (kind) => {
+    authIsSimpleMode.value = false
     const account = { ...buildAccount(), platform: 'gateway', type: 'gateway', group_ids: [10],
       credentials: { upstream_kind: kind, base_url: 'https://relay.example.com',
         model_mapping: { live: 'live', public: 'live' }, unknown_option: { keep: true } } } as any
@@ -505,6 +506,7 @@ describe('EditAccountModal', () => {
       upstream_kind: kind, base_url: 'https://edited.example.com', api_key: 'synthetic-new-key',
       model_mapping: account.credentials.model_mapping
     } })
+    authIsSimpleMode.value = true
   })
 
   it('keeps the target platform announcement independent, shared and persistent', async () => {
