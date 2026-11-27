@@ -166,7 +166,7 @@ describe('IQTestModal', () => {
     }
     const personalHistory = JSON.parse(localStorage.getItem('sub2api-pelican-test:42:personal:71')!)
     expect(personalHistory[0].pelicanQuestion).toEqual(question)
-    expect(localStorage.getItem('sub2api-pelican-test:42')).not.toContain('fixture-proof')
+    expect(localStorage.getItem('sub2api-pelican-test:42') || '').not.toContain('fixture-proof')
     await wrapper.setProps({ account: { id: 43, name: 'Second fixture', platform: 'openai', type: 'oauth', status: 'active' } as any })
     vm.selectQuestion('pelican')
     vm.selectPromptMode('personal_random')
@@ -304,6 +304,75 @@ describe('IQTestModal', () => {
     expect((wrapper.vm as any).modelId).toBe('gpt-6-astra')
   })
 
+  it('keeps a running test when the same administrator is refreshed', async () => {
+    const auth = useAuthStore()
+    auth.user = { id: 71, role: 'admin' } as any
+    let finish!: (response: Response) => void
+    global.fetch = vi.fn(() => new Promise<Response>(resolve => { finish = resolve })) as any
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+    vm.selectQuestion('pelican')
+    vm.modelId = 'custom-model'
+    const testing = vm.startTest()
+    await flushPromises()
+    expect(vm.running).toBe(true)
+    auth.user = { ...auth.user!, balance: 100 }
+    await flushPromises()
+    expect(vm.runs).toHaveLength(1)
+    expect(vm.modelId).toBe('custom-model')
+    expect(vm.questionKind).toBe('pelican')
+    finish(streamResponse([
+      { type: 'content', text: '<html><body>complete</body></html>' },
+      { type: 'test_complete', success: true }
+    ]))
+    await testing
+    expect(vm.runs[0].status).toBe('success')
+    expect(JSON.parse(localStorage.getItem('sub2api-pelican-test:42')!)[0].runs[0].status).toBe('success')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('saves a partially received answer before reload and restores it without another request', async () => {
+    let release!: (value: { done: boolean; value?: Uint8Array }) => void
+    const data = new TextEncoder().encode('data: {"type":"content","text":"partial answer"}\n\n')
+    const read = vi.fn()
+      .mockResolvedValueOnce({ done: false, value: data })
+      .mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    global.fetch = vi.fn(async () => ({ ok: true, body: { getReader: () => ({ read }) } } as unknown as Response)) as any
+    const wrapper = mountModal()
+    const testing = (wrapper.vm as any).startTest()
+    await flushPromises()
+    window.dispatchEvent(new Event('pagehide'))
+    const saved = JSON.parse(localStorage.getItem('sub2api-pelican-test:42')!)[0]
+    expect(saved.runs[0]).toMatchObject({ status: 'running', output: 'partial answer' })
+    wrapper.unmount()
+    release({ done: true })
+    await testing
+    // Simulate a hard reload where the component's unmount hook could not run.
+    localStorage.setItem('sub2api-pelican-test:42', JSON.stringify([saved]))
+    const restored = mountModal()
+    expect((restored.vm as any).runs[0]).toMatchObject({ status: 'error', interrupted: true, output: 'partial answer' })
+    expect(restored.text()).toContain('admin.accounts.pelicanTest.interrupted')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    restored.unmount()
+  })
+
+  it('retains completed parallel samples and the incomplete response when the stream disconnects', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(streamResponse([{ type: 'content', text: '21' }, { type: 'test_complete', success: true }]))
+      .mockResolvedValueOnce(streamResponse([{ type: 'content', text: 'partial' }]))
+    const wrapper = mountModal()
+    const vm = wrapper.vm as any
+    vm.parallelCount = 2
+    await vm.startTest()
+    const record = JSON.parse(localStorage.getItem('sub2api-pelican-test:42')!)[0]
+    expect(record.runs).toMatchObject([
+      { status: 'success', output: '21' },
+      { status: 'error', output: 'partial', error: 'admin.accounts.pelicanTest.interrupted' }
+    ])
+    expect(wrapper.text()).toContain('admin.accounts.pelicanTest.interrupted')
+    wrapper.unmount()
+  })
   it('ignores fragmented keepalive comments without changing generated HTML', async () => {
     const html = '<!doctype html><html><body>verified</body></html>'
     global.fetch = vi.fn(() => Promise.resolve(streamResponse([

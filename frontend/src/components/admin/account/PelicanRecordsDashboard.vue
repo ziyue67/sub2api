@@ -146,16 +146,19 @@ function formatDate(value?: string) {
 const verdictKeys: Record<StateProbeVerdict, string> = { healthy: 'verdictHealthy', degraded: 'verdictDegraded', inconclusive: 'verdictInconclusive' }
 function statusLabel(record: DisplayRecord) {
   if (record.verdict) return t(`admin.accounts.pelicanTest.probe.${verdictKeys[record.verdict]}`)
+  if (record.status === 'running') return t('admin.accounts.pelicanTest.runningShort')
   return t(record.status === 'success' ? 'admin.accounts.pelicanTest.success' : 'admin.accounts.pelicanTest.failed')
 }
 function statusClass(record: DisplayRecord) {
   if (record.verdict === 'inconclusive') return 'text-gray-500'
   if (record.verdict) return record.verdict === 'healthy' ? 'text-emerald-600' : 'text-red-500'
+  if (record.status === 'running') return 'text-amber-600'
   return record.status === 'success' ? 'text-emerald-600' : 'text-red-500'
 }
 function detailText(card: Card) {
   if (card.loadError) return card.loadError
   if (card.record.verdict) return card.record.output || card.record.error
+  if (card.record.source === 'manual' && card.record.error && card.record.output) return `${card.record.error}\n\n${card.record.output}`
   return card.record.error || card.record.output
 }
 function duration(value?: number) { return typeof value === 'number' && Number.isFinite(value) ? `${(value / 1000).toFixed(1)} s` : '—' }

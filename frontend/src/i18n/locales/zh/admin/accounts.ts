@@ -2411,6 +2411,7 @@ export default {
         downloadAll: '下载全部结果',
         noResponseBody: '测试接口没有返回响应流',
         emptyResponse: '模型返回为空',
+        interrupted: '测试连接已中断，已保留收到的内容，请查看记录或手动重新开始。',
         invalidHtml: '模型没有返回可展示的独立 HTML',
         modeQuestion: '题目测试',
         modeProbe: '探针测试',

@@ -2314,6 +2314,7 @@ export default {
         downloadAll: 'Download all results',
         noResponseBody: 'The test endpoint returned no response stream',
         emptyResponse: 'The model returned an empty response',
+        interrupted: 'The test connection was interrupted. Received output has been kept. Review the record or manually start another test.',
         invalidHtml: 'The model did not return standalone HTML that can be displayed',
         modeQuestion: 'Question test',
         modeProbe: 'Probe test',
