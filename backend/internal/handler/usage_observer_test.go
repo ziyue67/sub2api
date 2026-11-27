@@ -43,7 +43,7 @@ func (r *observerUsageRepo) OwnUsageFilterOptions(_ context.Context, id int64, _
 }
 func observerUsageRouter(r *observerUsageRepo, role string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	h := NewUsageHandler(service.NewUsageService(r, nil, nil, nil), nil, nil, nil)
+	h := NewUsageHandler(service.NewUsageService(r, nil, nil, nil), nil, nil, nil, nil)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})

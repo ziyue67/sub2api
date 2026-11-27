@@ -468,7 +468,7 @@ func newUsageRecordsCrossInstanceRouter(t *testing.T, keys *service.APIKeyServic
 	cfg := fixture.config
 	settingService := service.NewSettingService(fixture.setting, cfg)
 	usageService := service.NewUsageService(fixture.usage, nil, nil, nil)
-	usageHandler := handler.NewUsageHandler(usageService, keys, nil, settingService)
+	usageHandler := handler.NewUsageHandler(usageService, keys, nil, settingService, nil)
 	handlers := &handler.Handlers{
 		Gateway:       &handler.GatewayHandler{},
 		OpenAIGateway: &handler.OpenAIGatewayHandler{},

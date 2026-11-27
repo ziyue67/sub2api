@@ -548,7 +548,7 @@
       <template #pagination><Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" /></template>
     </TablePageLayout>
     <NewAPIUpstreamConfigDialog v-if="authStore.isAdmin" :show="newAPIConfigAccount !== null" :account="newAPIConfigAccount" @close="newAPIConfigAccount = null" @saved="reload" />
-    <CreateAccountModal :show="showCreate" :proxies="proxies" :proxies-loading="proxiesLoading" :proxies-load-error="proxiesLoadError" :groups="groups" @retry-proxies="loadProxyCatalog" @close="showCreate = false" @created="reload" />
+    <CreateAccountModal :show="showCreate" :proxies="proxies" :proxies-loading="proxiesLoading" :proxies-load-error="proxiesLoadError" :groups="groups" @retry-proxies="loadProxyCatalog" @close="showCreate = false" @created="handleAccountsCreated" />
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :proxies-loading="proxiesLoading" :proxies-load-error="proxiesLoadError" :groups="groups" @retry-proxies="loadProxyCatalog" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" @tested="reload" />
@@ -768,6 +768,36 @@ const showProxyLanes = ref(false)
 const showIQTest = ref(false)
 const showErrorPassthrough = ref(false)
 const showTLSFingerprintProfiles = ref(false)
+
+// Proxy account counts change whenever accounts are created, deleted, imported
+// or rebound, so reload them each time a proxy-picking dialog opens. Only a
+// response newer than the last applied one is used, so a slow older response
+// never overwrites fresher counts, while a failed newer request does not
+// discard an older success; a failed refresh keeps the previous list.
+let proxiesLoadSeq = 0
+let proxiesAppliedSeq = 0
+const loadProxies = async (): Promise<void> => {
+  const seq = ++proxiesLoadSeq
+  try {
+    const list: AccountProxy[] = await adminAPI.proxies.getAllWithCount()
+    if (seq > proxiesAppliedSeq) {
+      proxiesAppliedSeq = seq
+      proxies.value = list
+    }
+  } catch (error: unknown) {
+    console.error('Failed to load proxies:', error)
+  }
+}
+watch([showCreate, showEdit, showBulkEdit], (open: boolean[], wasOpen: boolean[] | undefined) => {
+  if (open.some((isOpen: boolean, i: number) => isOpen && !wasOpen?.[i])) void loadProxies()
+})
+// Batch creation can partially succeed and keep the dialog open for the
+// remaining items, so refresh counts on every successful creation too.
+const handleAccountsCreated = (): void => {
+  void reload()
+  void loadProxies()
+}
+
 const edAcc = ref<Account | null>(null)
 const tempUnschedAcc = ref<Account | null>(null)
 const deletingAcc = ref<Account | null>(null)

@@ -1009,12 +1009,20 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	// 服务端 ExtractUpstreamErrorMessage 也能从透传的 body 中提取 message。
 	clientDisconnected := false
 	var markClientDisconnected func(error)
+	var flushToolCarry func()
+	toolNameRestorer := newToolNameStreamRestorer(toolNameRewriteFromContext(c))
 	errorEventSent := false
 	sendErrorEvent := func(reason, message string) {
 		if errorEventSent || clientDisconnected {
 			return
 		}
 		errorEventSent = true
+		if flushToolCarry != nil {
+			flushToolCarry()
+			if clientDisconnected {
+				return
+			}
+		}
 		if message == "" {
 			message = reason
 		}
@@ -1305,6 +1313,30 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			markClientDisconnected(err)
 		}
 	}
+	writeBlock := func(block string) {
+		if clientDisconnected {
+			return
+		}
+		prepareHeaders()
+		if _, err := io.WriteString(w, reverseToolNamesIfPresentString(c, block)); err != nil {
+			markClientDisconnected(err)
+			return
+		}
+		if err := FlushGatewayResponse(w); err != nil {
+			markClientDisconnected(err)
+			return
+		}
+		lastDataAt = time.Now()
+		resetKeepaliveTimer()
+	}
+	flushToolCarry = func() {
+		if clientDisconnected || !c.Writer.Written() || toolNameRestorer == nil {
+			return
+		}
+		for _, payload := range toolNameRestorer.flush() {
+			writeBlock("event: content_block_delta\ndata: " + string(payload) + "\n\n")
+		}
+	}
 	consumePending := func() error {
 		if len(pendingEventLines) == 0 {
 			return nil
@@ -1349,17 +1381,21 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				_, _ = terminalFrames.WriteString(block)
 				continue
 			}
-			prepareHeaders()
-			if _, err := io.WriteString(w, reverseToolNamesIfPresentString(c, block)); err != nil {
-				markClientDisconnected(err)
-				return nil
+			if toolNameRestorer == nil || data == "" {
+				writeBlock(block)
+				continue
 			}
-			if err := FlushGatewayResponse(w); err != nil {
-				markClientDisconnected(err)
-				return nil
+			payload := streamEventBytes(data)
+			var restored [2][]byte
+			n := toolNameRestorer.restoreInto(payload, &restored)
+			for i, event := range restored[:n] {
+				if i == n-1 && bytes.Equal(event, payload) {
+					writeBlock(block)
+					continue
+				}
+				eventName := gjson.GetBytes(event, "type").String()
+				writeBlock("event: " + eventName + "\ndata: " + string(event) + "\n\n")
 			}
-			lastDataAt = time.Now()
-			resetKeepaliveTimer()
 		}
 		return nil
 	}
@@ -1415,6 +1451,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					}
 					return result(), failure.err
 				}
+				flushToolCarry()
+				if clientDisconnected {
+					return incompleteDrain(disconnectCause)
+				}
 				prepareHeaders()
 				if _, err := io.WriteString(w, reverseToolNamesIfPresentString(c, terminalFrames.String())); err != nil {
 					markClientDisconnected(err)
@@ -1453,7 +1493,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 						ResponseBody:           body,
 						RetryableOnSameAccount: true,
 					}
-					if usesOpenAIOAuthRetryAffinity(account) && !classifyUpstreamTransportError(ev.err).Persistent {
+					if usesOpenAIOAuthRetryAffinity(account) && classifyUpstreamTransportError(ev.err) == upstreamTransportTransient {
 						failoverErr.preserveOpenAIOAuthBinding()
 					}
 					return nil, failoverErr

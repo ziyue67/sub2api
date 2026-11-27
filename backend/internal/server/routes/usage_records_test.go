@@ -56,7 +56,7 @@ func (r *recordsRouteLogs) ListUsageRecords(_ context.Context, userID, keyID int
 func registerRecordsRoute(t *testing.T, r *gin.Engine, keys *service.APIKeyService, subs *service.SubscriptionService, settings *service.SettingService, cfg *config.Config) *recordsRouteLogs {
 	t.Helper()
 	logs := &recordsRouteLogs{}
-	usage := handler.NewUsageHandler(service.NewUsageService(logs, nil, nil, nil), keys, nil, nil)
+	usage := handler.NewUsageHandler(service.NewUsageService(logs, nil, nil, nil), keys, nil, nil, nil)
 	client := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	h := &handler.Handlers{

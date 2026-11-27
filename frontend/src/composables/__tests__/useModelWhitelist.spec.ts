@@ -25,6 +25,15 @@ describe('useModelWhitelist', () => {
     expect(getModelsByPlatform('bedrock')).toEqual(getModelsByPlatform('anthropic'))
   })
 
+  it('Kimi Coding Plan model options include exact K3.1 IDs', () => {
+    for (const platform of ['kimi', 'moonshot']) {
+      const models = getModelsByPlatform(platform)
+      expect(models).toContain('k3.1-pro')
+      expect(models).toContain('k3.1-pro-highspeed')
+      expect(models).not.toContain('k3.1')
+    }
+  })
+
   it('平台清单中没有内置模型列表的多协议供应商不预填白名单', () => {
     setPlatformCatalog({
       ...BUILTIN_PLATFORM_CATALOG,

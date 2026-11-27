@@ -64,7 +64,7 @@ func newRecordsFixture(t *testing.T, repo recordsTestRepo, flags map[string]stri
 	t.Cleanup(func() { _ = client.Close() })
 	cfg := &config.Config{JWT: config.JWTConfig{Secret: "unit-test-cursor-secret"}}
 	settings := service.NewSettingService(recordsTestSettings{values: flags, onRead: repo.onRead}, cfg)
-	usage := NewUsageHandler(service.NewUsageService(repo, nil, nil, nil), nil, nil, settings)
+	usage := NewUsageHandler(service.NewUsageService(repo, nil, nil, nil), nil, nil, settings, nil)
 	return recordsFixture{t, NewUsageRecordsHandler(usage, ratelimit.NewRateLimiter(client), cfg), cache}
 }
 
