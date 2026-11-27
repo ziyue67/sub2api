@@ -62,11 +62,6 @@ func SetupRouter(
 	r.Use(middleware2.SessionBindingContext(cfg))
 	r.Use(middleware2.GlobalIPBlacklist(cfg))
 	r.Use(middleware2.Logger())
-	var connectionRecorder middleware2.ConnectionTraceRecorder
-	if handlers.Admin != nil && handlers.Admin.Usage != nil {
-		connectionRecorder = handlers.Admin.Usage
-	}
-	r.Use(middleware2.RequestTiming(connectionRecorder))
 	r.Use(middleware2.CORS(cfg.CORS))
 	r.Use(middleware2.SecurityHeaders(cfg.Security.CSP, func() []string {
 		if p := cachedFrameOrigins.Load(); p != nil {

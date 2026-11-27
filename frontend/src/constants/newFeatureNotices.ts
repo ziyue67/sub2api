@@ -4,6 +4,11 @@
  * browser; use a new ID to announce the feature again in a later release.
  */
 export const NEW_FEATURE_NOTICES = {
+  monitorV3ComponentModels: 'channel-monitor-v3-component-models',
+  adminKeyFullAccess: 'admin-key-full-access-compatibility',
+  upstreamBillingGroupSync: 'upstream-billing-group-sync',
+  headerOverrideVariables: 'header-override-identity-variables',
+  domesticRouteAutoSchedule: 'domestic-route-auto-schedule',
   modelPlazaCurrency: 'model-plaza-display-currency-20261121',
   exaSearch: 'exa-search-provider',
   claudeWindowCost: 'claude-window-cost-estimate',
@@ -12,6 +17,7 @@ export const NEW_FEATURE_NOTICES = {
   channelConfig: 'channel-configuration-20261119',
   imageUsageBilling: 'image-usage-minimum-charge-20261119',
   crossPlatformGatewayAccounts: 'cross-platform-gateway-accounts',
+  gatewayModelSync: 'gateway-account-model-sync-20261122',
   newAPICostConversion: 'new-api-cost-conversion-20261119',
   accountOpsBalanceNotification: 'account-ops-per-account-balance-notification-20261119',
   channelUltrafastPricing: 'channel-ultrafast-pricing-initial-announcement',
@@ -72,6 +78,7 @@ export const NEW_FEATURE_NOTICES = {
   apiKeyModelPolicy: 'api-key-model-policy-initial-announcement',
   apiKeyLongContext: 'api-key-long-context-control-initial-announcement',
   apiKeyContextTokenLimit: 'api-key-context-token-limit-initial-announcement',
+  usageRecordsApi: 'usage-records-api-initial-announcement',
   apiKeyUsageDateRange: 'api-key-usage-date-range-initial-announcement',
   providerProfit: 'profit-operations-provider-reconciliation',
   profitOperationsToday: 'profit-operations-today-filter-initial-announcement',
@@ -81,6 +88,7 @@ export const NEW_FEATURE_NOTICES = {
   vipAutoCreditEmail: 'vip-auto-credit-email',
   oauthInitialTOTPRotation429: 'oauth-initial-totp-rotation-on-429-initial-announcement',
   oauthInitialDisableScheduling429: 'oauth-initial-disable-scheduling-on-429-initial-announcement',
+  oauthImportScheduling: 'oauth-import-scheduling-initial-announcement',
   oauthInitialWSSettings: 'oauth-initial-ws-settings-initial-announcement',
   aiOpsCodex: 'ai-ops-codex-observe-initial-announcement',
   aiOpsProposalCancel: 'ai-ops-proposal-cancel-initial-announcement',

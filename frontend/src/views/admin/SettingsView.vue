@@ -9977,7 +9977,7 @@ const rectifierForm = reactive({
   enabled: true,
   thinking_signature_enabled: true,
   thinking_budget_enabled: true,
-  apikey_signature_enabled: false,
+  apikey_signature_enabled: true,
   apikey_signature_patterns: [] as string[],
 });
 

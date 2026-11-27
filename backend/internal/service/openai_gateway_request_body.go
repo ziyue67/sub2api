@@ -72,11 +72,11 @@ func buildOpenAIResponsesURLForPlatform(platform string, base string) string {
 	return buildOpenAIResponsesURL(base)
 }
 
-func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account) bool {
+func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account, model string) bool {
 	if account == nil {
 		return false
 	}
-	if account.Platform == PlatformMistral {
+	if account.Platform == PlatformMistral || (account.Platform == PlatformQwen && qwenEffortModel(account.GetMappedModel(model))) {
 		return true
 	}
 	if account.IsOpenAIPassthroughEnabled() {
@@ -96,7 +96,7 @@ func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account) bool {
 // non-reasoning model. Treat that catalog-only "none" value as omission for
 // compatible upstreams, while preserving official OpenAI request semantics.
 func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body []byte) ([]byte, error) {
-	if len(body) == 0 || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
+	if len(body) == 0 || shouldPreserveOpenAIResponsesNoneReasoningEffort(account, gjson.GetBytes(body, "model").Str) {
 		return body, nil
 	}
 
@@ -123,7 +123,8 @@ func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body [
 }
 
 func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body map[string]any) {
-	if body == nil || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
+	model, _ := body["model"].(string)
+	if body == nil || shouldPreserveOpenAIResponsesNoneReasoningEffort(account, model) {
 		return
 	}
 	if effort, ok := body["reasoning_effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
@@ -1803,7 +1804,7 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 		}
 	}
 	needsOrphanCleanup := account != nil && account.IsOpenAIOAuthLike() &&
-		gjson.GetBytes(normalized, "input").IsArray() && openAIResponsesMayNeedOrphanCleanup(normalized)
+		gjson.Get(openAIWSPayloadStringView(normalized), "input").IsArray() && openAIResponsesMayNeedOrphanCleanup(normalized)
 	if needsOrphanCleanup || openAIResponsesInputMayNeedTruncation(normalized) {
 		var reqBody map[string]any
 		if err := decodeOpenAIJSONUseNumber(normalized, &reqBody); err != nil {
@@ -1907,7 +1908,8 @@ func normalizeOpenAIPassthroughOAuthBody(body []byte, compact bool) ([]byte, boo
 		changed = true
 	}
 
-	if inputResult := gjson.GetBytes(normalized, "input"); inputResult.Exists() {
+	// Inspect the input in place so an already-normalized history array is never copied here.
+	if inputResult := gjson.Get(openAIWSPayloadStringView(normalized), "input"); inputResult.Exists() {
 		switch {
 		case inputResult.Type == gjson.String:
 			text := inputResult.String()

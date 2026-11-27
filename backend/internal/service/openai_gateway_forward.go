@@ -92,6 +92,12 @@ func prismBrowserResponsesURL(baseURL string) string {
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, resultErr error) {
+	portable := OpenAIWSAgentRecoveryCanRetry(ctx) && !OpenAIAgentRecoveryNoReplay(ctx) &&
+		codexWSAnchorFromContext(ctx) == nil && openAIWSHandshakePayloadPortable(body)
+	if original, ok := ctx.Value(openAIWSHandshakeClientSourceKey{}).(bool); ok {
+		portable = portable && original
+	}
+	ctx = context.WithValue(ctx, openAIWSHandshakeReplayKey{}, portable)
 	if account.gatewayProtocolsPending() {
 		view, err := s.gatewayProtocolAccount(ctx, account, "openai", gatewayProtocolBodyModel(body))
 		if err != nil {
@@ -100,13 +106,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		account = view
 	}
 	ctx = s.withOAuth429Routing(ctx, gjson.GetBytes(body, "model").String(), IsOpenAIResponsesCompactPath(c))
-	endpoint := ""
-	if IsOpenAIResponsesCompactPath(c) {
-		endpoint = "/responses/compact"
-	}
-	if account.isOAuth429ModelBlockedForEndpoint(gjson.GetBytes(body, "model").String(), endpoint, oauth429CompactModel(ctx)) {
-		return nil, denyOpenAITurn("model_runtime_blocked")
-	}
 	preparedCtx, preparedBody, prepareErr := s.prepareOpenAIAgentOAuthReplay(ctx, account, body)
 	if prepareErr != nil {
 		return nil, prepareErr
@@ -124,7 +123,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, admissionErr
 	}
 	ctx = admittedCtx
-	endpoint = openAIResponsesUpstreamEndpoint
+	endpoint := openAIResponsesUpstreamEndpoint
 	if IsOpenAIResponsesCompactPath(c) {
 		endpoint += "/compact"
 	}
@@ -172,6 +171,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	account = latest
 	ctx = WithSelectedAccountProxyLane(ctx, account)
+	body = normalizeQwenRequestEffort(account, body, "", "reasoning.effort")
 	if err := CheckUpstreamModeration(ctx, c, account); err != nil {
 		return nil, err
 	}
@@ -1249,7 +1249,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			}
 			var capacityFailover *UpstreamFailoverError
 			if errors.As(wsErr, &capacityFailover) && !c.Writer.Written() {
-				return nil, capacityFailover
+				return nil, wsErr
 			}
 			if IsOpenAITurnAdmissionError(wsErr) {
 				return nil, wsErr
@@ -1583,7 +1583,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 		// Handle error response
 		if resp.StatusCode >= 400 {
-			respBody := s.readUpstreamErrorBody(resp)
+			respBody, errorBodyComplete := s.readUpstreamErrorBodyWithIntegrity(resp)
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
@@ -1626,7 +1626,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				// text. Do not borrow field/compact/failover retry budgets here.
 				return s.handleErrorResponse(ctx, resp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 			}
-			if openAIAgentRecoveryPreservesHistory(ctx) {
+			quotaRejected := errorBodyComplete && openAIAgentQuotaFailoverAllowed(ctx, resp.StatusCode, respBody)
+			if openAIAgentRecoveryPreservesHistory(ctx) && !quotaRejected {
 				return s.handleErrorResponse(ctx, resp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 			}
 			if retryBody, reason, changed, retryErr := normalizeOpenAIResponsesRejectedFieldRetryBody(resp.StatusCode, body, respBody); retryErr != nil {
@@ -1678,8 +1679,15 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					Detail:             upstreamDetail,
 				})
 
+				if quotaRejected {
+					if recovery := openAIAgentRecoveryFromContext(ctx); recovery.delivery != nil {
+						if err := recovery.delivery.rejectBeforeExecution(); err != nil {
+							return nil, err
+						}
+					}
+				}
 				shouldDisable := s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
-				return nil, s.newOpenAIAccountFailoverError(
+				failover := s.newOpenAIHTTPAccountFailoverError(
 					account,
 					resp.StatusCode,
 					resp.Header,
@@ -1688,6 +1696,8 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					shouldDisable,
 					!shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
 				)
+				failover.QuotaRejectedBeforeExecution = quotaRejected
+				return nil, failover
 			}
 			return s.handleErrorResponse(ctx, resp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 		}
@@ -1790,7 +1800,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 							Message:            signal.message,
 						})
 						shouldDisable := s.handleFailoverSideEffects(ctx, compactResp, account, compactBody, upstreamModel)
-						return nil, s.newOpenAIAccountFailoverError(
+						return nil, s.newOpenAIHTTPAccountFailoverError(
 							account, compactResp.StatusCode, compactResp.Header, compactBody, signal.message, shouldDisable,
 							!shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(compactResp.StatusCode) || isOpenAITransientProcessingError(compactResp.StatusCode, signal.message, compactBody)),
 						)
@@ -2284,7 +2294,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 	applyOpenCodeUpstreamUserAgent(account, targetURL, req.Header)
 
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverridesWithContext(req.Context(), req.Header)
 	if account.QwenSessionCacheEnabled() {
 		req.Header.Set("x-dashscope-session-cache", "enable")
 	}

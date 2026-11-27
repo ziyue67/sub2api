@@ -20,6 +20,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/UsersView.spec.ts \
 	src/components/user/__tests__/UserLiveUsageCell.spec.ts \
 	src/components/common/__tests__/NewFeatureBadge.spec.ts \
+	src/components/admin/settings/__tests__/AdminAccessKeysSettings.spec.ts \
 	src/components/admin/group/__tests__/GroupAntiDistillationSettings.spec.ts \
 	src/views/admin/__tests__/ChannelsView.modelSync.spec.ts \
 	src/views/admin/__tests__/ChannelsView.webSearchEmulation.spec.ts \
@@ -84,8 +85,11 @@ FRONTEND_CRITICAL_VITEST := \
 	src/stores/__tests__/supportTickets.spec.ts \
 	src/views/admin/__tests__/ChannelMonitorView.modeSwitch.spec.ts \
 	src/views/admin/__tests__/AccountQualityView.spec.ts \
+	src/views/admin/__tests__/AccountsView.lite.spec.ts \
+	src/api/__tests__/admin.accounts.upstreamBillingProbe.spec.ts \
 	src/views/admin/__tests__/AccountsView.bulkEdit.spec.ts \
 	src/views/admin/__tests__/AccountsView.declarationRefresh.spec.ts \
+	src/views/admin/__tests__/AccountsView.newAPIConfig.spec.ts \
 	src/utils/__tests__/accountUpstreamModelAutoSync.spec.ts \
 	src/utils/__tests__/qualityRulePatch.spec.ts \
 	src/components/admin/operations/__tests__/QualityOwnershipReview.spec.ts \
@@ -105,9 +109,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/common/__tests__/DateRangePicker.midnight.spec.ts \
 	src/components/admin/usage/__tests__/UsageStatsCards.spec.ts \
 	src/components/admin/usage/__tests__/UsageCleanupDialog.spec.ts \
+	src/components/usage/__tests__/UsageApiGuide.spec.ts \
 	src/views/user/__tests__/UsageView.spec.ts \
-	src/components/usage/__tests__/TrafficPanel.spec.ts \
-	src/api/__tests__/traffic.spec.ts \
 	src/views/user/__tests__/UsageEntryView.spec.ts \
 	src/components/admin/usage/__tests__/UsageFilters.spec.ts \
 	src/components/admin/usage/__tests__/LatencyObservabilityPanel.spec.ts \

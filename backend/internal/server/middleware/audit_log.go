@@ -53,6 +53,7 @@ func SkipAudit(c *gin.Context) {
 // are never accepted through this channel.
 var auditExtraAllowedKeys = map[string]struct{}{
 	"cache_billing_1h_before": {}, "cache_billing_1h_after": {},
+	"admin_key_id": {}, "full_access": {}, "full_access_before": {},
 	"source": {}, "target_channel_id": {}, "reason_code": {}, "readback": {}, "remaining_count": {}, "target_user_id": {},
 	"anonymous_api_enabled": {},
 	"admin_key_id":          {}, "full_access": {}, "full_access_before": {},

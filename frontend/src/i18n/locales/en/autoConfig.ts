@@ -60,17 +60,17 @@ export default {
     errors: { accounts_unavailable: 'Could not read account state.', metric_unavailable: 'Could not read the monitored metric.', account_enable_failed: 'Some fallback accounts could not be enabled. Check their state.' }
   },
  degradation: {
-  "independentScope": "Use up to 200 business samples per account and model in the last hour. Model restrictions apply only when enabled and the tested model is outside the retained list.",
+  "independentScope": "Only requests forwarded to Sol or Astra count toward the 429 threshold and qualify for retests. Use up to 200 business samples per account and model in the last hour. Confirmed reviews apply the selected account actions. Enabling model restrictions updates the account mapping using the retained model whitelist.",
   "independentSamples": "Minimum business request samples (20–200)",
-  "independentHint": "Business HTTP 429 pressure can trigger tests on the original account and model. Two complete wrong answers or five consecutive upstream HTTP 429 test responses can restrict the model. Timeouts, empty or truncated answers, and the text 429 do not count toward the streak.",
+  "independentHint": "Business HTTP 429 pressure can trigger tests on the original account and model. Only five consecutive upstream HTTP 429 responses in the same review trigger the configured degradation actions. Timeouts, empty or truncated answers, and the text 429 do not count toward the streak.",
   "independentEnable": "Run independent tests at the 429 threshold",
   "title": "Degradation actions",
   "hint": "The probe branch retains its confirmation policy. HTTP 429 pressure only starts the independent tests below; it never proves a wrong answer or directly changes account concurrency.",
   "conditions": "Conditions",
   "conditionsRequired": "Select 429 evidence or enable candy confirmation tests.",
-  "candyRetest": "Run two immediate candy tests and require two confirmed wrong answers",
+  "candyRetest": "Run two immediate candy tests. Both must return a wrong answer or HTTP 429 from the tested account.",
   "probeEvent": "Degradation {percent}% ≥ {threshold}% · {samples} conclusive rounds",
-  "candyEvent": "{model} candy confirmation · {wrong}/2 wrong answers",
+  "candyEvent": "{model} candy confirmation · {wrong} wrong answers, {rateLimited} rate-limited answers",
   "upstream429": "Excessive 429 errors",
   "upstreamErrorThreshold": "Upstream error threshold (%)",
   "upstream429ShareThreshold": "429 share of error responses (%)",
@@ -205,6 +205,9 @@ export default {
   "concurrency": "Initial concurrency",
   "cost_multiplier": "Cost multiplier",
   "groups": "Initial groups",
+  jsonImportScheduling: 'Enable scheduling after JSON import',
+  twoFALoginScheduling: 'Enable scheduling after 2FA login',
+  importSchedulingHint: 'When unchecked, new accounts still save their credentials and receive the initial configuration with scheduling off. Both options apply only while initial configuration is enabled.',
   totp429: {
     label: 'Automatically rotate 2FA after a 429',
     hint: 'Enable for new OpenAI OAuth accounts through initial configuration. After a 429, use the email, password and current 2FA saved in Credential Operations to rotate the secret and store it encrypted. At most one rotation task per account per hour; incomplete credentials or an unresolved rotation prevent automatic rotation.'

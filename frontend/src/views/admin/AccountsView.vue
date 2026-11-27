@@ -268,24 +268,38 @@
           <template #cell-name="{ row, value }">
             <a v-if="row.upstream_channel_binding" href="/admin/upstream-channels" class="block text-xs text-primary-600" data-testid="account-current-upstream">{{ row.upstream_channel_binding.channel ? `${row.upstream_channel_binding.channel.name} · ${row.upstream_channel_binding.channel.code}` : t('upstreamEntities.unbound') }}</a>
             <div class="flex flex-col">
-              <HelpTooltip
-                v-if="accountHomepageUrl(row)"
-                :content="accountHomepageUrl(row)"
-                width-class="w-max max-w-sm break-all"
-                class="-ml-1 self-start"
-              >
-                <template #trigger>
-                  <a
-                    :href="accountHomepageUrl(row)"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="border-b border-dotted border-gray-300 font-medium text-gray-900 dark:border-dark-600 dark:text-white"
-                  >
-                    {{ value }}
-                  </a>
-                </template>
-              </HelpTooltip>
-              <span v-else class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <div class="flex items-center gap-1">
+                <HelpTooltip
+                  v-if="accountHomepageUrl(row)"
+                  :content="accountHomepageUrl(row)"
+                  width-class="w-max max-w-sm break-all"
+                  class="-ml-1 self-start"
+                >
+                  <template #trigger>
+                    <a
+                      :href="accountHomepageUrl(row)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="border-b border-dotted border-gray-300 font-medium text-gray-900 dark:border-dark-600 dark:text-white"
+                    >
+                      {{ value }}
+                    </a>
+                  </template>
+                </HelpTooltip>
+                <span v-else class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+                <button
+                  v-if="row.type === 'apikey' || (row.platform === 'antigravity' && row.type === 'upstream')"
+                  type="button"
+                  class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-blue-600 hover:bg-blue-50 disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+                  :title="t('admin.accounts.upstreamBilling.saveGroup')"
+                  :aria-label="t('admin.accounts.upstreamBilling.saveGroup')"
+                  :disabled="syncingUpstreamGroup.has(row.id)"
+                  @click.stop="syncUpstreamGroup(row)"
+                >
+                  <Icon name="refresh" size="xs" :class="{ 'animate-spin': syncingUpstreamGroup.has(row.id) }" />
+                </button>
+                <NewFeatureBadge v-if="authStore.user?.id != null && (row.type === 'apikey' || (row.platform === 'antigravity' && row.type === 'upstream'))" :notice-id="NEW_FEATURE_NOTICES.upstreamBillingGroupSync" :user-id="authStore.user.id" compact />
+              </div>
               <span
                 v-if="accountDisplayEmail(row)"
                 class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
@@ -503,6 +517,13 @@
           </template>
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-1">
+              <div v-if="authStore.isAdmin && row.type === 'gateway'" class="flex items-center gap-1">
+                <button type="button" class="rounded-lg p-1.5 text-xs text-emerald-600 disabled:opacity-50"
+                  data-testid="gateway-sync-saved" :disabled="gatewayModelSyncIds.has(row.id)" @click="syncGatewayModels(row)">
+                  {{ t(gatewayModelSyncIds.has(row.id) ? 'admin.accounts.syncUpstreamModelsLoading' : 'admin.accounts.syncUpstreamModels') }}
+                </button>
+                <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.gatewayModelSync" :user-id="authStore.user?.id" />
+              </div>
               <button @click="handleEdit(row)" class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" /></svg>
                 <span class="text-xs">{{ t('common.edit') }}</span>
@@ -764,6 +785,7 @@ const menu = reactive<{show:boolean, acc:Account|null, anchorRect:DOMRect|null}>
 const exportingData = ref(false)
 const probingUpstreamBilling = reactive(new Set<number>())
 const probingUpstreamUsage = reactive(new Set<number>())
+const syncingUpstreamGroup = reactive(new Set<number>())
 const upstreamBillingProbeGloballyEnabled = ref<boolean | undefined>(undefined)
 const upstreamBillingNow = ref(Date.now())
 const upstreamBillingRateETag = ref<string | null>(null)
@@ -2216,6 +2238,25 @@ const loadAccountDetails = async (account: Pick<AccountListItem, 'id'>): Promise
   }
 }
 
+const gatewayModelSyncIds = ref(new Set<number>())
+const syncGatewayModels = async (account: AccountListItem) => {
+  if (gatewayModelSyncIds.value.has(account.id)) return
+  gatewayModelSyncIds.value.add(account.id)
+  try {
+    const result = await adminAPI.accounts.syncUpstreamModels(account.id, { apply: true, whitelist_only: true })
+    if (!result.applied || result.skipped) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsUnverified'))
+      return
+    }
+    appStore.showSuccess(t('admin.accounts.batchUpstream.saved'))
+    reload()
+  } catch (error) {
+    appStore.showError(extractApiErrorMessage(error, t('admin.accounts.syncUpstreamModelsFailed')))
+  } finally {
+    gatewayModelSyncIds.value.delete(account.id)
+  }
+}
+
 const handleEdit = async (a: AccountListItem) => {
   const account = await loadAccountDetails(a)
   if (!account) return
@@ -2608,7 +2649,7 @@ const accountMatchesCurrentFilters = (account: Account) => {
     if (filters.status === 'active') {
       if (account.status !== 'active' || isRateLimited || isTempUnschedulable || !account.schedulable) return false
     } else if (filters.status === 'rate_limited') {
-      if (account.status !== 'active' || !isRateLimited || isTempUnschedulable) return false
+      if (!isRateLimited) return false
     } else if (filters.status === 'temp_unschedulable') {
       if (account.status !== 'active' || !isTempUnschedulable) return false
     } else if (filters.status === 'unschedulable') {
@@ -2639,7 +2680,7 @@ const accountMatchesCurrentFilters = (account: Account) => {
 }
 const mergeRuntimeFields = (oldAccount: Account, updatedAccount: Account): Account => ({
   ...updatedAccount,
-  current_concurrency: updatedAccount.current_concurrency ?? oldAccount.current_concurrency,
+  current_concurrency: updatedAccount.current_concurrency !== undefined ? updatedAccount.current_concurrency : oldAccount.current_concurrency,
   current_window_cost: updatedAccount.current_window_cost ?? oldAccount.current_window_cost,
   active_sessions: updatedAccount.active_sessions ?? oldAccount.active_sessions
 })
@@ -2726,6 +2767,45 @@ const handleProbeUpstreamUsage = async (account: Account) => {
 const handleAccountUpdated = (updatedAccount: Account) => {
   patchAccountInList(updatedAccount)
   enterAutoRefreshSilentWindow()
+}
+// Only compare connection settings here. The server guard also covers secrets
+// omitted from lite rows and checks the row version inside the write transaction.
+const upstreamGroupSource = (account: AccountListItem) => JSON.stringify({
+  platform: account.platform, type: account.type, proxy_id: account.proxy_id ?? null,
+  credentials: account.credentials
+})
+const syncUpstreamGroup = async (account: AccountListItem) => {
+  if (syncingUpstreamGroup.has(account.id)) return
+  const original = { name: account.name, notes: account.notes, source: upstreamGroupSource(account) }
+  const contextVersion = accountListContextVersion
+  syncingUpstreamGroup.add(account.id)
+  try {
+    const fields = await adminAPI.accounts.previewUpstreamGroup({ account_id: account.id })
+    const current = accounts.value.find(item => item.id === account.id)
+    if (accountViewDisposed || contextVersion !== accountListContextVersion || !current || upstreamGroupSource(current) !== original.source) return
+    if (!fields.name && !fields.notes) {
+      appStore.showInfo(t('admin.accounts.upstreamBilling.groupUnavailable'))
+      return
+    }
+    if (current.name !== original.name || fields.name === current.name) delete fields.name
+    if (current.notes !== original.notes || fields.notes === current.notes) delete fields.notes
+    if (fields.name || fields.notes) {
+      // An older server cannot provide concurrency protection; never fall back
+      // to the unconditional PATCH that caused delayed previews to overwrite edits.
+      if (!fields.upstream_group_guard) {
+        appStore.showError(t('admin.accounts.upstreamBilling.groupFailed'))
+        return
+      }
+      const updated = await adminAPI.accounts.update(account.id, fields)
+      if (accountViewDisposed || contextVersion !== accountListContextVersion) return
+      if (accounts.value.find(item => item.id === account.id) === current) handleAccountUpdated(updated)
+    }
+    appStore.showSuccess(t('admin.accounts.upstreamBilling.groupSynced'))
+  } catch (error) {
+    if (!accountViewDisposed && contextVersion === accountListContextVersion) appStore.showError(extractApiErrorMessage(error, t('admin.accounts.upstreamBilling.groupFailed')))
+  } finally {
+    syncingUpstreamGroup.delete(account.id)
+  }
 }
 const formatExportTimestamp = () => {
   const now = new Date()

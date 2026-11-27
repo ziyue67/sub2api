@@ -3,7 +3,9 @@
 package adminaccess
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -29,4 +31,16 @@ func TestAdminFullAccessRouteBoundary(t *testing.T) {
 			t.Errorf("%s: got %v want %v", tc.path, got, tc.allowed)
 		}
 	}
+}
+
+func TestFullAccessRetainsIdentityWithoutResourceRestrictions(t *testing.T) {
+	principal := &Principal{KeyID: "same-key", Policy: Policy{FullAccess: true}}
+	ctx := WithPrincipal(context.Background(), principal)
+	require.Same(t, principal, FromContext(ctx))
+	require.Nil(t, RestrictedFromContext(ctx))
+	principal.Policy.FullAccess = false
+	require.Same(t, principal, RestrictedFromContext(ctx))
+	require.Nil(t, RestrictedFromContext(context.Background()))
+	require.False(t, RouteAllowed(principal.Policy, "POST", "/api/v1/admin/accounts/data"))
+	require.False(t, RouteAllowed(principal.Policy, "GET", "/api/v1/admin/openai/accounts/:id/quota"))
 }

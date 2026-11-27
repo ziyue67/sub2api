@@ -19,11 +19,12 @@ import {
 
 enableAutoUnmount(afterEach)
 
-const { updateAccountMock, syncUpstreamModelsMock, checkMixedChannelRiskMock, authIsSimpleMode, showErrorMock, showWarningMock } = vi.hoisted(() => ({
+const { updateAccountMock, syncUpstreamModelsMock, previewUpstreamGroup, checkMixedChannelRiskMock, authIsSimpleMode, showErrorMock, showWarningMock } = vi.hoisted(() => ({
   showErrorMock: vi.fn(),
   showWarningMock: vi.fn(),
   updateAccountMock: vi.fn(),
   syncUpstreamModelsMock: vi.fn(),
+  previewUpstreamGroup: vi.fn(),
   checkMixedChannelRiskMock: vi.fn(),
   authIsSimpleMode: { value: true }
 }))
@@ -56,6 +57,7 @@ vi.mock('@/api/admin', () => ({
       getManagementCapabilities: vi.fn().mockResolvedValue({ web_search_enabled: false, account_quota_notify_enabled: false }),
       update: updateAccountMock,
       syncUpstreamModels: syncUpstreamModelsMock,
+      previewUpstreamGroup,
       checkMixedChannelRisk: checkMixedChannelRiskMock
     },
     settings: {
@@ -100,6 +102,7 @@ const BaseDialogStub = defineComponent({
 const ModelWhitelistSelectorStub = defineComponent({
   name: 'ModelWhitelistSelector',
   props: {
+    syncCredentials: Object,
     modelMappings: { type: Array, default: () => [] },
     modelValue: {
       type: Array,
@@ -448,6 +451,60 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[1]?.[1]?.extra).not.toHaveProperty('anthropic_tool_result_images')
     expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.unrelated).toBe('preserve')
     restored.unmount()
+  })
+
+  it('announces gateway model settings independently and shares persistent dismissal', async () => {
+    localStorage.removeItem('sub2api:new-feature-notices:v1:41')
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const notices = useNewFeatureNoticeStore()
+    notices.dismiss(41, NEW_FEATURE_NOTICES.crossPlatformGatewayAccounts)
+    const account = { ...buildAccount(), platform: 'gateway', type: 'gateway',
+      credentials: { upstream_kind: 'new_api', base_url: 'https://relay.example.com' } } as any
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const badge = wrapper.findAllComponents(NewFeatureBadge).find(item => item.props('noticeId') === NEW_FEATURE_NOTICES.gatewayModelSync)!
+    expect(badge.find('button').exists()).toBe(true)
+    const sibling = mount(NewFeatureBadge, { props: { noticeId: NEW_FEATURE_NOTICES.gatewayModelSync, userId: 41 }, global: { plugins: [pinia] } })
+    await badge.get('button').trigger('click')
+    expect(sibling.find('button').exists()).toBe(false)
+    wrapper.unmount()
+    sibling.unmount()
+    setActivePinia(createPinia())
+    const reloaded = mountModal(account)
+    await flushPromises()
+    const reloadedBadge = reloaded.findAllComponents(NewFeatureBadge).find(item => item.props('noticeId') === NEW_FEATURE_NOTICES.gatewayModelSync)!
+    expect(reloadedBadge.find('button').exists()).toBe(false)
+    expect(useNewFeatureNoticeStore().isDismissed(41, NEW_FEATURE_NOTICES.crossPlatformGatewayAccounts)).toBe(true)
+    const future = mount(NewFeatureBadge, { props: { noticeId: 'fixture-future-gateway-notice-C', userId: 41 } })
+    expect(future.find('button').exists()).toBe(true)
+    future.unmount()
+  })
+
+  it.each(['new_api', 'sub2api'])('keeps %s gateway models across connection and group edits', async (kind) => {
+    const account = { ...buildAccount(), platform: 'gateway', type: 'gateway', group_ids: [10],
+      credentials: { upstream_kind: kind, base_url: 'https://relay.example.com',
+        model_mapping: { live: 'live', public: 'live' }, unknown_option: { keep: true } } } as any
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await flushPromises()
+    const selector = wrapper.getComponent(ModelWhitelistSelectorStub)
+    expect(selector.props('modelValue')).toEqual(['live'])
+    expect(selector.props('modelMappings')).toEqual([{ from: 'public', to: 'live' }])
+    const fields = wrapper.get('[data-testid="gateway-account-fields"]')
+    await fields.get('input[type="url"]').setValue('https://edited.example.com')
+    await fields.get('input[type="password"]').setValue('synthetic-new-key')
+    wrapper.getComponent(GroupSelectorStub).vm.$emit('update:modelValue', [20])
+    await flushPromises()
+    expect(selector.props('syncCredentials')).toMatchObject({ account_id: account.id,
+      upstream_kind: kind, base_url: 'https://edited.example.com', api_key: 'synthetic-new-key' })
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]).toMatchObject({ group_ids: [20], credentials: {
+      upstream_kind: kind, base_url: 'https://edited.example.com', api_key: 'synthetic-new-key',
+      model_mapping: account.credentials.model_mapping
+    } })
   })
 
   it('keeps the target platform announcement independent, shared and persistent', async () => {
@@ -1486,6 +1543,28 @@ describe('EditAccountModal', () => {
     await flushPromises()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_copilot_sdk).toBeUndefined()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated_setting).toBe('keep')
+  })
+
+  it('uses the saved connection until the administrator changes the upstream', async () => {
+    const account = buildAccount()
+    account.notes = 'local notes'
+    const wrapper = mountModal(account)
+    const sync = wrapper.getComponent({ name: 'UpstreamGroupSyncButton' }).get('button')
+    previewUpstreamGroup.mockResolvedValue({ name: 'Updated group' })
+    await sync.trigger('click')
+    await flushPromises()
+    expect(previewUpstreamGroup).toHaveBeenLastCalledWith({ account_id: account.id }, expect.anything())
+    expect(wrapper.get<HTMLInputElement>('[data-tour="edit-account-form-name"]').element.value).toBe('Updated group')
+    expect(wrapper.get<HTMLTextAreaElement>('textarea').element.value).toBe('local notes')
+
+    await wrapper.get('input[placeholder="https://api.openai.com"]').setValue('https://new-relay.example')
+    expect(sync.element.disabled).toBe(true)
+    await wrapper.get('input[type="password"]').setValue('replacement-key')
+    await sync.trigger('click')
+    expect(previewUpstreamGroup).toHaveBeenLastCalledWith({
+      platform: 'openai', base_url: 'https://new-relay.example', api_key: 'replacement-key', proxy_id: null
+    }, expect.anything())
+    wrapper.unmount()
   })
 
   it.each(['apikey', 'oauth'])('can opt a passthrough %s account into model filtering without changing groups', async (type) => {
@@ -2701,6 +2780,26 @@ describe('EditAccountModal', () => {
     expect(extra).not.toHaveProperty('new_api_apply_usd_rate')
   })
 
+  it('opts into group sync independently and clears it when probing stops', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+    const group = wrapper.get('[data-testid="upstream-billing-group-sync"]')
+    const probe = wrapper.get('[data-testid="upstream-billing-auto-probe"]')
+    const rate = wrapper.get('[data-testid="upstream-billing-rate-sync"]')
+    expect(group.attributes('aria-checked')).toBe('false')
+    await group.trigger('click')
+    expect(probe.attributes('aria-checked')).toBe('true')
+    expect(rate.attributes('aria-checked')).toBe('false')
+    await wrapper.get('form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.lastCall?.[1]).toMatchObject({
+      upstream_billing_group_sync_enabled: true, upstream_billing_rate_sync_enabled: false
+    })
+    await probe.trigger('click')
+    expect(group.attributes('aria-checked')).toBe('false')
+    wrapper.unmount()
+  })
+
   it('enabling rate sync also enables probing and stops submitting a manual rate', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()
@@ -3577,6 +3676,41 @@ describe('independent account cost multiplier', () => {
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     expect(updateAccountMock.mock.calls.at(-1)?.[1]?.extra?.cost_multiplier).toBe(0)
   })
+  describe.each([false, true])('API-only token procurement basis (platform switch: %s)', (switchPlatform) => {
+    it.each([
+      { loaded: 'account_stats', latest: 'standard_charge' },
+      { loaded: 'standard_charge', latest: 'account_stats' },
+      { loaded: 'account_stats', latest: null },
+      { loaded: 'standard_charge', latest: null }
+    ])('omits $loaded after an API update to $latest on a name edit', async ({ loaded, latest }) => {
+      const account = { ...buildAccount(), extra: { token_procurement_basis: loaded, unrelated: 'keep' } }
+      const wrapper = mountModal(account)
+      await flushPromises()
+
+      // A separate API client commits while the dialog still holds its old DTO.
+      const updatedAccount = { ...account, name: 'Renamed after API update',
+        platform: switchPlatform ? 'anthropic' : account.platform,
+        extra: { ...account.extra, token_procurement_basis: latest } }
+      updateAccountMock.mockReset().mockResolvedValue(updatedAccount)
+      if (switchPlatform) {
+        await wrapper.get('[data-testid="edit-account-platform"]').setValue('anthropic')
+        await flushPromises()
+      }
+      await wrapper.get('[data-tour="edit-account-form-name"]').setValue(updatedAccount.name)
+      await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+      await flushPromises()
+
+      expect(updateAccountMock).toHaveBeenCalledTimes(1)
+      const [id, payload] = updateAccountMock.mock.calls[0]
+      expect(id).toBe(account.id)
+      expect(payload.name).toBe(updatedAccount.name)
+      expect(payload.extra).not.toHaveProperty('token_procurement_basis')
+      if (switchPlatform) expect(payload.platform).toBe('anthropic')
+      else expect(payload.extra.unrelated).toBe('keep')
+      expect(account.extra.token_procurement_basis).toBe(loaded)
+      expect(wrapper.emitted('updated')?.[0]?.[0]).toEqual(updatedAccount)
+    })
+  })
   it('lets an operator disable upstream cost syncing and save the actual recharge cost', async () => {
     const account = { ...buildAccount(), extra: { cost_multiplier: 1, upstream_billing_probe_enabled: true } }
     const wrapper = mountModal(account)
@@ -4190,4 +4324,31 @@ it('omits untouched probe settings so stale editors cannot restore old charges',
   const wrapper = mountModal(account); await flushPromises()
   await wrapper.get('#edit-account-form').trigger('submit.prevent'); await flushPromises()
   expect(updateAccountMock.mock.calls[0][1].extra).not.toHaveProperty('probe_penalty')
+})
+
+describe('domestic route automatic scheduling', () => {
+  it('defaults off, saves the opt-in and removes it on uncheck', async () => {
+    vi.clearAllMocks()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    const account = { ...buildAccount(), platform: 'deepseek', type: 'apikey', extra: { custom_flag: true } }
+    updateAccountMock.mockResolvedValue(account)
+    const selector = '[data-testid="domestic-route-auto-schedule"]'
+    const modal = mountModal(account)
+    await flushPromises()
+    expect(modal.get<HTMLInputElement>(selector).element.checked).toBe(false)
+    expect(modal.findAllComponents(NewFeatureBadge).some(b => b.props('noticeId') === NEW_FEATURE_NOTICES.domesticRouteAutoSchedule)).toBe(true)
+    await modal.get(selector).setValue(true)
+    await modal.get('#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    const saved = updateAccountMock.mock.calls[0][1].extra
+    expect(saved).toMatchObject({ domestic_route_auto_schedule: true, custom_flag: true })
+    modal.unmount()
+    const reopened = mountModal({ ...account, extra: saved })
+    await flushPromises()
+    expect(reopened.get<HTMLInputElement>(selector).element.checked).toBe(true)
+    await reopened.get(selector).setValue(false)
+    await reopened.get('#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[1][1].extra.domestic_route_auto_schedule).toBeUndefined()
+  })
 })

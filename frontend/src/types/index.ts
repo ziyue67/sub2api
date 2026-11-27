@@ -1553,6 +1553,7 @@ export interface Account {
     upstream_billing_provider?: 'new_api'
     new_api_apply_usd_rate?: boolean
     upstream_billing_probe_enabled?: boolean
+    upstream_billing_group_sync_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
     upstream_usage_probe?: UpstreamUsageProbeSnapshot
@@ -1582,7 +1583,7 @@ export interface Account {
   proxy_fallback_origin_name?: string | null
   concurrency: number
   load_factor?: number | null
-  current_concurrency?: number // Real-time concurrency count from Redis
+  current_concurrency?: number | null // Redis slot count; null means observation unavailable
   scheduler_score?: {
     base_score: number
     sticky_score?: number
@@ -1901,6 +1902,7 @@ export interface CreateAccountRequest {
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
+  upstream_billing_group_sync_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
 }
 
@@ -1914,7 +1916,14 @@ export interface AccountGroupBinding {
   created_at: string
 }
 
+export interface UpstreamGroupSyncGuard {
+  source: string
+  name: string
+  notes: string | null
+}
+
 export interface UpdateAccountRequest {
+  upstream_group_guard?: UpstreamGroupSyncGuard
 	platform?: AccountPlatform
   name?: string
   notes?: string | null
@@ -1934,6 +1943,7 @@ export interface UpdateAccountRequest {
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
+  upstream_billing_group_sync_enabled?: boolean
   upstream_billing_rate_sync_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
 }
@@ -2998,6 +3008,8 @@ export interface PelicanPersonalQuestion {
 }
 
 export interface PelicanTestConfig {
+  quality_http_status?: number
+  quality_429_streak?: number
   prompt_mode?: 'custom' | 'random'
   pelican_question?: PelicanQuestion
   actual_prompt?: string

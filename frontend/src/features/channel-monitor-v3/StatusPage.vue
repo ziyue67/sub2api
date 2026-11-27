@@ -226,7 +226,7 @@
           </p>
         </div>
         <div class="flex items-center justify-between gap-2 border-t border-gray-100 px-3 py-1.5 text-[10px] text-gray-400 dark:border-dark-700 dark:text-gray-500">
-          <span class="truncate">{{ detail.component.name }}<template v-if="detail.component.model"> · {{ detail.component.model }}</template></span>
+          <span class="truncate">{{ detail.component.name }}<template v-if="componentModels(detail.component).length"> · {{ componentModels(detail.component).join(', ') }}</template></span>
           <span v-if="detail.cell.probed && detail.cell.probes" class="shrink-0" data-testid="monitor-v3-tooltip-volume">{{ t('channelMonitorV3.tooltip.probeVolume', { probes: detail.cell.probes, requests: detail.cell.requests || 0 }) }}</span>
           <span v-else-if="detail.cell.requests" class="shrink-0" data-testid="monitor-v3-tooltip-volume">{{ t('channelMonitorV3.tooltip.volume', { requests: detail.cell.requests, errors: detail.cell.errors || 0, ignored: detail.cell.ignored_errors || 0 }) }}</span>
         </div>
@@ -246,6 +246,7 @@ import StatusDot from './StatusDot.vue'
 import {
   MONITOR_V3_COLORS,
   MONITOR_V3_EMPTY_CELL,
+  componentModels,
   formatMonitorV3Availability,
   formatMonitorV3Bucket,
   formatMonitorV3Full,

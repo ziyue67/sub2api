@@ -1279,16 +1279,34 @@ var ProviderSet = wire.NewSet(
 // ProvideUsageBillingRepository 以按用户合并结算的通道作为各服务使用的计费仓储。
 func ProvideUsageBillingRepository(lanes *UsageBillingLaneCombiner) UsageBillingRepository {
 	if durable, ok := lanes.repo.(DurableUsageBillingRepository); ok {
-		return &durableUsageBillingLanes{UsageBillingLaneCombiner: lanes, DurableUsageBillingRepository: durable}
+		wrapped := &durableUsageBillingLanes{UsageBillingLaneCombiner: lanes, DurableUsageBillingRepository: durable}
+		if settlement, ok := lanes.repo.(UsageSettlementRepository); ok {
+			return &upstreamUsageBillingLanes{wrapped, settlement}
+		}
+		return wrapped
 	}
 	return lanes
 }
 
+type upstreamUsageBillingLanes struct {
+	*durableUsageBillingLanes
+	UsageSettlementRepository
+}
+
 // Staged delivery keeps its transactional journal and cache acknowledgement.
-// Direct Apply users still use lanes; journal application is not batched.
+// Direct Apply users use service lanes; staged delivery uses repository lanes.
 type durableUsageBillingLanes struct {
 	*UsageBillingLaneCombiner
 	DurableUsageBillingRepository
+}
+
+func (r *durableUsageBillingLanes) RecoverStagedUsageBilling(ctx context.Context, key UsageBillingEventKey) (*UsageBillingRecovery, error) {
+	if worker, ok := r.DurableUsageBillingRepository.(interface {
+		RecoverStagedUsageBilling(context.Context, UsageBillingEventKey) (*UsageBillingRecovery, error)
+	}); ok {
+		return worker.RecoverStagedUsageBilling(ctx, key)
+	}
+	return r.ApplyStagedUsageBilling(ctx, key)
 }
 
 // Preserve retry rotation so a failed cache invalidation cannot starve later receipts.

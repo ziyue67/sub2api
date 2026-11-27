@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 
+import { apiClient } from '@/api/client'
+import { listMyErrorRequests as requestUserErrors } from '@/api/usage'
 import UsageView from '../UsageView.vue'
-import TrafficPanel from '@/components/usage/TrafficPanel.vue'
+import UsageApiGuide from '@/components/usage/UsageApiGuide.vue'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
+import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
+import Pagination from '@/components/common/Pagination.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'
 import ExportProgressDialog from '@/components/common/ExportProgressDialog.vue'
@@ -100,7 +107,12 @@ vi.mock('@/api', () => ({
 }))
 
 const appStoreState = vi.hoisted(() => ({
+  isAdmin: false,
   cachedPublicSettings: { allow_user_view_error_requests: true } as Record<string, unknown>,
+}))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ isAdmin: appStoreState.isAdmin, user: { id: 41 } }),
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -124,6 +136,17 @@ vi.mock('vue-i18n', async () => {
 
 const simpleStub = { template: '<div><slot /></div>' }
 const chartStub = { template: '<div />' }
+
+function pendingPage() {
+  type Page = { items: { id: number }[]; total: number }
+  let resolve!: (page: Page) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<Page>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
 const usageLog = {
   id: 1,
@@ -168,9 +191,10 @@ function mountUsageView(realSelect = false) {
         DateRangePicker: true,
         Icon: true,
         UsageStatsCards: chartStub,
-        UsageTable: { ...chartStub, props: ['columns'] },
-        UserErrorRequestsTable: chartStub,
-        TrafficPanel: true,
+        UsageTable: { ...chartStub, props: ['columns', 'data', 'loading'] },
+        UserErrorRequestsTable: true,
+        UsageApiGuide: true,
+        NewFeatureBadge: true,
         ModelDistributionChart: chartStub,
         GroupDistributionChart: chartStub,
         EndpointDistributionChart: chartStub,
@@ -182,6 +206,7 @@ function mountUsageView(realSelect = false) {
 
 describe('user UsageView', () => {
   beforeEach(() => {
+    appStoreState.isAdmin = false
     appStoreState.cachedPublicSettings = { allow_user_view_error_requests: true }
     query.mockReset()
     getStats.mockReset()
@@ -248,13 +273,13 @@ describe('user UsageView', () => {
       const http200 = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(option => option.textContent?.trim() === '200 — Stream failed after headers')!
       http200.click()
       await flushPromises()
-      expect(listMyErrorRequests).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'transport_error', status_code: 200, page: 1 }))
+      expect(listMyErrorRequests).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'transport_error', status_code: 200, page: 1 }), { signal: expect.any(AbortSignal) })
 
       await status.get('button').trigger('click')
       await flushPromises()
       Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(option => option.textContent?.trim() === '502')!.click()
       await flushPromises()
-      expect(listMyErrorRequests).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'transport_error', status_code: 502 }))
+      expect(listMyErrorRequests).toHaveBeenLastCalledWith(expect.objectContaining({ category: 'transport_error', status_code: 502 }), { signal: expect.any(AbortSignal) })
       await wrapper.findAll('button').find(button => button.text() === 'Usage records')!.trigger('click')
       expect(query.mock.calls.every(([params]) => params.status_code === undefined && params.category === undefined)).toBe(true)
     } finally {
@@ -262,14 +287,228 @@ describe('user UsageView', () => {
     }
   })
 
-  it('passes the same own API key choices to traffic and usage details', async () => {
-    const wrapper = mountUsageView(); await flushPromises()
-    const usageOptions = wrapper.findAllComponents(Select).find(select =>
-      (select.props('options') as SelectOption[]).some(option => option.label === 'demo-key')
-    )!.props('options')
-    await wrapper.findAll('button').find(button => button.text() === 'traffic.title')!.trigger('click')
-    expect(wrapper.getComponent(TrafficPanel).props('apiKeyOptions')).toEqual(usageOptions)
+  it.each([false, true])('opens the API guide tab without loading data (admin=%s)', async (admin) => {
+    appStoreState.isAdmin = admin
+    const wrapper = mountUsageView()
+    await flushPromises()
+    const tabs = wrapper.findAll('button.tab')
+    expect(tabs).toHaveLength(3)
+    expect(tabs[2].text()).toBe('usageApi.title')
+    const badge = wrapper.findComponent(NewFeatureBadge)
+    expect(badge.exists()).toBe(admin)
+    if (admin) expect(badge.props()).toMatchObject({ noticeId: NEW_FEATURE_NOTICES.usageRecordsApi, userId: 41 })
+    const calls = query.mock.calls.length
+    const statCalls = getStats.mock.calls.length
+    await tabs[2].trigger('click')
+    expect(wrapper.findComponent(UsageApiGuide).exists()).toBe(true)
+    expect(wrapper.findComponent(UsageTable).exists()).toBe(false)
+    expect(wrapper.findComponent(DateRangePicker).exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'UsageStatsCards' }).exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Export CSV')
+    expect(query).toHaveBeenCalledTimes(calls)
+    expect(getStats).toHaveBeenCalledTimes(statCalls)
+    await tabs[0].trigger('click')
+    expect(wrapper.findComponent(UsageTable).exists()).toBe(true)
     wrapper.unmount()
+  })
+
+  it('stops pending pagination and ignores stale errors when the guide opens', async () => {
+    let finishKeys!: (page: unknown) => void
+    let failLogs!: (reason: Error) => void
+    let failErrors!: (reason: Error) => void
+    list.mockReturnValueOnce(new Promise(resolve => { finishKeys = resolve }))
+    query.mockReturnValueOnce(new Promise((_, reject) => { failLogs = reject }))
+    listMyErrorRequests.mockReturnValueOnce(new Promise((_, reject) => { failErrors = reject }))
+    const wrapper = mountUsageView()
+    const tabs = wrapper.findAll('button.tab')
+    await tabs[1].trigger('click')
+    await tabs[2].trigger('click')
+    expect(wrapper.findComponent(UsageApiGuide).exists()).toBe(true)
+    expect(list.mock.calls[0][3].signal.aborted).toBe(true)
+    expect(query.mock.calls[0][1].signal.aborted).toBe(true)
+    expect(listMyErrorRequests.mock.calls[0][1].signal.aborted).toBe(true)
+    finishKeys({ items: [{ id: 1 }], pages: 3 })
+    failLogs(new Error('old usage request'))
+    failErrors(new Error('old error request'))
+    await flushPromises()
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(showError).not.toHaveBeenCalled()
+    await tabs[0].trigger('click')
+    await flushPromises()
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(query).toHaveBeenCalledTimes(2)
+    expect(wrapper.findComponent(UsageTable).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it.each(['success', 'failure'])('reloads usage page 2 with the selected filter after visiting the guide (%s)', async outcome => {
+    const page1 = { items: [{ ...usageLog, id: 1 }], total: 51 }
+    const page2 = { items: [{ ...usageLog, id: 21 }], total: 50 }
+    const stale = pendingPage()
+    const reload = pendingPage()
+    query.mockResolvedValue(page1)
+    const wrapper = mountUsageView()
+    const [usage, , guide] = wrapper.findAll('button.tab')
+    const table = () => wrapper.getComponent(UsageTable)
+    try {
+      await flushPromises()
+      query.mockClear()
+      const keySelect = wrapper.findAllComponents(Select).find(select =>
+        (select.props('options') as SelectOption[]).some(option => option.label === 'All API Keys')
+      )!
+      keySelect.vm.$emit('update:modelValue', 1)
+      keySelect.vm.$emit('change', 1)
+      await flushPromises()
+      expect(table().props()).toMatchObject({ data: page1.items, loading: false })
+      const pager = wrapper.getComponent(Pagination)
+      expect(pager.props()).toMatchObject({ page: 1, total: 51 })
+
+      query.mockReturnValueOnce(stale.promise).mockReturnValueOnce(reload.promise)
+      pager.vm.$emit('update:page', 2)
+      await guide.trigger('click')
+      expect(query.mock.calls[1][1].signal.aborted).toBe(true)
+      expect(wrapper.vm.pagination).toMatchObject({ page: 2, total: 0 })
+      await usage.trigger('click')
+      const params = query.mock.calls.map(([request]) => request)
+      expect(params.map(request => request.page)).toEqual([1, 2, 2])
+      expect(params[1]).toMatchObject({ api_key_id: 1, page: 2 })
+      expect(params[2]).toEqual(params[1])
+      expect(table().props()).toMatchObject({ data: [], loading: true })
+      stale.resolve({ items: [{ id: 99 }], total: 99 })
+      await flushPromises()
+      expect(table().props()).toMatchObject({ data: [], loading: true })
+      expect(wrapper.vm.pagination).toMatchObject({ page: 2, total: 0 })
+
+      if (outcome === 'success') {
+        reload.resolve(page2)
+        await flushPromises()
+        expect(wrapper.getComponent(Pagination).props()).toMatchObject({ page: 2, total: 50 })
+        expect(table().props()).toMatchObject({ data: page2.items, loading: false })
+        expect(showError).not.toHaveBeenCalled()
+      } else {
+        reload.reject(new Error('usage unavailable'))
+        await flushPromises()
+        expect(wrapper.vm.pagination).toMatchObject({ page: 2, total: 0 })
+        expect(wrapper.findComponent(Pagination).exists()).toBe(false)
+        expect(table().props()).toMatchObject({ data: [], loading: false })
+        expect(showError.mock.calls).toEqual([['Failed to load']])
+      }
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it.each([
+    { path: 'directly', viaUsage: false },
+    { path: 'through usage details', viaUsage: true },
+  ] as const)('reloads the pending error page when returning from the guide $path', async ({ viaUsage }) => {
+    const page = (id: number) => ({ items: [{ id }], total: 30 })
+    let finishStale!: (response: ReturnType<typeof page>) => void
+    let finishCurrent!: (response: ReturnType<typeof page>) => void
+    listMyErrorRequests
+      .mockResolvedValueOnce(page(1))
+      .mockReturnValueOnce(new Promise(resolve => { finishStale = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { finishCurrent = resolve }))
+    const wrapper = mountUsageView()
+    const [usage, errors, guide] = wrapper.findAll('button.tab')
+    const table = () => wrapper.getComponent(UserErrorRequestsTable)
+    try {
+      await errors.trigger('click')
+      await nextTick()
+      expect(table().props()).toMatchObject({ page: 1, rows: [{ id: 1 }], loading: false })
+      table().vm.$emit('update:page', 2)
+      await guide.trigger('click')
+      if (viaUsage) await usage.trigger('click')
+      await errors.trigger('click')
+      expect(listMyErrorRequests.mock.calls.map(([params]) => params.page)).toEqual([1, 2, 2])
+      expect(table().props()).toMatchObject({ page: 2, rows: [], loading: true })
+      finishStale(page(99))
+      await flushPromises()
+      expect(table().props()).toMatchObject({ page: 2, rows: [], loading: true })
+      finishCurrent(page(21))
+      await flushPromises()
+      expect(table().props()).toMatchObject({ page: 2, rows: [{ id: 21 }], total: 30, loading: false })
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps the selected error filter when an old response arrives after the reload', async () => {
+    let finishStale!: (result: { items: { id: number }[]; total: number }) => void
+    listMyErrorRequests
+      .mockResolvedValueOnce({ items: [{ id: 1 }], total: 1 })
+      .mockReturnValueOnce(new Promise(resolve => { finishStale = resolve }))
+      .mockResolvedValueOnce({ items: [{ id: 3 }], total: 1 })
+    const wrapper = mountUsageView()
+    const [usage, errors, guide] = wrapper.findAll('button.tab')
+    try {
+      await errors.trigger('click')
+      const status = wrapper.findAllComponents(Select).find(select =>
+        (select.props('options') as SelectOption[]).some(option => option.value === 502)
+      )!
+      status.vm.$emit('update:modelValue', 502)
+      status.vm.$emit('change', 502)
+      await usage.trigger('click')
+      expect(listMyErrorRequests.mock.calls[1][1].signal.aborted).toBe(true)
+      await guide.trigger('click')
+      await errors.trigger('click')
+      await nextTick()
+      expect(listMyErrorRequests.mock.calls.map(([params]) => params.status_code)).toEqual([undefined, 502, 502])
+      finishStale({ items: [{ id: 2 }], total: 1 })
+      await flushPromises()
+      expect(wrapper.getComponent(UserErrorRequestsTable).props()).toMatchObject({ page: 1, rows: [{ id: 3 }], loading: false })
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it.each(['resolve', 'reject'])('aborts the error request on unmount and ignores a late %s', async outcome => {
+    const pending = pendingPage()
+    const httpGet = vi.spyOn(apiClient, 'get').mockReturnValueOnce(pending.promise.then(data => ({ data })))
+    listMyErrorRequests.mockImplementationOnce(requestUserErrors)
+    const wrapper = mountUsageView()
+    const state = wrapper.vm
+    let signal: AbortSignal
+    try {
+      await wrapper.findAll('button.tab')[1].trigger('click')
+      signal = listMyErrorRequests.mock.calls[0][1].signal
+      expect(httpGet).toHaveBeenCalledWith('/usage/errors', { params: expect.objectContaining({ page: 1 }), signal })
+      expect(signal.aborted).toBe(false)
+    } finally {
+      wrapper.unmount()
+      httpGet.mockRestore()
+    }
+    expect(signal.aborted).toBe(true)
+    const snapshot = { errorLoading: state.errorLoading, errorRows: state.errorRows, errorTotal: state.errorTotal }
+    if (outcome === 'resolve') pending.resolve({ items: [{ id: 99 }], total: 99 })
+    else pending.reject(new Error('late error'))
+    await flushPromises()
+    expect(state.errorLoading).toBe(snapshot.errorLoading)
+    expect(state.errorRows).toBe(snapshot.errorRows)
+    expect(state.errorTotal).toBe(snapshot.errorTotal)
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it('scrolls the tab row into view after rendering the guide only', async () => {
+    const wrapper = mountUsageView()
+    const [usage, errors, guide] = wrapper.findAll('button.tab')
+    const row = usage.element.parentElement!
+    const scrollIntoView = vi.fn(() => {
+      expect(wrapper.findComponent(UsageApiGuide).exists()).toBe(true)
+      expect(wrapper.findComponent(DateRangePicker).exists()).toBe(false)
+    })
+    row.scrollIntoView = scrollIntoView
+    try {
+      await errors.trigger('click')
+      await usage.trigger('click')
+      expect(scrollIntoView).not.toHaveBeenCalled()
+      await guide.trigger('click')
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'instant' })
+      await errors.trigger('click')
+      expect(scrollIntoView).toHaveBeenCalledTimes(1)
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('loads logs, stats, model stats, and snapshot on first render', async () => {
@@ -292,7 +531,7 @@ describe('user UsageView', () => {
       include_group_stats: true,
     }))
     expect(list).toHaveBeenCalledTimes(1)
-    expect(list).toHaveBeenCalledWith(1, 100)
+    expect(list).toHaveBeenCalledWith(1, 100, undefined, { signal: expect.any(AbortSignal) })
     expect(getAvailable).toHaveBeenCalled()
   })
 
@@ -360,7 +599,7 @@ describe('user UsageView', () => {
     const wrapper = mountUsageView()
     await flushPromises()
 
-    expect(list.mock.calls).toEqual([[1, 100], [2, 100]])
+    expect(list.mock.calls.map(([page, size]) => [page, size])).toEqual([[1, 100], [2, 100]])
     const usageKeySelect = wrapper.findAllComponents(Select).find((select) =>
       select.props('options').some((option: SelectOption) => option.label === 'All API Keys')
     )!
@@ -392,7 +631,7 @@ describe('user UsageView', () => {
     await flushPromises()
 
     expect(listMyErrorRequests).toHaveBeenCalledWith(
-      expect.objectContaining({ api_key_id: laterKey.id, page: 1 })
+      expect.objectContaining({ api_key_id: laterKey.id, page: 1 }), { signal: expect.any(AbortSignal) }
     )
     expect(list).toHaveBeenCalledTimes(2)
     wrapper.unmount()
@@ -404,7 +643,7 @@ describe('user UsageView', () => {
     const wrapper = mountUsageView()
     await flushPromises()
 
-    expect(list.mock.calls).toEqual([[1, 100]])
+    expect(list.mock.calls.map(([page, size]) => [page, size])).toEqual([[1, 100]])
     const keySelect = wrapper.findAllComponents(Select).find((select) =>
       select.props('options').some((option: SelectOption) => option.label === 'All API Keys')
     )!
@@ -425,7 +664,7 @@ describe('user UsageView', () => {
     const wrapper = mountUsageView()
     await flushPromises()
 
-    expect(list.mock.calls).toEqual([[1, 100], [2, 100]])
+    expect(list.mock.calls.map(([page, size]) => [page, size])).toEqual([[1, 100], [2, 100]])
     const keySelect = wrapper.findAllComponents(Select).find((select) =>
       select.props('options').some((option: SelectOption) => option.label === 'All API Keys')
     )!
@@ -479,6 +718,7 @@ describe('user UsageView', () => {
   })
 
   it('exports csv with current filters and without admin-only fields', async () => {
+    query.mockResolvedValue({ items: [{ ...usageLog, actual_cost: 0.001953125 }], total: 1, pages: 1 })
     const wrapper = mountUsageView()
     await flushPromises()
     ;(wrapper.vm as any).filters.native_compaction_v2 = true

@@ -4,11 +4,60 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestSanitizeGrokResponsesModelInputSingleObject(t *testing.T) {
+	const item = `{"type":"function_call_output","call_id":"call_a","output":{"large":9007199254740993,"count":1.2300e+09}}`
+	for _, tc := range []struct{ name, key, tail string }{
+		{"input", `"input"`, `, "after" : "kept"}`},
+		{"escaped key", `"in\u0070ut"`, `, "after" : "kept"}`},
+		{"duplicate key", `"input"`, `, "input" : "later", "after" : "kept"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			normalize := func(value string) []byte {
+				raw := `{"before" : true, ` + tc.key + " : " + value + tc.tail
+				body := []byte(raw)
+				got, err := sanitizeGrokResponsesModelInput(body)
+				require.NoError(t, err)
+				require.Equal(t, raw, string(body))
+				return got
+			}
+			got := normalize(item)
+			require.Equal(t, normalize("["+item+"]"), got)
+			require.True(t, strings.HasSuffix(string(got), tc.tail))
+			output := gjson.GetBytes(got, "input.0.output").String()
+			require.Equal(t, "9007199254740993", gjson.Get(output, "large").Raw)
+			require.Equal(t, "1.2300e+09", gjson.Get(output, "count").Raw)
+		})
+	}
+}
+
+func BenchmarkSanitizeGrokResponsesModelInput(b *testing.B) {
+	text := strings.Repeat(`synthetic \"example\"\n`, 48_000)
+	msg := `{"role":"user","content":"` + text + `"}`
+	for _, tc := range []struct{ name, input string }{
+		{"Array", "[" + msg + "]"},
+		{"Object", msg},
+		{"String", `"` + text + `"`},
+		{"ShortObject", `{"role":"user","content":"hello"}`},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			body := []byte(`{"model":"grok-4.5","input":` + tc.input + `}`)
+			b.SetBytes(int64(len(body)))
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := sanitizeGrokResponsesModelInput(body); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
 
 func TestSanitizeGrokResponsesModelInputAgentMessage(t *testing.T) {
 	tests := []struct {
@@ -140,6 +189,53 @@ func TestSanitizeGrokResponsesModelInputPairsCallsInTwoPasses(t *testing.T) {
 	require.JSONEq(t, `{"groups":["repo"]}`, gjson.GetBytes(patched, "input.5.output").String())
 	require.Equal(t, "function_call_output", gjson.GetBytes(patched, "input.6.type").String())
 	require.Equal(t, "orphan", gjson.GetBytes(patched, "input.6.call_id").String())
+}
+
+func TestPairGrokReplayCallIDsSkipsAlreadyPairedCalls(t *testing.T) {
+	items := []any{
+		map[string]any{"type": "function_call_output", "id": "item_b"},
+		map[string]any{"type": "function_call", "call_id": "a"},
+		map[string]any{"type": "function_call", "call_id": "a"},
+		map[string]any{"type": "function_call", "call_id": "b", "id": "item_b"},
+		map[string]any{"type": "function_call", "call_id": "c"},
+		map[string]any{"type": "function_call_output"},
+		map[string]any{"type": "function_call_output", "call_id": "a"},
+		map[string]any{"type": "function_call_output"},
+		map[string]any{"type": "function_call_output", "call_id": "unknown"},
+		map[string]any{"type": "function_call_output"},
+	}
+
+	_, outputs := pairGrokReplayCallIDs(items)
+	require.Equal(t, map[int]string{
+		0: "b", 5: "a", 6: "a", 7: "c", 8: "unknown", 9: "grok_replay_call_1",
+	}, outputs)
+}
+
+func BenchmarkPairGrokReplayCallIDs(b *testing.B) {
+	for _, pairs := range []int{8, 64, 192, 512} {
+		for _, mode := range []string{"implicit", "mixed", "explicit"} {
+			b.Run(strconv.Itoa(pairs)+"/"+mode, func(b *testing.B) {
+				items := make([]any, 0, 2*pairs)
+				for i := 0; i < pairs; i++ {
+					id := "call_" + strconv.Itoa(i)
+					output := map[string]any{"type": "function_call_output"}
+					switch mode {
+					case "explicit":
+						output["call_id"] = id
+					case "mixed":
+						if i%2 == 0 {
+							output["call_id"] = "call_" + strconv.Itoa(pairs-1-i)
+						}
+					}
+					items = append(items, map[string]any{"type": "function_call", "call_id": id}, output)
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					pairGrokReplayCallIDs(items)
+				}
+			})
+		}
+	}
 }
 
 func TestSanitizeGrokResponsesModelInputMapsAllItemAliasesAndRejectsConflicts(t *testing.T) {
