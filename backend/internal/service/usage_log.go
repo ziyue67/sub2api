@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"strings"
 	"time"
 )
@@ -106,13 +107,14 @@ type UsageLog struct {
 	CustomerCostDetails     *CustomerCostDetails
 	// Platform snapshots the concrete upstream provider at request time. Gateway
 	// accounts use the resolved request target. Empty is unknown legacy data.
-	Platform  string
-	ID        int64
-	UserID    int64
-	APIKeyID  int64
-	AccountID int64
-	RequestID string
-	Model     string
+	Platform      string
+	ContentTiming *requesttiming.ContentObservation
+	ID            int64
+	UserID        int64
+	APIKeyID      int64
+	AccountID     int64
+	RequestID     string
+	Model         string
 	// RequestedModel is the client-requested model name recorded for stable user/admin display.
 	// Empty should be treated as Model for backward compatibility with historical rows.
 	RequestedModel string

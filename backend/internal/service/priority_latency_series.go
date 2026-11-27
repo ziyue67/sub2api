@@ -99,8 +99,6 @@ func (s *OpenAIGatewayService) PriorityLatencySeries(ctx context.Context, minute
 		summary[candidate.AccountID] = candidate
 	}
 	cfg := input.config
-	// Older saved preferences referred to diagnostic spans that are no longer collected.
-	cfg.LatencyMeasurement = "legacy_forward"
 	var group *int64
 	if snapshot.GroupID != nil {
 		value := *snapshot.GroupID

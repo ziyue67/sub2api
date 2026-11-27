@@ -674,6 +674,13 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	}
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
+	defer func() {
+		if recorder, ok := repo.(interface {
+			RecordRequestTiming(context.Context, string, int64)
+		}); ok {
+			recorder.RecordRequestTiming(ctx, usageLog.RequestID, usageLog.APIKeyID)
+		}
+	}()
 
 	if writer, ok := repo.(usageLogBestEffortWriter); ok {
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
@@ -697,6 +704,14 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 
 	if _, err := repo.Create(usageCtx, usageLog); err != nil {
 		logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
+	}
+}
+
+func recordDurableUsageTiming(ctx context.Context, repo UsageLogRepository, usage *UsageLog) {
+	if recorder, ok := repo.(interface {
+		RecordRequestTiming(context.Context, string, int64)
+	}); ok && usage != nil {
+		recorder.RecordRequestTiming(ctx, usage.RequestID, usage.APIKeyID)
 	}
 }
 
@@ -1022,6 +1037,8 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	}
 	if !s.DurableUsageBillingEnabled() {
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+	} else {
+		recordDurableUsageTiming(ctx, s.usageLogRepo, usageLog)
 	}
 
 	return nil
