@@ -3,6 +3,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,7 +46,7 @@ func TestResponsesSolToolsSwitchAccount(t *testing.T) {
 			h.Responses(c)
 
 			urls, accountIDs, bodies := upstream.snapshot()
-			require.Equal(t, []int64{2}, accountIDs, "the first account is incompatible, not an upstream attempt")
+			require.Equal(t, []int64{2}, accountIDs, "the first account is incompatible, not an upstream attempt: %s", rec.Body.String())
 			require.Equal(t, []string{"https://upstream.example/v1/responses"}, urls)
 			require.Len(t, bodies, 1)
 			require.Equal(t, "gpt-6.1-sol", gjson.GetBytes(bodies[0], "model").String())
@@ -145,7 +146,7 @@ func solToolsTestAccounts(supported ...bool) []service.Account {
 		accounts = append(accounts, service.Account{
 			ID: int64(i + 1), Name: fmt.Sprintf("responses-account-%d", i+1),
 			Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
-			Status: service.StatusActive, Schedulable: true, Priority: i,
+			Status: service.StatusActive, Schedulable: true, Priority: i, GroupIDs: []int64{3132},
 			Credentials: map[string]any{
 				"api_key": "test-key", "base_url": "https://upstream.example",
 				"model_mapping": map[string]any{"public-alias": "gpt-6.1-sol"},
@@ -156,12 +157,21 @@ func solToolsTestAccounts(supported ...bool) []service.Account {
 	return accounts
 }
 
+type solToolsAdmissionRepo struct {
+	*grokCredentialHandlerRepo
+}
+
+func (r solToolsAdmissionRepo) GetOpenAITurnAdmission(ctx context.Context, id int64) (*service.Account, *service.Account, error) {
+	account, err := r.GetByID(ctx, id)
+	return account, nil, err
+}
+
 func newSolToolsFailoverHandler(t *testing.T, accounts []service.Account, upstream service.HTTPUpstream) (*OpenAIGatewayHandler, *grokCredentialHandlerRepo) {
 	t.Helper()
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	repo := &grokCredentialHandlerRepo{accounts: accounts}
 	gateway := service.NewOpenAIGatewayService(
-		repo, nil, nil, nil, nil, nil, nil, nil, cfg,
+		solToolsAdmissionRepo{repo}, nil, nil, nil, nil, nil, nil, nil, cfg,
 		nil, nil, nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)

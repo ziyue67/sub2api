@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -43,6 +44,11 @@ func (c *updateInstallClient) DownloadFile(_ context.Context, _, dest string, _ 
 		return errors.New("download unavailable")
 	}
 	return os.WriteFile(dest, []byte("downloaded release"), 0600)
+}
+
+func (c *updateInstallClient) FetchChecksumFile(context.Context, string) ([]byte, error) {
+	digest := sha256.Sum256([]byte("downloaded release"))
+	return []byte(fmt.Sprintf("%x  %s_%s\n", digest, runtime.GOOS, runtime.GOARCH)), nil
 }
 
 func TestUpdateServicePendingRestartPrecedesReleaseLookup(t *testing.T) {
@@ -117,6 +123,9 @@ func runUpdateInstallScenario(t *testing.T, scenario string) {
 		Assets: []GitHubAsset{{
 			Name:               svc.getArchiveName(),
 			BrowserDownloadURL: "https://github.com/example/releases/" + svc.getArchiveName(),
+		}, {
+			Name:               "checksums.txt",
+			BrowserDownloadURL: "https://github.com/example/releases/checksums.txt",
 		}},
 	}
 	update := func() error { return svc.PerformUpdate(context.Background()) }

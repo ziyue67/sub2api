@@ -121,17 +121,16 @@ func TestOpenAIResponsesInstructionsEchoRestoreHelpers(t *testing.T) {
 	require.Equal(t, event, restoreOpenAIResponsesInstructionsEchoInEvent(c, event), "a new attempt clears the previous restore value")
 }
 
-func TestOpenAIGatewayService_OAuthPassthrough_CodexBlankInstructionsForwardedAsIs(t *testing.T) {
+func TestOpenAIGatewayService_OAuthPassthrough_CodexExplicitInvalidInstructionsRejected(t *testing.T) {
 	for _, raw := range []string{`""`, `" "`, `{"text":"x"}`} {
 		t.Run(raw, func(t *testing.T) {
 			upstream := instructionsEchoUpstream(raw)
 			result, rec, err := instructionsEchoForward(t, instructionsEchoOAuthAccount(true), upstream,
 				`{"model":"gpt-5.3-codex","stream":true,"instructions":`+raw+`,"input":[{"type":"message","role":"user","content":"Hi"}]}`)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.Equal(t, http.StatusOK, rec.Code)
-			require.JSONEq(t, raw, gjson.GetBytes(upstream.lastBody, "instructions").Raw)
-			require.JSONEq(t, raw, sseResponseInstructions(t, rec.Body.String(), "response.completed").Raw)
+			require.ErrorContains(t, err, "openai passthrough rejected before upstream")
+			require.Nil(t, result)
+			require.Equal(t, http.StatusForbidden, rec.Code)
+			require.Empty(t, upstream.requests)
 		})
 	}
 }

@@ -11,3 +11,8 @@ for mirror_list in /etc/apt/apt-mirrors.txt /etc/apt/apt-security-mirrors.txt; d
   fi
 done
 printf '%s\n' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' 'Acquire::Retries "2";' | sudo tee /etc/apt/apt.conf.d/99-sub2api-ci-timeouts >/dev/null
+# Playwright dependency installation invokes apt itself. Use the signed Ubuntu
+# archive only on the disposable CI runner, including indirect apt invocations.
+if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+  printf '%s\n' 'Dir::Etc::sourcelist "/etc/apt/sources.list.d/ubuntu.sources";' 'Dir::Etc::sourceparts "-";' | sudo tee /etc/apt/apt.conf.d/99-sub2api-ci-sources >/dev/null
+fi
