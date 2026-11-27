@@ -52,7 +52,7 @@ func runOpenAIImagesWithUpstream(t *testing.T, status int, upstreamBody string) 
 	}}}
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	gatewayService := service.NewOpenAIGatewayService(
-		accountRepo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil,
+		accountRepo, nil, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil,
 		&openAIImagesStaticHTTPUpstream{status: status, body: upstreamBody},
 		nil, nil, nil, nil, nil, nil, nil, nil,
 	)

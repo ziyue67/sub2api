@@ -233,8 +233,8 @@ func TestIsExplicitGrokFreeOAuthAccount_OnlyExactFree(t *testing.T) {
 func TestOpenAIAccountSchedulerLoadBalanceAppliesGrokFreeQuotaGate(t *testing.T) {
 	cfg := grokFreeQuotaTestConfig()
 	cfg.RunMode = config.RunModeSimple
-	clearGrokFreeQuotaTestCache(t, &openaiGrokFreeQuotaGateCache)
-	t.Cleanup(func() { clearGrokFreeQuotaTestCache(t, &openaiGrokFreeQuotaGateCache) })
+	clearGrokFreeQuotaTestCache(t, openaiGrokFreeQuotaGateCache)
+	t.Cleanup(func() { clearGrokFreeQuotaTestCache(t, openaiGrokFreeQuotaGateCache) })
 	accounts := []Account{
 		{ID: 1, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"subscription_tier": "free"}},
 		{ID: 2, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Credentials: map[string]any{"subscription_tier": "pro"}},

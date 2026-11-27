@@ -36,8 +36,8 @@ jobs:
           set -euo pipefail
           bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends redis-server
           fi
           python3 -m unittest discover -s .github/scripts -p 'test_shadow_omission_evidence.py'
       - name: Original handler assertions RED on exact bd824 shadow production

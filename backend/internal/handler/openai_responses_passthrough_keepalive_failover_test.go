@@ -90,7 +90,7 @@ func newOpenAIPassthroughKeepaliveHandler(t *testing.T, upstream service.HTTPUps
 	cfg := &config.Config{RunMode: config.RunModeSimple}
 	cfg.Gateway.StreamKeepaliveInterval = 1
 	gatewayService := service.NewOpenAIGatewayService(
-		openAIImagesFailoverAccountRepo{accounts: accounts}, nil, nil, nil, nil, nil, nil, cfg,
+		openAIImagesFailoverAccountRepo{accounts: accounts}, nil, nil, nil, nil, nil, nil, nil, cfg,
 		nil, nil, nil, nil, nil, upstream, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	billing := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)

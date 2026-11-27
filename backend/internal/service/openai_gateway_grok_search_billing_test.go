@@ -107,8 +107,8 @@ func TestGetSchedulableAccount_AppliesGrokFreeSoftGate(t *testing.T) {
 	usageRepo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
 		account.ID: {Tokens: 480_000}, // above 95% of 500k
 	}}
-	clearGrokFreeQuotaTestCache(t, &gatewayGrokFreeQuotaGateCache)
-	t.Cleanup(func() { clearGrokFreeQuotaTestCache(t, &gatewayGrokFreeQuotaGateCache) })
+	clearGrokFreeQuotaTestCache(t, gatewayGrokFreeQuotaGateCache)
+	t.Cleanup(func() { clearGrokFreeQuotaTestCache(t, gatewayGrokFreeQuotaGateCache) })
 	svc := &GatewayService{
 		cfg:          cfg,
 		accountRepo:  repo,
@@ -146,8 +146,8 @@ func TestOpenAIGetSchedulableAccount_AppliesGrokFreeSoftGate(t *testing.T) {
 	usageRepo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
 		account.ID: {Tokens: 480_000},
 	}}
-	clearGrokFreeQuotaTestCache(t, &openaiGrokFreeQuotaGateCache)
-	t.Cleanup(func() { clearGrokFreeQuotaTestCache(t, &openaiGrokFreeQuotaGateCache) })
+	clearGrokFreeQuotaTestCache(t, openaiGrokFreeQuotaGateCache)
+	t.Cleanup(func() { clearGrokFreeQuotaTestCache(t, openaiGrokFreeQuotaGateCache) })
 	svc := &OpenAIGatewayService{
 		cfg:          cfg,
 		accountRepo:  repo,

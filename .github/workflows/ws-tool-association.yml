@@ -28,7 +28,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Install isolated Redis
         run: |
-          if ! command -v redis-server >/dev/null; then sudo apt-get update && sudo apt-get install -y redis-server; fi
+          if ! command -v redis-server >/dev/null; then sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update && sudo apt-get install -y redis-server; fi
       - name: Freeze candidate and exact pre-repair projection
         env:
           CANDIDATE: ${{ github.event.pull_request.head.sha }}

@@ -60,8 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends redis-server
           fi
           redis-server --version
       - name: Account model policy and manual control regressions
@@ -143,8 +143,8 @@ jobs:
           docker version > evidence/docker-version.txt
           docker info > evidence/docker-info.txt
           if ! command -v gdb >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends gdb
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- install -y --no-install-recommends gdb
           fi
           (cd backend && go list -deps -test -race -tags=integration ./internal/repository) > evidence/instrumented-dependencies.txt
       - name: Native account edits, migration and scheduler cache with PostgreSQL and Redis
