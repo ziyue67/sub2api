@@ -231,7 +231,8 @@ func TestAntigravityGeminiStreamSkipsCommentKeepaliveForGoGenaiSynctest(t *testi
 }
 
 func TestAntigravityGeminiStreamSkipsCommentKeepaliveForOldJSGenai(t *testing.T) {
-	out := runAntigravityGeminiStreamWithIdle(t, "google-genai-sdk/1.30.0 gl-node/v24.22.3", 1200*time.Millisecond)
+	out, sawKeepalive := runAntigravityGeminiStreamWithIdle(t, "google-genai-sdk/1.30.0 gl-node/v24.22.3", 1200*time.Millisecond)
+	require.False(t, sawKeepalive, "old js-genai must never receive an SSE comment event")
 	require.Contains(t, out, `"text":"partial"`)
 	for _, event := range strings.Split(out, "\n\n") {
 		require.False(t, strings.HasPrefix(event, ":"), "js-genai < 1.32 must never receive an SSE comment event, got %q", event)
