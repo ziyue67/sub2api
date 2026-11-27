@@ -230,6 +230,10 @@ func (s *GatewayService) ForwardAsResponses(
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
 
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && s.rateLimitService != nil && account.IsAnthropicOAuthOrSetupToken() {
+		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
+	}
+
 	// 13. Handle normal response (convert Anthropic → Responses)
 	var handleErr error
 	if clientStream {
@@ -380,6 +384,10 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 	if src.OutputTokens > 0 {
 		dst.OutputTokens = src.OutputTokens
 	}
+	if src.OutputTokensDetails != nil {
+		dst.thinkingTokens = src.OutputTokensDetails.ThinkingTokens
+		dst.thinkingTokensPresent = true
+	}
 }
 
 func normalizeAnthropicPromptTotal(usage *ClaudeUsage, promptTokens int, promptCacheMissTokens *int) {
@@ -455,6 +463,9 @@ func normalizeAnthropicEventUsageForResponses(event *apicompat.AnthropicStreamEv
 		dst.CacheCreationInputTokens = usage.CacheCreationInputTokens
 		dst.CacheCreationInputTokensPresent = true
 		dst.CacheCreation = nil
+		if usage.thinkingTokensPresent {
+			dst.OutputTokensDetails = &apicompat.AnthropicOutputTokensDetails{ThinkingTokens: usage.thinkingTokens}
+		}
 	}
 	normalize(event.Usage)
 	if event.Message != nil {
@@ -656,6 +667,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	state.Model = originalModel
 	state.PreserveThinkingSignatures = isClaude55SignedThinkingModel(mappedModel)
 	clientToolRestorer := apicompat.NewResponsesClientToolStreamRestorer(clientToolMapping)
+	toolNameRestorer := newToolNameStreamRestorer(toolNameRewriteFromContext(c))
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
@@ -793,15 +805,30 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 		observer.ObserveAnthropic([]byte(payload))
 		stream.observe(&event, payload)
+		if stream.upstreamErrType != "" {
+			break
+		}
 		if event.Type == "message_stop" {
 			continue
+		}
+		if toolNameRestorer == nil {
+			processEvent(&event)
+			continue
+		}
+		var restored [2][]byte
+		n := toolNameRestorer.restoreInto(streamEventBytes(payload), &restored)
+		for _, restoredPayload := range restored[:n] {
+			var restoredEvent apicompat.AnthropicStreamEvent
+			if json.Unmarshal(restoredPayload, &restoredEvent) == nil {
+				processEvent(&restoredEvent)
+			}
 		}
 		if stream.upstreamErrType != "" {
 			break
 		}
-		processEvent(&event)
 	}
 
+	flushToolNameCarry(c, c.Writer.Size() != writerSizeBeforeStream, toolNameRestorer, processEvent)
 	return finalizeStream()
 }
 

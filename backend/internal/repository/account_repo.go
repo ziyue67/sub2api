@@ -73,6 +73,7 @@ var schedulerNeutralExtraKeyPrefixes = []string{
 	"upstream_billing_probe",
 	"upstream_usage_probe",
 	"upstream_billing_rate_sync",
+	"upstream_billing_group_sync",
 	"ollama_cloud_usage",
 }
 
@@ -585,7 +586,10 @@ func (r *accountRepository) Update(ctx context.Context, account *service.Account
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.Update(ctx, account)
 	}
-	return r.updateAccount(ctx, account, nil, nil, account.RateMultiplier)
+	if account == nil {
+		return nil
+	}
+	return r.updateAccount(ctx, account, service.AccountBillingSettingsUpdate{RateMultiplier: account.RateMultiplier, SetName: true, SetNotes: true})
 }
 
 // UpdateWithAccountBillingSettings applies an admin account edit while
@@ -594,19 +598,15 @@ func (r *accountRepository) Update(ctx context.Context, account *service.Account
 func (r *accountRepository) UpdateWithAccountBillingSettings(
 	ctx context.Context,
 	account *service.Account,
-	probeEnabled *bool,
-	rateSyncEnabled *bool,
-	rateMultiplier *float64,
+	settings service.AccountBillingSettingsUpdate,
 ) error {
-	return r.updateAccount(ctx, account, probeEnabled, rateSyncEnabled, rateMultiplier)
+	return r.updateAccount(ctx, account, settings)
 }
 
 func (r *accountRepository) updateAccount(
 	ctx context.Context,
 	account *service.Account,
-	explicitProbeEnabled *bool,
-	explicitRateSyncEnabled *bool,
-	explicitRateMultiplier *float64,
+	settings service.AccountBillingSettingsUpdate,
 ) error {
 	if account == nil {
 		return nil
@@ -635,9 +635,7 @@ func (r *accountRepository) updateAccount(
 		ctx,
 		client,
 		account,
-		explicitProbeEnabled,
-		explicitRateSyncEnabled,
-		explicitRateMultiplier,
+		settings,
 	)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrAccountNotFound, nil)
@@ -671,19 +669,40 @@ func (r *accountRepository) updateLockedAccount(
 	ctx context.Context,
 	client *dbent.Client,
 	account *service.Account,
-	explicitProbeEnabled *bool,
-	explicitRateSyncEnabled *bool,
-	explicitRateMultiplier *float64,
+	settings service.AccountBillingSettingsUpdate,
 ) (*dbent.Account, error) {
 	if err := service.ValidateGatewayAccountIdentity(account.Platform, account.Type, account.Credentials); err != nil {
 		return nil, err
 	}
-	extra, err := lockAndMergeAccountProbeExtra(ctx, client, account, explicitProbeEnabled, explicitRateSyncEnabled)
+	extra, err := lockAndMergeAccountProbeExtra(ctx, client, account, settings)
 	if err != nil {
 		return nil, err
 	}
 	account.Extra = extra
 	// lockAndMergeAccountProbeExtra holds the account row lock in this transaction.
+	if settings.ExpectedUpdatedAt != nil {
+		rows, err := client.QueryContext(ctx, "SELECT updated_at FROM accounts WHERE id = $1 AND deleted_at IS NULL", account.ID)
+		if err != nil {
+			return nil, err
+		}
+		var version time.Time
+		if !rows.Next() {
+			err = rows.Err()
+			_ = rows.Close()
+			if err != nil {
+				return nil, err
+			}
+			return nil, service.ErrAccountNotFound
+		}
+		err = rows.Scan(&version)
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		if !version.Equal(*settings.ExpectedUpdatedAt) {
+			return nil, service.ErrAccountUpdateConflict
+		}
+	}
 	if err := accounttimer.CancelPending(ctx, client, account.ID, time.Now().UTC()); err != nil {
 		return nil, err
 	}
@@ -699,8 +718,6 @@ func (r *accountRepository) updateLockedAccount(
 	}
 
 	builder := client.Account.UpdateOneID(account.ID).
-		SetName(account.Name).
-		SetNillableNotes(account.Notes).
 		SetPlatform(account.Platform).
 		SetType(account.Type).
 		SetCredentials(normalizeJSONMap(account.Credentials)).
@@ -721,8 +738,18 @@ func (r *accountRepository) updateLockedAccount(
 		builder.SetSchedulable(false)
 	}
 
-	if explicitRateMultiplier != nil {
-		builder.SetRateMultiplier(*explicitRateMultiplier)
+	if settings.SetName {
+		builder.SetName(account.Name)
+	}
+	if settings.SetNotes {
+		if account.Notes == nil {
+			builder.ClearNotes()
+		} else {
+			builder.SetNotes(*account.Notes)
+		}
+	}
+	if settings.RateMultiplier != nil {
+		builder.SetRateMultiplier(*settings.RateMultiplier)
 	}
 	builder.SetGroupRateMultiplier(account.UserGroupRateMultiplier())
 	if account.LoadFactor != nil {
@@ -782,10 +809,6 @@ func (r *accountRepository) updateLockedAccount(
 	} else {
 		builder.ClearSessionWindowStatus()
 	}
-	if account.Notes == nil {
-		builder.ClearNotes()
-	}
-
 	builder.SetQuotaDimension(dbaccount.QuotaDimension(account.QuotaDimensionOrDefault()))
 	builder.SetNillableParentAccountID(account.ParentAccountID)
 
@@ -796,8 +819,7 @@ func lockAndMergeAccountProbeExtra(
 	ctx context.Context,
 	client *dbent.Client,
 	account *service.Account,
-	explicitProbeEnabled *bool,
-	explicitRateSyncEnabled *bool,
+	settings service.AccountBillingSettingsUpdate,
 ) (map[string]any, error) {
 	credentials, err := json.Marshal(normalizeJSONMap(account.Credentials))
 	if err != nil {
@@ -958,7 +980,7 @@ func lockAndMergeAccountProbeExtra(
 	// Isolation is server-owned. A normal save must use the latest value read
 	// under this row lock, including absence after a legitimate restoration.
 	// Never revive, erase or replace it from a client/service snapshot.
-	for _, key := range []string{service.OAuthDegradationActionExtraKey, service.QualityModelIsolationKey, service.OAuth429ModelBlocksKey} {
+	for _, key := range []string{service.OAuthDegradationActionExtraKey, service.QualityModelIsolationKey} {
 		delete(extra, key)
 		if state, exists := currentExtra[key]; exists {
 			if extra == nil {
@@ -990,6 +1012,7 @@ func lockAndMergeAccountProbeExtra(
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
+		service.UpstreamBillingGroupSyncEnabledExtraKey,
 		service.UpstreamBillingProbeExtraKey,
 		service.UpstreamUsageProbeExtraKey,
 		service.OllamaCloudUsageSessionExtraKey,
@@ -1010,40 +1033,32 @@ func lockAndMergeAccountProbeExtra(
 			probeEnabled = value
 			probeEnabledPresent = true
 		}
-		if explicitProbeEnabled != nil {
-			probeEnabled = *explicitProbeEnabled
+		if settings.ProbeEnabled != nil {
+			probeEnabled = *settings.ProbeEnabled
 			probeEnabledPresent = true
-		}
-	}
-	rateSyncEnabled := false
-	rateSyncEnabledPresent := false
-	if probeAccount {
-		if enabled, ok, err := decodeAccountExtraJSON(currentRateSyncEnabled); err != nil {
-			return nil, err
-		} else if value, isBool := enabled.(bool); ok && isBool {
-			rateSyncEnabled = value
-			rateSyncEnabledPresent = true
-		}
-		if explicitRateSyncEnabled != nil {
-			rateSyncEnabled = *explicitRateSyncEnabled
-			rateSyncEnabledPresent = true
-		}
-		if explicitProbeEnabled != nil && !*explicitProbeEnabled {
-			rateSyncEnabled = false
-			rateSyncEnabledPresent = true
-		}
-		// 同步依赖探测，方向是单向的：探测关闭（或探测键缺失）一律把同步归零。
-		// 不做反向推导——由 rate_sync=true 推出 probe=true 会让一条"同步开、探测键
-		// 缺失"的僵尸记录在任意一次无关编辑时静默打开周期性外呼。需要同时打开两个
-		// 开关的调用方（管理端编辑）自己显式传 explicitProbeEnabled=true。
-		if !probeEnabled {
-			rateSyncEnabled = false
 		}
 		if probeEnabledPresent {
 			extra[service.UpstreamBillingProbeEnabledExtraKey] = probeEnabled
 		}
-		if rateSyncEnabledPresent {
-			extra[service.UpstreamBillingRateSyncEnabledExtraKey] = rateSyncEnabled
+		currentRateSync, _, err := decodeAccountExtraJSON(currentRateSyncEnabled)
+		if err != nil {
+			return nil, err
+		}
+		for _, flag := range []struct {
+			key       string
+			stored    any
+			requested *bool
+		}{
+			{service.UpstreamBillingRateSyncEnabledExtraKey, currentRateSync, settings.RateSyncEnabled},
+			{service.UpstreamBillingGroupSyncEnabledExtraKey, currentExtra[service.UpstreamBillingGroupSyncEnabledExtraKey], settings.GroupSyncEnabled},
+		} {
+			enabled, present := flag.stored.(bool)
+			if flag.requested != nil {
+				enabled, present = *flag.requested, true
+			}
+			if present || (settings.ProbeEnabled != nil && !*settings.ProbeEnabled) {
+				extra[flag.key] = probeEnabled && enabled
+			}
 		}
 	}
 	delete(extra, service.UpstreamBillingProviderExtraKey)
@@ -1135,7 +1150,7 @@ func lockAndMergeAccountProbeExtra(
 	// Resolve omission against the locked row, including a concurrent deletion.
 	// Do this after platform portability so omitted account-wide costs stay fresh;
 	// probe penalties still follow the platform transition's discard contract.
-	for _, key := range []string{service.AccountCostMultiplierExtraKey, service.AccountCostAutoSyncExtraKey, service.AccountProbePenaltyExtraKey} {
+	for _, key := range []string{service.AccountCostMultiplierExtraKey, service.AccountCostAutoSyncExtraKey, service.TokenProcurementBasisKey, service.ImagePurchasePricesKey, service.AccountProbePenaltyExtraKey} {
 		if service.AccountPlatformChanging(ctx) && key == service.AccountProbePenaltyExtraKey {
 			continue
 		}
@@ -1441,7 +1456,7 @@ func (r *accountRepository) List(ctx context.Context, params pagination.Paginati
 
 // accountStatusFilterPredicate 把列表的 status 筛选换成查询条件。质量运维等场景
 // 需要一次筛多个状态（如「正常+限流中」），因此支持逗号分隔的多个值，任一命中即可；
-// 单个值的行为与原先完全一致。
+// 单个值与组合值共用同一状态口径。
 func accountStatusFilterPredicate(status string) dbpredicate.Account {
 	var predicates []dbpredicate.Account
 	for _, value := range strings.Split(status, ",") {
@@ -1459,8 +1474,8 @@ func accountStatusFilterPredicate(status string) dbpredicate.Account {
 }
 
 // accountStatusPredicate 是单个状态值的查询条件。除数据库里的真实状态外，还有几个
-// 派生状态：正常 = active 且可调度且不在限流/临时不可调度中；限流中 / 临时不可调度 /
-// 不可调度分别取对应的一段。
+// 派生状态：正常 = active 且可调度且不在限流/临时不可调度中；限流中仅取未来的
+// 限流截止时间，与列表标记一致，允许和错误、禁用或临时不可调度状态重叠。
 func accountStatusPredicate(status string) dbpredicate.Account {
 	notTempUnschedulable := dbpredicate.Account(func(s *entsql.Selector) {
 		col := s.C("temp_unschedulable_until")
@@ -1481,11 +1496,7 @@ func accountStatusPredicate(status string) dbpredicate.Account {
 			notTempUnschedulable,
 		)
 	case "rate_limited":
-		return dbaccount.And(
-			dbaccount.StatusEQ(service.StatusActive),
-			dbaccount.RateLimitResetAtGT(time.Now()),
-			notTempUnschedulable,
-		)
+		return dbaccount.RateLimitResetAtGT(time.Now())
 	case "temp_unschedulable":
 		return dbaccount.And(
 			dbaccount.StatusEQ(service.StatusActive),
@@ -2466,7 +2477,7 @@ func (r *accountRepository) BindGroups(ctx context.Context, accountID int64, gro
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.BindGroups(ctx, accountID, groupIDs)
 	}
-	if adminaccess.FromContext(ctx) != nil {
+	if adminaccess.RestrictedFromContext(ctx) != nil {
 		return r.scopedAdminBindGroups(ctx, accountID, groupIDs)
 	}
 	// 使用事务保证删除旧绑定与创建新绑定的原子性
@@ -3373,7 +3384,7 @@ func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedu
 	// Scoped writes already hold the account row in their caller-owned transaction.
 	// Cancel pending timers in that same transaction, without opening Store.Manual's
 	// independent transaction or changing ordinary account-edit semantics.
-	if principal := adminaccess.FromContext(ctx); principal != nil {
+	if principal := adminaccess.RestrictedFromContext(ctx); principal != nil {
 		if dbent.TxFromContext(ctx) == nil || principal.CreatorID <= 0 {
 			return errors.New("scoped schedulable write requires an authenticated transaction")
 		}
@@ -3545,24 +3556,26 @@ func (r *accountRepository) UpdateUpstreamBillingProbeSnapshot(
 	account *service.Account,
 	snapshot *service.UpstreamBillingProbeSnapshot,
 	rateMultiplier *float64,
+	group service.BillingGroupInfo,
 ) error {
 	if account == nil || snapshot == nil {
 		return service.ErrAccountNilInput
 	}
 	if snapshot.Status != service.UpstreamBillingProbeStatusOK {
 		rateMultiplier = nil
+		group = service.BillingGroupInfo{}
 	}
 	if dbent.TxFromContext(ctx) == nil {
 		tx, err := r.client.Tx(ctx)
 		if errors.Is(err, dbent.ErrTxStarted) {
-			return r.updateUpstreamBillingProbeSnapshotInTx(ctx, account, snapshot, rateMultiplier)
+			return r.updateUpstreamBillingProbeSnapshotInTx(ctx, account, snapshot, rateMultiplier, group)
 		}
 		if err != nil {
 			return err
 		}
 		defer func() { _ = tx.Rollback() }()
 
-		if err := r.updateUpstreamBillingProbeSnapshotInTx(dbent.NewTxContext(ctx, tx), account, snapshot, rateMultiplier); err != nil {
+		if err := r.updateUpstreamBillingProbeSnapshotInTx(dbent.NewTxContext(ctx, tx), account, snapshot, rateMultiplier, group); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -3573,7 +3586,7 @@ func (r *accountRepository) UpdateUpstreamBillingProbeSnapshot(
 		r.syncSchedulerAccountSnapshot(ctx, account.ID)
 		return nil
 	}
-	return r.updateUpstreamBillingProbeSnapshotInTx(ctx, account, snapshot, rateMultiplier)
+	return r.updateUpstreamBillingProbeSnapshotInTx(ctx, account, snapshot, rateMultiplier, group)
 }
 
 // UpdateUpstreamUsageProbeSnapshot stores a read-only usage observation only
@@ -3666,6 +3679,7 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 	account *service.Account,
 	snapshot *service.UpstreamBillingProbeSnapshot,
 	rateMultiplier *float64,
+	group service.BillingGroupInfo,
 ) error {
 	updates := map[string]any{service.UpstreamBillingProbeExtraKey: snapshot}
 	if service.IsUpstreamBillingProbeIdentity(account.Platform, account.Type) {
@@ -3732,6 +3746,10 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 				THEN $10::numeric
 				ELSE rate_multiplier
 			END,
+			name = CASE WHEN extra @> '{"upstream_billing_group_sync_enabled": true, "upstream_billing_probe_enabled": true}'::jsonb
+				THEN COALESCE(NULLIF($11, ''), name) ELSE name END,
+			notes = CASE WHEN extra @> '{"upstream_billing_group_sync_enabled": true, "upstream_billing_probe_enabled": true}'::jsonb
+				THEN COALESCE(NULLIF($12, ''), notes) ELSE notes END,
 			updated_at = NOW()
 		WHERE id = $2
 			AND platform = $3
@@ -3743,7 +3761,7 @@ func (r *accountRepository) updateUpstreamBillingProbeSnapshotInTx(
 			AND COALESCE(extra -> 'upstream_billing_rate_sync_enabled', 'null'::jsonb) = $9::jsonb
  AND NOT (COALESCE(extra,'{}'::jsonb) @> '{"upstream_billing_provider":"new_api"}'::jsonb)
 			AND deleted_at IS NULL
-	`, string(payload), account.ID, account.Platform, account.Type, string(credentials), proxyID, string(expectedSnapshotJSON), string(expectedEnabledJSON), string(expectedRateSyncEnabledJSON), rateMultiplier)
+	`, string(payload), account.ID, account.Platform, account.Type, string(credentials), proxyID, string(expectedSnapshotJSON), string(expectedEnabledJSON), string(expectedRateSyncEnabledJSON), rateMultiplier, group.Name, group.Description)
 	if err != nil {
 		return err
 	}
@@ -3844,7 +3862,6 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 	// Only ordinary bulk saves reject this input; runtime UpdateExtra remains
 	// available to the dedicated isolation owner.
 	delete(updates.Extra, service.QualityModelIsolationKey)
-	delete(updates.Extra, service.OAuth429ModelBlocksKey)
 
 	setClauses := make([]string, 0, 8)
 	args := make([]any, 0, 8)

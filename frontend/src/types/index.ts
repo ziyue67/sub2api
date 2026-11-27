@@ -1084,6 +1084,7 @@ export interface Proxy {
   quality_grade?: string
   quality_summary?: string
   quality_checked?: number
+  latency_checked_at?: string
   expires_at: string | null
   fallback_mode: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
@@ -1117,6 +1118,8 @@ export interface ProxyQualityCheckResult {
   exit_ip?: string
   country?: string
   country_code?: string
+  region?: string
+  city?: string
   base_latency_ms?: number
   passed_count: number
   warn_count: number
@@ -1553,6 +1556,7 @@ export interface Account {
     upstream_billing_provider?: 'new_api'
     new_api_apply_usd_rate?: boolean
     upstream_billing_probe_enabled?: boolean
+    upstream_billing_group_sync_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
     upstream_usage_probe?: UpstreamUsageProbeSnapshot
@@ -1582,7 +1586,7 @@ export interface Account {
   proxy_fallback_origin_name?: string | null
   concurrency: number
   load_factor?: number | null
-  current_concurrency?: number // Real-time concurrency count from Redis
+  current_concurrency?: number | null // Redis slot count; null means observation unavailable
   scheduler_score?: {
     base_score: number
     sticky_score?: number
@@ -1709,6 +1713,7 @@ export interface WindowStats {
   user_cost?: number
   lifetime_tokens?: number // All-time totals (no time filter)
   lifetime_cost?: number
+  upstream_errors?: number | null // Today stats only; absent when ops monitoring is disabled
 }
 
 export interface UsageProgress {
@@ -1901,6 +1906,7 @@ export interface CreateAccountRequest {
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
+  upstream_billing_group_sync_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
 }
 
@@ -1914,7 +1920,14 @@ export interface AccountGroupBinding {
   created_at: string
 }
 
+export interface UpstreamGroupSyncGuard {
+  source: string
+  name: string
+  notes: string | null
+}
+
 export interface UpdateAccountRequest {
+  upstream_group_guard?: UpstreamGroupSyncGuard
 	platform?: AccountPlatform
   name?: string
   notes?: string | null
@@ -1934,6 +1947,7 @@ export interface UpdateAccountRequest {
   expires_at?: number | null
   auto_pause_on_expired?: boolean
   upstream_billing_probe_enabled?: boolean
+  upstream_billing_group_sync_enabled?: boolean
   upstream_billing_rate_sync_enabled?: boolean
   confirm_mixed_channel_risk?: boolean
 }
@@ -2164,6 +2178,8 @@ export interface UsageLog {
   account_id: number | null
   request_id: string
   model: string
+  /** Final response model; only present for user rows when the channel enables expose_response_model. */
+  response_model?: string | null
   service_tier?: string | null
   reasoning_effort?: string | null
   inbound_endpoint?: string | null
@@ -2694,6 +2710,7 @@ export interface AccountUsageHistory {
   cost: number
   actual_cost: number // Account cost (account multiplier)
   user_cost: number // User/API key billed cost (group multiplier)
+  upstream_errors?: number | null // Absent when ops monitoring is disabled
 }
 
 export interface AccountUsageSummary {
@@ -2709,6 +2726,8 @@ export interface AccountUsageSummary {
   avg_daily_requests: number
   avg_daily_tokens: number
   avg_duration_ms: number
+  total_upstream_errors?: number | null // Absent when ops monitoring is disabled
+  today_upstream_errors?: number | null
   today: {
     date: string
     cost: number
@@ -2998,6 +3017,8 @@ export interface PelicanPersonalQuestion {
 }
 
 export interface PelicanTestConfig {
+  quality_http_status?: number
+  quality_429_streak?: number
   prompt_mode?: 'custom' | 'random'
   pelican_question?: PelicanQuestion
   actual_prompt?: string

@@ -60,17 +60,17 @@ export default {
     errors: { accounts_unavailable: '账号状态读取失败。', metric_unavailable: '监控指标读取失败。', account_enable_failed: '部分兜底账号开启失败，请检查账号状态。' }
   },
  degradation: {
-  "independentScope": "每个账号和模型使用最近一小时内最多 200 个业务样本。只对启用了模型限制且不在保留名单的被测模型执行处置。",
+  "independentScope": "429 触发统计与复测只看实际转发到 Sol、Astra 的请求，每个账号和模型取最近一小时内最多 200 个业务样本。复测确认后执行下方勾选的账号处置动作。启用模型限制时，按保留模型白名单更新账号映射。",
   "independentSamples": "最少业务请求样本（20–200）",
-  "independentHint": "启用后，业务 429 达到阈值会对原账号和模型发起复测。两次完整明确错答，或同一轮追加测试连续 5 次收到 HTTP 429，均可触发模型限制。超时、空答、截断和正文里的数字 429 都不能计入连续 429。",
+  "independentHint": "启用后，业务 429 达到阈值会对原账号和模型发起复测。只有同一轮复测连续 5 次收到上游 HTTP 429，才执行降智后处置。超时、空答、截断和正文里的数字 429 都不能计入连续 429。",
   "independentEnable": "达到 429 阈值后自动复测",
   "title": "降智后处置",
   "hint": "普通探针分支保留原确认流程。HTTP 429 压力只触发下方独立测试，不代表答案错误，也不直接降低账号并发。",
   "conditions": "判断条件",
   "conditionsRequired": "请勾选 429 条件或启用糖果题复核。",
-  "candyRetest": "即时复核糖果题，两次均明确答错才处置",
+  "candyRetest": "即时复核两次糖果题，每次答错或答题限流（HTTP 429）均计入处置条件",
   "probeEvent": "降智 {percent}% ≥ {threshold}% · {samples} 个明确轮次",
-  "candyEvent": "{model} 糖果复核 · {wrong}/2 次明确答错",
+  "candyEvent": "{model} 糖果复核 · 答错 {wrong} 次，答题限流 {rateLimited} 次",
   "upstream429": "429 错误率过高",
   "upstreamErrorThreshold": "上游错误率阈值（%）",
   "upstream429ShareThreshold": "429 占错误响应阈值（%）",
@@ -205,6 +205,9 @@ export default {
   "concurrency": "初始并发",
   "cost_multiplier": "成本倍率",
   "groups": "首次加入分组",
+  jsonImportScheduling: 'JSON 导入自动开启调度',
+  twoFALoginScheduling: '2FA 登录自动开启调度',
+  importSchedulingHint: '取消勾选后，新账号仍保存凭据并应用首次配置，调度保持关闭。停用首次配置后，这两个选项均不生效。',
   totp429: {
     label: '429 后自动更换 2FA',
     hint: '随首次配置为新 OpenAI OAuth 账号启用。遇到 429 时，使用凭证运营已保存的邮箱、密码和当前 2FA 更换密钥，新密钥加密保存。同一账号 1 小时内最多自动创建一次更换任务；凭据不完整或更换结果待确认时不自动更换。'

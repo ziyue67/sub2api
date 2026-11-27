@@ -72,7 +72,9 @@ func TestProcurementSnapshotUnknownAndLegacySemantics(t *testing.T) {
 	for _, kind := range []string{AccountTypeAPIKey, AccountTypeUpstream, AccountTypeOAuth} {
 		legacy := &UsageLog{Platform: PlatformOpenAI}
 		captureGatewayProcurementCost(legacy, &Account{Type: kind})
-		require.Nil(t, legacy.ProcurementCostSnapshot, "legacy single-platform reporting must retain its existing fallback")
+		require.NotNil(t, legacy.ProcurementCostSnapshot)
+		require.Equal(t, 2, legacy.ProcurementCostSnapshot.Version)
+		require.Nil(t, legacy.ProcurementCostSnapshot.CostMultiplier)
 	}
 	require.Equal(t, 10.0, log.TotalCost)
 	require.Equal(t, 3.0, log.ActualCost)
@@ -119,5 +121,33 @@ func TestProcurementSnapshotSub2APIManualRate(t *testing.T) {
 		captureGatewayProcurementCost(log, account)
 		require.NotNil(t, log.ProcurementCostSnapshot.CostMultiplier)
 		require.Equal(t, factor, *log.ProcurementCostSnapshot.CostMultiplier)
+	}
+}
+
+func TestProfitOperationsCapturesImagePriceAndSavedMultiplier(t *testing.T) {
+	prices := map[string]any{"1K": 0.005}
+	account := &Account{Type: AccountTypeAPIKey, Extra: map[string]any{ImagePurchasePricesKey: prices, AccountCostMultiplierExtraKey: 0.08}}
+	usage := &UsageLog{ImageCount: 2}
+	captureGatewayProcurementCost(usage, account)
+	prices["1K"] = 5.0
+	account.Extra[AccountCostMultiplierExtraKey] = 1
+	require.Equal(t, .005, usage.ProcurementCostSnapshot.ImagePrices["1K"])
+	require.Equal(t, .08, *usage.ProcurementCostSnapshot.CostMultiplier)
+}
+
+func TestProfitOperationsTokenBasisSnapshot(t *testing.T) {
+	account := &Account{Type: AccountTypeAPIKey, Extra: map[string]any{AccountCostMultiplierExtraKey: 0.35}}
+	for _, basis := range []string{TokenProcurementAccount, TokenProcurementStandard} {
+		if basis == TokenProcurementStandard {
+			account.Extra[TokenProcurementBasisKey] = basis
+		}
+		require.NoError(t, ValidateAccountCostMultiplierExtra(account.Extra))
+		log := &UsageLog{TotalCost: 100, ActualCost: 50}
+		captureGatewayProcurementCost(log, account)
+		require.Equal(t, basis, log.ProcurementCostSnapshot.TokenBasis)
+		require.Equal(t, 0.35, *log.ProcurementCostSnapshot.CostMultiplier)
+	}
+	for _, invalid := range []any{"unknown", 1, map[string]any{}} {
+		require.Error(t, ValidateAccountCostMultiplierExtra(map[string]any{TokenProcurementBasisKey: invalid}))
 	}
 }

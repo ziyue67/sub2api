@@ -35,7 +35,7 @@ func TestObserverUsageErrorsScopeAndVisibility(t *testing.T) {
 			repo := &observerErrorRepo{detail: service.OpsErrorLogDetail{OpsErrorLog: service.OpsErrorLog{ID: 7, UserID: &owner, AccountName: "own-account"}, APIKeyPrefix: "secret-prefix", ErrorBody: "own-error"}}
 			settings := service.NewSettingService(&settingHandlerPublicRepoStub{values: map[string]string{service.SettingKeyAllowUserViewErrorRequests: enabled}}, nil)
 			ops := service.NewOpsService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
-			h := NewUsageHandler(nil, nil, ops, settings)
+			h := NewUsageHandler(nil, nil, ops, settings, nil)
 			router := gin.New()
 			router.Use(func(c *gin.Context) {
 				c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 42})

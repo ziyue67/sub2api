@@ -95,7 +95,7 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 	if account.IsGrokOAuth() && isGrokCLIProxyTarget(targetURL) {
 		applyGrokCLIHeaders(req.Header)
 	}
-	account.ApplyHeaderOverrides(req.Header)
+	account.ApplyHeaderOverridesWithContext(req.Context(), req.Header)
 
 	proxyURL := AccountProxyURL(account)
 	started := time.Now()

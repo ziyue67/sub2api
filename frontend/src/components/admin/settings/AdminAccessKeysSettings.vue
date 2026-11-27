@@ -1,6 +1,6 @@
 <template>
   <section class="card space-y-4 p-6" :aria-label="t('adminAccessKeys.title')">
-    <h2 class="text-lg font-semibold">{{ t('adminAccessKeys.title') }}</h2>
+    <h2 class="flex items-center gap-2 text-lg font-semibold">{{ t('adminAccessKeys.title') }}<NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.adminKeyFullAccess" :user-id="authStore.user?.id" /></h2>
     <p class="text-sm text-gray-500">{{ t('adminAccessKeys.authorizationHint') }}</p>
     <p class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">{{ t('adminAccessKeys.sharedAccountWarning') }}</p>
     <p v-if="error" role="alert" class="text-sm text-red-600">{{ error }}</p>
@@ -44,6 +44,7 @@
       <label class="flex gap-2"><input v-model="draft.enabled" type="checkbox" />{{ t('adminAccessKeys.enabled') }}</label>
       <div class="space-y-2 rounded-lg border border-red-300 p-3">
         <label class="flex gap-2"><input data-test="full-access" type="checkbox" :checked="draft.policy.full_access || fullAccessPrompt" :disabled="busy" @change="changeFullAccess" />{{ t('adminAccessKeys.fullAccessLabel') }}</label>
+        <NewFeatureBadge :notice-id="NEW_FEATURE_NOTICES.adminKeyFullAccess" :user-id="authStore.user?.id" />
         <p class="text-sm text-red-700 dark:text-red-300">{{ t('adminAccessKeys.fullAccessWarning') }}</p>
         <p v-if="draft.policy.full_access" class="text-sm">{{ t('adminAccessKeys.rulesSuspended') }}</p>
       </div>
@@ -93,6 +94,9 @@ import * as api from '@/api/admin/adminAccessKeys'
 import type { AccessRule, AdminKey, AdminKeyInput, Permission } from '@/api/admin/adminAccessKeys'
 import { getAllIncludingInactive } from '@/api/admin/groups'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
+import { useAuthStore } from '@/stores/auth'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import { useAdminAccessKeyPermissions } from '@/composables/useAdminAccessKeyPermissions'
@@ -101,6 +105,7 @@ import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
 const { t, locale } = useI18n()
 const { permissionLabel, permissionCategory } = useAdminAccessKeyPermissions()
 const stepUp = useStepUp()
+const authStore = useAuthStore()
 const items = ref<AdminKey[]>([])
 const permissions = ref<Permission[]>([])
 const groups = ref<{ id: number; name: string }[]>([])

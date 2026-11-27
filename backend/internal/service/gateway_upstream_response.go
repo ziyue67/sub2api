@@ -10,8 +10,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -23,6 +25,24 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// This relay sometimes rejects the thinking envelope without identifying the field.
+// Keep signed history and thinking semantics intact for the next account.
+func aiwanwuThinkingRoute(account *Account, model string) bool {
+	if account == nil || account.Platform != PlatformAnthropic || account.Type != AccountTypeAPIKey || model != "claude-opus-5-5" {
+		return false
+	}
+	origin, err := url.Parse(account.GetBaseURL())
+	return err == nil && origin.Scheme == "https" && (strings.EqualFold(origin.Hostname(), "www.aiwanwu.cc") || strings.EqualFold(origin.Hostname(), "aiwanwu.cc"))
+}
+
+func aiwanwuThinkingFailover(c *gin.Context, account *Account, resp *http.Response, body []byte) *UpstreamFailoverError {
+	if !gjson.ValidBytes(body) || gjson.GetBytes(body, "error.message").String() != "Unsupported field in thinking" {
+		return nil
+	}
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{ProxyID: opsUpstreamProxyID(account), Platform: account.Platform, AccountID: account.ID, UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"), Kind: "failover", Message: "Unsupported field in thinking"})
+	return &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: body, RequestScopedTransient: true}
+}
 
 // isClaudeCodeClient 判断请求是否来自真正的 Claude Code 客户端。
 // 判定条件：
@@ -363,6 +383,35 @@ func (s *GatewayService) readUpstreamErrorBody(resp *http.Response) ([]byte, err
 
 const anthropicRequestTooLargeMessage = "Request body is too large. Anthropic Messages requests are limited to 32 MiB. Reduce the request size and try again."
 
+const AnthropicModelUnavailableReason GatewayFailureReason = "anthropic_model_unavailable"
+
+// A relay can reject a model offered by a different account in the same local group.
+func (s *GatewayService) anthropicModelNotFoundFailover(c *gin.Context, account *Account, resp *http.Response) *UpstreamFailoverError {
+	if account == nil || account.Platform != PlatformAnthropic || resp == nil || resp.StatusCode != http.StatusNotFound || resp.Body == nil {
+		return nil
+	}
+	body, err := s.readUpstreamErrorBody(resp)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || !gjson.ValidBytes(body) {
+		return nil
+	}
+	message := extractUpstreamErrorMessage(body)
+	code := extractUpstreamErrorCode(body)
+	kind := gjson.GetBytes(body, "error.type").String()
+	if !IsOpsModelCapabilityRejection(resp.StatusCode, 0, message) &&
+		code != "model_not_found" && kind != "model_not_found" && code != "model_not_supported" && kind != "model_not_supported" {
+		return nil
+	}
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+		ProxyID: opsUpstreamProxyID(account), ProxyName: opsUpstreamProxyName(account),
+		Kind: "failover", UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+		Message: sanitizeUpstreamErrorMessage(message),
+	})
+	return &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: body, Reason: AnthropicModelUnavailableReason}
+}
+
 var errAnthropicRequestTooLarge = errors.New("anthropic request body too large")
 
 func isAnthropicRequestTooLarge(account *Account, resp *http.Response) bool {
@@ -412,6 +461,9 @@ func handleAnthropicRequestTooLarge(c *gin.Context, resp *http.Response) (*Forwa
 func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, requestedModel ...string) (*ForwardResult, error) {
 	if isAnthropicRequestTooLarge(account, resp) {
 		return handleAnthropicRequestTooLarge(c, resp)
+	}
+	if s.interceptAnthropicContextRejection(c, account, resp) {
+		return nil, errGatewayContextRejection
 	}
 	// Upstream returned a non-success HTTP status; count Ollama Cloud / OpenCode Go activity.
 	scheduleOllamaCloudUsageActivity(s.deferredService, account)
@@ -836,20 +888,23 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	// 更新5h窗口状态
 	s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 
-	if s.responseHeaderFilter != nil {
-		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
-	}
+	// Install upstream headers only for the attempt that writes the downstream response.
+	prepareHeaders := sync.OnceFunc(func() {
+		if s.responseHeaderFilter != nil {
+			responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		}
 
-	// 设置SSE响应头
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
+		// 设置SSE响应头
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
 
-	// 透传其他响应头
-	if v := resp.Header.Get("x-request-id"); v != "" {
-		c.Header("x-request-id", v)
-	}
+		// 透传其他响应头
+		if v := resp.Header.Get("x-request-id"); v != "" {
+			c.Header("x-request-id", v)
+		}
+	})
 
 	w := c.Writer
 	if _, ok := w.(http.Flusher); !ok {
@@ -954,12 +1009,20 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	// 服务端 ExtractUpstreamErrorMessage 也能从透传的 body 中提取 message。
 	clientDisconnected := false
 	var markClientDisconnected func(error)
+	var flushToolCarry func()
+	toolNameRestorer := newToolNameStreamRestorer(toolNameRewriteFromContext(c))
 	errorEventSent := false
 	sendErrorEvent := func(reason, message string) {
 		if errorEventSent || clientDisconnected {
 			return
 		}
 		errorEventSent = true
+		if flushToolCarry != nil {
+			flushToolCarry()
+			if clientDisconnected {
+				return
+			}
+		}
 		if message == "" {
 			message = reason
 		}
@@ -974,6 +1037,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			// json.Marshal 不可能在已知 string-only 输入上失败，保守 fallback
 			body = []byte(fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":%q}}`, reason, message))
 		}
+		prepareHeaders()
 		MarkResponseCommitted(c)
 		if _, err := fmt.Fprintf(w, "event: error\ndata: %s\n\n", body); err != nil {
 			markClientDisconnected(err)
@@ -994,6 +1058,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	noopDeltaKeepaliveDeltaType := ""
 
 	pendingEventLines := make([]string, 0, 4)
+	sawUpstreamLine := false
 
 	processSSEEvent := func(lines []string) ([]string, string, *sseUsagePatch, error) {
 		if len(lines) == 0 {
@@ -1248,6 +1313,30 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			markClientDisconnected(err)
 		}
 	}
+	writeBlock := func(block string) {
+		if clientDisconnected {
+			return
+		}
+		prepareHeaders()
+		if _, err := io.WriteString(w, reverseToolNamesIfPresentString(c, block)); err != nil {
+			markClientDisconnected(err)
+			return
+		}
+		if err := FlushGatewayResponse(w); err != nil {
+			markClientDisconnected(err)
+			return
+		}
+		lastDataAt = time.Now()
+		resetKeepaliveTimer()
+	}
+	flushToolCarry = func() {
+		if clientDisconnected || !c.Writer.Written() || toolNameRestorer == nil {
+			return
+		}
+		for _, payload := range toolNameRestorer.flush() {
+			writeBlock("event: content_block_delta\ndata: " + string(payload) + "\n\n")
+		}
+	}
 	consumePending := func() error {
 		if len(pendingEventLines) == 0 {
 			return nil
@@ -1292,16 +1381,21 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				_, _ = terminalFrames.WriteString(block)
 				continue
 			}
-			if _, err := io.WriteString(w, reverseToolNamesIfPresentString(c, block)); err != nil {
-				markClientDisconnected(err)
-				return nil
+			if toolNameRestorer == nil || data == "" {
+				writeBlock(block)
+				continue
 			}
-			if err := FlushGatewayResponse(w); err != nil {
-				markClientDisconnected(err)
-				return nil
+			payload := streamEventBytes(data)
+			var restored [2][]byte
+			n := toolNameRestorer.restoreInto(payload, &restored)
+			for i, event := range restored[:n] {
+				if i == n-1 && bytes.Equal(event, payload) {
+					writeBlock(block)
+					continue
+				}
+				eventName := gjson.GetBytes(event, "type").String()
+				writeBlock("event: " + eventName + "\ndata: " + string(event) + "\n\n")
 			}
-			lastDataAt = time.Now()
-			resetKeepaliveTimer()
 		}
 		return nil
 	}
@@ -1337,6 +1431,19 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				}
 				status.readErr = io.EOF
 				if failure := status.failure(); failure != nil {
+					// An empty stream leaves no client message or measured usage to preserve.
+					if failure.errType == "stream_incomplete" && !c.Writer.Written() && !sawUpstreamLine && !usage.hasObservedTokens() {
+						appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+							ProxyID: opsUpstreamProxyID(account), ProxyName: opsUpstreamProxyName(account),
+							Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+							UpstreamStatusCode: http.StatusBadGateway, UpstreamRequestID: resp.Header.Get("x-request-id"),
+							Kind: "failover", Message: failure.message,
+						})
+						return nil, &UpstreamFailoverError{
+							StatusCode:   http.StatusBadGateway,
+							ResponseBody: []byte(`{"type":"error","error":{"type":"stream_incomplete","message":"upstream stream ended without a terminal event"}}`),
+						}
+					}
 					MarkOpsStreamError(c, failure.errType, failure.message, http.StatusBadGateway)
 					if !clientDisconnected {
 						MarkResponseCommitted(c)
@@ -1344,6 +1451,11 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					}
 					return result(), failure.err
 				}
+				flushToolCarry()
+				if clientDisconnected {
+					return incompleteDrain(disconnectCause)
+				}
+				prepareHeaders()
 				if _, err := io.WriteString(w, reverseToolNamesIfPresentString(c, terminalFrames.String())); err != nil {
 					markClientDisconnected(err)
 					return incompleteDrain(err)
@@ -1368,12 +1480,28 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				}
 				disconnectMsg := "upstream stream disconnected: " + sanitizeStreamError(ev.err)
 				if !c.Writer.Written() && !status.usageSeen && !usage.hasObservedTokens() {
-					body, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]string{"type": "upstream_disconnected", "message": disconnectMsg}})
-					return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, ResponseBody: body, RetryableOnSameAccount: true}
+					logger.LegacyPrintf("service.gateway", "Upstream stream read error before any client output (account=%d), failing over: %v", account.ID, ev.err)
+					body, _ := json.Marshal(map[string]any{
+						"type": "error",
+						"error": map[string]string{
+							"type":    "upstream_disconnected",
+							"message": disconnectMsg,
+						},
+					})
+					failoverErr := &UpstreamFailoverError{
+						StatusCode:             http.StatusBadGateway,
+						ResponseBody:           body,
+						RetryableOnSameAccount: true,
+					}
+					if usesOpenAIOAuthRetryAffinity(account) && classifyUpstreamTransportError(ev.err) == upstreamTransportTransient {
+						failoverErr.preserveOpenAIOAuthBinding()
+					}
+					return nil, failoverErr
 				}
 				sendErrorEvent("stream_read_error", disconnectMsg)
 				return result(), fmt.Errorf("stream read error: %w", ev.err)
 			}
+			sawUpstreamLine = true
 			line := ev.line
 			if line == "" {
 				if err := consumePending(); err != nil {
@@ -1418,6 +1546,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					keepaliveBlock = block
 				}
 			}
+			prepareHeaders()
 			if _, werr := fmt.Fprint(w, keepaliveBlock); werr != nil {
 				markClientDisconnected(werr)
 				continue

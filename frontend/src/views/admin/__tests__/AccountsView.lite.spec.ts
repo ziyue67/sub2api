@@ -20,6 +20,8 @@ const {
   getAllProxies,
   getAllGroups,
   refreshCredentials,
+  previewUpstreamGroup,
+  updateAccount,
   showError,
   showWarning
 } = vi.hoisted(() => ({
@@ -36,6 +38,8 @@ const {
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn(),
   refreshCredentials: vi.fn(),
+  previewUpstreamGroup: vi.fn(),
+  updateAccount: vi.fn(),
   showError: vi.fn(),
   showWarning: vi.fn()
 }))
@@ -57,9 +61,11 @@ vi.mock('@/api/admin', () => ({
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
       toggleSchedulable: vi.fn(),
-      refreshCredentials
+      refreshCredentials,
+      previewUpstreamGroup,
+      update: updateAccount
     },
-    proxies: { getAll: getAllProxies },
+    proxies: { getAllWithCount: getAllProxies },
     groups: { getAll: getAllGroups }
   }
 }))
@@ -83,6 +89,7 @@ const DataTableStub = defineComponent({
   template: `
     <div>
       <template v-if="!loading"><div v-for="row in data" :key="row.id" :data-account-name="row.name">
+        <slot name="cell-name" :row="row" :value="row.name" />
         <slot name="cell-groups" :row="row" />
         <slot name="cell-capacity" :row="row" />
         <slot name="cell-performance" :row="row" />
@@ -100,7 +107,7 @@ const AccountGroupsCellStub = defineComponent({
 })
 
 const EditAccountModalStub = defineComponent({
-  props: { show: Boolean, account: { type: Object, default: null } },
+  props: { show: Boolean, account: { type: Object, default: null }, proxies: Array },
   template: '<div data-test="edit-account">{{ show ? account?.name : "" }}</div>'
 })
 
@@ -122,7 +129,7 @@ function mountView(stubActionMenu = true, realUsageCell = false) {
         AppLayout: { template: '<div><slot /></div>' },
         TablePageLayout: { template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>' },
         DataTable: DataTableStub,
-        AccountTableActions: { template: `<div><button data-test="manual-refresh" @click="$emit('refresh')">refresh</button><slot name="after" /></div>` },
+        AccountTableActions: { template: `<div><button data-test="manual-refresh" @click="$emit('refresh')">refresh</button><button data-test="open-create" @click="$emit('create')">create</button><slot name="after" /></div>` },
         AccountTableFilters: true,
         AccountBulkActionsBar: true,
         Pagination: true,
@@ -193,6 +200,8 @@ describe('admin AccountsView lite account list', () => {
     getAllGroups.mockReset().mockResolvedValue([{ id: 7, name: 'codex', platform: 'openai' }])
     getUpstreamBillingRatesWithEtag.mockReset().mockResolvedValue({ notModified: true, data: null })
     probeUpstreamBilling.mockReset()
+    previewUpstreamGroup.mockReset()
+    updateAccount.mockReset()
     refreshCredentials.mockReset()
     showError.mockReset()
     showWarning.mockReset()
@@ -231,7 +240,209 @@ describe('admin AccountsView lite account list', () => {
     await flushPromises()
     expect(getPerformance).toHaveBeenCalledTimes(1)
     expect(getPerformance).toHaveBeenCalledWith([42], expect.any(AbortSignal))
+  })
+
+  it('loads proxies with account counts and passes them to create and edit modals', async () => {
+    const proxies = [
+      { id: 1, name: 'Unused proxy', account_count: 0 },
+      { id: 2, name: 'Shared proxy', account_count: 7 }
+    ]
+    getAllProxies.mockResolvedValue(proxies)
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(getAllProxies).toHaveBeenCalledTimes(1)
+    expect(wrapper.findComponent({ name: 'CreateAccountModal' }).props('proxies')).toEqual(proxies)
+    expect(wrapper.findComponent(EditAccountModalStub).props('proxies')).toEqual(proxies)
     wrapper.unmount()
+  })
+
+  it('reloads proxy account counts each time the create dialog opens and keeps them on failure', async () => {
+    const initial = [{ id: 2, name: 'Shared proxy', account_count: 7 }]
+    const refreshed = [{ id: 2, name: 'Shared proxy', account_count: 8 }]
+    getAllProxies.mockResolvedValueOnce(initial).mockResolvedValueOnce(refreshed).mockRejectedValueOnce(new Error('offline'))
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = mountView()
+    await flushPromises()
+    const createModal = () => wrapper.findComponent({ name: 'CreateAccountModal' })
+    expect(createModal().props('proxies')).toEqual(initial)
+
+    await wrapper.get('[data-test="open-create"]').trigger('click')
+    await flushPromises()
+    expect(getAllProxies).toHaveBeenCalledTimes(2)
+    expect(createModal().props('proxies')).toEqual(refreshed)
+
+    createModal().vm.$emit('close')
+    await flushPromises()
+    expect(getAllProxies).toHaveBeenCalledTimes(2)
+
+    await wrapper.get('[data-test="open-create"]').trigger('click')
+    await flushPromises()
+    expect(getAllProxies).toHaveBeenCalledTimes(3)
+    expect(createModal().props('proxies')).toEqual(refreshed)
+    wrapper.unmount()
+  })
+
+  it('applies an older proxy response when a newer refresh fails, but never lets it overwrite a newer one', async () => {
+    type ProxyList = Array<{ id: number; name: string; account_count: number }>
+    const deferred = () => {
+      let resolve!: (value: ProxyList) => void
+      let reject!: (reason: Error) => void
+      const promise = new Promise<ProxyList>((res, rej) => { resolve = res; reject = rej })
+      return { promise, resolve, reject }
+    }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const createModal = (wrapper: ReturnType<typeof mountView>) => wrapper.findComponent({ name: 'CreateAccountModal' })
+
+    // Mount request is slow; the dialog-open request fails first.
+    const mountLoad = deferred()
+    const openLoad = deferred()
+    getAllProxies.mockReturnValueOnce(mountLoad.promise).mockReturnValueOnce(openLoad.promise)
+    let wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="open-create"]').trigger('click')
+    openLoad.reject(new Error('offline'))
+    await flushPromises()
+    mountLoad.resolve([{ id: 1, name: 'Shared proxy', account_count: 3 }])
+    await flushPromises()
+    expect(createModal(wrapper).props('proxies')).toEqual([{ id: 1, name: 'Shared proxy', account_count: 3 }])
+    wrapper.unmount()
+
+    // Mount request is slow; the dialog-open request succeeds first with newer counts.
+    const slowMount = deferred()
+    const fastOpen = deferred()
+    getAllProxies.mockReset().mockReturnValueOnce(slowMount.promise).mockReturnValueOnce(fastOpen.promise)
+    wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="open-create"]').trigger('click')
+    fastOpen.resolve([{ id: 1, name: 'Shared proxy', account_count: 4 }])
+    await flushPromises()
+    slowMount.resolve([{ id: 1, name: 'Shared proxy', account_count: 3 }])
+    await flushPromises()
+    expect(createModal(wrapper).props('proxies')).toEqual([{ id: 1, name: 'Shared proxy', account_count: 4 }])
+    wrapper.unmount()
+  })
+
+  it('refreshes proxy account counts after accounts are created while the dialog stays open', async () => {
+    const before = [{ id: 2, name: 'Shared proxy', account_count: 7 }]
+    const after = [{ id: 2, name: 'Shared proxy', account_count: 9 }]
+    getAllProxies.mockResolvedValueOnce(before).mockResolvedValueOnce(before).mockResolvedValueOnce(after)
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-test="open-create"]').trigger('click')
+    await flushPromises()
+    const createModal = wrapper.findComponent({ name: 'CreateAccountModal' })
+    expect(createModal.props('proxies')).toEqual(before)
+
+    createModal.vm.$emit('created')
+    await flushPromises()
+    expect(getAllProxies).toHaveBeenCalledTimes(3)
+    expect(createModal.props('proxies')).toEqual(after)
+    wrapper.unmount()
+  })
+
+  it('syncs the selected row without clearing notes missing from the upstream', async () => {
+    const account = { ...listRow, type: 'apikey', notes: 'local notes' }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    const guard = { source: 'synthetic-source', name: account.name, notes: account.notes }
+    previewUpstreamGroup.mockResolvedValueOnce({}).mockResolvedValueOnce({ name: 'New group', upstream_group_guard: guard })
+    updateAccount.mockReset().mockResolvedValue({ ...account, name: 'New group' })
+    const wrapper = mountView()
+    await flushPromises()
+    const sync = wrapper.get('button[aria-label="admin.accounts.upstreamBilling.saveGroup"]')
+    await sync.trigger('click')
+    await flushPromises()
+    expect(updateAccount).not.toHaveBeenCalled()
+    await sync.trigger('click')
+    await flushPromises()
+    expect(previewUpstreamGroup).toHaveBeenLastCalledWith({ account_id: account.id })
+    expect(updateAccount).toHaveBeenCalledWith(account.id, { name: 'New group', upstream_group_guard: guard })
+    expect(wrapper.find('[data-account-name="New group"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('clears a cached concurrency count on explicit null and retains it only for omitted edit fields', async () => {
+    const account = { ...listRow, current_concurrency: 2 }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    const wrapper = mountView()
+    await flushPromises()
+    const displayed = () => wrapper.findComponent(UpstreamBillingRateCell).props('account').current_concurrency
+    wrapper.findComponent(EditAccountModalStub).vm.$emit('updated', { ...account, current_concurrency: undefined })
+    await flushPromises()
+    expect(displayed()).toBe(2)
+    wrapper.findComponent(EditAccountModalStub).vm.$emit('updated', { ...account, current_concurrency: null })
+    await flushPromises()
+    expect(displayed()).toBeNull()
+    wrapper.findComponent(EditAccountModalStub).vm.$emit('updated', { ...account, current_concurrency: 0 })
+    await flushPromises()
+    expect(displayed()).toBe(0)
+    wrapper.unmount()
+  })
+
+  it.each([
+    { label: 'name', edit: { name: 'Manual name' }, expected: { notes: 'Remote notes' } },
+    { label: 'notes', edit: { notes: 'Manual notes' }, expected: { name: 'Remote name' } },
+    { label: 'both text fields', edit: { name: 'Manual name', notes: 'Manual notes' }, expected: null },
+    { label: 'credentials', edit: { credentials: { api_key: 'synthetic-replacement' } }, expected: null },
+    { label: 'URL', edit: { credentials: { base_url: 'https://different.example/v1' } }, expected: null },
+    { label: 'protocol URL', edit: { credentials: { api_base_urls: { chat_completions: 'https://different.example/v1' } } }, expected: null },
+    { label: 'proxy', edit: { proxy_id: 9 }, expected: null },
+    { label: 'platform', edit: { platform: 'gemini' }, expected: null },
+    { label: 'unrelated priority', edit: { priority: 8 }, expected: { name: 'Remote name', notes: 'Remote notes' } },
+    { label: 'unchanged', edit: {}, expected: { name: 'Remote name', notes: 'Remote notes' } }
+  ])('protects a completed $label edit from a delayed group preview', async ({ edit, expected }) => {
+    const account = { ...listRow, type: 'apikey', notes: 'Local notes' }
+    const guard = { source: 'synthetic-source', name: account.name, notes: account.notes }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    let resolvePreview!: (fields: Record<string, unknown>) => void
+    previewUpstreamGroup.mockReturnValue(new Promise(resolve => { resolvePreview = resolve }))
+    const current = { ...account, ...edit }
+    updateAccount.mockImplementation(async (_id, fields) => ({ ...current, ...fields }))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[aria-label="admin.accounts.upstreamBilling.saveGroup"]').trigger('click')
+    // The real view's editor event replaces the list row, reproducing the stale reference.
+    wrapper.findComponent(EditAccountModalStub).vm.$emit('updated', current)
+    await flushPromises()
+    resolvePreview({ name: 'Remote name', notes: 'Remote notes', upstream_group_guard: guard })
+    await flushPromises()
+    if (expected) {
+      expect(updateAccount).toHaveBeenCalledTimes(1)
+      expect(updateAccount).toHaveBeenCalledWith(account.id, { ...expected, upstream_group_guard: guard })
+    } else {
+      expect(updateAccount).not.toHaveBeenCalled()
+    }
+    const displayed = wrapper.findComponent(UpstreamBillingRateCell).props('account')
+    expect(displayed.name).toBe(expected?.name ?? current.name)
+    expect(displayed.notes).toBe(expected?.notes ?? current.notes)
+    expect(displayed.priority).toBe(current.priority)
+    wrapper.unmount()
+  })
+
+  it.each(['preview failure', 'patch conflict', 'missing guard', 'unmounted'])('keeps local text on %s', async (scenario) => {
+    const account = { ...listRow, type: 'apikey', notes: 'Local notes' }
+    listAccounts.mockResolvedValue({ items: [account], total: 1, page: 1, page_size: 20, pages: 1 })
+    let resolvePreview!: (fields: Record<string, unknown>) => void
+    let rejectPreview!: (error: Error) => void
+    previewUpstreamGroup.mockReturnValue(new Promise((resolve, reject) => { resolvePreview = resolve; rejectPreview = reject }))
+    updateAccount.mockRejectedValue({ response: { status: 409, data: { message: 'Account changed' } } })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[aria-label="admin.accounts.upstreamBilling.saveGroup"]').trigger('click')
+    if (scenario === 'unmounted') wrapper.unmount()
+    if (scenario === 'preview failure') rejectPreview(new Error('Preview failed'))
+    else resolvePreview({ name: 'Remote name', ...(scenario === 'missing guard' ? {} : {
+      upstream_group_guard: { source: 'synthetic-source', name: account.name, notes: account.notes }
+    }) })
+    await flushPromises()
+    if (scenario === 'patch conflict') expect(updateAccount).toHaveBeenCalledTimes(1)
+    else expect(updateAccount).not.toHaveBeenCalled()
+    if (scenario !== 'unmounted') {
+      expect(wrapper.findComponent(UpstreamBillingRateCell).props('account').name).toBe(account.name)
+      expect(showError).toHaveBeenCalled()
+      expect(wrapper.get('button[aria-label="admin.accounts.upstreamBilling.saveGroup"]').attributes('disabled')).toBeUndefined()
+      wrapper.unmount()
+    }
   })
 
   it.each([

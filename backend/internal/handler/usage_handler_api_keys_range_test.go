@@ -53,7 +53,7 @@ func keyRangeRequest(t *testing.T, body string) (*httptest.ResponseRecorder, *ke
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	repo, keys := &keyRangeUsageRepo{}, &keyRangeOwnershipRepo{}
-	h := NewUsageHandler(service.NewUsageService(repo, nil, nil, nil), service.NewAPIKeyService(keys, nil, nil, nil, nil, nil, nil), nil, nil)
+	h := NewUsageHandler(service.NewUsageService(repo, nil, nil, nil), service.NewAPIKeyService(keys, nil, nil, nil, nil, nil, nil), nil, nil, nil)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 42})

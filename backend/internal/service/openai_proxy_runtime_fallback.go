@@ -221,7 +221,7 @@ func (s *OpenAIGatewayService) doUpstreamWithProxyFallback(ctx context.Context, 
 		resp, err, unsent := s.doOpenAIProxyAttemptWithTrace(attemptReq, account, target)
 		if err == nil || resp != nil || !unsent || target.proxyID == 0 ||
 			ctx.Err() != nil || req.Context().Err() != nil || req.GetBody == nil ||
-			!classifyUpstreamTransportError(err).Persistent {
+			classifyUpstreamTransportError(err) == upstreamTransportTransient {
 			return resp, err
 		}
 		// A plugin may report having sent a request even when it did not emit

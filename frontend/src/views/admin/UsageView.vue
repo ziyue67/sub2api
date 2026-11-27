@@ -2,14 +2,13 @@
   <AppLayout>
     <div class="space-y-6">
       <UsageStatsCards
-        v-if="activeTab !== 'traffic'"
         :stats="usageStats"
         show-rate
         :rate-window="usageStatsWindow"
         :notice-user-id="props.observerMode ? undefined : authStore.user?.id"
       />
       <!-- Charts Section -->
-      <div v-if="activeTab !== 'traffic'" class="space-y-4">
+      <div class="space-y-4">
         <div class="card p-4">
           <div class="flex flex-wrap items-center gap-4">
             <div class="flex items-center gap-2">
@@ -99,7 +98,7 @@
           </button>
         </div>
 
-        <UsageFilters v-if="activeTab !== 'traffic'" v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" :notice-user-id="props.observerMode ? undefined : authStore.user?.id" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
+        <UsageFilters v-model="filters" ref="usageFiltersRef" flat :mode="activeTab" :notice-user-id="props.observerMode ? undefined : authStore.user?.id" class="border-b border-gray-100 dark:border-dark-700/50" :start-date="startDate" :end-date="endDate" :exporting="exporting" :model-options="modelNameOptions" @change="applyFilters" @refresh="refreshData" @reset="resetFilters" @cleanup="openCleanupDialog" @export="exportToExcel">
           <template #after-reset>
             <div v-if="activeTab === 'usage' || activeTab === 'errors'" class="relative" ref="columnDropdownRef">
               <button
@@ -140,7 +139,6 @@
 
         <div v-show="activeTab === 'usage'" class="overflow-hidden rounded-b-2xl">
           <UsageTable
-            enable-timing-details
             :notice-user-id="props.observerMode ? undefined : authStore.user?.id"
             flat
             :data="usageLogs"
@@ -171,25 +169,6 @@
             @update:pageSize="onErrPageSize"
             @ipGeoBatchFailed="handleIpGeoBatchFailed" />
         </div>
-        <UsageConnections
-          v-if="!props.observerMode && activeTab === 'connections'"
-          :filters="connectionFilters"
-          :refresh-key="connectionRefreshKey"
-        />
-        <TrafficPanel v-if="!props.observerMode && activeTab === 'traffic'" admin />
-        <LatencyObservabilityPanel
-          v-if="!props.observerMode && activeTab === 'latency'"
-          flat
-          hide-title
-          :start-date="filters.start_date || startDate"
-          :end-date="filters.end_date || endDate"
-          :model="filters.model"
-          :user-id="filters.user_id"
-          :api-key-id="filters.api_key_id"
-          :account-id="filters.account_id"
-          :group-id="filters.group_id"
-          :refresh-token="connectionRefreshKey"
-        />
         <!-- 懒挂载：首次切到该 tab 才请求排行数据，之后随筛选自动刷新 -->
         <div v-if="!props.observerMode && rankingMounted" v-show="activeTab === 'ranking'" class="overflow-hidden rounded-b-2xl">
           <UserTokenRanking
@@ -242,9 +221,6 @@ import { resolveUsageStatsWindow, type UsageRateWindow, type UsageTrendRateConte
 import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
-import UsageConnections from '@/components/admin/usage/UsageConnections.vue'
-import LatencyObservabilityPanel from '@/components/admin/usage/LatencyObservabilityPanel.vue'
-import TrafficPanel from '@/components/usage/TrafficPanel.vue'
 import UserTokenRanking from '@/components/admin/usage/UserTokenRanking.vue'
 import UsageCleanupDialog from '@/components/admin/usage/UsageCleanupDialog.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
@@ -638,7 +614,6 @@ const refreshData = () => {
   refreshRollingRange()
   pagination.page = 1
   errPage.value = 1
-  connectionRefreshKey.value++
   invalidateModelStatsCache()
   loadLogs()
   loadStats(true)
@@ -700,7 +675,7 @@ const exportToExcel = async () => {
     let p = 1; let total = pagination.total; let exportedCount = 0
     const XLSX = await import('xlsx')
     const headers = [
-      t('usage.time'), t('admin.usage.user'), t('usage.apiKeyFilter'),
+      t('usage.time'), t('admin.usage.user'), t('admin.usage.username'), t('usage.apiKeyFilter'),
       t('admin.usage.account'), t('usage.requestedModel'), t('usage.sentUpstreamModel'), t('usage.upstreamResponseModel'), t('usage.upstreamModelMismatch'), t('usage.requestedReasoningEffort'), t('usage.reasoningEffort'), t('admin.usage.group'),
       t('usage.inboundEndpoint'), t('usage.upstreamEndpoint'),
       t('usage.type'),
@@ -723,7 +698,7 @@ const exportToExcel = async () => {
       )
       if (c.signal.aborted) break; if (p === 1) { total = res.total; exportProgress.total = total }
       const rows = (res.items || []).map((log: AdminUsageLog) => [
-        log.created_at, log.user?.email || '', log.api_key?.name || '', log.account?.name || '', log.model,
+        log.created_at, log.user?.email || '', log.user?.username?.trim() || '', log.api_key?.name || '', log.account?.name || '', log.model,
         log.upstream_model || log.model, log.upstream_response_model || '', log.upstream_model_mismatch == null ? '' : t(log.upstream_model_mismatch ? 'common.yes' : 'common.no'), formatReasoningEffort(log.reasoning_effort), formatReasoningEffort(log.upstream_reasoning_effort || log.reasoning_effort), log.group?.name || '',
         log.inbound_endpoint || '', log.upstream_endpoint || '', getRequestTypeLabel(log),
         log.input_tokens, log.output_tokens, log.cache_read_tokens, log.cache_creation_tokens,
@@ -766,6 +741,7 @@ const HIDDEN_COLUMNS_CURRENT_VERSION = 'upstream-request-id-hidden-by-default'
 
 const allColumns = computed(() => [
   { key: 'user', label: t('admin.usage.user'), sortable: false },
+  { key: 'username', label: t('admin.usage.username'), sortable: false },
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
   { key: 'account', label: t('admin.usage.account'), sortable: false },
   { key: 'model', label: t('usage.model'), sortable: true },
@@ -910,28 +886,15 @@ const loadSavedColumns = () => {
 }
 
 // Detail tabs
-type DetailTab = 'usage' | 'errors' | 'connections' | 'ranking' | 'traffic' | 'latency'
+type DetailTab = 'usage' | 'errors' | 'ranking'
 const activeTab = ref<DetailTab>('usage')
 const canViewErrors = computed(() => !props.observerMode || !!appStore.cachedPublicSettings?.allow_user_view_error_requests)
 const detailTabs = computed(() => [
   { key: 'usage' as const, label: t('usage.tabs.usage'), icon: 'document' as const },
   ...(canViewErrors.value ? [{ key: 'errors' as const, label: t('usage.tabs.errors'), icon: 'exclamationTriangle' as const }] : []),
-  ...(!props.observerMode ? [{ key: 'connections' as const, label: t('connections.title'), icon: 'clock' as const }] : []),
   ...(!props.observerMode ? [{ key: 'ranking' as const, label: t('usage.tabs.ranking'), icon: 'chart' as const }] : []),
-  ...(!props.observerMode ? [{ key: 'traffic' as const, label: t('traffic.title'), icon: 'chart' as const }] : []),
-  ...(!props.observerMode ? [{ key: 'latency' as const, label: t('latencyObservability.title'), icon: 'clock' as const }] : []),
 ])
 const usageFiltersRef = ref<InstanceType<typeof UsageFilters> | null>(null)
-const connectionRefreshKey = ref(0)
-const connectionFilters = computed(() => ({
-  start_time: toRFC3339(filters.value.start_date),
-  end_time: toRFC3339(filters.value.end_date, true),
-  user_id: filters.value.user_id ?? undefined,
-  api_key_id: filters.value.api_key_id ?? undefined,
-  account_id: filters.value.account_id ?? undefined,
-  group_id: filters.value.group_id ?? undefined,
-  model: filters.value.model || undefined,
-}))
 const rankingMounted = ref(false)
 const rankingRef = ref<InstanceType<typeof UserTokenRanking> | null>(null)
 

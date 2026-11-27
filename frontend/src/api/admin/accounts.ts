@@ -12,6 +12,7 @@ import type {
   AccountListItem,
   CreateAccountRequest,
   UpdateAccountRequest,
+  UpstreamGroupSyncGuard,
   PaginatedResponse,
   AccountUsageInfo,
   WindowStats,
@@ -740,6 +741,8 @@ export async function syncUpstreamModels(
 export interface SyncUpstreamPreviewParams {
   platform: string
   type: string
+  upstream_kind?: 'sub2api' | 'new_api'
+  account_id?: number
   base_url?: string
   api_key: string
   proxy_id?: number
@@ -1163,14 +1166,36 @@ export async function setUpstreamBillingProbeEnabled(id: number, enabled: boolea
 }
 
 export async function probeUpstreamBilling(id: number): Promise<UpstreamBillingProbeResult> {
-  const { data } = await apiClient.post<UpstreamBillingProbeResult>(`/admin/accounts/${id}/upstream-billing-probe`)
+  const { data } = await apiClient.post<UpstreamBillingProbeResult>(
+    `/admin/accounts/${id}/upstream-billing-probe`, undefined, { timeout: 45_000 }
+  )
   return data
+}
+
+export type UpstreamGroupSource = { account_id: number } | {
+  platform: string
+  base_url: string
+  api_key: string
+  proxy_id?: number | null
+}
+
+export async function previewUpstreamGroup(source: UpstreamGroupSource, signal?: AbortSignal) {
+  const { data } = await apiClient.post<{ group_name?: string; group_description?: string; sync_guard?: UpstreamGroupSyncGuard }>(
+    '/admin/accounts/upstream-billing-probe/group-preview', source, { signal }
+  )
+  const fields: { name?: string; notes?: string; upstream_group_guard?: UpstreamGroupSyncGuard } = {}
+  if (data.group_name?.trim()) fields.name = data.group_name
+  if (data.group_description?.trim()) fields.notes = data.group_description
+  if (data.sync_guard) fields.upstream_group_guard = data.sync_guard
+  return fields
 }
 
 export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<UpstreamBillingProbeResult[]> {
   const { data } = await apiClient.post<{ results: UpstreamBillingProbeResult[] }>(
     '/admin/accounts/upstream-billing-probe/batch',
-    { account_ids: accountIds }
+    { account_ids: accountIds },
+    // Up to five waves of four accounts, each doing a rate and a balance GET.
+    { timeout: 225_000 }
   )
   return data.results
 }
@@ -1374,6 +1399,7 @@ export const accountsAPI = {
   updateUpstreamBillingProbeSettings,
   setUpstreamBillingProbeEnabled,
   probeUpstreamBilling,
+  previewUpstreamGroup,
   probeUpstreamBillingBatch,
   probeUpstreamUsage,
   probeUpstreamUsageBatch,

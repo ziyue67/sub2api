@@ -230,6 +230,10 @@ func (s *GatewayService) ForwardAsChatCompletions(
 		return nil, fmt.Errorf("upstream error: %d %s", resp.StatusCode, upstreamMsg)
 	}
 
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && s.rateLimitService != nil && account.IsAnthropicOAuthOrSetupToken() {
+		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
+	}
+
 	// 13. Handle normal response
 	// Read Anthropic SSE → convert to Responses events → convert to CC format
 	var handleErr error
@@ -488,6 +492,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	anthState.Model = originalModel
 	ccState := apicompat.NewResponsesEventToChatState()
 	ccState.Model = originalModel
+	toolNameRestorer := newToolNameStreamRestorer(toolNameRewriteFromContext(c))
 
 	var usage ClaudeUsage
 	var firstTokenMs *int
@@ -607,15 +612,30 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 		observer.ObserveAnthropic([]byte(payload))
 		stream.observe(&event, payload)
+		if stream.upstreamErrType != "" {
+			break
+		}
 		if event.Type == "message_stop" {
 			continue
+		}
+		if toolNameRestorer == nil {
+			processAnthropicEvent(&event)
+			continue
+		}
+		var restored [2][]byte
+		n := toolNameRestorer.restoreInto(streamEventBytes(payload), &restored)
+		for _, restoredPayload := range restored[:n] {
+			var restoredEvent apicompat.AnthropicStreamEvent
+			if json.Unmarshal(restoredPayload, &restoredEvent) == nil {
+				processAnthropicEvent(&restoredEvent)
+			}
 		}
 		if stream.upstreamErrType != "" {
 			break
 		}
-		processAnthropicEvent(&event)
 	}
 
+	flushToolNameCarry(c, c.Writer.Size() != writerSizeBeforeStream, toolNameRestorer, processAnthropicEvent)
 	if failure := stream.failure(); failure != nil {
 		return finishAnthropicCompatStreamFailure(c, writerSizeBeforeStream, failure, resultWithUsage(), stream.usageSeen, func() {
 			writeAnthropicCompatCCStreamFailure(c, failure)

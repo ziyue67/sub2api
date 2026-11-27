@@ -1784,7 +1784,6 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// dropping it would make an enabled API-key account silently bill as raw 5m.
 		service.CacheCreationBilling1hKey,
 		service.QualityModelIsolationKey,
-		service.OAuth429ModelBlocksKey,
 		service.UpstreamBillingProbeExtraKey,
 		service.GrokMediaEligibleExtraKey,
 		"grok_billing_snapshot",

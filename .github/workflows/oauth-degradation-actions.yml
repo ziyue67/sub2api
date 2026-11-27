@@ -102,8 +102,8 @@ jobs:
         run: |
           bash candidate/.github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
       - name: Baseline behavioral RED
         shell: bash
@@ -333,8 +333,8 @@ jobs:
           docker version > evidence/docker.txt
           docker info > evidence/docker-info.txt
           if ! command -v gdb >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends gdb
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends gdb -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
           bash -n candidate/.github/scripts/oauth-degradation-integration-race.sh
           gofmt -d candidate/backend/internal/repository/oauth_degradation_chain_integration_test.go candidate/backend/internal/repository/oauth_degradation_race_integration_test.go > evidence/gofmt.diff

@@ -48,7 +48,7 @@ vi.mock('@/api/admin', () => ({
       batchDelete
     },
     proxies: {
-      getAll: getAllProxies
+      getAllWithCount: getAllProxies
     },
     groups: {
       getAll: getAllGroups

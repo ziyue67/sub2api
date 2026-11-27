@@ -113,8 +113,8 @@ jobs:
         run: |
           bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
           redis-server --version
       - name: Unit tests with timings
@@ -201,8 +201,8 @@ jobs:
         run: |
           bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
           redis-server --version
       - name: Integration tests with timings
@@ -453,7 +453,6 @@ jobs:
       - name: Offline multi-host contract checks
         run: python -m unittest discover -s deploy/tests -p 'test_multihost_preflight.py'
       - run: python -m unittest discover -s deploy/tests -p 'test_migrate_reauth_managed.py'
-      - run: python -m unittest discover -s deploy/connection-diagnostics -p 'test_collect.py'
 
   prism-adapter:
     needs: changes

@@ -1,5 +1,5 @@
 <template>
-  <div :class="identityOnly ? 'w-full lg:w-auto' : flat ? 'p-4 sm:p-6' : 'card p-6'">
+  <div :class="flat ? 'p-4 sm:p-6' : 'card p-6'">
     <!-- Toolbar: left filters (multi-line) + right actions -->
     <div class="flex flex-wrap items-end justify-between gap-4">
       <!-- Left: filters (allowed to wrap to multiple rows) -->
@@ -77,30 +77,28 @@
               class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
             >
               <span class="truncate">{{ k.name || `#${k.id}` }}</span>
-              <span v-if="k.deleted" class="ml-1 text-xs text-gray-400">({{ t('traffic.deletedKey') }})</span>
+              <span v-if="k.deleted" class="ml-1 text-xs text-gray-400">({{ t('admin.usage.userDeletedBadge') }})</span>
               <span class="ml-2 text-xs text-gray-400">#{{ k.id }}</span>
             </button>
           </div>
-          <p v-if="apiKeySearchError" role="alert" class="mt-1 text-xs text-red-600 dark:text-red-400">{{ t('traffic.keysFailed') }}</p>
         </div>
 
-        <template v-if="!identityOnly">
-          <div v-if="showPlatformFilter" data-testid="usage-platform-filter" class="w-full sm:w-52">
-            <label for="usage-platform" class="input-label flex items-center gap-1.5">
-              {{ t('admin.usage.platform') }}
-              <NewFeatureBadge v-if="noticeUserId != null" :notice-id="mode === 'errors' ? NEW_FEATURE_NOTICES.adminErrorPlatform : NEW_FEATURE_NOTICES.adminUsagePlatform" :user-id="noticeUserId" />
-            </label>
-            <Select
-              id="usage-platform"
-              :model-value="filters.platform ?? null"
-              :options="platformOptions"
-              :aria-label="t('admin.usage.platform')"
-              aria-describedby="usage-platform-hint"
-              searchable
-              @update:model-value="filters.platform = $event || undefined"
-              @change="emitChange"
-            />
-          </div>
+        <div v-if="showPlatformFilter" data-testid="usage-platform-filter" class="w-full sm:w-52">
+          <label for="usage-platform" class="input-label flex items-center gap-1.5">
+            {{ t('admin.usage.platform') }}
+            <NewFeatureBadge v-if="noticeUserId != null" :notice-id="mode === 'errors' ? NEW_FEATURE_NOTICES.adminErrorPlatform : NEW_FEATURE_NOTICES.adminUsagePlatform" :user-id="noticeUserId" />
+          </label>
+          <Select
+            id="usage-platform"
+            :model-value="filters.platform ?? null"
+            :options="platformOptions"
+            :aria-label="t('admin.usage.platform')"
+            aria-describedby="usage-platform-hint"
+            searchable
+            @update:model-value="filters.platform = $event || undefined"
+            @change="emitChange"
+          />
+        </div>
 
           <!-- Model Filter -->
           <div class="w-full sm:w-auto sm:min-w-[220px]">
@@ -108,96 +106,95 @@
             <Select v-model="filters.model" :options="modelOptions" searchable :creatable="modelCreatable" @change="emitChange" />
           </div>
 
-          <!-- Account Filter -->
-          <div ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
-            <label class="input-label">{{ t('admin.usage.account') }}</label>
-            <input
-              v-model="accountKeyword"
-              type="text"
-              class="input pr-8"
-              :placeholder="t('admin.usage.searchAccountPlaceholder')"
-              @input="debounceAccountSearch"
-              @focus="showAccountDropdown = true"
-            />
+        <!-- Account Filter -->
+        <div ref="accountSearchRef" class="usage-filter-dropdown relative w-full sm:w-auto sm:min-w-[220px]">
+          <label class="input-label">{{ t('admin.usage.account') }}</label>
+          <input
+            v-model="accountKeyword"
+            type="text"
+            class="input pr-8"
+            :placeholder="t('admin.usage.searchAccountPlaceholder')"
+            @input="debounceAccountSearch"
+            @focus="showAccountDropdown = true"
+          />
+          <button
+            v-if="filters.account_id"
+            type="button"
+            @click="clearAccount"
+            class="absolute right-2 top-9 text-gray-400"
+            aria-label="Clear account filter"
+          >
+            ✕
+          </button>
+          <div
+            v-if="showAccountDropdown && (accountResults.length > 0 || accountKeyword)"
+            class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
+          >
             <button
-              v-if="filters.account_id"
+              v-for="a in accountResults"
+              :key="a.id"
               type="button"
-              @click="clearAccount"
-              class="absolute right-2 top-9 text-gray-400"
-              aria-label="Clear account filter"
+              @click="selectAccount(a)"
+              class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
             >
-              ✕
+              <span class="truncate">{{ a.name }}</span>
+              <span class="ml-2 text-xs text-gray-400">#{{ a.id }}</span>
             </button>
-            <div
-              v-if="showAccountDropdown && (accountResults.length > 0 || accountKeyword)"
-              class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-white shadow-lg dark:bg-dark-800"
-            >
-              <button
-                v-for="a in accountResults"
-                :key="a.id"
-                type="button"
-                @click="selectAccount(a)"
-                class="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-dark-700"
-              >
-                <span class="truncate">{{ a.name }}</span>
-                <span class="ml-2 text-xs text-gray-400">#{{ a.id }}</span>
-              </button>
-            </div>
           </div>
+        </div>
 
-          <!-- Request Type Filter (usage only) -->
-          <div v-if="mode !== 'errors' && mode !== 'connections' && mode !== 'latency'" class="w-full sm:w-auto sm:min-w-[180px]">
-            <label class="input-label">{{ t('usage.type') }}</label>
-            <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
-          </div>
+        <!-- Request Type Filter (usage only) -->
+        <div v-if="mode !== 'errors' && mode !== 'connections' && mode !== 'latency'" class="w-full sm:w-auto sm:min-w-[180px]">
+          <label class="input-label">{{ t('usage.type') }}</label>
+          <Select v-model="filters.request_type" :options="requestTypeOptions" @change="emitChange" />
+        </div>
 
-          <!-- Native compaction is independent of the transport request type. -->
-          <div v-if="mode !== 'errors' && mode !== 'connections' && mode !== 'latency'" class="w-full sm:w-auto sm:min-w-[180px]">
-            <label class="input-label">{{ t('usage.compactionFilter') }}</label>
-            <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
-          </div>
+        <!-- Native compaction is independent of the transport request type. -->
+        <div v-if="mode !== 'errors' && mode !== 'connections' && mode !== 'latency'" class="w-full sm:w-auto sm:min-w-[180px]">
+          <label class="input-label">{{ t('usage.compactionFilter') }}</label>
+          <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="emitChange" />
+        </div>
 
-          <!-- Billing Type Filter (usage only) -->
-          <div v-if="mode !== 'errors' && mode !== 'connections' && mode !== 'latency'" class="w-full sm:w-auto sm:min-w-[200px]">
-            <label class="input-label">{{ t('admin.usage.billingType') }}</label>
-            <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
-          </div>
+        <!-- Billing Type Filter (usage only) -->
+        <div v-if="mode !== 'errors' && mode !== 'connections' && mode !== 'latency'" class="w-full sm:w-auto sm:min-w-[200px]">
+          <label class="input-label">{{ t('admin.usage.billingType') }}</label>
+          <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="emitChange" />
+        </div>
 
-          <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
-          <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
-            <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
-            <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitChange" />
-          </div>
+        <!-- Billing Mode Filter (usage only；用户排行的 user-breakdown 接口不支持该维度) -->
+        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[200px]">
+          <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
+          <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="emitChange" />
+        </div>
 
-          <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
-            <label class="input-label">{{ t('admin.usage.upstreamModelAudit') }}</label>
-            <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
-          </div>
+        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[220px]">
+          <label class="input-label">{{ t('admin.usage.upstreamModelAudit') }}</label>
+          <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
+        </div>
 
-          <!-- Error Phase Filter (errors only) -->
-          <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-            <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
-            <Select v-model="filters.error_phase" :options="errorPhaseOptions" @change="emitChange" />
-          </div>
+        <!-- Error Phase Filter (errors only) -->
+        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+          <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
+          <Select v-model="filters.error_phase" :options="errorPhaseOptions" @change="emitChange" />
+        </div>
 
-          <!-- Error Category Filter (errors only) -->
-          <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-            <label class="input-label">{{ t('usage.errors.category') }}</label>
-            <Select v-model="filters.error_category" :options="errorCategoryOptions" @change="emitChange" />
-          </div>
+        <!-- Error Category Filter (errors only) -->
+        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+          <label class="input-label">{{ t('usage.errors.category') }}</label>
+          <Select v-model="filters.error_category" :options="errorCategoryOptions" @change="emitChange" />
+        </div>
 
-          <!-- Status Code Filter (errors only) -->
-          <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
-            <label class="input-label">{{ t('admin.ops.errorLog.status') }}</label>
-            <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitChange" />
-          </div>
+        <!-- Status Code Filter (errors only) -->
+        <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
+          <label class="input-label">{{ t('admin.ops.errorLog.status') }}</label>
+          <Select v-model="filters.status_code" :options="statusCodeOptions" @change="emitChange" />
+        </div>
 
-          <!-- Group Filter -->
-          <div class="w-full sm:w-auto sm:min-w-[200px]">
-            <label class="input-label">{{ t('admin.usage.group') }}</label>
-            <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
-          </div>
-        </template>
+        <!-- Group Filter -->
+        <div class="w-full sm:w-auto sm:min-w-[200px]">
+          <label class="input-label">{{ t('admin.usage.group') }}</label>
+          <Select v-model="filters.group_id" :options="groupOptions" searchable @change="emitChange" />
+        </div>
 
         <slot name="after-filters" />
       </div>
@@ -221,7 +218,7 @@
         </template>
       </div>
     </div>
-    <p v-if="!identityOnly && showPlatformFilter" id="usage-platform-hint" class="mt-3 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.usage.platformHistoryHint') }}</p>
+    <p v-if="showPlatformFilter" id="usage-platform-hint" class="mt-3 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.usage.platformHistoryHint') }}</p>
   </div>
 </template>
 
@@ -298,7 +295,6 @@ let userSearchSequence = 0
 const apiKeyKeyword = ref('')
 const apiKeyResults = ref<UsageFilterOption[]>([])
 const showApiKeyDropdown = ref(false)
-const apiKeySearchError = ref(false)
 let apiKeySearchTimeout: ReturnType<typeof setTimeout> | null = null
 let apiKeySearchSequence = 0
 
@@ -427,14 +423,16 @@ const clearPendingApiKeySearch = () => {
 
 const searchApiKeys = async (userId: number | undefined, query: string, sequence: number) => {
   try {
-    const results = props.apiKeySearch && !observerMode
-      ? await props.apiKeySearch(userId, query)
-      : observerMode
+    const results = observerMode
       ? await observerUsageAPI.filterOptions('api_key', query)
       : await adminAPI.usage.searchApiKeys(userId, query)
-    if (sequence === apiKeySearchSequence && userId === filters.value.user_id) { apiKeyResults.value = results; apiKeySearchError.value = false }
+    if (sequence === apiKeySearchSequence && userId === filters.value.user_id) {
+      apiKeyResults.value = results
+    }
   } catch {
-    if (sequence === apiKeySearchSequence && userId === filters.value.user_id) { apiKeyResults.value = []; apiKeySearchError.value = Boolean(props.apiKeySearch) }
+    if (sequence === apiKeySearchSequence && userId === filters.value.user_id) {
+      apiKeyResults.value = []
+    }
   }
 }
 
@@ -481,7 +479,7 @@ const clearUser = () => {
 
 const selectApiKey = (k: UsageFilterOption) => {
   clearPendingApiKeySearch()
-  apiKeyKeyword.value = `${k.name || String(k.id)}${k.deleted ? ` (${t('traffic.deletedKey')})` : ''}`
+  apiKeyKeyword.value = `${k.name || String(k.id)}${k.deleted ? ` (${t('admin.usage.userDeletedBadge')})` : ''}`
   showApiKeyDropdown.value = false
   filters.value.api_key_id = k.id
   emitChange()
@@ -490,7 +488,6 @@ const selectApiKey = (k: UsageFilterOption) => {
 const clearApiKey = () => {
   clearPendingApiKeySearch()
   apiKeyKeyword.value = ''
-  apiKeySearchError.value = false
   apiKeyResults.value = []
   showApiKeyDropdown.value = false
   filters.value.api_key_id = undefined
@@ -559,7 +556,7 @@ const onDocumentClick = (e: MouseEvent) => {
 watch(
   () => props.startDate,
   (value) => {
-    if (!props.identityOnly) filters.value.start_date = value
+    filters.value.start_date = value
   },
   { immediate: true }
 )
@@ -567,7 +564,7 @@ watch(
 watch(
   () => props.endDate,
   (value) => {
-    if (!props.identityOnly) filters.value.end_date = value
+    filters.value.end_date = value
   },
   { immediate: true }
 )
@@ -610,7 +607,6 @@ watch(
 
 onMounted(async () => {
   document.addEventListener('click', onDocumentClick)
-  if (props.identityOnly) return
   try {
     const gs = observerMode
       ? { items: await observerUsageAPI.filterOptions('group') }

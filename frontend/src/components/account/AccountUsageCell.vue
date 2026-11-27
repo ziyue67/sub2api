@@ -242,6 +242,11 @@
 
     <!-- Antigravity OAuth accounts: fetch usage from API -->
     <template v-else-if="account.platform === 'antigravity' && account.type === 'oauth'">
+      <div v-if="todayStats" class="mb-1 text-[10px] text-gray-500 dark:text-gray-400">
+        {{ formatKeyRequests }} req · {{ formatKeyTokens }} ·
+        <span :title="t('usage.accountBilled')">A ${{ formatKeyCost }}</span>
+        <span v-if="todayStats.user_cost != null" :title="t('usage.userBilled')"> · U ${{ formatKeyUserCost }}</span>
+      </div>
       <!-- 账户类型徽章 -->
       <div v-if="antigravityTierLabel" class="mb-1 flex items-center gap-1">
         <span
@@ -886,6 +891,8 @@ const showUsageWindows = computed(() => {
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   // 第三方上游 API Key 没有模拟配额，按普通 Key 账号展示今日统计与额度进度条。
   if (props.account.platform === 'gemini') return !isGeminiThirdPartyApiKey.value
+  // DeepSeek keys use the same local usage row as OpenAI keys.
+  if (props.account.platform === 'deepseek' && props.account.type === 'apikey') return false
   // 多协议 API Key 供应商：apikey 账号也有滚动用量窗口（coding plan / 订阅）或余额，
   // 由 CNProviderQuotaCell / CNProviderBalanceCell 自行探测与展示。
   if (isMultiProtocolApiKeyPlatform(props.account.platform)) {

@@ -17,7 +17,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type fullAccessRouteService struct{ scopedRouteAccounts }
+type fullAccessRouteService struct {
+	scopedRouteAccounts
+	created []*service.CreateAccountInput
+}
+
+func (s *fullAccessRouteService) ListProxies(context.Context, int, int, string, string, string, string, string) ([]service.Proxy, int64, error) {
+	return nil, 0, nil
+}
+func (s *fullAccessRouteService) CreateAccount(ctx context.Context, in *service.CreateAccountInput) (*service.Account, error) {
+	require.NotNil(s.t, adminaccess.FromContext(ctx))
+	require.Nil(s.t, adminaccess.RestrictedFromContext(ctx))
+	s.created = append(s.created, in)
+	return &service.Account{ID: 100, Platform: in.Platform, Type: in.Type}, nil
+}
 
 func (*fullAccessRouteService) GetProxy(context.Context, int64) (*service.Proxy, error) {
 	return &service.Proxy{ID: 9, Username: "proxy-user", Password: "proxy-secret", Status: "active"}, nil
@@ -33,7 +46,7 @@ func TestAdminFullAccessRegisteredRoutesPreserveFullHandlers(t *testing.T) {
 	settings.SetScopedAdminKeyRepository(keys)
 	key, _, err := settings.CreateScopedAdminKey(context.Background(), service.ScopedAdminKeyInput{Name: "完整管理", Enabled: true, ConfirmFullAccess: true, Policy: adminaccess.Policy{FullAccess: true}}, 9)
 	require.NoError(t, err)
-	svc := &fullAccessRouteService{scopedRouteAccounts{t: t}}
+	svc := &fullAccessRouteService{scopedRouteAccounts: scopedRouteAccounts{t: t}}
 	account := adminhandler.NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	auth := middleware.NewAdminAuthMiddleware(nil, service.NewUserService(&scopedRouteUsers{}, nil, nil, nil), settings, nil)
 	r := gin.New()
@@ -50,6 +63,24 @@ func TestAdminFullAccessRegisteredRoutesPreserveFullHandlers(t *testing.T) {
 		require.Equal(t, 200, w.Code, tc.path+": "+w.Body.String())
 		require.Contains(t, w.Body.String(), tc.contains)
 	}
+
+	// Fork policy requires step-up authentication for credential imports, including full-access keys.
+	body := `{"data":{"type":"sub2api-data","version":1,"proxies":[],"accounts":[{"name":"fixture","platform":"openai","type":"oauth","credentials":{"access_token":"fixture-token","chatgpt_account_id":"fixture-id"},"extra":{"identity":"fixture"},"concurrency":3,"priority":50}]},"group_ids":[42]}`
+	importRequest := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/v1/admin/accounts/data", strings.NewReader(body))
+		req.Header.Set("x-api-key", key)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	w := importRequest()
+	require.Equal(t, 403, w.Code, w.Body.String())
+	require.Empty(t, svc.created)
+	keys.item.Policy.FullAccess = false
+	require.Equal(t, 403, importRequest().Code)
+	require.Empty(t, svc.created)
+	keys.item.Policy.FullAccess = true
 	// 密钥全权模式仍不跨越真人会话边界。
 	for _, path := range []string{"/api/v1/admin/settings/admin-api-keys", "/api/v1/admin/accounts/data"} {
 		req := httptest.NewRequest("GET", path, nil)

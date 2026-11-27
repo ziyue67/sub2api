@@ -767,7 +767,7 @@ func validateClaude55Request(body []byte, model string) error {
 		if isSonnet55 {
 			return fmt.Errorf("claude-sonnet-5-5 requires adaptive thinking or thinking.type=between_tools; omit thinking or use one of those modes")
 		}
-		return fmt.Errorf("%s requires adaptive thinking; omit thinking or use thinking.type=adaptive and output_config.effort", model)
+		return fmt.Errorf("%s requires adaptive thinking; received thinking.type=%s; omit thinking or use thinking.type=adaptive and output_config.effort", model, thinkingType)
 	case "between_tools":
 		if !isSonnet55 {
 			if isHaiku55 {
@@ -924,7 +924,13 @@ func FilterThinkingBlocksForRetry(body []byte, mappedModel string) []byte {
 	}
 
 	var messages []any
-	if err := json.Unmarshal(sliceRawFromBody(body, msgsRes), &messages); err != nil {
+	messagesJSON := sliceRawFromBody(body, msgsRes)
+	if !json.Valid(messagesJSON) {
+		return body
+	}
+	decoder := json.NewDecoder(bytes.NewReader(messagesJSON))
+	decoder.UseNumber() // Preserve tool arguments when rewriting the message history.
+	if err := decoder.Decode(&messages); err != nil {
 		return body
 	}
 
@@ -1417,7 +1423,12 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte, mappedModel string) []b
 	}
 
 	var req map[string]any
-	if err := json.Unmarshal(body, &req); err != nil {
+	if !json.Valid(body) {
+		return body
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber() // json.Marshal also preserves these numbers in downgraded tool text.
+	if err := decoder.Decode(&req); err != nil {
 		return body
 	}
 

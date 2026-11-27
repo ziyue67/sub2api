@@ -137,6 +137,9 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	upstreamMsg string,
 	upstreamModel string,
 ) *UpstreamFailoverError {
+	if IsUpstreamContextRejection(resp.StatusCode, respBody) {
+		return nil
+	}
 	if isDeepSeekInputContentResponse(account, resp.StatusCode, respBody) {
 		return nil
 	}
@@ -185,7 +188,7 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	if account.Platform != PlatformGrok && !tempUnscheduled {
 		shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 	}
-	return s.newOpenAIAccountFailoverError(
+	return s.newOpenAIHTTPAccountFailoverError(
 		account,
 		resp.StatusCode,
 		resp.Header,
@@ -300,7 +303,7 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 
 	// 账号级请求头覆写：放在所有内置默认头（含 Grok CLI 身份头）之后应用，
 	// 使配置值获得除共享传输层强制头之外的最高优先级。
-	account.ApplyHeaderOverrides(upstreamReq.Header)
+	account.ApplyHeaderOverridesWithContext(upstreamReq.Context(), upstreamReq.Header)
 	applyOpenCodeSessionHeader(c, account, targetURL, upstreamReq.Header, body)
 
 	proxyURL := ""

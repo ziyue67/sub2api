@@ -49,6 +49,8 @@ const messages: Record<string, string> = {
   'admin.dashboard.day': 'Day',
   'admin.dashboard.hour': 'Hour',
   'admin.usage.failedToLoadUser': 'Failed to load user',
+  'admin.usage.user': 'User',
+  'admin.usage.username': 'Username',
 	'admin.usage.requestId': 'Request ID',
 	'admin.usage.upstreamRequestId': 'Upstream ID',
 	'latencyObservability.reasoning_first_ms': 'First reasoning event',
@@ -248,35 +250,13 @@ describe('admin UsageView route filters', () => {
     expect(wrapper.find('[data-test="user-filter-label"]').text()).toBe('ranked-user@example.test')
   })
 
-  it('mounts the latency panel only after selecting its tab and passes supported filters', async () => {
+  it('omits the retired per-request diagnostic tabs', async () => {
     const wrapper = mountRouteFilteredUsageView()
     await flushPromises()
+    const labels = wrapper.findAll('[data-testid="usage-detail-tab"]').map(tab => tab.text())
+    expect(labels).not.toContain('latencyObservability.title')
     expect(wrapper.find('[data-test="latency-tab"]').exists()).toBe(false)
-
-    const vm = wrapper.vm as any
-    vm.filters.model = 'gpt-5.6-sol'
-    vm.filters.user_id = 42
-    vm.filters.api_key_id = 8
-    vm.filters.account_id = 7
-    vm.filters.group_id = 3
-    await wrapper.vm.$nextTick()
-
-    const latencyTab = wrapper.findAll('[data-testid="usage-detail-tab"]').find(tab => tab.text() === 'latencyObservability.title')!
-    await latencyTab.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[data-test="latency-tab"]').exists()).toBe(true)
-    expect(wrapper.findComponent(LatencyObservabilityPanelStub).props()).toMatchObject({
-      startDate: expect.any(String),
-      endDate: expect.any(String),
-      model: 'gpt-5.6-sol',
-      userId: 42,
-      apiKeyId: 8,
-      accountId: 7,
-      groupId: 3,
-      flat: true,
-      hideTitle: true,
-    })
+    expect(wrapper.find('[data-test="connection-tab"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -646,6 +626,46 @@ describe('admin UsageView request ID column visibility', () => {
       expect.arrayContaining([expect.objectContaining({ key: 'upstream_request_id', label: 'Upstream ID' })]),
     )
   })
+
+  it('shows username column by default and allows hiding it from column settings', async () => {
+    const wrapper = mount(UsageView, {
+      global: {
+        stubs: {
+          AppLayout: AppLayoutStub,
+          UsageStatsCards: true,
+          UsageFilters: UsageFiltersStub,
+          UsageTable: UsageTableStub,
+          UsageExportProgress: true,
+          UsageCleanupDialog: true,
+          UserBalanceHistoryModal: true,
+          AuditLogModal: true,
+          Pagination: true,
+          Select: true,
+          DateRangePicker: true,
+          Icon: true,
+          TokenUsageTrend: true,
+          ModelDistributionChart: true,
+          GroupDistributionChart: true,
+          EndpointDistributionChart: true,
+          UserTokenRanking: true,
+        },
+      },
+    })
+    await wrapper.vm.$nextTick()
+
+    const usageTable = wrapper.findComponent(UsageTableStub)
+    expect(usageTable.props('columns')).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'username', label: 'Username' })]),
+    )
+
+    await wrapper.get('button[title="admin.users.columnSettings"]').trigger('click')
+    const usernameToggle = wrapper.get('[data-testid="usage-column-toggle-username"]')
+    await usernameToggle.trigger('click')
+
+    expect(usageTable.props('columns')).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'username' })]),
+    )
+  })
 })
 
 describe('admin UsageView handleUserClick', () => {
@@ -804,13 +824,10 @@ describe('admin UsageView ranking tab', () => {
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(false)
 
     const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
-    expect(tabs).toHaveLength(6)
+    expect(tabs).toHaveLength(3)
     expect(wrapper.find('[data-test="connection-tab"]').exists()).toBe(false)
-    await tabs[2].trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-test="connection-tab"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(false)
-    await tabs[3].trigger('click')
+    await tabs[2].trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test="ranking"]').exists()).toBe(true)
 
@@ -833,6 +850,7 @@ describe('admin UsageView model audit export', () => {
 			items: [{
 				id: 1,
 				created_at: '2026-08-04T00:00:00Z',
+				user: { id: 7, email: 'alice@test.com', username: 'Alice' },
 				model: 'gpt-5.6-sol',
 				upstream_model: 'gpt-5.5',
 				upstream_response_model: 'gpt-5.4',
@@ -872,14 +890,16 @@ describe('admin UsageView model audit export', () => {
 		await flushPromises()
 
 		const headers = aoaToSheet.mock.calls[0][0][0]
-		expect(headers.slice(4, 8)).toEqual([
+		expect(headers.slice(1, 3)).toEqual(['User', 'Username'])
+		expect(headers.slice(5, 9)).toEqual([
 			'Requested model',
 			'Sent upstream model',
 			'Upstream response model',
 			'Upstream model mismatch',
 		])
 		const row = sheetAddAoa.mock.calls[0][1][0]
-		expect(row.slice(4, 8)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
+		expect(row.slice(1, 3)).toEqual(['alice@test.com', 'Alice'])
+		expect(row.slice(5, 9)).toEqual(['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'Yes'])
 		const cacheRateIndex = headers.indexOf('usage.latencyCacheRate')
 		expect(cacheRateIndex).toBe(headers.indexOf('admin.usage.cacheCreationTokens') + 1)
 		expect(row[cacheRateIndex]).toBe('0%')
@@ -1155,7 +1175,6 @@ describe('admin UsageView rolling 24 hour requests', () => {
     expect(list.mock.lastCall?.[0]).toMatchObject({ ...range, page: 2 })
     await (wrapper.vm as any).exportToExcel()
     expect(exportList.mock.lastCall?.[0]).toMatchObject(range)
-    expect((wrapper.vm as any).connectionFilters).toMatchObject({ start_time: range.start_date, end_time: range.end_date })
     ;(wrapper.vm as any).switchTab('errors')
     await flushPromises()
     expect(listErrorLogs.mock.lastCall?.[0]).toMatchObject({ start_time: range.start_date, end_time: range.end_date })

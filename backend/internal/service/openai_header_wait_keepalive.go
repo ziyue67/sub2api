@@ -155,9 +155,8 @@ func startOpenAIHeaderWaitKeepaliveInterval(c *gin.Context, w *openAIHeaderWaitW
 			}
 			// Stop acquired k.mu: all heartbeat writes happened-before this handoff.
 			k.mu.Lock()
-			n, started := k.bytes, k.started
+			started := k.started
 			k.mu.Unlock()
-			recordOpenAIStreamKeepaliveBytes(c, n)
 			if started && w.Status() == http.StatusOK && strings.HasPrefix(w.Header().Get("Content-Type"), "text/event-stream") {
 				w.committed = true
 			}

@@ -69,8 +69,8 @@ jobs:
         run: |
           bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
       - name: Compaction admission and structured tool history
         working-directory: backend
@@ -124,8 +124,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/lossy-baseline-evidence"
           bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
           python3 -B -m unittest discover -s .github/scripts -p 'test_assert_lossy_protocol.py' -v
           bash .github/scripts/prepare-lossy-protocol-baseline.sh "$EXPECTED_HEAD_SHA" "$RUNNER_TEMP/lossy-baseline" | tee "$RUNNER_TEMP/lossy-baseline-evidence/source-manifest.txt"

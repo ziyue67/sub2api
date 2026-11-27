@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -493,20 +492,21 @@ type Proxy struct {
 
 type ProxyWithAccountCount struct {
 	Proxy
-	AccountCount   int64  `json:"account_count"`
-	LatencyMs      *int64 `json:"latency_ms,omitempty"`
-	LatencyStatus  string `json:"latency_status,omitempty"`
-	LatencyMessage string `json:"latency_message,omitempty"`
-	IPAddress      string `json:"ip_address,omitempty"`
-	Country        string `json:"country,omitempty"`
-	CountryCode    string `json:"country_code,omitempty"`
-	Region         string `json:"region,omitempty"`
-	City           string `json:"city,omitempty"`
-	QualityStatus  string `json:"quality_status,omitempty"`
-	QualityScore   *int   `json:"quality_score,omitempty"`
-	QualityGrade   string `json:"quality_grade,omitempty"`
-	QualitySummary string `json:"quality_summary,omitempty"`
-	QualityChecked *int64 `json:"quality_checked,omitempty"`
+	AccountCount   int64      `json:"account_count"`
+	LatencyMs      *int64     `json:"latency_ms,omitempty"`
+	LatencyStatus  string     `json:"latency_status,omitempty"`
+	LatencyMessage string     `json:"latency_message,omitempty"`
+	IPAddress      string     `json:"ip_address,omitempty"`
+	Country        string     `json:"country,omitempty"`
+	CountryCode    string     `json:"country_code,omitempty"`
+	Region         string     `json:"region,omitempty"`
+	City           string     `json:"city,omitempty"`
+	QualityStatus  string     `json:"quality_status,omitempty"`
+	QualityScore   *int       `json:"quality_score,omitempty"`
+	QualityGrade   string     `json:"quality_grade,omitempty"`
+	QualitySummary string     `json:"quality_summary,omitempty"`
+	QualityChecked *int64     `json:"quality_checked,omitempty"`
+	LatencyChecked *time.Time `json:"latency_checked_at,omitempty"`
 }
 
 // AdminProxy 是管理员接口使用的 proxy DTO（包含密码等敏感字段）。
@@ -519,20 +519,21 @@ type AdminProxy struct {
 // AdminProxyWithAccountCount 是管理员接口使用的带账号统计的 proxy DTO。
 type AdminProxyWithAccountCount struct {
 	AdminProxy
-	AccountCount   int64  `json:"account_count"`
-	LatencyMs      *int64 `json:"latency_ms,omitempty"`
-	LatencyStatus  string `json:"latency_status,omitempty"`
-	LatencyMessage string `json:"latency_message,omitempty"`
-	IPAddress      string `json:"ip_address,omitempty"`
-	Country        string `json:"country,omitempty"`
-	CountryCode    string `json:"country_code,omitempty"`
-	Region         string `json:"region,omitempty"`
-	City           string `json:"city,omitempty"`
-	QualityStatus  string `json:"quality_status,omitempty"`
-	QualityScore   *int   `json:"quality_score,omitempty"`
-	QualityGrade   string `json:"quality_grade,omitempty"`
-	QualitySummary string `json:"quality_summary,omitempty"`
-	QualityChecked *int64 `json:"quality_checked,omitempty"`
+	AccountCount   int64      `json:"account_count"`
+	LatencyMs      *int64     `json:"latency_ms,omitempty"`
+	LatencyStatus  string     `json:"latency_status,omitempty"`
+	LatencyMessage string     `json:"latency_message,omitempty"`
+	IPAddress      string     `json:"ip_address,omitempty"`
+	Country        string     `json:"country,omitempty"`
+	CountryCode    string     `json:"country_code,omitempty"`
+	Region         string     `json:"region,omitempty"`
+	City           string     `json:"city,omitempty"`
+	QualityStatus  string     `json:"quality_status,omitempty"`
+	QualityScore   *int       `json:"quality_score,omitempty"`
+	QualityGrade   string     `json:"quality_grade,omitempty"`
+	QualitySummary string     `json:"quality_summary,omitempty"`
+	QualityChecked *int64     `json:"quality_checked,omitempty"`
+	LatencyChecked *time.Time `json:"latency_checked_at,omitempty"`
 }
 
 type ProxyAccountSummary struct {
@@ -629,14 +630,19 @@ type BatchUpdateRedeemCodesRequest struct {
 
 // UsageLog 是普通用户接口使用的 usage log DTO（不包含管理员字段）。
 type UsageLog struct {
-	CustomerCostDetails *service.CustomerCostDetails      `json:"customer_cost_details,omitempty"`
-	ContentTiming       *requesttiming.ContentObservation `json:"content_timing,omitempty"`
-	ID                  int64                             `json:"id"`
-	UserID              int64                             `json:"user_id"`
-	APIKeyID            int64                             `json:"api_key_id"`
-	AccountID           int64                             `json:"account_id"`
-	RequestID           string                            `json:"request_id"`
-	Model               string                            `json:"model"`
+	CustomerCostDetails *service.CustomerCostDetails `json:"customer_cost_details,omitempty"`
+	ID                  int64                        `json:"id"`
+	UserID              int64                        `json:"user_id"`
+	APIKeyID            int64                        `json:"api_key_id"`
+	AccountID           int64                        `json:"account_id"`
+	RequestID           string                       `json:"request_id"`
+	Model               string                       `json:"model"`
+
+	// ResponseModel is the final model that actually answered the request. It is
+	// only populated for regular users when the record's channel enables
+	// features_config.expose_response_model and it differs from Model. The
+	// intermediate mapping chain is never exposed.
+	ResponseModel *string `json:"response_model,omitempty"`
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
 	ServiceTier *string `json:"service_tier,omitempty"`
 	// ReasoningEffort is the client-requested effort (mapping-hidden, like Model).

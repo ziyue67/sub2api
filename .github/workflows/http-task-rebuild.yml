@@ -79,8 +79,8 @@ jobs:
         run: |
           bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
       - name: Keep clean candidate and prepare disposable RED source
         shell: bash
@@ -198,8 +198,8 @@ jobs:
         run: |
           bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
       - name: Reproduce concrete HTTP review failures in disposable baseline
         shell: bash
@@ -269,8 +269,8 @@ jobs:
         run: |
           bash .github/scripts/ci-ubuntu-mirrors.sh
           if ! command -v redis-server >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends redis-server
+            sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- update
+            sudo apt-get install -y --no-install-recommends redis-server -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
           fi
       - name: Execute unsafe source mutant with unchanged composed HTTP oracle
         shell: bash

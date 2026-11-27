@@ -349,6 +349,8 @@ func (s *adminServiceImpl) checkProxyURLQuality(ctx context.Context, proxyURL st
 	result.ExitIP = exitInfo.IP
 	result.Country = exitInfo.Country
 	result.CountryCode = exitInfo.CountryCode
+	result.Region = exitInfo.Region
+	result.City = exitInfo.City
 	result.BaseLatencyMs = latencyMs
 	result.Items = append(result.Items, ProxyQualityCheckItem{
 		Target:    "base_connectivity",
@@ -639,6 +641,10 @@ func (s *adminServiceImpl) attachProxyLatency(ctx context.Context, proxies []Pro
 		proxies[i].QualityGrade = info.QualityGrade
 		proxies[i].QualitySummary = info.QualitySummary
 		proxies[i].QualityChecked = info.QualityCheckedAt
+		if !info.UpdatedAt.IsZero() {
+			checkedAt := info.UpdatedAt
+			proxies[i].LatencyChecked = &checkedAt
+		}
 	}
 }
 

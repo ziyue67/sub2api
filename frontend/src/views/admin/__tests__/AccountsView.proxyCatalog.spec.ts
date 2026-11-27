@@ -19,7 +19,7 @@ vi.mock('@/api/admin', () => ({
       getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: false }),
       getBatchTodayStats: vi.fn().mockResolvedValue({ stats: {} })
     },
-    proxies: { getAll: getAllProxies },
+    proxies: { getAllWithCount: getAllProxies },
     groups: { getAll: getAllGroups }
   }
 }))

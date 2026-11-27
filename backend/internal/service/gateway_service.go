@@ -602,6 +602,18 @@ type GatewayCache interface {
 	GetReasoningContent(ctx context.Context, itemID string) (string, error)
 }
 
+// GatewayStickySessionCompareCache is an optional GatewayCache capability. The
+// production Redis cache compares and writes atomically; cache stubs do not
+// need to implement it for ordinary gateway tests.
+type GatewayStickySessionCompareCache interface {
+	// CompareAndBindSessionAccountID writes accountID and returns true when the
+	// key is missing, already holds accountID (only the TTL is refreshed) or
+	// holds one of replaceableAccountIDs, i.e. a value this request may have
+	// written itself. A key holding any other account was rebound by another
+	// request: it is left alone and false is returned.
+	CompareAndBindSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, replaceableAccountIDs []int64, ttl time.Duration) (bool, error)
+}
+
 // derefGroupID safely dereferences *int64 to int64, returning 0 if nil
 func derefGroupID(groupID *int64) int64 {
 	if groupID == nil {
@@ -793,6 +805,11 @@ type ClaudeUsage struct {
 	ImageOutputTokens        int  `json:"image_output_tokens,omitempty"`
 	WebSearchRequests        int  `json:"-"` // Anthropic usage.server_tool_use.web_search_requests（累计值）
 
+	// thinkingTokens 是 usage.output_tokens_details.thinking_tokens（output_tokens 的子集，不另计费），
+	// 只用于转 OpenAI 格式时输出 reasoning_tokens；上游给了才算数（0 也算）。
+	thinkingTokens        int
+	thinkingTokensPresent bool
+
 	cacheCreationInputTokensPresent     bool
 	cacheCreationInputTokensFromDetails bool
 	promptTotalTokens                   int
@@ -883,8 +900,9 @@ func (r *ForwardResult) upstreamPriceFactor() float64 {
 type GatewayFailureStage string
 
 const (
-	GatewayFailureStageInference   GatewayFailureStage = "inference"
-	GatewayFailureStageAccountAuth GatewayFailureStage = "account_auth"
+	GatewayFailureStageInference            GatewayFailureStage = "inference"
+	GatewayFailureStageAccountAuth          GatewayFailureStage = "account_auth"
+	GatewayFailureStageRequestCompatibility GatewayFailureStage = "request_compatibility"
 )
 
 // GatewayFailureScope identifies whether selecting another account can help.
@@ -912,16 +930,18 @@ type GatewayFailureReason string
 // trigger account failover. Additive metadata keeps existing composite literals
 // source-compatible and preserves their legacy retry-next-account behavior.
 type UpstreamFailoverError struct {
-	StatusCode               int
-	ResponseBody             []byte        // 上游响应体，用于错误透传规则匹配
-	ResponseHeaders          http.Header   // 上游响应头，用于透传 cf-ray/cf-mitigated/content-type 等诊断信息
-	ForceCacheBilling        bool          // Antigravity 粘性会话切换时设为 true
-	RetryableOnSameAccount   bool          // 临时性错误（如 Google 间歇性 400、空响应），应在同一账号上重试 N 次再切换
-	SameAccountRetryDelay    time.Duration // 同账号重试的最小间隔；零值使用 handler 默认值
-	SameAccountRetryDeadline time.Time     // 同账号重试截止时间；零值表示仅受 retryLimit 限制
-	SameAccountRetryMax      int           // 可选的错误级同账号重试上限，低于 handler 默认预算时优先采用
-	RequestScopedTransient   bool          // 故障因素与账号无关（如上游按客户端身份/模型容量降载）：可同账号重试，但不得据此对账号做临时封禁
-	SafeToFailoverAfterWrite bool          // 仅写出 SSE 注释等非语义字节时，仍可在同一客户端流中切换账号
+	// QuotaRejectedBeforeExecution is set after any provisional tool receipts are restored.
+	QuotaRejectedBeforeExecution bool
+	StatusCode                   int
+	ResponseBody                 []byte        // 上游响应体，用于错误透传规则匹配
+	ResponseHeaders              http.Header   // 上游响应头，用于透传 cf-ray/cf-mitigated/content-type 等诊断信息
+	ForceCacheBilling            bool          // Antigravity 粘性会话切换时设为 true
+	RetryableOnSameAccount       bool          // 临时性错误（如 Google 间歇性 400、空响应），应在同一账号上重试 N 次再切换
+	SameAccountRetryDelay        time.Duration // 同账号重试的最小间隔；零值使用 handler 默认值
+	SameAccountRetryDeadline     time.Time     // 同账号重试截止时间；零值表示仅受 retryLimit 限制
+	SameAccountRetryMax          int           // 可选的错误级同账号重试上限，低于 handler 默认预算时优先采用
+	RequestScopedTransient       bool          // 故障因素与账号无关（如上游按客户端身份/模型容量降载）：可同账号重试，但不得据此对账号做临时封禁
+	SafeToFailoverAfterWrite     bool          // 仅写出 SSE 注释等非语义字节时，仍可在同一客户端流中切换账号
 	// HeaderTimeoutSubmitted marks a failover caused by an OpenAI response-header
 	// timeout after the request was written. The upstream may have billed the
 	// attempt; the successful usage record adds one retry surcharge unit.
@@ -940,11 +960,20 @@ func (e *UpstreamFailoverError) Error() string {
 	if e != nil && e.Stage == GatewayFailureStageAccountAuth {
 		return fmt.Sprintf("credential failure: %s (failover)", e.Reason)
 	}
+	if e != nil && e.Stage == GatewayFailureStageRequestCompatibility {
+		return fmt.Sprintf("request compatibility failure: %s (failover)", e.Reason)
+	}
 	return fmt.Sprintf("upstream error: %d (failover)", e.StatusCode)
 }
 
 func (e *UpstreamFailoverError) ShouldRetryNextAccount() bool {
 	return e != nil && e.NextAccountAction != NextAccountStop
+}
+
+// SameAccountRetryOnly separates retry affinity from account-health scope.
+// An ambiguous Grok 403 is request-scoped too, but has its own one-backup budget.
+func (e *UpstreamFailoverError) SameAccountRetryOnly() bool {
+	return e != nil && e.RequestScopedTransient && e.Scope == GatewayFailureScopeRequest && e.Reason != GrokUnknownForbiddenReason
 }
 
 func (e *UpstreamFailoverError) IsCredentialFailure() bool {
@@ -963,7 +992,10 @@ const OpenAIWSModelUnavailableReason GatewayFailureReason = "openai_ws_model_una
 // except an Excel BPS 429, which only cools the account's BPS route, and a
 // local BPS image admission rejection, which never reached the upstream.
 func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
-	if e == nil || e.Reason == OpenAIWSModelUnavailableReason || e.Reason == ExcelBPSRateLimitedReason || e.Reason == GrokUnknownForbiddenReason || e.IsExcelBPSImageAdmissionRejection() {
+	if e == nil || e.Stage == GatewayFailureStageRequestCompatibility || e.Reason == OpenAIWSModelUnavailableReason || e.Reason == ExcelBPSRateLimitedReason || e.Reason == GrokUnknownForbiddenReason || e.IsExcelBPSImageAdmissionRejection() {
+		return false
+	}
+	if e.RequestScopedTransient && e.Scope == GatewayFailureScopeRequest {
 		return false
 	}
 	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount
@@ -1200,6 +1232,23 @@ func (s *GatewayService) BindStickySession(ctx context.Context, groupID *int64, 
 		return nil
 	}
 	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, accountID, stickySessionTTL)
+}
+
+// BindStickySessionUnlessRebound writes the terminal session -> account binding
+// unless another request rebound the key while this one was forwarding. The
+// write only covers values this request may have written itself: a missing key,
+// accountID (only the TTL is refreshed) and the accounts it failed over from.
+// Any other value belongs to another request and survives. Caches without the
+// compare capability fall back to the unconditional write.
+func (s *GatewayService) BindStickySessionUnlessRebound(ctx context.Context, groupID *int64, sessionHash string, accountID int64, replaceableAccountIDs []int64) error {
+	if sessionHash == "" || accountID <= 0 || s.cache == nil {
+		return nil
+	}
+	if cache, ok := s.cache.(GatewayStickySessionCompareCache); ok {
+		_, err := cache.CompareAndBindSessionAccountID(ctx, derefGroupID(groupID), sessionHash, accountID, replaceableAccountIDs, stickySessionTTL)
+		return err
+	}
+	return s.BindStickySession(ctx, groupID, sessionHash, accountID)
 }
 
 // bindGatewayStickySessionDuringSelection preserves the normal eager sticky
