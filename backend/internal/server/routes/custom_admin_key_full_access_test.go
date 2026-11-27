@@ -64,7 +64,7 @@ func TestAdminFullAccessRegisteredRoutesPreserveFullHandlers(t *testing.T) {
 		require.Contains(t, w.Body.String(), tc.contains)
 	}
 
-	// Exercise the real import handler with synthetic credentials and metadata.
+	// Fork policy requires step-up authentication for credential imports, including full-access keys.
 	body := `{"data":{"type":"sub2api-data","version":1,"proxies":[],"accounts":[{"name":"fixture","platform":"openai","type":"oauth","credentials":{"access_token":"fixture-token","chatgpt_account_id":"fixture-id"},"extra":{"identity":"fixture"},"concurrency":3,"priority":50}]},"group_ids":[42]}`
 	importRequest := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "/api/v1/admin/accounts/data", strings.NewReader(body))
@@ -75,15 +75,11 @@ func TestAdminFullAccessRegisteredRoutesPreserveFullHandlers(t *testing.T) {
 		return w
 	}
 	w := importRequest()
-	require.Equal(t, 200, w.Code, w.Body.String())
-	require.Contains(t, w.Body.String(), `"account_created":1`)
-	require.Len(t, svc.created, 1)
-	require.Equal(t, "fixture-id", svc.created[0].Credentials["chatgpt_account_id"])
-	require.Equal(t, "fixture", svc.created[0].Extra["identity"])
-	require.Equal(t, []int64{42}, svc.created[0].GroupIDs)
+	require.Equal(t, 403, w.Code, w.Body.String())
+	require.Empty(t, svc.created)
 	keys.item.Policy.FullAccess = false
 	require.Equal(t, 403, importRequest().Code)
-	require.Len(t, svc.created, 1)
+	require.Empty(t, svc.created)
 	keys.item.Policy.FullAccess = true
 	// 密钥全权模式仍不跨越真人会话边界。
 	for _, path := range []string{"/api/v1/admin/settings/admin-api-keys", "/api/v1/admin/accounts/data"} {

@@ -12,7 +12,7 @@ vi.mock('@/api/admin', () => ({ adminAPI: {
     probeUpstreamBilling: probe,
     syncUpstreamModels: syncModels,
     getUpstreamBillingRatesWithEtag: vi.fn().mockResolvedValue({ notModified: true, data: null })
-  }, proxies: { getAll: vi.fn().mockResolvedValue([]) }, groups: { getAll: vi.fn().mockResolvedValue([]) }
+  }, proxies: { getAllWithCount: vi.fn().mockResolvedValue([]) }, groups: { getAll: vi.fn().mockResolvedValue([]) }
 } }))
 vi.mock('@/api/admin/accounts', async () => ({ ...await vi.importActual('@/api/admin/accounts'), getNewAPIUpstreamConfig: getConfig, saveNewAPIUpstreamConfig: saveConfig }))
 vi.mock('@/stores/app', () => ({ useAppStore: () => ({ showError: vi.fn(), showSuccess: vi.fn(), showInfo: vi.fn() }) }))

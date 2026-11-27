@@ -13,7 +13,11 @@ const catalogSource = readFileSync(resolve(process.cwd(), '../backend/internal/p
 const catalog = [...catalogSource.matchAll(/Permission\{"([^"]+)", "([^"]+)", "([^"]+)", "([^"]+)"\}/g)].map(([, id, label, category, scope]) => ({ id, label, category, scope }))
 const mocks = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), update: vi.fn(), rotate: vi.fn(), revoke: vi.fn(), deleteRecord: vi.fn() }))
 vi.mock('@/api/admin/adminAccessKeys', () => mocks)
-vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: vi.fn().mockResolvedValue([{ id: 7, name: 'Example group' }]) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 41 } }) }))
+vi.mock('@/api/admin/groups', () => {
+  const getAllIncludingInactive = vi.fn().mockResolvedValue([{ id: 7, name: 'Example group' }])
+  return { getAllIncludingInactive, default: { getAllIncludingInactive } }
+})
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/composables/useStepUp', () => ({ useStepUp: () => ({ run: (fn: () => unknown) => fn() }), isStepUpCancelled: () => false }))
 const wrappers: ReturnType<typeof mount>[] = []
@@ -25,7 +29,7 @@ beforeEach(() => {
 })
 function setup(locale: 'en' | 'zh' = 'en') {
   const i18n = createI18n({ legacy: false, locale, fallbackLocale: 'en', messages: { en, zh } })
-  const wrapper = mount(AdminAccessKeysSettings, { global: { plugins: [i18n], stubs: { teleport: true } } })
+  const wrapper = mount(AdminAccessKeysSettings, { global: { plugins: [i18n], stubs: { teleport: true, NewFeatureBadge: true } } })
   wrappers.push(wrapper)
   return { wrapper, i18n }
 }

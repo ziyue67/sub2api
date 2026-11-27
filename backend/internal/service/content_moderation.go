@@ -1544,25 +1544,29 @@ func (s *ContentModerationService) runWorker(workerCtx context.Context, id int) 
 // eligible worker. Only asynchronous work pays at most this short idle wait;
 // synchronous moderation and its snapshot refresh behavior are unchanged.
 func (s *ContentModerationService) waitForAsyncWork(ctx context.Context) bool {
-	if s == nil || s.asyncQueue == nil {
+	if s == nil {
 		return false
-	}
-	if ctx.Err() != nil {
-		return false
-	}
-	if len(s.asyncQueue) > 0 {
-		return true
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return false
+		}
+		s.asyncQueueMu.RLock()
+		queue, wake, lazy := s.asyncQueue, s.asyncWake, s.asyncQueueLazy
+		s.asyncQueueMu.RUnlock()
+		if queue == nil && !lazy {
+			return false
+		}
+		if len(queue) > 0 {
+			return true
+		}
 		select {
 		case <-ctx.Done():
 			return false
+		case <-wake:
 		case <-ticker.C:
-			if len(s.asyncQueue) > 0 {
-				return true
-			}
 		}
 	}
 }

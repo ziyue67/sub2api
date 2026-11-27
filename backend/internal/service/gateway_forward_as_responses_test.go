@@ -656,6 +656,10 @@ func TestHandleResponsesBufferedStreamingResponse_ThinkingTokensBecomeReasoningT
 			`event: message_delta`,
 			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":120,"output_tokens_details":{"thinking_tokens":40}}}`,
 			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
+			``,
 		}, "\n"))),
 	}
 

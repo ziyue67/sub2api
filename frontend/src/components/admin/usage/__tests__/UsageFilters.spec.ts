@@ -471,6 +471,7 @@ describe('UsageFilters — user and API key filters', () => {
   })
 
   it('ignores outdated keyword results and does not restore keys after clearing', async () => {
+    await chooseUser('first@example.test')
     const pending = deferred<Array<{ id: number; name: string }>>()
     mockSearchApiKeys.mockImplementationOnce(() => pending.promise)
     const input = wrapper.get('input[placeholder="Search API key..."]')
