@@ -269,6 +269,7 @@
             <div v-if="run.html" class="aspect-[4/3] bg-white dark:bg-white">
               <iframe :srcdoc="run.html" class="h-full w-full border-0" sandbox="allow-scripts" referrerpolicy="no-referrer" :title="`${t('admin.accounts.pelicanTest.output')} ${index + 1}`"></iframe>
             </div>
+            <p v-if="run.error && run.output" class="border-t border-gray-200 px-3 py-2 text-xs text-red-600 dark:border-dark-600 dark:text-red-300">{{ run.error }}</p>
             <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-words border-t border-gray-200 bg-gray-950 p-3 text-xs leading-relaxed text-gray-200 dark:border-dark-600">{{ run.output || run.error || t('admin.accounts.pelicanTest.waiting') }}</pre>
           </article>
         </div>
@@ -303,7 +304,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { questionPrompt, questionContract, isTextAnswerKind, stateProbeVerdict, STATE_PROBE_QUESTION, type IntelligenceQuestion, type StateProbeVerdict } from '@/utils/intelligenceTest'
 import { useI18n } from 'vue-i18n'
 import { extractPelicanHtml as extractHtml } from '@/utils/pelicanHtml'
@@ -350,6 +351,7 @@ interface TestRun {
   output: string
   html: string
   error: string
+  interrupted?: boolean
   source?: 'manual' | 'scheduled'
   startedAt?: string
   finishedAt?: string
@@ -448,6 +450,8 @@ const runs = ref<TestRun[]>([])
 const records = ref<TestRecord[]>([])
 const scheduledRecords = ref<ScheduledTestResult[]>([])
 const controllers = new Map<string, AbortController>()
+let activeManualRecord: { key: string; record: TestRecord } | null = null
+let checkpointTimer: ReturnType<typeof setTimeout> | undefined
 const testMode = ref<TestMode>('question')
 const probeResults = ref<OpenAICodexStateProbeResult[]>([])
 const probeError = ref('')
@@ -571,18 +575,51 @@ function loadStoredRecords(key: string): TestRecord[] {
 
 function readRecords() {
   const personal = personalStorageKey.value ? loadStoredRecords(personalStorageKey.value) : []
-  records.value = [...loadStoredRecords(storageKey.value), ...personal].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  records.value = [...loadStoredRecords(storageKey.value), ...personal]
+    .filter(record => typeof record?.createdAt === 'string' && Array.isArray(record.runs))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map(record => ({ ...record, runs: record.runs.map(run => run.status === 'running'
+      ? { ...run, status: 'error', interrupted: true, error: t('admin.accounts.pelicanTest.interrupted') }
+      : run) }))
 }
 
-function saveRecords() {
+function checkpointManualRecord() {
+  clearTimeout(checkpointTimer)
+  checkpointTimer = undefined
+  const session = activeManualRecord
+  if (!session) return
+  const { key, record } = session
+  const snapshot = { ...record, runs: record.runs.map(run => ({ ...run })) }
+  if (key === storageKey.value || key === personalStorageKey.value) {
+    records.value = [snapshot, ...records.value.filter(item => item.id !== snapshot.id)]
+  }
   try {
-    localStorage.setItem(storageKey.value, JSON.stringify(records.value.filter(record => !record.pelicanQuestion?.proof).slice(0, 8)))
-    if (personalStorageKey.value) {
-      localStorage.setItem(personalStorageKey.value, JSON.stringify(records.value.filter(record => record.pelicanQuestion?.proof).slice(0, 8)))
-    }
+    const stored = loadStoredRecords(key).filter(item => item.id !== snapshot.id)
+    localStorage.setItem(key, JSON.stringify([snapshot, ...stored].slice(0, 8)))
   } catch {
     // A large model response must not prevent the current result from being shown.
   }
+}
+
+function queueManualCheckpoint() {
+  if (!activeManualRecord || checkpointTimer !== undefined) return
+  checkpointTimer = setTimeout(checkpointManualRecord, 500)
+}
+
+function stopManualRound() {
+  if (!activeManualRecord) return
+  for (const run of activeManualRecord.record.runs) {
+    if (run.status === 'running') {
+      run.status = 'error'
+      run.interrupted = true
+      run.error = t('admin.accounts.pelicanTest.interrupted')
+      run.finishedAt = new Date().toISOString()
+      if (run.startedAt) run.durationMs = Math.max(0, Date.parse(run.finishedAt) - Date.parse(run.startedAt))
+    }
+  }
+  checkpointManualRecord()
+  activeManualRecord = null
+  running.value = false
 }
 
 function formatDate(value: string) {
@@ -632,12 +669,14 @@ function loadRecord(record: TestRecord) {
   questionSnapshot.value = record.pelicanQuestion ? { prompt: record.prompt, reasoning_effort: record.reasoningEffort, parallel_count: record.runs.length, pelican_question: record.pelicanQuestion, actual_prompt: record.actualPrompt } : null
   modelId.value = record.modelId
   reasoningEffort.value = record.reasoningEffort || 'medium'
+  parallelCount.value = record.runs.length
   runs.value = record.runs.map((run) => ({ ...run, questionKind: run.questionKind || record.questionKind || 'pelican', modelId: run.modelId || record.modelId, reasoningEffort: run.reasoningEffort || record.reasoningEffort }))
   viewingScheduled.value = false
   activeTab.value = 'results'
 }
 
 function handleClose() {
+  stopManualRound()
   for (const controller of controllers.values()) controller.abort()
   controllers.clear()
   running.value = false
@@ -672,6 +711,7 @@ async function consumeRun(run: TestRun, signal: AbortSignal, round: ManualRound)
     }),
     signal
   })
+  if (signal.aborted) return
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const reader = response.body?.getReader()
   if (!reader) throw new Error(t('admin.accounts.pelicanTest.noResponseBody'))
@@ -688,7 +728,10 @@ async function consumeRun(run: TestRun, signal: AbortSignal, round: ManualRound)
     } catch {
       return
     }
-    if (event.type === 'content' && event.text) run.output += event.text
+    if (event.type === 'content' && event.text) {
+      run.output += event.text
+      queueManualCheckpoint()
+    }
     if (event.type === 'test_complete') {
       completed = true
       if (!event.success) throw new Error(event.error || t('admin.accounts.pelicanTest.failed'))
@@ -697,6 +740,7 @@ async function consumeRun(run: TestRun, signal: AbortSignal, round: ManualRound)
   }
   while (true) {
     const { done, value } = await reader.read()
+    if (signal.aborted) return
     if (done) break
     buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
@@ -704,7 +748,11 @@ async function consumeRun(run: TestRun, signal: AbortSignal, round: ManualRound)
     for (const line of lines) consumeLine(line.trim())
   }
   if (buffer.trim()) consumeLine(buffer.trim())
-  if (!completed || !run.output.trim()) throw new Error(t('admin.accounts.pelicanTest.emptyResponse'))
+  if (!completed) {
+    run.interrupted = true
+    throw new Error(t('admin.accounts.pelicanTest.interrupted'))
+  }
+  if (!run.output.trim()) throw new Error(t('admin.accounts.pelicanTest.emptyResponse'))
   run.html = run.questionKind === 'candy' ? '' : extractHtml(run.output)
   if (run.questionKind !== 'candy' && !run.html) throw new Error(t('admin.accounts.pelicanTest.invalidHtml'))
   run.status = 'success'
@@ -712,19 +760,20 @@ async function consumeRun(run: TestRun, signal: AbortSignal, round: ManualRound)
 
 async function startOne(run: TestRun, round: ManualRound) {
   const started = performance.now()
-  run.startedAt = new Date().toISOString()
   const controller = new AbortController()
   controllers.set(run.id, controller)
   try {
     await consumeRun(run, controller.signal, round)
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') return
+    if (controller.signal.aborted) return
     run.status = 'error'
+    if (error instanceof TypeError || (error instanceof DOMException && error.name === 'AbortError')) run.interrupted = true
     run.error = error instanceof Error ? error.message : t('admin.accounts.pelicanTest.failed')
   } finally {
     run.durationMs = Math.max(0, Math.round(performance.now() - started))
     run.finishedAt = new Date().toISOString()
-    controllers.delete(run.id)
+    if (controllers.get(run.id) === controller) controllers.delete(run.id)
+    if (activeManualRecord?.record.runs.includes(run)) checkpointManualRecord()
   }
 }
 
@@ -732,7 +781,8 @@ async function startTest() {
   if (running.value || !props.account || !canStart.value || questionKind.value === 'ciallo') return
   viewingScheduled.value = false
   const question = promptMode.value !== 'custom' ? questionSnapshot.value?.pelican_question : undefined
-  const owner = auth.user?.id
+  const key = promptMode.value === 'personal_random' ? personalStorageKey.value : storageKey.value
+  if (!key) return
   const round: ManualRound = {
     accountId: props.account.id, questionKind: questionKind.value,
     modelId: modelId.value.trim(), reasoningEffort: reasoningEffort.value,
@@ -742,25 +792,24 @@ async function startTest() {
     question: question ? JSON.parse(JSON.stringify(question)) : undefined,
   }
   const count = normalizeCount()
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
   parallelCount.value = count
   runs.value = Array.from({ length: count }, (_, index) => ({
-    id: `${Date.now()}-${index}`,
+    id: `${id}-${index}`,
     questionKind: questionKind.value,
     status: 'running',
     output: '',
     html: '',
     error: '',
     source: 'manual',
+    startedAt: new Date().toISOString(),
     modelId: modelId.value.trim(),
     reasoningEffort: reasoningEffort.value
   }))
   activeTab.value = 'results'
   running.value = true
-  await Promise.all(runs.value.map((run) => startOne(run, round)))
-  running.value = false
-  if (props.account?.id !== round.accountId || !props.show || (round.promptMode === 'personal_random' && (auth.user?.id !== owner || !auth.isAdmin))) return
   const record: TestRecord = {
-    id: `${Date.now()}`,
+    id,
     createdAt: new Date().toISOString(),
     questionKind: round.questionKind,
     prompt: round.prompt,
@@ -768,10 +817,16 @@ async function startTest() {
     pelicanQuestion: round.question,
     modelId: round.modelId,
     reasoningEffort: round.reasoningEffort,
-    runs: runs.value.map((run) => ({ ...run }))
+    runs: runs.value
   }
-  records.value = [record, ...records.value.filter((item) => item.id !== record.id)]
-  saveRecords()
+  const session = { key, record }
+  activeManualRecord = session
+  checkpointManualRecord()
+  await Promise.all(record.runs.map((run) => startOne(run, round)))
+  if (activeManualRecord !== session) return
+  checkpointManualRecord()
+  activeManualRecord = null
+  running.value = false
 }
 
 async function startProbe() {
@@ -811,11 +866,22 @@ function downloadAll() {
   runs.value.filter((run) => run.output).forEach((run) => downloadHtml(run))
 }
 
-onBeforeUnmount(() => { for (const controller of controllers.values()) controller.abort() })
+onMounted(() => window.addEventListener('pagehide', checkpointManualRecord))
+onBeforeUnmount(() => {
+  window.removeEventListener('pagehide', checkpointManualRecord)
+  stopManualRound()
+  for (const controller of controllers.values()) controller.abort()
+})
 
 watch(modelId, () => { if (props.show) loadReasoning() })
 
-watch(() => [props.show, props.account?.id, auth.user?.id, auth.isAdmin] as const, ([show]) => {
+// Compare the primitive values independently. The auth store replaces the user
+// object every minute, even if the administrator's identity has not changed.
+watch([() => props.show, () => props.account?.id, () => auth.user?.id, () => auth.isAdmin], ([show]) => {
+  stopManualRound()
+  for (const controller of controllers.values()) controller.abort()
+  controllers.clear()
+  running.value = false
   // The records window never outlives the dialog or carries over to another account.
   recordsView.value = null
   managingBank.value = false
@@ -838,6 +904,8 @@ watch(() => [props.show, props.account?.id, auth.user?.id, auth.isAdmin] as cons
     testMode.value = 'question'
     probeResults.value = []
     probeError.value = ''
+    const latest = records.value[0]
+    if (latest?.runs.some(run => run.interrupted)) loadRecord(latest)
     void loadModels()
     void loadReasoning()
   } else {
